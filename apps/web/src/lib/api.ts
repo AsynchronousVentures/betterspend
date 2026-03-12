@@ -355,4 +355,14 @@ export const api = {
     update: (id: string, data: unknown) => apiFetch<any>(`/inventory/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     adjust: (id: string, data: { quantity: number; notes?: string }) => apiFetch<any>(`/inventory/${id}/adjust`, { method: 'POST', body: JSON.stringify(data) }),
   },
+  requisitionTemplates: {
+    list: () => apiFetch<any[]>('/requisition-templates'),
+    get: (id: string) => apiFetch<any>(`/requisition-templates/${id}`),
+    create: (data: unknown) => apiFetch<any>('/requisition-templates', { method: 'POST', body: JSON.stringify(data) }),
+    createFromRequisition: (requisitionId: string, data: unknown) =>
+      apiFetch<any>(`/requisition-templates/from-requisition/${requisitionId}`, { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: unknown) => apiFetch<any>(`/requisition-templates/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    remove: (id: string) => apiFetch<void>(`/requisition-templates/${id}`, { method: 'DELETE' }),
+    apply: (id: string) => apiFetch<any>(`/requisition-templates/${id}/apply`),
+  },
 };

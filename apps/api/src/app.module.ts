@@ -38,6 +38,7 @@ import { ApprovalDelegationsModule } from './modules/approval-delegations/approv
 import { RfqModule } from './modules/rfq/rfq.module';
 import { RecurringPoModule } from './modules/recurring-po/recurring-po.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
+import { RequisitionTemplatesModule } from './modules/requisition-templates/requisition-templates.module';
 
 @Module({
   imports: [
@@ -80,6 +81,7 @@ import { InventoryModule } from './modules/inventory/inventory.module';
     RfqModule,
     RecurringPoModule,
     InventoryModule,
+    RequisitionTemplatesModule,
   ],
 })
 export class AppModule {}
