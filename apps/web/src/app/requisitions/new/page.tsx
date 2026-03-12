@@ -134,6 +134,7 @@ function NewRequisitionContent() {
   const [priority, setPriority] = useState('normal');
   const [currency, setCurrency] = useState('USD');
   const [neededBy, setNeededBy] = useState('');
+  const [templateBanner, setTemplateBanner] = useState('');
 
   // Pre-populate from catalog item if passed via query params
   const prefill = searchParams.get('catalogItemId')
@@ -154,6 +155,32 @@ function NewRequisitionContent() {
   const [aiText, setAiText] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiMsg, setAiMsg] = useState('');
+
+  // Load template if templateId is in URL
+  useEffect(() => {
+    const templateId = searchParams.get('templateId');
+    if (!templateId) return;
+    api.requisitionTemplates.apply(templateId).then((data: any) => {
+      if (data?.title) setTitle(data.title);
+      if (data?.description) setDescription(data.description);
+      if (data?.priority) setPriority(data.priority);
+      if (data?.currency) setCurrency(data.currency);
+      if (data?.lines?.length) {
+        setLines(data.lines.map((l: any) => ({
+          description: l.description || '',
+          qty: String(l.quantity || 1),
+          uom: l.unitOfMeasure || 'each',
+          unitPrice: String(l.unitPrice || 0),
+          vendorId: l.vendorId || '',
+          catalogItemId: l.catalogItemId || '',
+        })));
+      }
+      // Try to fetch template name for the banner
+      api.requisitionTemplates.get(templateId).then((t: any) => {
+        if (t?.name) setTemplateBanner(t.name);
+      }).catch(() => setTemplateBanner('template'));
+    }).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const total = lines.reduce((sum, l) => sum + (parseFloat(l.qty) || 0) * (parseFloat(l.unitPrice) || 0), 0);
 
@@ -238,12 +265,29 @@ function NewRequisitionContent() {
 
   return (
     <div style={{ padding: '2rem', maxWidth: '960px' }}>
-      <div style={{ marginBottom: '1.5rem' }}>
-        <Link href="/requisitions" style={{ color: COLORS.textSecondary, fontSize: '0.875rem', textDecoration: 'none' }}>
-          &larr; Back to Requisitions
+      <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+        <div>
+          <Link href="/requisitions" style={{ color: COLORS.textSecondary, fontSize: '0.875rem', textDecoration: 'none' }}>
+            &larr; Back to Requisitions
+          </Link>
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: '0.5rem 0 0', color: COLORS.textPrimary }}>New Requisition</h1>
+        </div>
+        <Link
+          href="/requisitions/templates"
+          style={{ fontSize: '0.875rem', color: COLORS.accentBlueDark, textDecoration: 'none', border: `1px solid ${COLORS.accentBlueLight}`, padding: '0.4rem 0.875rem', borderRadius: '6px', background: COLORS.accentBlueLight, fontWeight: 500, marginTop: '0.25rem', display: 'inline-block' }}
+        >
+          Browse Templates
         </Link>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: '0.5rem 0 0', color: COLORS.textPrimary }}>New Requisition</h1>
       </div>
+
+      {/* Template Banner */}
+      {templateBanner && (
+        <div style={{ background: COLORS.accentGreenLight, border: `1px solid ${COLORS.accentGreen}`, borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: COLORS.accentGreenDark }}>
+          <span>Pre-filled from template: <strong>{templateBanner}</strong></span>
+          <span style={{ marginLeft: 'auto', color: COLORS.textMuted, fontSize: '0.8rem' }}>Review and adjust the fields before creating.</span>
+          <a href="/requisitions/templates" style={{ color: COLORS.accentGreenDark, textDecoration: 'none', fontWeight: 600, marginLeft: '0.5rem' }}>View all templates →</a>
+        </div>
+      )}
 
       {/* AI Parse Panel */}
       <div style={{ background: 'linear-gradient(135deg, #eff6ff 0%, #f5f3ff 100%)', border: `1px solid ${COLORS.accentBlueLight}`, borderRadius: '10px', padding: '1.25rem', marginBottom: '1.25rem' }}>

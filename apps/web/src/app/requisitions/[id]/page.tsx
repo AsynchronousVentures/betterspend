@@ -60,6 +60,13 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
   const [poPaymentTerms, setPoPaymentTerms] = useState('');
   const [poSubmitting, setPoSubmitting] = useState(false);
   const [poError, setPoError] = useState('');
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [templateDesc, setTemplateDesc] = useState('');
+  const [templateOrgWide, setTemplateOrgWide] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [templateError, setTemplateError] = useState('');
+  const [templateSuccess, setTemplateSuccess] = useState(false);
 
   useEffect(() => {
     params.then(({ id: pid }) => {
@@ -104,6 +111,28 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
       setPoError(err instanceof Error ? err.message : 'PO creation failed');
     } finally {
       setPoSubmitting(false);
+    }
+  }
+
+  async function saveAsTemplate() {
+    if (!templateName.trim()) { setTemplateError('Name is required'); return; }
+    setTemplateError('');
+    setTemplateSaving(true);
+    try {
+      await api.requisitionTemplates.createFromRequisition(id, {
+        name: templateName,
+        description: templateDesc || undefined,
+        isOrgWide: templateOrgWide,
+      });
+      setTemplateSuccess(true);
+      setSaveTemplateOpen(false);
+      setTemplateName('');
+      setTemplateDesc('');
+      setTemplateOrgWide(false);
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : 'Failed to save template');
+    } finally {
+      setTemplateSaving(false);
     }
   }
 
@@ -230,8 +259,57 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
             {actionLoading === 'cancel' ? 'Cancelling…' : 'Cancel Requisition'}
           </button>
         )}
+        <button
+          onClick={() => { setSaveTemplateOpen(true); setTemplateError(''); setTemplateSuccess(false); }}
+          style={{ background: COLORS.white, color: COLORS.textSecondary, border: `1px solid ${COLORS.border}`, borderRadius: '6px', padding: '0.625rem 1.25rem', fontSize: '0.875rem', fontWeight: 500, cursor: 'pointer' }}
+        >
+          Save as Template
+        </button>
       </div>
       {error && <div style={{ marginTop: '0.75rem', background: COLORS.accentRedLight, border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.625rem 1rem', color: COLORS.accentRedDark, fontSize: '0.875rem' }}>{error}</div>}
+      {templateSuccess && <div style={{ marginTop: '0.75rem', background: COLORS.accentGreenLight, border: `1px solid ${COLORS.accentGreen}`, borderRadius: '6px', padding: '0.625rem 1rem', color: COLORS.accentGreenDark, fontSize: '0.875rem' }}>Template saved! <a href="/requisitions/templates" style={{ color: COLORS.accentGreenDark, fontWeight: 600 }}>View templates →</a></div>}
+
+      {/* Save as Template Dialog */}
+      {saveTemplateOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: SHADOWS.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}
+          onClick={(e) => { if (e.target === e.currentTarget) setSaveTemplateOpen(false); }}>
+          <div style={{ background: COLORS.white, borderRadius: '10px', padding: '1.75rem', width: '100%', maxWidth: '480px', boxShadow: SHADOWS.dropdown }}>
+            <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem', fontWeight: 700, color: COLORS.textPrimary }}>Save as Template</h2>
+            <p style={{ margin: '0 0 1.25rem', fontSize: '0.875rem', color: COLORS.textSecondary }}>
+              Save this requisition as a reusable template to pre-fill future requests.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: COLORS.textSecondary, marginBottom: '0.375rem' }}>Template Name *</label>
+                <input value={templateName} onChange={(e) => setTemplateName(e.target.value)}
+                  placeholder="e.g. Monthly Office Supplies"
+                  style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: COLORS.textSecondary, marginBottom: '0.375rem' }}>Description</label>
+                <textarea value={templateDesc} onChange={(e) => setTemplateDesc(e.target.value)}
+                  rows={2} placeholder="Optional description"
+                  style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', resize: 'vertical', boxSizing: 'border-box' }} />
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: COLORS.textSecondary, cursor: 'pointer' }}>
+                <input type="checkbox" checked={templateOrgWide} onChange={(e) => setTemplateOrgWide(e.target.checked)} />
+                Make available to all org members
+              </label>
+            </div>
+            {templateError && <div style={{ marginTop: '0.75rem', background: COLORS.accentRedLight, border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.5rem 0.75rem', color: COLORS.accentRedDark, fontSize: '0.8rem' }}>{templateError}</div>}
+            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem', justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => setSaveTemplateOpen(false)}
+                style={{ background: COLORS.white, color: COLORS.textSecondary, border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', padding: '0.5rem 1rem', fontSize: '0.875rem', cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button type="button" onClick={saveAsTemplate} disabled={templateSaving}
+                style={{ background: COLORS.textPrimary, color: COLORS.white, border: 'none', borderRadius: '6px', padding: '0.5rem 1.25rem', fontSize: '0.875rem', fontWeight: 600, cursor: templateSaving ? 'not-allowed' : 'pointer', opacity: templateSaving ? 0.7 : 1 }}>
+                {templateSaving ? 'Saving…' : 'Save Template'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create PO Dialog */}
       {poDialogOpen && (

@@ -92,6 +92,13 @@
       "when": 1773800000000,
       "tag": "0012_inventory",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1773900000000,
+      "tag": "0013_requisition_templates",
+      "breakpoints": true
     }
   ]
 }

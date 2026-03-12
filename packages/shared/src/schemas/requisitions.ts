@@ -22,3 +22,27 @@ export const createRequisitionSchema = z.object({
 });
 
 export type CreateRequisitionInput = z.infer<typeof createRequisitionSchema>;
+
+export const createRequisitionTemplateSchema = z.object({
+  name: z.string().min(1).max(255),
+  description: z.string().optional(),
+  isOrgWide: z.boolean().default(false),
+  templateData: z.object({
+    title: z.string().min(1).max(255),
+    description: z.string().optional(),
+    departmentId: z.string().uuid().optional(),
+    projectId: z.string().uuid().optional(),
+    priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
+    currency: z.string().length(3).default('USD'),
+    lines: z.array(requisitionLineSchema).min(1),
+  }),
+});
+
+export const createTemplateFromRequisitionSchema = z.object({
+  name: z.string().min(1).max(255),
+  description: z.string().optional(),
+  isOrgWide: z.boolean().default(false),
+});
+
+export type CreateRequisitionTemplateInput = z.infer<typeof createRequisitionTemplateSchema>;
+export type CreateTemplateFromRequisitionInput = z.infer<typeof createTemplateFromRequisitionSchema>;

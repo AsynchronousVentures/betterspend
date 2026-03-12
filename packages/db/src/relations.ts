@@ -1,6 +1,7 @@
 import { relations } from 'drizzle-orm';
 import { organizations, departments, projects } from './schema/organizations';
 import { users, userRoles } from './schema/users';
+import { requisitionTemplates } from './schema/requisition-templates';
 import { vendors, catalogItems } from './schema/vendors';
 import { requisitions, requisitionLines } from './schema/requisitions';
 import { purchaseOrders, poLines, poVersions, blanketReleases } from './schema/purchase-orders';
@@ -206,4 +207,9 @@ export const systemSettingsRelations = relations(systemSettings, ({ one }) => ({
 
 export const vendorPortalTokensRelations = relations(vendorPortalTokens, ({ one }) => ({
   vendor: one(vendors, { fields: [vendorPortalTokens.vendorId], references: [vendors.id] }),
+}));
+
+export const requisitionTemplatesRelations = relations(requisitionTemplates, ({ one }) => ({
+  organization: one(organizations, { fields: [requisitionTemplates.organizationId], references: [organizations.id] }),
+  createdBy: one(users, { fields: [requisitionTemplates.createdById], references: [users.id] }),
 }));
