@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api } from '../lib/api';
 import { COLORS, SHADOWS } from '../lib/theme';
@@ -198,6 +198,7 @@ function ActionItem({
 }
 
 export default function HomePage() {
+  const dashboardRef = useRef<HTMLDivElement>(null);
   const [kpis, setKpis] = useState<any>(null);
   const [pending, setPending] = useState<any>(null);
   const [activity, setActivity] = useState<any[]>([]);
@@ -210,6 +211,8 @@ export default function HomePage() {
   const [autoApproveThreshold, setAutoApproveThreshold] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [relativeNow, setRelativeNow] = useState(() => Date.now());
+  const [exportingCsv, setExportingCsv] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -256,17 +259,124 @@ export default function HomePage() {
       (pending.upcomingSoftwareRenewals ?? 0)
     : 0;
 
+  async function handleExportCsv() {
+    setExportingCsv(true);
+    try {
+      const exportedAt = new Date().toISOString();
+      const datePart = exportedAt.split('T')[0];
+      const rows = [
+        ['KPI Name', 'Value', 'Exported At'],
+        ['Active POs', String(po?.active ?? 0), exportedAt],
+        ['Open Requisitions', String(req?.total ?? 0), exportedAt],
+        ['Invoices Paid', String(inv?.paid ?? 0), exportedAt],
+        ['Annual Budget', String(bud?.totalBudget ?? 0), exportedAt],
+      ];
+      const csv = rows
+        .map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(','))
+        .join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `dashboard-${datePart}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportingCsv(false);
+    }
+  }
+
+  async function handleExportPdf() {
+    if (!dashboardRef.current) return;
+
+    setExportingPdf(true);
+    try {
+      const exportedAt = new Date();
+      const datePart = exportedAt.toISOString().split('T')[0];
+      const printWindow = window.open('', '_blank', 'noopener,noreferrer');
+      if (!printWindow) return;
+
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>dashboard-${datePart}</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 24px; color: #0f172a; }
+              h1 { font-size: 24px; margin-bottom: 4px; }
+              p.meta { color: #475569; font-size: 12px; margin-top: 0; margin-bottom: 16px; }
+              a { color: inherit; text-decoration: none; }
+            </style>
+          </head>
+          <body>
+            <h1>BetterSpend Dashboard</h1>
+            <p class="meta">Generated ${exportedAt.toLocaleString()}</p>
+            ${dashboardRef.current.innerHTML}
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.focus();
+      window.setTimeout(() => {
+        printWindow.print();
+      }, 250);
+    } finally {
+      setExportingPdf(false);
+    }
+  }
+
   return (
     <div style={{ padding: isMobile ? '1.25rem 1rem' : '2rem' }}>
-      <div style={{ marginBottom: '1.5rem' }}>
-        <h1 style={{ fontSize: '1.375rem', fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>
-          Dashboard
-        </h1>
-        <p style={{ color: COLORS.textMuted, fontSize: '0.8125rem', marginTop: '0.25rem' }}>
-          Welcome to BetterSpend — your P2P control center
-        </p>
+      <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
+        <div>
+          <h1 style={{ fontSize: '1.375rem', fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>
+            Dashboard
+          </h1>
+          <p style={{ color: COLORS.textMuted, fontSize: '0.8125rem', marginTop: '0.25rem' }}>
+            Welcome to BetterSpend — your P2P control center
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={handleExportCsv}
+            disabled={loading || exportingCsv}
+            style={{
+              padding: '0.55rem 0.9rem',
+              borderRadius: '8px',
+              border: `1px solid ${COLORS.border}`,
+              background: COLORS.cardBg,
+              color: COLORS.textPrimary,
+              fontSize: '0.8125rem',
+              fontWeight: 600,
+              cursor: loading || exportingCsv ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {exportingCsv ? 'Exporting CSV...' : 'Export CSV'}
+          </button>
+          <button
+            type="button"
+            onClick={handleExportPdf}
+            disabled={loading || exportingPdf}
+            style={{
+              padding: '0.55rem 0.9rem',
+              borderRadius: '8px',
+              border: 'none',
+              background: COLORS.accentBlue,
+              color: COLORS.white,
+              fontSize: '0.8125rem',
+              fontWeight: 600,
+              cursor: loading || exportingPdf ? 'not-allowed' : 'pointer',
+              opacity: loading || exportingPdf ? 0.7 : 1,
+            }}
+          >
+            {exportingPdf ? 'Preparing PDF...' : 'Export PDF'}
+          </button>
+        </div>
       </div>
 
+      <div ref={dashboardRef}>
       {/* KPI grid */}
       {loading ? (
         <div
@@ -1030,6 +1140,7 @@ export default function HomePage() {
             </Link>
           ))}
         </div>
+      </div>
       </div>
     </div>
   );
