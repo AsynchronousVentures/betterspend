@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { Db } from '@betterspend/db';
 import { exchangeRates, organizations } from '@betterspend/db';
 import { DB_TOKEN } from '../../database/database.module';
@@ -14,6 +14,21 @@ export interface UpsertExchangeRateInput {
 @Injectable()
 export class ExchangeRatesService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
+
+  private normalizeCurrency(code: string, fieldName: string) {
+    const normalized = code.trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(normalized)) {
+      throw new BadRequestException(`${fieldName} must be a 3-letter currency code`);
+    }
+    return normalized;
+  }
+
+  private validateRate(rate: number) {
+    if (!Number.isFinite(rate) || rate <= 0) {
+      throw new BadRequestException('Exchange rate must be greater than zero');
+    }
+    return rate;
+  }
 
   async getOrganizationBaseCurrency(organizationId: string) {
     const org = await this.db.query.organizations.findFirst({
@@ -38,16 +53,62 @@ export class ExchangeRatesService {
   }
 
   async upsert(organizationId: string, input: UpsertExchangeRateInput) {
-    const fromCurrency = input.fromCurrency.toUpperCase();
-    const toCurrency = input.toCurrency.toUpperCase();
+    const fromCurrency = this.normalizeCurrency(input.fromCurrency, 'From currency');
+    const toCurrency = this.normalizeCurrency(input.toCurrency, 'To currency');
+    const rate = this.validateRate(input.rate);
 
     const [row] = await this.db.insert(exchangeRates).values({
       orgId: organizationId,
       fromCurrency,
       toCurrency,
-      rate: String(input.rate),
+      rate: String(rate),
       isManual: input.isManual ?? true,
+    }).onConflictDoUpdate({
+      target: [exchangeRates.orgId, exchangeRates.fromCurrency, exchangeRates.toCurrency],
+      set: {
+        rate: String(rate),
+        isManual: input.isManual ?? true,
+        fetchedAt: new Date(),
+      },
     }).returning();
+
+    return row;
+  }
+
+  async update(organizationId: string, id: string, input: UpsertExchangeRateInput) {
+    const existing = await this.db.query.exchangeRates.findFirst({
+      where: (record, { and, eq }) => and(eq(record.id, id), eq(record.orgId, organizationId)),
+    });
+    if (!existing) {
+      throw new BadRequestException(`Exchange rate ${id} not found`);
+    }
+
+    const fromCurrency = this.normalizeCurrency(input.fromCurrency, 'From currency');
+    const toCurrency = this.normalizeCurrency(input.toCurrency, 'To currency');
+    const rate = this.validateRate(input.rate);
+
+    const [row] = await this.db.update(exchangeRates)
+      .set({
+        fromCurrency,
+        toCurrency,
+        rate: String(rate),
+        isManual: input.isManual ?? true,
+        fetchedAt: new Date(),
+      })
+      .where(and(eq(exchangeRates.id, id), eq(exchangeRates.orgId, organizationId)))
+      .returning();
+
+    return row;
+  }
+
+  async remove(organizationId: string, id: string) {
+    const [row] = await this.db.delete(exchangeRates)
+      .where(and(eq(exchangeRates.id, id), eq(exchangeRates.orgId, organizationId)))
+      .returning();
+
+    if (!row) {
+      throw new BadRequestException(`Exchange rate ${id} not found`);
+    }
 
     return row;
   }
@@ -83,8 +144,9 @@ export class ExchangeRatesService {
   }
 
   async updateOrganizationBaseCurrency(organizationId: string, baseCurrency: string) {
+    const normalizedBaseCurrency = this.normalizeCurrency(baseCurrency, 'Base currency');
     const [org] = await this.db.update(organizations)
-      .set({ baseCurrency: baseCurrency.toUpperCase(), updatedAt: new Date() })
+      .set({ baseCurrency: normalizedBaseCurrency, updatedAt: new Date() })
       .where(eq(organizations.id, organizationId))
       .returning();
     return org;

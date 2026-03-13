@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Put, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -20,6 +20,20 @@ export class ExchangeRatesController {
   @ApiOperation({ summary: 'Create or override an exchange rate' })
   create(@CurrentOrgId() orgId: string, @Body() body: UpsertExchangeRateInput) {
     return this.exchangeRatesService.upsert(orgId, body);
+  }
+
+  @Patch(':id')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Update an exchange rate' })
+  update(@CurrentOrgId() orgId: string, @Param('id') id: string, @Body() body: UpsertExchangeRateInput) {
+    return this.exchangeRatesService.update(orgId, id, body);
+  }
+
+  @Delete(':id')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Delete an exchange rate' })
+  remove(@CurrentOrgId() orgId: string, @Param('id') id: string) {
+    return this.exchangeRatesService.remove(orgId, id);
   }
 
   @Get('organization-base-currency')

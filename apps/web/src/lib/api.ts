@@ -79,6 +79,9 @@ export const api = {
     list: () => apiFetch<any[]>('/exchange-rates'),
     create: (data: unknown) =>
       apiFetch<any>('/exchange-rates', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: unknown) =>
+      apiFetch<any>(`/exchange-rates/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    remove: (id: string) => apiFetch<void>(`/exchange-rates/${id}`, { method: 'DELETE' }),
     getBaseCurrency: () =>
       apiFetch<{ baseCurrency: string }>('/exchange-rates/organization-base-currency'),
     updateBaseCurrency: (baseCurrency: string) =>

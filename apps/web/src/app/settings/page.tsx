@@ -85,9 +85,16 @@ function SettingsContent() {
   const [baseCurrency, setBaseCurrency] = useState('USD');
   const [exchangeRates, setExchangeRates] = useState<any[]>([]);
   const [rateForm, setRateForm] = useState({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '1.08' });
+  const [editingRateId, setEditingRateId] = useState<string | null>(null);
   const [orgSaving, setOrgSaving] = useState(false);
   const [orgMsg, setOrgMsg] = useState('');
   const [orgError, setOrgError] = useState('');
+
+  async function refreshExchangeRateSettings() {
+    const [base, rates] = await Promise.all([api.exchangeRates.getBaseCurrency(), api.exchangeRates.list()]);
+    setBaseCurrency(base.baseCurrency ?? 'USD');
+    setExchangeRates(rates);
+  }
 
   useEffect(() => {
     api.settings.getAll().then((all) => {
@@ -99,8 +106,7 @@ function SettingsContent() {
         contract_price_deviation_action: (all.contract_price_deviation_action as 'warn' | 'block') ?? c.contract_price_deviation_action,
       }));
     }).catch(() => {});
-    api.exchangeRates.getBaseCurrency().then((data) => setBaseCurrency(data.baseCurrency ?? 'USD')).catch(() => {});
-    api.exchangeRates.list().then(setExchangeRates).catch(() => {});
+    refreshExchangeRateSettings().catch(() => {});
   }, []);
 
   // Load OAuth connection status and handle callback params
@@ -218,22 +224,83 @@ function SettingsContent() {
     setOrgMsg('');
     setOrgSaving(true);
     try {
-      await api.exchangeRates.updateBaseCurrency(baseCurrency);
-      await api.exchangeRates.create({
-        fromCurrency: rateForm.fromCurrency.toUpperCase(),
-        toCurrency: rateForm.toCurrency.toUpperCase(),
-        rate: parseFloat(rateForm.rate),
-        isManual: true,
-      });
-      const [base, rates] = await Promise.all([api.exchangeRates.getBaseCurrency(), api.exchangeRates.list()]);
-      setBaseCurrency(base.baseCurrency ?? 'USD');
-      setExchangeRates(rates);
-      setOrgMsg('Base currency and exchange rates saved.');
+      const parsedRate = Number(rateForm.rate);
+      if (!/^[A-Z]{3}$/.test(baseCurrency.trim().toUpperCase())) {
+        throw new Error('Base currency must be a 3-letter currency code');
+      }
+      if (!/^[A-Z]{3}$/.test(rateForm.fromCurrency.trim().toUpperCase())) {
+        throw new Error('From currency must be a 3-letter currency code');
+      }
+      if (!/^[A-Z]{3}$/.test(rateForm.toCurrency.trim().toUpperCase())) {
+        throw new Error('To currency must be a 3-letter currency code');
+      }
+      if (!Number.isFinite(parsedRate) || parsedRate <= 0) {
+        throw new Error('Exchange rate must be greater than zero');
+      }
+
+      await api.exchangeRates.updateBaseCurrency(baseCurrency.trim().toUpperCase());
+      if (editingRateId) {
+        await api.exchangeRates.update(editingRateId, {
+          fromCurrency: rateForm.fromCurrency.trim().toUpperCase(),
+          toCurrency: rateForm.toCurrency.trim().toUpperCase(),
+          rate: parsedRate,
+          isManual: true,
+        });
+      } else {
+        await api.exchangeRates.create({
+          fromCurrency: rateForm.fromCurrency.trim().toUpperCase(),
+          toCurrency: rateForm.toCurrency.trim().toUpperCase(),
+          rate: parsedRate,
+          isManual: true,
+        });
+      }
+      await refreshExchangeRateSettings();
+      setEditingRateId(null);
+      setRateForm({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '1.08' });
+      setOrgMsg(editingRateId ? 'Exchange rate updated.' : 'Base currency and exchange rate saved.');
     } catch (e: any) {
       setOrgError(e.message);
     } finally {
       setOrgSaving(false);
     }
+  }
+
+  async function handleDeleteRate(id: string) {
+    if (!window.confirm('Delete this exchange rate?')) return;
+    setOrgError('');
+    setOrgMsg('');
+    setOrgSaving(true);
+    try {
+      await api.exchangeRates.remove(id);
+      await refreshExchangeRateSettings();
+      if (editingRateId === id) {
+        setEditingRateId(null);
+        setRateForm({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '1.08' });
+      }
+      setOrgMsg('Exchange rate deleted.');
+    } catch (e: any) {
+      setOrgError(e.message);
+    } finally {
+      setOrgSaving(false);
+    }
+  }
+
+  function handleEditRate(rate: any) {
+    setEditingRateId(rate.id ?? null);
+    setRateForm({
+      fromCurrency: rate.fromCurrency ?? 'EUR',
+      toCurrency: rate.toCurrency ?? 'USD',
+      rate: Number(rate.rate).toString(),
+    });
+    setOrgError('');
+    setOrgMsg(`Editing ${rate.fromCurrency} -> ${rate.toCurrency}.`);
+  }
+
+  function handleCancelRateEdit() {
+    setEditingRateId(null);
+    setRateForm({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '1.08' });
+    setOrgError('');
+    setOrgMsg('Exchange rate editor reset.');
   }
 
   const successStyle: React.CSSProperties = { background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', padding: '0.75rem', color: '#15803d', fontSize: '0.875rem', marginTop: '1rem' };
@@ -615,8 +682,11 @@ function SettingsContent() {
                 <input style={inputStyle} maxLength={3} value={baseCurrency} onChange={(e) => setBaseCurrency(e.target.value.toUpperCase())} />
               </div>
               <div>
-                <label style={labelStyle}>Manual Exchange Rate</label>
+                <label style={labelStyle}>Add Exchange Rate</label>
                 <input style={inputStyle} type="number" min="0" step="0.00000001" value={rateForm.rate} onChange={(e) => setRateForm((prev) => ({ ...prev, rate: e.target.value }))} />
+                <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.35rem' }}>
+                  {editingRateId ? 'Editing an existing exchange rate.' : 'Create or override a saved manual rate pair.'}
+                </div>
               </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
@@ -630,14 +700,31 @@ function SettingsContent() {
               </div>
             </div>
             <div>
-              <div style={{ fontSize: '0.8rem', fontWeight: 600, color: COLORS.textSecondary, marginBottom: '0.5rem' }}>Latest Exchange Rates</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: COLORS.textSecondary }}>Saved Exchange Rates</div>
+                {editingRateId ? (
+                  <button type="button" onClick={handleCancelRateEdit} style={btnDanger}>Cancel Edit</button>
+                ) : null}
+              </div>
               <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: '6px', overflow: 'hidden' }}>
                 {exchangeRates.length === 0 ? (
                   <div style={{ padding: '0.875rem 1rem', fontSize: '0.875rem', color: COLORS.textMuted }}>No exchange rates configured yet.</div>
                 ) : exchangeRates.map((rate, idx) => (
-                  <div key={`${rate.fromCurrency}-${rate.toCurrency}-${rate.id ?? idx}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 1rem', borderBottom: idx < exchangeRates.length - 1 ? `1px solid ${COLORS.contentBg}` : undefined }}>
-                    <span style={{ fontSize: '0.875rem', color: COLORS.textPrimary }}>{rate.fromCurrency} → {rate.toCurrency}</span>
+                  <div key={`${rate.fromCurrency}-${rate.toCurrency}-${rate.id ?? idx}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr) auto', gap: '0.75rem', alignItems: 'center', padding: '0.75rem 1rem', borderBottom: idx < exchangeRates.length - 1 ? `1px solid ${COLORS.contentBg}` : undefined }}>
+                    <div>
+                      <div style={{ fontSize: '0.875rem', color: COLORS.textPrimary }}>{rate.fromCurrency} → {rate.toCurrency}</div>
+                      <div style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>
+                        {rate.isManual ? 'Manual override' : 'Imported'}
+                      </div>
+                    </div>
                     <span style={{ fontSize: '0.875rem', color: COLORS.textSecondary, fontFamily: 'monospace' }}>{Number(rate.rate).toFixed(6)}</span>
+                    <span style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>
+                      {rate.fetchedAt ? new Date(rate.fetchedAt).toLocaleString() : 'Unknown'}
+                    </span>
+                    <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                      <button type="button" onClick={() => handleEditRate(rate)} style={btnPrimary}>Edit</button>
+                      <button type="button" onClick={() => handleDeleteRate(rate.id)} style={btnDanger}>Delete</button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -651,7 +738,7 @@ function SettingsContent() {
             </p>
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
-            <button type="submit" disabled={orgSaving} style={btnPrimary}>{orgSaving ? 'Saving...' : 'Save Currency Settings'}</button>
+            <button type="submit" disabled={orgSaving} style={btnPrimary}>{orgSaving ? 'Saving...' : editingRateId ? 'Update Exchange Rate' : 'Save Currency Settings'}</button>
           </div>
         </form>
       )}
