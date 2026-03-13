@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { api } from '../../lib/api';
 import { COLORS, SHADOWS } from '../../lib/theme';
@@ -543,6 +544,22 @@ function SettingsContent() {
             <InfoRow label="Version" value="BetterSpend v1.0.0-beta" />
             <InfoRow label="License" value="MIT License" />
             <InfoRow label="Source Code" value="github.com/AsyncronousVentures/betterspend" />
+          </div>
+          <div style={{ marginTop: '1.5rem', padding: '1rem', background: COLORS.contentBg, borderRadius: '6px', border: `1px solid ${COLORS.border}` }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <div>
+                <h3 style={{ fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary, margin: 0 }}>Tax Code Management</h3>
+                <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, margin: '0.35rem 0 0' }}>
+                  Manage VAT and sales tax rates used on purchase order and invoice lines.
+                </p>
+              </div>
+              <Link
+                href="/tax-codes"
+                style={{ ...btnPrimary, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                Open Tax Codes
+              </Link>
+            </div>
           </div>
           <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#fef9c3', borderRadius: '6px', border: '1px solid #fde68a' }}>
             <p style={{ fontSize: '0.85rem', color: COLORS.accentAmberDark, margin: 0 }}>
