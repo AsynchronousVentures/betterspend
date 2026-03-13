@@ -23,6 +23,7 @@ import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
 import { SequenceService } from '../../common/services/sequence.service';
 import { MatchingService } from '../invoices/matching.service';
+import { VendorsService } from '../vendors/vendors.service';
 
 export interface SubmitInvoiceInput {
   purchaseOrderId: string;
@@ -64,6 +65,7 @@ export class VendorPortalService {
     private readonly settingsService: SettingsService,
     private readonly sequenceService: SequenceService,
     private readonly matchingService: MatchingService,
+    private readonly vendorsService: VendorsService,
   ) {}
 
   async sendAccessLink(vendorId: string, orgId: string): Promise<{ success: boolean }> {
@@ -295,6 +297,25 @@ export class VendorPortalService {
     ]);
 
     return { items, proposals };
+  }
+
+  async getVendorOnboarding(vendorId: string, orgId: string) {
+    return this.vendorsService.getPortalOnboarding(vendorId, orgId);
+  }
+
+  async submitVendorOnboarding(
+    vendorId: string,
+    orgId: string,
+    data: {
+      questionnaireId?: string;
+      companyInfo?: Record<string, unknown>;
+      responses?: Record<string, unknown>;
+      documentLinks?: Record<string, unknown>;
+      bankingDetails?: Record<string, unknown>;
+      submit?: boolean;
+    },
+  ) {
+    return this.vendorsService.submitPortalOnboarding(vendorId, orgId, data);
   }
 
   async submitCatalogPriceProposal(

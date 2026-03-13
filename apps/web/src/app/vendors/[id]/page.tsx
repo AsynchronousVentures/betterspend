@@ -18,6 +18,8 @@ export default function VendorDetailPage() {
   const [error, setError] = useState('');
   const [form, setForm] = useState<any>({});
   const [txns, setTxns] = useState<{ invoices: any[]; purchaseOrders: any[] } | null>(null);
+  const [onboarding, setOnboarding] = useState<any>(null);
+  const [reviewSaving, setReviewSaving] = useState(false);
 
   useEffect(() => {
     api.vendors.get(id).then((v) => {
@@ -34,6 +36,7 @@ export default function VendorDetailPage() {
       });
     }).catch((e) => setError(e.message)).finally(() => setLoading(false));
     api.vendors.transactions(id).then(setTxns).catch(() => {});
+    api.vendors.onboardingDetail(id).then(setOnboarding).catch(() => {});
   }, [id]);
 
   async function handleSave(e: FormEvent) {
@@ -80,10 +83,30 @@ export default function VendorDetailPage() {
     }
   }
 
+  async function reviewOnboarding(decision: 'approved' | 'changes_requested') {
+    setReviewSaving(true);
+    try {
+      const updated = await api.vendors.reviewOnboarding(id, { decision });
+      setVendor((current: any) => ({ ...current, ...updated }));
+      setOnboarding(await api.vendors.onboardingDetail(id));
+      toast(decision === 'approved' ? 'Onboarding approved' : 'Changes requested', 'success');
+    } catch (e: any) {
+      setPortalMsg('Error: ' + (e.message || 'Failed to review onboarding'));
+    } finally {
+      setReviewSaving(false);
+    }
+  }
+
   const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
     active: { bg: '#dcfce7', text: '#15803d' },
     inactive: { bg: COLORS.hoverBg, text: COLORS.textSecondary },
     blocked: { bg: COLORS.accentRedLight, text: COLORS.accentRedDark },
+  };
+  const ONBOARDING_COLORS: Record<string, { bg: string; text: string }> = {
+    approved: { bg: '#dcfce7', text: '#15803d' },
+    pending_review: { bg: '#fffbeb', text: '#b45309' },
+    changes_requested: { bg: '#fef2f2', text: '#b91c1c' },
+    not_started: { bg: COLORS.hoverBg, text: COLORS.textSecondary },
   };
 
   async function togglePunchout() {
@@ -103,6 +126,8 @@ export default function VendorDetailPage() {
   if (!vendor) return null;
 
   const sc = STATUS_COLORS[vendor.status] || { bg: COLORS.hoverBg, text: COLORS.textSecondary };
+  const onboardingColor = ONBOARDING_COLORS[vendor.onboardingStatus] || ONBOARDING_COLORS.not_started;
+  const latestSubmission = onboarding?.submissions?.[0] ?? null;
 
   return (
     <div style={{ padding: '2rem', maxWidth: '800px' }}>
@@ -149,6 +174,62 @@ export default function VendorDetailPage() {
             <Field label="Tax ID" value={vendor.taxId || '—'} />
             <Field label="Payment Terms" value={vendor.paymentTerms || '—'} />
           </Section>
+          <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.25rem', boxShadow: SHADOWS.card }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <div>
+                <h2 style={{ fontWeight: 600, fontSize: '0.9rem', color: COLORS.textSecondary, margin: 0 }}>Onboarding</h2>
+                <p style={{ fontSize: '0.8rem', color: COLORS.textMuted, margin: '0.35rem 0 0' }}>
+                  Questionnaire completion, risk score, and buyer review status.
+                </p>
+              </div>
+              <span style={{ padding: '0.2rem 0.6rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 600, background: onboardingColor.bg, color: onboardingColor.text }}>
+                {String(vendor.onboardingStatus || 'not_started').replace(/_/g, ' ')}
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
+              <Field label="Risk Score" value={String(vendor.onboardingRiskScore ?? 0)} />
+              <Field label="Risk Level" value={String(vendor.onboardingRiskLevel ?? 'low')} />
+              <Field label="Submitted" value={vendor.onboardingLastSubmittedAt ? new Date(vendor.onboardingLastSubmittedAt).toLocaleString() : '—'} />
+            </div>
+            {latestSubmission && (
+              <div style={{ padding: '0.75rem', background: COLORS.hoverBg, borderRadius: '8px', fontSize: '0.82rem', color: COLORS.textSecondary }}>
+                Latest questionnaire: {latestSubmission.questionnaire?.name ?? 'Default questionnaire'}
+                <br />
+                Documents: W-9 {latestSubmission.documentLinks?.w9 ? 'attached' : 'missing'} • COI {latestSubmission.documentLinks?.coi ? 'attached' : 'missing'} • Banking {latestSubmission.documentLinks?.banking ? 'attached' : 'missing'}
+                {latestSubmission.reviewNote ? (
+                  <>
+                    <br />
+                    Review note: {latestSubmission.reviewNote}
+                  </>
+                ) : null}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+              <Link href="/vendors/onboarding" style={{ padding: '0.45rem 0.8rem', borderRadius: '6px', textDecoration: 'none', background: COLORS.accentBlueLight, color: COLORS.accentBlueDark, fontWeight: 600, fontSize: '0.82rem' }}>
+                Open Onboarding Queue
+              </Link>
+              {vendor.onboardingStatus === 'pending_review' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => reviewOnboarding('approved')}
+                    disabled={reviewSaving}
+                    style={{ padding: '0.45rem 0.8rem', borderRadius: '6px', border: 'none', background: '#dcfce7', color: '#166534', fontWeight: 600, fontSize: '0.82rem', cursor: reviewSaving ? 'not-allowed' : 'pointer' }}
+                  >
+                    Approve Onboarding
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => reviewOnboarding('changes_requested')}
+                    disabled={reviewSaving}
+                    style={{ padding: '0.45rem 0.8rem', borderRadius: '6px', border: 'none', background: '#fef2f2', color: '#b91c1c', fontWeight: 600, fontSize: '0.82rem', cursor: reviewSaving ? 'not-allowed' : 'pointer' }}
+                  >
+                    Request Changes
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
           <Section title="Contact">
             <Field label="Contact Name" value={vendor.contactInfo?.contactName || '—'} />
             <Field label="Email" value={vendor.contactInfo?.email || '—'} />

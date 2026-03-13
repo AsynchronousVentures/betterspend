@@ -47,6 +47,40 @@ export class VendorsController {
     return this.vendorsService.getTransactions(id, orgId);
   }
 
+  @Get('onboarding/questionnaires')
+  @ApiOperation({ summary: 'List onboarding questionnaires' })
+  onboardingQuestionnaires(@CurrentOrgId() orgId: string) {
+    return this.vendorsService.listOnboardingQuestionnaires(orgId);
+  }
+
+  @Post('onboarding/questionnaires')
+  @ApiOperation({ summary: 'Create an onboarding questionnaire' })
+  createOnboardingQuestionnaire(@Body() body: any, @CurrentOrgId() orgId: string) {
+    return this.vendorsService.createOnboardingQuestionnaire(orgId, body ?? {});
+  }
+
+  @Get('onboarding/queue')
+  @ApiOperation({ summary: 'List vendor onboarding submissions awaiting review' })
+  onboardingQueue(@CurrentOrgId() orgId: string) {
+    return this.vendorsService.listOnboardingQueue(orgId);
+  }
+
+  @Get(':id/onboarding')
+  @ApiOperation({ summary: 'Get onboarding detail for a vendor' })
+  onboardingDetail(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
+    return this.vendorsService.getOnboardingDetail(id, orgId);
+  }
+
+  @Post(':id/onboarding/review')
+  @ApiOperation({ summary: 'Approve onboarding or request changes' })
+  reviewOnboarding(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { decision: 'approved' | 'changes_requested'; reviewNote?: string },
+    @CurrentOrgId() orgId: string,
+  ) {
+    return this.vendorsService.reviewOnboarding(id, orgId, body);
+  }
+
   @Patch(':id')
   @ApiOperation({ summary: 'Update a vendor' })
   update(

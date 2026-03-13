@@ -32,3 +32,4 @@ export * from './spend-guard-alerts';
 export * from './software-licenses';
 export * from './catalog-price-proposals';
 export * from './email-intake';
+export * from './onboarding-questionnaires';

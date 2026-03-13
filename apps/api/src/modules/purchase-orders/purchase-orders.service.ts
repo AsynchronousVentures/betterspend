@@ -140,6 +140,18 @@ export class PurchaseOrdersService {
 
   async create(organizationId: string, issuedBy: string, input: CreatePoInput) {
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
+    const vendor = await this.db.query.vendors.findFirst({
+      where: (record, { and, eq }) =>
+        and(eq(record.id, input.vendorId), eq(record.organizationId, organizationId)),
+    });
+    if (!vendor) {
+      throw new NotFoundException(`Vendor ${input.vendorId} not found`);
+    }
+    if (['pending_review', 'changes_requested'].includes(vendor.onboardingStatus ?? 'not_started')) {
+      throw new BadRequestException(
+        `Vendor onboarding is ${vendor.onboardingStatus.replace(/_/g, ' ')} and must be approved before a PO can be created`,
+      );
+    }
     const number = await this.sequenceService.next(organizationId, 'purchase_order');
     const currency = input.currency ?? 'USD';
     const taxCodeMap = await this.getTaxCodeMap(

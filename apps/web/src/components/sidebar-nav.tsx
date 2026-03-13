@@ -94,6 +94,7 @@ const NAV_CONFIG: NavEntry[] = [
       { label: 'Vendors', href: '/vendors' },
       { label: 'Supplier Scorecard', href: '/supplier-scorecard' },
       { label: 'Supplier Diversity & ESG', href: '/supplier-diversity' },
+      { label: 'Vendor Onboarding', href: '/vendors/onboarding' },
       { label: 'Contracts', href: '/contracts' },
       { label: 'Software Licenses', href: '/software-licenses' },
       { label: 'Users', href: '/users' },

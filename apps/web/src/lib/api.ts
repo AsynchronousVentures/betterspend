@@ -110,6 +110,22 @@ export const api = {
     updateEsg: (id: string, data: unknown) =>
       apiFetch<any>(`/vendors/${id}/esg`, { method: 'PATCH', body: JSON.stringify(data) }),
     diversitySummary: () => apiFetch<any>('/vendors/diversity/summary'),
+    onboardingQuestionnaires: () => apiFetch<any[]>('/vendors/onboarding/questionnaires'),
+    createOnboardingQuestionnaire: (data: unknown) =>
+      apiFetch<any>('/vendors/onboarding/questionnaires', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    onboardingQueue: () => apiFetch<any[]>('/vendors/onboarding/queue'),
+    onboardingDetail: (id: string) => apiFetch<any>(`/vendors/${id}/onboarding`),
+    reviewOnboarding: (
+      id: string,
+      data: { decision: 'approved' | 'changes_requested'; reviewNote?: string },
+    ) =>
+      apiFetch<any>(`/vendors/${id}/onboarding/review`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
   users: {
     list: () => apiFetch<any[]>('/users'),
@@ -542,6 +558,13 @@ export const api = {
       apiFetch<any[]>(`/vendor-portal/invoices?token=${encodeURIComponent(token)}`),
     catalog: (token: string) =>
       apiFetch<any>(`/vendor-portal/catalog?token=${encodeURIComponent(token)}`),
+    onboarding: (token: string) =>
+      apiFetch<any>(`/vendor-portal/onboarding?token=${encodeURIComponent(token)}`),
+    submitOnboarding: (token: string, data: unknown) =>
+      apiFetch<any>(`/vendor-portal/onboarding?token=${encodeURIComponent(token)}`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
     submitPriceProposal: (token: string, data: any) =>
       apiFetch<any>(`/vendor-portal/catalog/price-proposals?token=${encodeURIComponent(token)}`, {
         method: 'POST',

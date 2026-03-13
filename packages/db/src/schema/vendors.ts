@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, boolean, jsonb, timestamp, text } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, boolean, jsonb, timestamp, text, integer } from 'drizzle-orm/pg-core';
 import { organizations, legalEntities } from './organizations';
 
 export const vendors = pgTable('vendors', {
@@ -12,6 +12,11 @@ export const vendors = pgTable('vendors', {
   address: jsonb('address').default({}),
   contactInfo: jsonb('contact_info').default({}),
   status: varchar('status', { length: 20 }).notNull().default('active'), // active|inactive|blocked
+  onboardingStatus: varchar('onboarding_status', { length: 30 }).notNull().default('not_started'), // not_started|pending_review|changes_requested|approved
+  onboardingRiskScore: integer('onboarding_risk_score').notNull().default(0),
+  onboardingRiskLevel: varchar('onboarding_risk_level', { length: 20 }).notNull().default('low'),
+  onboardingApprovedAt: timestamp('onboarding_approved_at', { withTimezone: true }),
+  onboardingLastSubmittedAt: timestamp('onboarding_last_submitted_at', { withTimezone: true }),
   punchoutEnabled: boolean('punchout_enabled').notNull().default(false),
   punchoutConfig: jsonb('punchout_config'),
   // Supplier diversity & ESG fields

@@ -330,10 +330,19 @@ function VendorPortalContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [data, setData] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'pos' | 'invoices' | 'catalog'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'pos' | 'invoices' | 'onboarding' | 'catalog'>('overview');
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [catalogData, setCatalogData] = useState<{ items: any[]; proposals: any[] } | null>(null);
+  const [onboardingData, setOnboardingData] = useState<any>(null);
+  const [onboardingSaving, setOnboardingSaving] = useState(false);
+  const [onboardingMessage, setOnboardingMessage] = useState('');
+  const [onboardingForm, setOnboardingForm] = useState<any>({
+    companyInfo: { legalName: '', taxId: '' },
+    responses: {},
+    documentLinks: { w9: '', coi: '', banking: '' },
+    bankingDetails: { accountName: '', lastFour: '' },
+  });
   const [proposalForm, setProposalForm] = useState({
     itemId: '',
     proposedPrice: '',
@@ -352,6 +361,17 @@ function VendorPortalContent() {
       .catch((e) => setError(e.message || 'Failed to load portal data.'))
       .finally(() => setLoading(false));
     api.vendorPortal.catalog(token).then(setCatalogData).catch(() => {});
+    api.vendorPortal.onboarding(token).then((result) => {
+      setOnboardingData(result);
+      if (result?.latestSubmission) {
+        setOnboardingForm({
+          companyInfo: result.latestSubmission.companyInfo ?? { legalName: '', taxId: '' },
+          responses: result.latestSubmission.responses ?? {},
+          documentLinks: result.latestSubmission.documentLinks ?? { w9: '', coi: '', banking: '' },
+          bankingDetails: result.latestSubmission.bankingDetails ?? { accountName: '', lastFour: '' },
+        });
+      }
+    }).catch(() => {});
   }, [token, submitSuccess]);
 
   if (!token) {
@@ -415,6 +435,7 @@ function VendorPortalContent() {
     { key: 'overview' as const, label: 'Overview' },
     { key: 'pos' as const, label: `Purchase Orders (${purchaseOrders.length})` },
     { key: 'invoices' as const, label: `Invoices (${invoiceList.length})` },
+    { key: 'onboarding' as const, label: 'Onboarding' },
     { key: 'catalog' as const, label: `Catalog & Pricing (${catalogData?.items.length ?? 0})` },
   ];
 
@@ -483,6 +504,30 @@ function VendorPortalContent() {
     } finally {
       event.target.value = '';
       setProposalSaving(false);
+    }
+  }
+
+  async function saveOnboarding(submit: boolean) {
+    if (!token || !onboardingData?.questionnaire) return;
+    setOnboardingSaving(true);
+    setOnboardingMessage('');
+    setError('');
+    try {
+      await api.vendorPortal.submitOnboarding(token, {
+        questionnaireId: onboardingData.questionnaire.id,
+        companyInfo: onboardingForm.companyInfo,
+        responses: onboardingForm.responses,
+        documentLinks: onboardingForm.documentLinks,
+        bankingDetails: onboardingForm.bankingDetails,
+        submit,
+      });
+      const refreshed = await api.vendorPortal.onboarding(token);
+      setOnboardingData(refreshed);
+      setOnboardingMessage(submit ? 'Onboarding submitted for buyer review.' : 'Draft saved.');
+    } catch (e: any) {
+      setError(e.message || 'Failed to save onboarding.');
+    } finally {
+      setOnboardingSaving(false);
     }
   }
 
@@ -679,6 +724,126 @@ function VendorPortalContent() {
                   </table>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'onboarding' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 0.85fr', gap: '1rem' }}>
+            <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, padding: '1rem' }}>
+              <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary }}>Supplier Onboarding Questionnaire</h3>
+              <div style={{ display: 'grid', gap: '0.75rem' }}>
+                <input
+                  value={onboardingForm.companyInfo.legalName ?? ''}
+                  onChange={(e) => setOnboardingForm((current: any) => ({ ...current, companyInfo: { ...current.companyInfo, legalName: e.target.value } }))}
+                  placeholder="Legal company name"
+                  style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
+                />
+                <input
+                  value={onboardingForm.companyInfo.taxId ?? ''}
+                  onChange={(e) => setOnboardingForm((current: any) => ({ ...current, companyInfo: { ...current.companyInfo, taxId: e.target.value } }))}
+                  placeholder="Tax ID / registration number"
+                  style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
+                />
+                {(onboardingData?.questionnaire?.questions ?? []).map((question: any) => (
+                  <div key={question.id} style={{ display: 'grid', gap: '0.35rem' }}>
+                    <label style={{ fontSize: '0.82rem', fontWeight: 600, color: COLORS.textSecondary }}>
+                      {question.label} {question.required ? '*' : ''}
+                    </label>
+                    {question.type === 'yes_no' ? (
+                      <select
+                        value={onboardingForm.responses?.[question.id] ?? ''}
+                        onChange={(e) => setOnboardingForm((current: any) => ({ ...current, responses: { ...current.responses, [question.id]: e.target.value } }))}
+                        style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px' }}
+                      >
+                        <option value="">Select…</option>
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                      </select>
+                    ) : question.type === 'long_text' ? (
+                      <textarea
+                        rows={4}
+                        value={onboardingForm.responses?.[question.id] ?? ''}
+                        onChange={(e) => setOnboardingForm((current: any) => ({ ...current, responses: { ...current.responses, [question.id]: e.target.value } }))}
+                        style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', resize: 'vertical', boxSizing: 'border-box' }}
+                      />
+                    ) : (
+                      <input
+                        type={question.type === 'date' ? 'date' : 'text'}
+                        value={onboardingForm.responses?.[question.id] ?? ''}
+                        onChange={(e) => setOnboardingForm((current: any) => ({ ...current, responses: { ...current.responses, [question.id]: e.target.value } }))}
+                        style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
+                      />
+                    )}
+                  </div>
+                ))}
+                <input
+                  value={onboardingForm.documentLinks.w9 ?? ''}
+                  onChange={(e) => setOnboardingForm((current: any) => ({ ...current, documentLinks: { ...current.documentLinks, w9: e.target.value } }))}
+                  placeholder="W-9 link or upload reference"
+                  style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
+                />
+                <input
+                  value={onboardingForm.documentLinks.coi ?? ''}
+                  onChange={(e) => setOnboardingForm((current: any) => ({ ...current, documentLinks: { ...current.documentLinks, coi: e.target.value } }))}
+                  placeholder="Certificate of insurance link"
+                  style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
+                />
+                <input
+                  value={onboardingForm.documentLinks.banking ?? ''}
+                  onChange={(e) => setOnboardingForm((current: any) => ({ ...current, documentLinks: { ...current.documentLinks, banking: e.target.value } }))}
+                  placeholder="Banking support document link"
+                  style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
+                />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                  <input
+                    value={onboardingForm.bankingDetails.accountName ?? ''}
+                    onChange={(e) => setOnboardingForm((current: any) => ({ ...current, bankingDetails: { ...current.bankingDetails, accountName: e.target.value } }))}
+                    placeholder="Bank account name"
+                    style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
+                  />
+                  <input
+                    value={onboardingForm.bankingDetails.lastFour ?? ''}
+                    onChange={(e) => setOnboardingForm((current: any) => ({ ...current, bankingDetails: { ...current.bankingDetails, lastFour: e.target.value } }))}
+                    placeholder="Account last four"
+                    style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                  <button type="button" onClick={() => saveOnboarding(false)} disabled={onboardingSaving} style={{ padding: '0.625rem 1rem', background: COLORS.tableBorder, color: COLORS.textPrimary, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>
+                    Save Draft
+                  </button>
+                  <button type="button" onClick={() => saveOnboarding(true)} disabled={onboardingSaving} style={{ padding: '0.625rem 1rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>
+                    {onboardingSaving ? 'Submitting...' : 'Submit for Review'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gap: '1rem' }}>
+              <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, padding: '1rem' }}>
+                <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary }}>Current Status</h3>
+                <div style={{ display: 'grid', gap: '0.5rem', fontSize: '0.85rem', color: COLORS.textSecondary }}>
+                  <div>Status: {String(vendor.onboardingStatus ?? 'not_started').replace(/_/g, ' ')}</div>
+                  <div>Risk score: {vendor.onboardingRiskScore ?? 0}</div>
+                  <div>Risk level: {vendor.onboardingRiskLevel ?? 'low'}</div>
+                  <div>Last submitted: {vendor.onboardingLastSubmittedAt ? new Date(vendor.onboardingLastSubmittedAt).toLocaleString() : '—'}</div>
+                </div>
+                {onboardingMessage && (
+                  <div style={{ marginTop: '0.75rem', fontSize: '0.8rem', color: '#065f46' }}>{onboardingMessage}</div>
+                )}
+                {onboardingData?.latestSubmission?.reviewNote && (
+                  <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#fffbeb', borderRadius: '8px', fontSize: '0.8rem', color: '#92400e' }}>
+                    Buyer note: {onboardingData.latestSubmission.reviewNote}
+                  </div>
+                )}
+              </div>
+              <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, padding: '1rem' }}>
+                <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary }}>What this review covers</h3>
+                <div style={{ fontSize: '0.82rem', color: COLORS.textSecondary, lineHeight: 1.6 }}>
+                  Buyers review your questionnaire answers, tax forms, insurance documents, and banking support before issuing new purchase orders.
+                </div>
+              </div>
             </div>
           </div>
         )}

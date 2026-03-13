@@ -91,6 +91,36 @@ export class VendorPortalController {
     return this.vendorPortalService.listVendorCatalog(vendorId, DEMO_ORG_ID);
   }
 
+  @Get('onboarding')
+  @Public()
+  @ApiOperation({ summary: 'Get vendor onboarding questionnaire and latest submission via portal token' })
+  async getOnboarding(@Query('token') token: string) {
+    if (!token) throw new UnauthorizedException('Token is required');
+    const vendorId = await this.vendorPortalService.validateToken(token);
+    return this.vendorPortalService.getVendorOnboarding(vendorId, DEMO_ORG_ID);
+  }
+
+  @Post('onboarding')
+  @Public()
+  @ApiOperation({ summary: 'Save or submit vendor onboarding via portal token' })
+  @HttpCode(HttpStatus.CREATED)
+  async submitOnboarding(
+    @Query('token') token: string,
+    @Body()
+    body: {
+      questionnaireId?: string;
+      companyInfo?: Record<string, unknown>;
+      responses?: Record<string, unknown>;
+      documentLinks?: Record<string, unknown>;
+      bankingDetails?: Record<string, unknown>;
+      submit?: boolean;
+    },
+  ) {
+    if (!token) throw new UnauthorizedException('Token is required');
+    const vendorId = await this.vendorPortalService.validateToken(token);
+    return this.vendorPortalService.submitVendorOnboarding(vendorId, DEMO_ORG_ID, body ?? {});
+  }
+
   @Post('catalog/price-proposals')
   @Public()
   @ApiOperation({ summary: 'Submit catalog price proposal via portal token' })

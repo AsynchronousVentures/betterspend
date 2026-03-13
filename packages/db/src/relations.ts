@@ -29,6 +29,7 @@ import { spendGuardAlerts } from './schema/spend-guard-alerts';
 import { softwareLicenses } from './schema/software-licenses';
 import { catalogPriceProposals } from './schema/catalog-price-proposals';
 import { emailIntakeItems } from './schema/email-intake';
+import { onboardingQuestionnaires, vendorOnboardingSubmissions } from './schema/onboarding-questionnaires';
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   legalEntities: many(legalEntities),
@@ -43,6 +44,8 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   spendGuardAlerts: many(spendGuardAlerts),
   softwareLicenses: many(softwareLicenses),
   emailIntakeItems: many(emailIntakeItems),
+  onboardingQuestionnaires: many(onboardingQuestionnaires),
+  vendorOnboardingSubmissions: many(vendorOnboardingSubmissions),
 }));
 
 export const exchangeRatesRelations = relations(exchangeRates, ({ one }) => ({
@@ -113,6 +116,30 @@ export const vendorsRelations = relations(vendors, ({ one, many }) => ({
   catalogItems: many(catalogItems),
   softwareLicenses: many(softwareLicenses),
   catalogPriceProposals: many(catalogPriceProposals),
+  onboardingSubmissions: many(vendorOnboardingSubmissions),
+}));
+
+export const onboardingQuestionnairesRelations = relations(onboardingQuestionnaires, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [onboardingQuestionnaires.organizationId],
+    references: [organizations.id],
+  }),
+  submissions: many(vendorOnboardingSubmissions),
+}));
+
+export const vendorOnboardingSubmissionsRelations = relations(vendorOnboardingSubmissions, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [vendorOnboardingSubmissions.organizationId],
+    references: [organizations.id],
+  }),
+  vendor: one(vendors, {
+    fields: [vendorOnboardingSubmissions.vendorId],
+    references: [vendors.id],
+  }),
+  questionnaire: one(onboardingQuestionnaires, {
+    fields: [vendorOnboardingSubmissions.questionnaireId],
+    references: [onboardingQuestionnaires.id],
+  }),
 }));
 
 export const catalogItemsRelations = relations(catalogItems, ({ one }) => ({
