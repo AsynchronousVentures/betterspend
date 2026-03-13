@@ -588,6 +588,7 @@ export const api = {
       apiFetch<any>(`/recurring-po/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     delete: (id: string) => apiFetch<void>(`/recurring-po/${id}`, { method: 'DELETE' }),
     run: (id: string) => apiFetch<any>(`/recurring-po/${id}/run`, { method: 'POST' }),
+    skipNext: (id: string) => apiFetch<any>(`/recurring-po/${id}/skip-next`, { method: 'POST' }),
   },
   inventory: {
     list: (params?: { lowStockOnly?: boolean }) =>

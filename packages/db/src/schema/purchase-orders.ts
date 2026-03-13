@@ -3,6 +3,7 @@ import { organizations, legalEntities } from './organizations';
 import { users } from './users';
 import { vendors, catalogItems } from './vendors';
 import { requisitions, requisitionLines } from './requisitions';
+import { recurringPos } from './recurring-pos';
 import { contracts } from './contracts';
 import { taxCodes } from './tax-codes';
 
@@ -11,6 +12,7 @@ export const purchaseOrders = pgTable('purchase_orders', {
   organizationId: uuid('organization_id').notNull().references(() => organizations.id),
   entityId: uuid('entity_id').references(() => legalEntities.id),
   requisitionId: uuid('requisition_id').references(() => requisitions.id),
+  recurringPoId: uuid('recurring_po_id').references(() => recurringPos.id),
   vendorId: uuid('vendor_id').notNull().references(() => vendors.id),
   number: varchar('number', { length: 50 }).notNull().unique(),
   version: integer('version').notNull().default(1),

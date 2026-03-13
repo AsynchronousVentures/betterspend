@@ -82,4 +82,10 @@ export class RecurringPoController {
   ) {
     return this.recurringPoService.triggerRun(id, orgId, userId);
   }
+
+  @Post(':id/skip-next')
+  @ApiOperation({ summary: 'Skip the next scheduled run for a recurring PO' })
+  skipNext(@CurrentOrgId() orgId: string, @Param('id') id: string) {
+    return this.recurringPoService.skipNext(id, orgId);
+  }
 }

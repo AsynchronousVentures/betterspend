@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { Fragment, useState, useEffect } from 'react';
 import { COLORS, SHADOWS, FONT } from '../../lib/theme';
 import { api } from '../../lib/api';
 
@@ -29,6 +30,16 @@ interface RecurringPo {
   maxRuns?: number;
   vendor?: { id: string; name: string } | null;
   createdAt: string;
+  upcomingRuns?: string[];
+  historyCount?: number;
+  recentHistory?: Array<{
+    id: string;
+    number: string;
+    status: string;
+    totalAmount: string;
+    currency: string;
+    createdAt: string;
+  }>;
 }
 
 interface Vendor {
@@ -73,6 +84,9 @@ export default function RecurringPoPage() {
   const [showNew, setShowNew] = useState(false);
   const [saving, setSaving] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [detailsById, setDetailsById] = useState<Record<string, RecurringPo>>({});
   const [successMsg, setSuccessMsg] = useState('');
 
   // Form state
@@ -183,6 +197,7 @@ export default function RecurringPoPage() {
   }
 
   async function handleRunNow(id: string) {
+    if (!confirm('Run this recurring PO now and create a draft purchase order?')) return;
     setRunningId(id);
     setError('');
     try {
@@ -193,6 +208,42 @@ export default function RecurringPoPage() {
       setError(e.message || 'Failed to trigger run');
     } finally {
       setRunningId(null);
+    }
+  }
+
+  async function handleSkipNext(rpo: RecurringPo) {
+    if (!confirm(`Skip the next scheduled run on ${fmtDate(rpo.nextRunAt)}?`)) return;
+    setError('');
+    try {
+      const result = await api.recurringPo.skipNext(rpo.id);
+      await loadSchedules();
+      showSuccess(`Skipped ${fmtDate(result.skippedRunAt)}. Next run is now ${fmtDate(result.nextRunAt)}.`);
+      if (expandedId === rpo.id) {
+        await loadDetails(rpo.id, true);
+      }
+    } catch (e: any) {
+      setError(e.message || 'Failed to skip next run');
+    }
+  }
+
+  async function loadDetails(id: string, force = false) {
+    if (!force && detailsById[id]) return;
+    setDetailLoadingId(id);
+    try {
+      const detail = await api.recurringPo.get(id);
+      setDetailsById((current) => ({ ...current, [id]: detail as RecurringPo }));
+    } catch (e: any) {
+      setError(e.message || 'Failed to load schedule details');
+    } finally {
+      setDetailLoadingId(null);
+    }
+  }
+
+  async function toggleExpanded(id: string) {
+    const nextExpanded = expandedId === id ? null : id;
+    setExpandedId(nextExpanded);
+    if (nextExpanded) {
+      await loadDetails(id);
     }
   }
 
@@ -284,8 +335,10 @@ export default function RecurringPoPage() {
               </tr>
             </thead>
             <tbody>
-              {schedules.map((rpo, idx) => {
+              {schedules.map((rpo) => {
                 const paused = !rpo.active;
+                const detail = detailsById[rpo.id];
+                const expanded = expandedId === rpo.id;
                 const rowStyle: React.CSSProperties = {
                   borderBottom: `1px solid ${COLORS.tableBorder}`,
                   opacity: paused ? 0.55 : 1,
@@ -297,85 +350,204 @@ export default function RecurringPoPage() {
                   verticalAlign: 'middle',
                 };
                 return (
-                  <tr key={rpo.id} style={rowStyle}>
-                    <td style={cellStyle}>
-                      <div style={{
-                        fontWeight: 600,
-                        textDecoration: paused ? 'line-through' : 'none',
-                        color: paused ? COLORS.textMuted : COLORS.textPrimary,
-                      }}>
-                        {rpo.title}
-                      </div>
-                      {rpo.description && (
-                        <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, marginTop: 2 }}>{rpo.description}</div>
-                      )}
-                    </td>
-                    <td style={cellStyle}>{rpo.vendor?.name ?? <span style={{ color: COLORS.textMuted }}>—</span>}</td>
-                    <td style={cellStyle}>
-                      <span style={{ fontSize: FONT.xs, fontWeight: 600, background: COLORS.accentBlueLight, color: COLORS.accentBlueDark, padding: '0.2rem 0.5rem', borderRadius: 20 }}>
-                        {FREQ_LABELS[rpo.frequency] ?? rpo.frequency}
-                      </span>
-                    </td>
-                    <td style={{ ...cellStyle, whiteSpace: 'nowrap' }}>{fmtDate(rpo.nextRunAt)}</td>
-                    <td style={{ ...cellStyle, color: COLORS.textSecondary }}>{fmtDate(rpo.lastRunAt)}</td>
-                    <td style={cellStyle}>
-                      {rpo.runCount}{rpo.maxRuns ? `/${rpo.maxRuns}` : ''}
-                    </td>
-                    <td style={{ ...cellStyle, fontWeight: 600 }}>{fmtCurrency(rpo.totalAmount, rpo.currency)}</td>
-                    <td style={cellStyle}>
-                      {paused ? (
-                        <span style={{ fontSize: FONT.xs, fontWeight: 600, background: COLORS.accentAmberLight, color: COLORS.accentAmberDark, padding: '0.2rem 0.5rem', borderRadius: 20 }}>
-                          PAUSED
+                  <Fragment key={rpo.id}>
+                    <tr key={rpo.id} style={rowStyle}>
+                      <td style={cellStyle}>
+                        <div style={{
+                          fontWeight: 600,
+                          textDecoration: paused ? 'line-through' : 'none',
+                          color: paused ? COLORS.textMuted : COLORS.textPrimary,
+                        }}>
+                          {rpo.title}
+                        </div>
+                        {rpo.description && (
+                          <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, marginTop: 2 }}>{rpo.description}</div>
+                        )}
+                        {!!rpo.historyCount && (
+                          <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, marginTop: 4 }}>
+                            {rpo.historyCount} generated PO{rpo.historyCount === 1 ? '' : 's'}
+                          </div>
+                        )}
+                      </td>
+                      <td style={cellStyle}>{rpo.vendor?.name ?? <span style={{ color: COLORS.textMuted }}>—</span>}</td>
+                      <td style={cellStyle}>
+                        <span style={{ fontSize: FONT.xs, fontWeight: 600, background: COLORS.accentBlueLight, color: COLORS.accentBlueDark, padding: '0.2rem 0.5rem', borderRadius: 20 }}>
+                          {FREQ_LABELS[rpo.frequency] ?? rpo.frequency}
                         </span>
-                      ) : (
-                        <span style={{ fontSize: FONT.xs, fontWeight: 600, background: COLORS.accentGreenLight, color: COLORS.accentGreenDark, padding: '0.2rem 0.5rem', borderRadius: 20 }}>
-                          ACTIVE
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ ...cellStyle, whiteSpace: 'nowrap' }}>
-                      <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                        {/* Run Now */}
-                        <button
-                          disabled={!!runningId || paused}
-                          onClick={() => handleRunNow(rpo.id)}
-                          title="Run Now — creates a draft PO"
-                          style={{
-                            background: COLORS.accentBlue, color: '#fff', border: 'none',
-                            borderRadius: 5, padding: '0.25rem 0.6rem', fontSize: FONT.xs,
-                            fontWeight: 600, cursor: (runningId || paused) ? 'not-allowed' : 'pointer',
-                            opacity: (runningId || paused) ? 0.5 : 1,
-                          }}
-                        >
-                          {runningId === rpo.id ? '...' : 'Run'}
-                        </button>
-                        {/* Pause / Resume */}
-                        <button
-                          onClick={() => handleToggleActive(rpo)}
-                          style={{
-                            background: paused ? COLORS.accentGreenLight : COLORS.accentAmberLight,
-                            color: paused ? COLORS.accentGreenDark : COLORS.accentAmberDark,
-                            border: 'none', borderRadius: 5, padding: '0.25rem 0.6rem',
-                            fontSize: FONT.xs, fontWeight: 600, cursor: 'pointer',
-                          }}
-                        >
-                          {paused ? 'Resume' : 'Pause'}
-                        </button>
-                        {/* Delete */}
-                        <button
-                          onClick={() => handleDelete(rpo.id)}
-                          title="Delete schedule"
-                          style={{
-                            background: COLORS.accentRedLight, color: COLORS.accentRedDark,
-                            border: 'none', borderRadius: 5, padding: '0.25rem 0.5rem',
-                            fontSize: FONT.xs, fontWeight: 600, cursor: 'pointer',
-                          }}
-                        >
-                          Del
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                      </td>
+                      <td style={{ ...cellStyle, whiteSpace: 'nowrap' }}>
+                        {fmtDate(rpo.nextRunAt)}
+                        {rpo.upcomingRuns && rpo.upcomingRuns.length > 1 && (
+                          <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, marginTop: 4 }}>
+                            +{Math.max(rpo.upcomingRuns.length - 1, 0)} more scheduled
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ ...cellStyle, color: COLORS.textSecondary }}>{fmtDate(rpo.lastRunAt)}</td>
+                      <td style={cellStyle}>
+                        {rpo.runCount}{rpo.maxRuns ? `/${rpo.maxRuns}` : ''}
+                      </td>
+                      <td style={{ ...cellStyle, fontWeight: 600 }}>{fmtCurrency(rpo.totalAmount, rpo.currency)}</td>
+                      <td style={cellStyle}>
+                        {paused ? (
+                          <span style={{ fontSize: FONT.xs, fontWeight: 600, background: COLORS.accentAmberLight, color: COLORS.accentAmberDark, padding: '0.2rem 0.5rem', borderRadius: 20 }}>
+                            PAUSED
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: FONT.xs, fontWeight: 600, background: COLORS.accentGreenLight, color: COLORS.accentGreenDark, padding: '0.2rem 0.5rem', borderRadius: 20 }}>
+                            ACTIVE
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ ...cellStyle, whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                          <button
+                            disabled={!!runningId || paused}
+                            onClick={() => handleRunNow(rpo.id)}
+                            title="Run Now — creates a draft PO"
+                            style={{
+                              background: COLORS.accentBlue, color: '#fff', border: 'none',
+                              borderRadius: 5, padding: '0.25rem 0.6rem', fontSize: FONT.xs,
+                              fontWeight: 600, cursor: (runningId || paused) ? 'not-allowed' : 'pointer',
+                              opacity: (runningId || paused) ? 0.5 : 1,
+                            }}
+                          >
+                            {runningId === rpo.id ? '...' : 'Run'}
+                          </button>
+                          <button
+                            disabled={paused}
+                            onClick={() => handleSkipNext(rpo)}
+                            style={{
+                              background: COLORS.accentBlueLight,
+                              color: COLORS.accentBlueDark,
+                              border: 'none',
+                              borderRadius: 5,
+                              padding: '0.25rem 0.6rem',
+                              fontSize: FONT.xs,
+                              fontWeight: 600,
+                              cursor: paused ? 'not-allowed' : 'pointer',
+                              opacity: paused ? 0.5 : 1,
+                            }}
+                          >
+                            Skip Next
+                          </button>
+                          <button
+                            onClick={() => handleToggleActive(rpo)}
+                            style={{
+                              background: paused ? COLORS.accentGreenLight : COLORS.accentAmberLight,
+                              color: paused ? COLORS.accentGreenDark : COLORS.accentAmberDark,
+                              border: 'none', borderRadius: 5, padding: '0.25rem 0.6rem',
+                              fontSize: FONT.xs, fontWeight: 600, cursor: 'pointer',
+                            }}
+                          >
+                            {paused ? 'Resume' : 'Pause'}
+                          </button>
+                          <button
+                            onClick={() => void toggleExpanded(rpo.id)}
+                            style={{
+                              background: COLORS.cardBg,
+                              color: COLORS.textPrimary,
+                              border: `1px solid ${COLORS.border}`,
+                              borderRadius: 5,
+                              padding: '0.25rem 0.6rem',
+                              fontSize: FONT.xs,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {expanded ? 'Hide' : 'Details'}
+                          </button>
+                          <button
+                            onClick={() => handleDelete(rpo.id)}
+                            title="Delete schedule"
+                            style={{
+                              background: COLORS.accentRedLight, color: COLORS.accentRedDark,
+                              border: 'none', borderRadius: 5, padding: '0.25rem 0.5rem',
+                              fontSize: FONT.xs, fontWeight: 600, cursor: 'pointer',
+                            }}
+                          >
+                            Del
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    {expanded && (
+                      <tr>
+                        <td colSpan={9} style={{ padding: '1rem', background: COLORS.contentBg }}>
+                          {detailLoadingId === rpo.id && !detail ? (
+                            <div style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>Loading schedule details...</div>
+                          ) : detail ? (
+                            <div style={{ display: 'grid', gap: '1rem' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+                                <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '0.85rem' }}>
+                                  <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Next run</div>
+                                  <div style={{ fontSize: FONT.base, fontWeight: 700, color: COLORS.textPrimary }}>{fmtDate(detail.nextRunAt)}</div>
+                                </div>
+                                <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '0.85rem' }}>
+                                  <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Last run</div>
+                                  <div style={{ fontSize: FONT.base, fontWeight: 700, color: COLORS.textPrimary }}>{fmtDate(detail.lastRunAt)}</div>
+                                </div>
+                                <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '0.85rem' }}>
+                                  <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Generated POs</div>
+                                  <div style={{ fontSize: FONT.base, fontWeight: 700, color: COLORS.textPrimary }}>{detail.historyCount ?? 0}</div>
+                                </div>
+                              </div>
+
+                              <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: '1rem' }}>
+                                <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '0.95rem' }}>
+                                  <div style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary, marginBottom: '0.75rem' }}>
+                                    Upcoming runs
+                                  </div>
+                                  <div style={{ display: 'grid', gap: '0.5rem' }}>
+                                    {(detail.upcomingRuns ?? []).length === 0 ? (
+                                      <div style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>No future runs scheduled.</div>
+                                    ) : (
+                                      (detail.upcomingRuns ?? []).map((runAt, index) => (
+                                        <div key={runAt} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '0.6rem 0.75rem' }}>
+                                          <span style={{ fontSize: FONT.sm, color: COLORS.textPrimary, fontWeight: 600 }}>{fmtDate(runAt)}</span>
+                                          <span style={{ fontSize: FONT.xs, color: COLORS.textMuted }}>
+                                            {index === 0 ? 'Next scheduled run' : `Run ${detail.runCount + index + 1}`}
+                                          </span>
+                                        </div>
+                                      ))
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '0.95rem' }}>
+                                  <div style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary, marginBottom: '0.75rem' }}>
+                                    Generated PO history
+                                  </div>
+                                  <div style={{ display: 'grid', gap: '0.5rem' }}>
+                                    {(detail.recentHistory ?? []).length === 0 ? (
+                                      <div style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>No purchase orders have been created from this schedule yet.</div>
+                                    ) : (
+                                      (detail.recentHistory ?? []).map((po) => (
+                                        <div key={po.id} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '0.65rem 0.75rem' }}>
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
+                                            <Link href={`/purchase-orders/${po.id}`} style={{ color: COLORS.accentBlueDark, textDecoration: 'none', fontWeight: 700, fontSize: FONT.sm }}>
+                                              {po.number}
+                                            </Link>
+                                            <span style={{ fontSize: FONT.xs, color: COLORS.textMuted }}>{fmtDate(po.createdAt)}</span>
+                                          </div>
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
+                                            <span style={{ fontSize: FONT.xs, color: COLORS.textSecondary, textTransform: 'capitalize' }}>{po.status}</span>
+                                            <span style={{ fontSize: FONT.sm, color: COLORS.textPrimary, fontWeight: 600 }}>
+                                              {fmtCurrency(po.totalAmount, po.currency)}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      ))
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ) : null}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>

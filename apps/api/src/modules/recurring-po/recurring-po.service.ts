@@ -13,6 +13,15 @@ interface RecurringPoLine {
   unitOfMeasure?: string;
 }
 
+interface RecurringPoHistoryItem {
+  id: string;
+  number: string;
+  status: string;
+  totalAmount: string;
+  currency: string;
+  createdAt: Date;
+}
+
 @Injectable()
 export class RecurringPoService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
@@ -50,6 +59,78 @@ export class RecurringPoService {
       default:
         throw new BadRequestException(`Invalid frequency: ${frequency}`);
     }
+  }
+
+  private buildUpcomingRuns(
+    frequency: Frequency,
+    dayOfMonth: number | null | undefined,
+    nextRunAt: Date,
+    runCount: number,
+    maxRuns?: number | null,
+    count = 5,
+  ): string[] {
+    const runs: string[] = [];
+    let cursor = new Date(nextRunAt);
+    let projectedRunCount = runCount;
+
+    while (runs.length < count) {
+      if (maxRuns !== null && maxRuns !== undefined && projectedRunCount >= maxRuns) break;
+      runs.push(cursor.toISOString());
+      projectedRunCount += 1;
+      cursor = this.computeNextRunAt(frequency, dayOfMonth, cursor);
+    }
+
+    return runs;
+  }
+
+  private async recentHistory(recurringPoId: string, organizationId: string, limit = 10): Promise<RecurringPoHistoryItem[]> {
+    return this.db
+      .select({
+        id: purchaseOrders.id,
+        number: purchaseOrders.number,
+        status: purchaseOrders.status,
+        totalAmount: purchaseOrders.totalAmount,
+        currency: purchaseOrders.currency,
+        createdAt: purchaseOrders.createdAt,
+      })
+      .from(purchaseOrders)
+      .where(and(eq(purchaseOrders.organizationId, organizationId), eq(purchaseOrders.recurringPoId, recurringPoId)))
+      .orderBy(desc(purchaseOrders.createdAt))
+      .limit(limit);
+  }
+
+  private async historyCount(recurringPoId: string, organizationId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(purchaseOrders)
+      .where(and(eq(purchaseOrders.organizationId, organizationId), eq(purchaseOrders.recurringPoId, recurringPoId)));
+
+    return row?.count ?? 0;
+  }
+
+  private async projectRecurringPo(
+    recurringPo: any,
+    vendor: { id: string; name: string } | null | undefined,
+    organizationId: string,
+    includeHistory = false,
+  ) {
+    const upcomingRuns = this.buildUpcomingRuns(
+      recurringPo.frequency as Frequency,
+      recurringPo.dayOfMonth,
+      recurringPo.nextRunAt,
+      recurringPo.runCount,
+      recurringPo.maxRuns,
+    );
+    const count = await this.historyCount(recurringPo.id, organizationId);
+    const history = includeHistory ? await this.recentHistory(recurringPo.id, organizationId) : [];
+
+    return {
+      ...recurringPo,
+      vendor: vendor?.id ? vendor : null,
+      upcomingRuns,
+      historyCount: count,
+      recentHistory: history,
+    };
   }
 
   private async nextPoNumber(orgId: string): Promise<string> {
@@ -91,7 +172,7 @@ export class RecurringPoService {
       .where(eq(recurringPos.organizationId, organizationId))
       .orderBy(desc(recurringPos.createdAt));
 
-    return rows.map((r) => ({ ...r.rpo, vendor: r.vendor?.id ? r.vendor : null }));
+    return Promise.all(rows.map((r) => this.projectRecurringPo(r.rpo, r.vendor?.id ? r.vendor : null, organizationId)));
   }
 
   async findOne(id: string, organizationId: string) {
@@ -105,7 +186,7 @@ export class RecurringPoService {
       .where(and(eq(recurringPos.id, id), eq(recurringPos.organizationId, organizationId)));
 
     if (!row) throw new NotFoundException(`Recurring PO ${id} not found`);
-    return { ...row.rpo, vendor: row.vendor?.id ? row.vendor : null };
+    return this.projectRecurringPo(row.rpo, row.vendor?.id ? row.vendor : null, organizationId, true);
   }
 
   async create(
@@ -243,6 +324,7 @@ export class RecurringPoService {
         .insert(purchaseOrders)
         .values({
           organizationId,
+          recurringPoId: id,
           vendorId: rpo.vendorId!,
           number: poNumber,
           version: 1,
@@ -298,6 +380,25 @@ export class RecurringPoService {
       purchaseOrderNumber: poNumber,
       runCount: newRunCount,
       reachedMax,
+    };
+  }
+
+  async skipNext(id: string, organizationId: string) {
+    const rpo = await this.findOne(id, organizationId);
+    const skippedRunAt = rpo.nextRunAt;
+    const nextRunAt = this.computeNextRunAt(rpo.frequency as Frequency, rpo.dayOfMonth, new Date(rpo.nextRunAt));
+
+    await this.db
+      .update(recurringPos)
+      .set({
+        nextRunAt,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(recurringPos.id, id), eq(recurringPos.organizationId, organizationId)));
+
+    return {
+      skippedRunAt,
+      nextRunAt,
     };
   }
 }
