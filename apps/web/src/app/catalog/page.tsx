@@ -54,18 +54,22 @@ export default function CatalogPage() {
   const [saving, setSaving] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
+  const [priceProposals, setPriceProposals] = useState<any[]>([]);
+  const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [items, vendors, cats] = await Promise.all([
+      const [items, vendors, cats, proposals] = await Promise.all([
         searchQ ? api.catalog.search(searchQ) : api.catalog.list({ vendorId: filterVendor || undefined, category: filterCategory || undefined }),
         api.vendors.list(),
         api.catalog.categories(),
+        api.catalog.priceProposals('pending'),
       ]);
       setItems(items as CatalogItem[]);
       setVendors(vendors as Vendor[]);
       setCategories(cats);
+      setPriceProposals(proposals);
     } catch {
       // silently fail
     }
@@ -210,6 +214,49 @@ export default function CatalogPage() {
 
       {/* Table */}
       <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', overflow: 'hidden', boxShadow: SHADOWS.card }}>
+        {priceProposals.length > 0 && (
+          <div style={{ padding: '1rem', borderBottom: `1px solid ${COLORS.tableBorder}`, background: '#fff7ed' }}>
+            <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#9a3412', marginBottom: '0.75rem' }}>
+              Pending Supplier Price Updates ({priceProposals.length})
+            </div>
+            <div style={{ display: 'grid', gap: '0.75rem' }}>
+              {priceProposals.slice(0, 6).map((proposal) => (
+                <div key={proposal.id} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1.3fr auto', gap: '0.75rem', alignItems: 'center', background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '0.75rem' }}>
+                  <div>
+                    <div style={{ fontWeight: 600, color: COLORS.textPrimary }}>{proposal.item?.name}</div>
+                    <div style={{ fontSize: '0.78rem', color: COLORS.textMuted }}>{proposal.vendor?.name}</div>
+                  </div>
+                  <div style={{ fontSize: '0.875rem', color: COLORS.textSecondary }}>
+                    {formatPrice(String(proposal.currentPrice), proposal.item?.currency ?? 'USD')} {'->'} {formatPrice(String(proposal.proposedPrice), proposal.item?.currency ?? 'USD')}
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>
+                    Effective: {proposal.effectiveDate ? new Date(proposal.effectiveDate).toLocaleDateString() : 'Immediate'}
+                  </div>
+                  <input
+                    value={reviewNotes[proposal.id] ?? ''}
+                    onChange={(e) => setReviewNotes((current) => ({ ...current, [proposal.id]: e.target.value }))}
+                    placeholder="Review note"
+                    style={{ ...inputStyle, fontSize: '0.8rem' }}
+                  />
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      onClick={async () => { await api.catalog.reviewPriceProposal(proposal.itemId, proposal.id, { status: 'approved', reviewNote: reviewNotes[proposal.id] }); await load(); }}
+                      style={{ ...btnPrimary, background: '#059669', padding: '0.4rem 0.8rem', fontSize: '0.75rem' }}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      onClick={async () => { await api.catalog.reviewPriceProposal(proposal.itemId, proposal.id, { status: 'rejected', reviewNote: reviewNotes[proposal.id] }); await load(); }}
+                      style={{ ...btnDanger }}
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {loading ? (
           <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>Loading…</div>
         ) : items.length === 0 ? (

@@ -1,8 +1,9 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { eq, and, ilike, or } from 'drizzle-orm';
+import { eq, and, ilike, or, desc } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { catalogItems } from '@betterspend/db';
+import { catalogItems, catalogPriceProposals } from '@betterspend/db';
+import { NotificationsService } from '../notifications/notifications.service';
 
 export interface CreateCatalogItemInput {
   vendorId?: string;
@@ -31,7 +32,10 @@ export interface UpdateCatalogItemInput {
 
 @Injectable()
 export class CatalogService {
-  constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
+  constructor(
+    @Inject(DB_TOKEN) private readonly db: Db,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async findAll(organizationId: string, filters?: { vendorId?: string; category?: string; activeOnly?: boolean }) {
     return this.db.query.catalogItems.findMany({
@@ -117,5 +121,88 @@ export class CatalogService {
     });
     const cats = [...new Set(items.map((i) => i.category).filter(Boolean))] as string[];
     return cats.sort();
+  }
+
+  async listPriceProposals(organizationId: string, status?: string) {
+    return this.db.query.catalogPriceProposals.findMany({
+      where: (p, { and, eq }) =>
+        and(
+          eq(p.organizationId, organizationId),
+          status ? eq(p.status, status) : undefined,
+        ),
+      with: {
+        item: { with: { vendor: true } },
+        vendor: true,
+        reviewer: true,
+      },
+      orderBy: (p, { desc }) => desc(p.submittedAt),
+    });
+  }
+
+  async reviewPriceProposal(
+    proposalId: string,
+    organizationId: string,
+    reviewerId: string,
+    input: { status: 'approved' | 'rejected'; reviewNote?: string },
+  ) {
+    const proposal = await this.db.query.catalogPriceProposals.findFirst({
+      where: (p, { and, eq }) =>
+        and(eq(p.id, proposalId), eq(p.organizationId, organizationId)),
+      with: {
+        item: true,
+      },
+    });
+    if (!proposal) throw new NotFoundException(`Catalog price proposal ${proposalId} not found`);
+
+    const [updated] = await this.db
+      .update(catalogPriceProposals)
+      .set({
+        status: input.status,
+        reviewedBy: reviewerId,
+        reviewedAt: new Date(),
+        reviewNote: input.reviewNote ?? null,
+      })
+      .where(and(eq(catalogPriceProposals.id, proposalId), eq(catalogPriceProposals.organizationId, organizationId)))
+      .returning();
+
+    if (input.status === 'approved') {
+      await this.db
+        .update(catalogItems)
+        .set({
+          unitPrice: String(updated.proposedPrice),
+          updatedAt: new Date(),
+        })
+        .where(eq(catalogItems.id, proposal.itemId));
+    }
+
+    if (proposal.item?.vendorId) {
+      const vendor = await this.db.query.vendors.findFirst({
+        where: (v, { and, eq }) =>
+          and(eq(v.id, proposal.vendorId), eq(v.organizationId, organizationId)),
+      });
+      if (vendor) {
+        const vendorOwnerId = null;
+        if (vendorOwnerId) {
+          await this.notificationsService.create(
+            organizationId,
+            vendorOwnerId,
+            'catalog_price_proposal_reviewed',
+            `${proposal.item.name} price proposal ${input.status}`,
+            input.reviewNote ?? undefined,
+            'catalog_price_proposal',
+            proposalId,
+          );
+        }
+      }
+    }
+
+    return this.db.query.catalogPriceProposals.findFirst({
+      where: (p, { eq }) => eq(p.id, proposalId),
+      with: {
+        item: { with: { vendor: true } },
+        vendor: true,
+        reviewer: true,
+      },
+    });
   }
 }

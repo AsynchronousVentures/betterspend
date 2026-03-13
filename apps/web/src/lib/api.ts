@@ -181,6 +181,17 @@ export const api = {
     update: (id: string, data: unknown) =>
       apiFetch<any>(`/catalog-items/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     remove: (id: string) => apiFetch<void>(`/catalog-items/${id}`, { method: 'DELETE' }),
+    priceProposals: (status?: string) =>
+      apiFetch<any[]>(`/catalog-items/price-proposals${status ? `?status=${status}` : ''}`),
+    reviewPriceProposal: (
+      itemId: string,
+      proposalId: string,
+      data: { status: 'approved' | 'rejected'; reviewNote?: string },
+    ) =>
+      apiFetch<any>(`/catalog-items/${itemId}/price-proposals/${proposalId}/review`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
   },
   glMappings: {
     list: (targetSystem?: string) =>
@@ -507,6 +518,13 @@ export const api = {
       }),
     listInvoices: (token: string) =>
       apiFetch<any[]>(`/vendor-portal/invoices?token=${encodeURIComponent(token)}`),
+    catalog: (token: string) =>
+      apiFetch<any>(`/vendor-portal/catalog?token=${encodeURIComponent(token)}`),
+    submitPriceProposal: (token: string, data: any) =>
+      apiFetch<any>(`/vendor-portal/catalog/price-proposals?token=${encodeURIComponent(token)}`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
   notifications: {
     list: (params?: { unreadOnly?: boolean; limit?: number }) => {

@@ -29,3 +29,4 @@ export * from './tax-codes';
 export * from './exchange-rates';
 export * from './spend-guard-alerts';
 export * from './software-licenses';
+export * from './catalog-price-proposals';

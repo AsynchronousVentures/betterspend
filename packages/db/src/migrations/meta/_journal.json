@@ -148,6 +148,13 @@
       "when": 1774700000000,
       "tag": "0020_software_licenses",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1774800000000,
+      "tag": "0021_catalog_price_proposals",
+      "breakpoints": true
     }
   ]
 }

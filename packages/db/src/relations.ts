@@ -27,6 +27,7 @@ import { taxCodes } from './schema/tax-codes';
 import { exchangeRates } from './schema/exchange-rates';
 import { spendGuardAlerts } from './schema/spend-guard-alerts';
 import { softwareLicenses } from './schema/software-licenses';
+import { catalogPriceProposals } from './schema/catalog-price-proposals';
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   legalEntities: many(legalEntities),
@@ -102,6 +103,7 @@ export const vendorsRelations = relations(vendors, ({ one, many }) => ({
   entity: one(legalEntities, { fields: [vendors.entityId], references: [legalEntities.id] }),
   catalogItems: many(catalogItems),
   softwareLicenses: many(softwareLicenses),
+  catalogPriceProposals: many(catalogPriceProposals),
 }));
 
 export const catalogItemsRelations = relations(catalogItems, ({ one }) => ({
@@ -355,6 +357,26 @@ export const softwareLicensesRelations = relations(softwareLicenses, ({ one }) =
     fields: [softwareLicenses.ownerUserId],
     references: [users.id],
     relationName: 'softwareLicenseOwner',
+  }),
+}));
+
+export const catalogPriceProposalsRelations = relations(catalogPriceProposals, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [catalogPriceProposals.organizationId],
+    references: [organizations.id],
+  }),
+  item: one(catalogItems, {
+    fields: [catalogPriceProposals.itemId],
+    references: [catalogItems.id],
+  }),
+  vendor: one(vendors, {
+    fields: [catalogPriceProposals.vendorId],
+    references: [vendors.id],
+  }),
+  reviewer: one(users, {
+    fields: [catalogPriceProposals.reviewedBy],
+    references: [users.id],
+    relationName: 'catalogPriceProposalReviewer',
   }),
 }));
 

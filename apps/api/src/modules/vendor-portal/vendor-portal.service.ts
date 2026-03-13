@@ -16,6 +16,8 @@ import {
   purchaseOrders,
   invoices,
   invoiceLines,
+  catalogItems,
+  catalogPriceProposals,
 } from '@betterspend/db';
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
@@ -35,6 +37,13 @@ export interface SubmitInvoiceInput {
     quantity: number;
     unitPrice: number;
   }>;
+}
+
+export interface SubmitCatalogPriceProposalInput {
+  itemId: string;
+  proposedPrice: number;
+  effectiveDate?: string;
+  note?: string;
 }
 
 @Injectable()
@@ -262,5 +271,50 @@ export class VendorPortalService {
       with: { purchaseOrder: true },
       orderBy: (i, { desc }) => desc(i.createdAt),
     });
+  }
+
+  async listVendorCatalog(vendorId: string, orgId: string) {
+    const [items, proposals] = await Promise.all([
+      this.db.query.catalogItems.findMany({
+        where: (c, { and, eq }) => and(eq(c.vendorId, vendorId), eq(c.organizationId, orgId)),
+        orderBy: (c, { asc }) => asc(c.name),
+      }),
+      this.db.query.catalogPriceProposals.findMany({
+        where: (p, { and, eq }) => and(eq(p.vendorId, vendorId), eq(p.organizationId, orgId)),
+        with: { item: true },
+        orderBy: (p, { desc }) => desc(p.submittedAt),
+      }),
+    ]);
+
+    return { items, proposals };
+  }
+
+  async submitCatalogPriceProposal(
+    vendorId: string,
+    orgId: string,
+    input: SubmitCatalogPriceProposalInput,
+  ) {
+    const item = await this.db.query.catalogItems.findFirst({
+      where: (c, { and, eq }) =>
+        and(eq(c.id, input.itemId), eq(c.vendorId, vendorId), eq(c.organizationId, orgId)),
+    });
+    if (!item) {
+      throw new ForbiddenException('Catalog item not found or does not belong to your account');
+    }
+
+    const [proposal] = await this.db
+      .insert(catalogPriceProposals)
+      .values({
+        organizationId: orgId,
+        itemId: item.id,
+        vendorId,
+        proposedPrice: String(input.proposedPrice),
+        currentPrice: item.unitPrice,
+        effectiveDate: input.effectiveDate ? new Date(input.effectiveDate) : null,
+        note: input.note ?? null,
+      })
+      .returning();
+
+    return proposal;
   }
 }

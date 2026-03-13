@@ -304,9 +304,17 @@ function VendorPortalContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [data, setData] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'pos' | 'invoices'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'pos' | 'invoices' | 'catalog'>('overview');
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [catalogData, setCatalogData] = useState<{ items: any[]; proposals: any[] } | null>(null);
+  const [proposalForm, setProposalForm] = useState({
+    itemId: '',
+    proposedPrice: '',
+    effectiveDate: '',
+    note: '',
+  });
+  const [proposalSaving, setProposalSaving] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -316,6 +324,7 @@ function VendorPortalContent() {
       .then(setData)
       .catch((e) => setError(e.message || 'Failed to load portal data.'))
       .finally(() => setLoading(false));
+    api.vendorPortal.catalog(token).then(setCatalogData).catch(() => {});
   }, [token, submitSuccess]);
 
   if (!token) {
@@ -379,7 +388,28 @@ function VendorPortalContent() {
     { key: 'overview' as const, label: 'Overview' },
     { key: 'pos' as const, label: `Purchase Orders (${purchaseOrders.length})` },
     { key: 'invoices' as const, label: `Invoices (${invoiceList.length})` },
+    { key: 'catalog' as const, label: `Catalog & Pricing (${catalogData?.items.length ?? 0})` },
   ];
+
+  async function submitPriceProposal(e: FormEvent) {
+    e.preventDefault();
+    setProposalSaving(true);
+    setError('');
+    try {
+      await api.vendorPortal.submitPriceProposal(token, {
+        itemId: proposalForm.itemId,
+        proposedPrice: parseFloat(proposalForm.proposedPrice),
+        effectiveDate: proposalForm.effectiveDate ? new Date(proposalForm.effectiveDate).toISOString() : undefined,
+        note: proposalForm.note || undefined,
+      });
+      setProposalForm({ itemId: '', proposedPrice: '', effectiveDate: '', note: '' });
+      setCatalogData(await api.vendorPortal.catalog(token));
+    } catch (e: any) {
+      setError(e.message || 'Failed to submit price proposal.');
+    } finally {
+      setProposalSaving(false);
+    }
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
@@ -574,6 +604,87 @@ function VendorPortalContent() {
                   </table>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'catalog' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1rem' }}>
+            <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, overflow: 'hidden' }}>
+              <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.tableBorder}`, fontWeight: 600, color: COLORS.textPrimary }}>
+                Buyer Catalog
+              </div>
+              {!catalogData || catalogData.items.length === 0 ? (
+                <div style={{ padding: '2rem', color: COLORS.textMuted }}>No catalog items are assigned to your company yet.</div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
+                        {['Item', 'SKU', 'Current Price', 'Category'].map((h) => (
+                          <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600, color: COLORS.textSecondary }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {catalogData.items.map((item) => (
+                        <tr key={item.id} style={{ borderBottom: `1px solid ${COLORS.hoverBg}` }}>
+                          <td style={{ padding: '0.75rem 1rem', fontWeight: 500, color: COLORS.textPrimary }}>{item.name}</td>
+                          <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary }}>{item.sku ?? '—'}</td>
+                          <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary }}>{fmt(item.unitPrice, item.currency)}</td>
+                          <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary }}>{item.category ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <form onSubmit={submitPriceProposal} style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, padding: '1rem' }}>
+                <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary }}>Submit Price Update</h3>
+                <div style={{ display: 'grid', gap: '0.75rem' }}>
+                  <select value={proposalForm.itemId} onChange={(e) => setProposalForm((current) => ({ ...current, itemId: e.target.value }))} required style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }}>
+                    <option value="">Select catalog item</option>
+                    {(catalogData?.items ?? []).map((item) => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
+                    ))}
+                  </select>
+                  <input value={proposalForm.proposedPrice} onChange={(e) => setProposalForm((current) => ({ ...current, proposedPrice: e.target.value }))} required type="number" min="0" step="0.01" placeholder="Proposed unit price" style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }} />
+                  <input value={proposalForm.effectiveDate} onChange={(e) => setProposalForm((current) => ({ ...current, effectiveDate: e.target.value }))} type="date" style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }} />
+                  <textarea value={proposalForm.note} onChange={(e) => setProposalForm((current) => ({ ...current, note: e.target.value }))} placeholder="Reason for the price update" rows={4} style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', resize: 'vertical', boxSizing: 'border-box' }} />
+                  <button type="submit" disabled={proposalSaving} style={{ padding: '0.625rem 1rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>
+                    {proposalSaving ? 'Submitting...' : 'Submit Proposal'}
+                  </button>
+                </div>
+              </form>
+
+              <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, overflow: 'hidden' }}>
+                <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.tableBorder}`, fontWeight: 600, color: COLORS.textPrimary }}>
+                  Proposal History
+                </div>
+                {!catalogData || catalogData.proposals.length === 0 ? (
+                  <div style={{ padding: '1rem', color: COLORS.textMuted }}>No price proposals submitted yet.</div>
+                ) : (
+                  <div style={{ padding: '0.5rem 0' }}>
+                    {catalogData.proposals.map((proposal) => (
+                      <div key={proposal.id} style={{ padding: '0.75rem 1rem', borderBottom: `1px solid ${COLORS.hoverBg}` }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                          <div>
+                            <div style={{ fontWeight: 600, color: COLORS.textPrimary }}>{proposal.item?.name}</div>
+                            <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>
+                              {fmt(proposal.currentPrice, proposal.item?.currency ?? 'USD')} {'->'} {fmt(proposal.proposedPrice, proposal.item?.currency ?? 'USD')}
+                            </div>
+                          </div>
+                          <StatusBadge status={proposal.status} />
+                        </div>
+                        {proposal.note && <div style={{ fontSize: '0.8rem', color: COLORS.textMuted, marginTop: '0.35rem' }}>{proposal.note}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}

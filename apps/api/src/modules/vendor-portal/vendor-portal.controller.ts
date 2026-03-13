@@ -10,7 +10,11 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { VendorPortalService, SubmitInvoiceInput } from './vendor-portal.service';
+import {
+  VendorPortalService,
+  SubmitInvoiceInput,
+  SubmitCatalogPriceProposalInput,
+} from './vendor-portal.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 
@@ -75,5 +79,27 @@ export class VendorPortalController {
     if (!token) throw new UnauthorizedException('Token is required');
     const vendorId = await this.vendorPortalService.validateToken(token);
     return this.vendorPortalService.listVendorInvoices(vendorId, DEMO_ORG_ID);
+  }
+
+  @Get('catalog')
+  @Public()
+  @ApiOperation({ summary: 'List vendor catalog items and price proposals via portal token' })
+  async listCatalog(@Query('token') token: string) {
+    if (!token) throw new UnauthorizedException('Token is required');
+    const vendorId = await this.vendorPortalService.validateToken(token);
+    return this.vendorPortalService.listVendorCatalog(vendorId, DEMO_ORG_ID);
+  }
+
+  @Post('catalog/price-proposals')
+  @Public()
+  @ApiOperation({ summary: 'Submit catalog price proposal via portal token' })
+  @HttpCode(HttpStatus.CREATED)
+  async submitCatalogPriceProposal(
+    @Query('token') token: string,
+    @Body() body: SubmitCatalogPriceProposalInput,
+  ) {
+    if (!token) throw new UnauthorizedException('Token is required');
+    const vendorId = await this.vendorPortalService.validateToken(token);
+    return this.vendorPortalService.submitCatalogPriceProposal(vendorId, DEMO_ORG_ID, body);
   }
 }
