@@ -19,6 +19,14 @@ interface InvoiceLine {
   description: string;
   quantity: string;
   unitPrice: string;
+  taxCodeId: string;
+  taxInclusive: boolean;
+}
+
+interface TaxCode {
+  id: string;
+  code: string;
+  ratePercent: string;
 }
 
 interface OcrExtractedLine { description: string; quantity: number; unitPrice: number; }
@@ -34,6 +42,7 @@ export default function NewInvoicePage() {
   const router = useRouter();
   const [pos, setPOs] = useState<PO[]>([]);
   const [selectedPO, setSelectedPO] = useState<PO | null>(null);
+  const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
   const [vendorId, setVendorId] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
@@ -54,6 +63,10 @@ export default function NewInvoicePage() {
         setPOs(arr);
       })
       .catch(() => {});
+
+    api.taxCodes.list()
+      .then((data) => setTaxCodes(Array.isArray(data) ? data : []))
+      .catch(() => {});
   }, []);
 
   const handlePOChange = async (poId: string) => {
@@ -67,6 +80,8 @@ export default function NewInvoicePage() {
       description: l.description,
       quantity: l.quantity,
       unitPrice: l.unitPrice,
+      taxCodeId: '',
+      taxInclusive: false,
     })));
   };
 
@@ -75,14 +90,22 @@ export default function NewInvoicePage() {
   };
 
   const addLine = () => {
-    setLines((prev) => [...prev, { poLineId: '', lineNumber: prev.length + 1, description: '', quantity: '1', unitPrice: '0' }]);
+    setLines((prev) => [...prev, { poLineId: '', lineNumber: prev.length + 1, description: '', quantity: '1', unitPrice: '0', taxCodeId: '', taxInclusive: false }]);
   };
 
   const removeLine = (idx: number) => {
     setLines((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const subtotal = lines.reduce((s, l) => s + parseFloat(l.quantity || '0') * parseFloat(l.unitPrice || '0'), 0);
+  function getLineTotal(line: InvoiceLine) {
+    const raw = parseFloat(line.quantity || '0') * parseFloat(line.unitPrice || '0');
+    const taxCode = taxCodes.find((entry) => entry.id === line.taxCodeId);
+    if (!taxCode) return raw;
+    const rate = parseFloat(taxCode.ratePercent || '0') / 100;
+    return line.taxInclusive ? raw : raw * (1 + rate);
+  }
+
+  const subtotal = lines.reduce((sum, line) => sum + getLineTotal(line), 0);
 
   // OCR: submit file → create OCR job → poll until done → pre-populate form
   async function handleOcrUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -139,7 +162,7 @@ export default function NewInvoicePage() {
     if (d.lines && d.lines.length > 0) {
       setLines(d.lines.map((l, i) => ({
         poLineId: '', lineNumber: i + 1,
-        description: l.description, quantity: String(l.quantity), unitPrice: String(l.unitPrice),
+        description: l.description, quantity: String(l.quantity), unitPrice: String(l.unitPrice), taxCodeId: '', taxInclusive: false,
       })));
     }
   }
@@ -157,6 +180,8 @@ export default function NewInvoicePage() {
         dueDate: dueDate || undefined,
         lines: lines.map((l) => ({
           poLineId: l.poLineId || undefined,
+          taxCodeId: l.taxCodeId || undefined,
+          taxInclusive: l.taxInclusive,
           lineNumber: l.lineNumber,
           description: l.description,
           quantity: parseFloat(l.quantity),
@@ -252,6 +277,28 @@ export default function NewInvoicePage() {
                     <td style={{ padding: '0.5rem 0.75rem', color: COLORS.textSecondary, width: '40px' }}>{idx + 1}</td>
                     <td style={{ padding: '0.5rem 0.75rem' }}>
                       <input value={line.description} onChange={(e) => updateLine(idx, 'description', e.target.value)} required style={{ ...inputStyle, width: '100%' }} />
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem', marginTop: '0.4rem', alignItems: 'center' }}>
+                        <select value={line.taxCodeId} onChange={(e) => updateLine(idx, 'taxCodeId', e.target.value)} style={{ ...inputStyle, fontSize: '0.8rem', padding: '0.4rem 0.5rem' }}>
+                          <option value="">No tax code</option>
+                          {taxCodes.map((taxCode) => (
+                            <option key={taxCode.id} value={taxCode.id}>
+                              {taxCode.code} ({taxCode.ratePercent}%)
+                            </option>
+                          ))}
+                        </select>
+                        <label style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', fontSize: '0.75rem', color: COLORS.textSecondary }}>
+                          <input
+                            type="checkbox"
+                            checked={line.taxInclusive}
+                            onChange={(e) =>
+                              setLines((prev) => prev.map((entry, entryIdx) => (
+                                entryIdx === idx ? { ...entry, taxInclusive: e.target.checked } : entry
+                              )))
+                            }
+                          />
+                          Incl.
+                        </label>
+                      </div>
                     </td>
                     <td style={{ padding: '0.5rem 0.75rem', width: '80px' }}>
                       <input type="number" min="0" step="0.01" value={line.quantity} onChange={(e) => updateLine(idx, 'quantity', e.target.value)} required style={{ ...inputStyle, width: '80px' }} />
@@ -260,7 +307,7 @@ export default function NewInvoicePage() {
                       <input type="number" min="0" step="0.01" value={line.unitPrice} onChange={(e) => updateLine(idx, 'unitPrice', e.target.value)} required style={{ ...inputStyle, width: '100px' }} />
                     </td>
                     <td style={{ padding: '0.5rem 0.75rem', color: COLORS.textSecondary, width: '90px' }}>
-                      ${(parseFloat(line.quantity || '0') * parseFloat(line.unitPrice || '0')).toFixed(2)}
+                      ${getLineTotal(line).toFixed(2)}
                     </td>
                     <td style={{ padding: '0.5rem 0.75rem', width: '30px' }}>
                       <button type="button" onClick={() => removeLine(idx)} style={{ color: COLORS.accentRed, background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem' }}>×</button>

@@ -4,6 +4,7 @@ import { vendors } from './vendors';
 import { users } from './users';
 import { purchaseOrders, poLines } from './purchase-orders';
 import { goodsReceiptLines } from './receiving';
+import { taxCodes } from './tax-codes';
 
 export const invoices = pgTable('invoices', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -39,9 +40,12 @@ export const invoiceLines = pgTable('invoice_lines', {
   invoiceId: uuid('invoice_id').notNull().references(() => invoices.id),
   poLineId: uuid('po_line_id').references(() => poLines.id),
   lineNumber: numeric('line_number').notNull(),
+  taxCodeId: uuid('tax_code_id').references(() => taxCodes.id),
   description: varchar('description', { length: 500 }).notNull(),
   quantity: numeric('quantity', { precision: 10, scale: 2 }).notNull(),
   unitPrice: numeric('unit_price', { precision: 12, scale: 2 }).notNull(),
+  taxAmount: numeric('tax_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+  taxInclusive: boolean('tax_inclusive').notNull().default(false),
   totalPrice: numeric('total_price', { precision: 14, scale: 2 }).notNull(),
   glAccount: varchar('gl_account', { length: 50 }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

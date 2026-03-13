@@ -25,3 +25,5 @@ export * from './recurring-pos';
 export * from './inventory';
 export * from './requisition-templates';
 export * from './payment-runs';
+export * from './tax-codes';
+export * from './exchange-rates';

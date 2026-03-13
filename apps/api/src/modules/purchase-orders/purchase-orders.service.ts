@@ -8,7 +8,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { ContractComplianceService } from './contract-compliance.service';
 import { EntitiesService } from '../entities/entities.service';
 import type { Db } from '@betterspend/db';
-import { purchaseOrders, poLines, poVersions, blanketReleases, requisitions } from '@betterspend/db';
+import { purchaseOrders, poLines, poVersions, blanketReleases, requisitions, taxCodes } from '@betterspend/db';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 import { z } from 'zod';
@@ -33,6 +33,8 @@ const createPoSchema = z.object({
     unitOfMeasure: z.string().default('each'),
     unitPrice: z.number().nonnegative(),
     glAccount: z.string().optional(),
+    taxCodeId: z.string().uuid().optional(),
+    taxInclusive: z.boolean().optional(),
     catalogItemId: z.string().uuid().optional(),
     requisitionLineId: z.string().uuid().optional(),
   })).min(1),
@@ -47,6 +49,8 @@ const changeOrderSchema = z.object({
     unitOfMeasure: z.string().default('each'),
     unitPrice: z.number().nonnegative(),
     glAccount: z.string().optional(),
+    taxCodeId: z.string().uuid().optional(),
+    taxInclusive: z.boolean().optional(),
   })).optional(),
   notes: z.string().optional(),
   paymentTerms: z.string().optional(),
@@ -55,6 +59,14 @@ const changeOrderSchema = z.object({
 export type CreatePoInput = z.infer<typeof createPoSchema>;
 export type ChangeOrderInput = z.infer<typeof changeOrderSchema>;
 export { createPoSchema, changeOrderSchema };
+
+interface LineTaxSnapshot {
+  taxCodeId?: string;
+  taxInclusive?: boolean;
+  subtotal: number;
+  taxAmount: number;
+  totalAmount: number;
+}
 
 @Injectable()
 export class PurchaseOrdersService {
@@ -68,6 +80,38 @@ export class PurchaseOrdersService {
     private readonly entitiesService: EntitiesService,
   ) {}
 
+  private calculateLineTax(quantity: number, unitPrice: number, ratePercent: number, taxInclusive: boolean): LineTaxSnapshot {
+    const rawAmount = quantity * unitPrice;
+    if (taxInclusive) {
+      const subtotal = ratePercent > 0 ? rawAmount / (1 + ratePercent / 100) : rawAmount;
+      return {
+        subtotal,
+        taxAmount: rawAmount - subtotal,
+        totalAmount: rawAmount,
+      };
+    }
+
+    const subtotal = rawAmount;
+    const taxAmount = subtotal * (ratePercent / 100);
+    return {
+      subtotal,
+      taxAmount,
+      totalAmount: subtotal + taxAmount,
+    };
+  }
+
+  private async getTaxCodeMap(organizationId: string, taxCodeIds: string[]) {
+    if (taxCodeIds.length === 0) return new Map<string, any>();
+    const records = await this.db.query.taxCodes.findMany({
+      where: (record, { and, eq, inArray }) =>
+        and(eq(record.orgId, organizationId), inArray(record.id, taxCodeIds)),
+    });
+    if (records.length !== taxCodeIds.length) {
+      throw new BadRequestException('One or more tax codes are invalid for this organization');
+    }
+    return new Map(records.map((record) => [record.id, record]));
+  }
+
   async findAll(organizationId: string, filters?: { status?: string; vendorId?: string; entityId?: string }) {
     return this.db.query.purchaseOrders.findMany({
       where: (po, { and, eq }) => {
@@ -77,7 +121,7 @@ export class PurchaseOrdersService {
         if (filters?.entityId) conditions.push(eq(po.entityId, filters.entityId));
         return and(...conditions);
       },
-      with: { vendor: true, lines: true, entity: true },
+      with: { vendor: true, lines: { with: { taxCode: true } }, entity: true },
       orderBy: (po, { desc }) => desc(po.createdAt),
     });
   }
@@ -85,7 +129,7 @@ export class PurchaseOrdersService {
   async findOne(id: string, organizationId: string) {
     const po = await this.db.query.purchaseOrders.findFirst({
       where: (po, { and, eq }) => and(eq(po.id, id), eq(po.organizationId, organizationId)),
-      with: { vendor: true, lines: true, versions: true, entity: true },
+      with: { vendor: true, lines: { with: { taxCode: true } }, versions: true, entity: true },
     });
     if (!po) throw new NotFoundException(`Purchase Order ${id} not found`);
     return po;
@@ -94,6 +138,10 @@ export class PurchaseOrdersService {
   async create(organizationId: string, issuedBy: string, input: CreatePoInput) {
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
     const number = await this.sequenceService.next(organizationId, 'purchase_order');
+    const taxCodeMap = await this.getTaxCodeMap(
+      organizationId,
+      input.lines.map((line) => line.taxCodeId).filter((value): value is string => !!value),
+    );
 
     // Run compliance checks for each line before the transaction
     const lineComplianceResults = this.contractCompliance
@@ -111,7 +159,14 @@ export class PurchaseOrdersService {
       : input.lines.map(() => null);
 
     const createdId = await this.db.transaction(async (tx) => {
-      const subtotal = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
+      const lineAmounts = input.lines.map((line) => {
+        const taxCode = line.taxCodeId ? taxCodeMap.get(line.taxCodeId) : null;
+        const ratePercent = taxCode ? parseFloat(String(taxCode.ratePercent ?? '0')) : 0;
+        return this.calculateLineTax(line.quantity, line.unitPrice, ratePercent, !!line.taxInclusive);
+      });
+      const subtotal = lineAmounts.reduce((sum, line) => sum + line.subtotal, 0);
+      const taxAmount = lineAmounts.reduce((sum, line) => sum + line.taxAmount, 0);
+      const totalAmount = lineAmounts.reduce((sum, line) => sum + line.totalAmount, 0);
 
       const [po] = await tx.insert(purchaseOrders).values({
         organizationId,
@@ -127,9 +182,9 @@ export class PurchaseOrdersService {
         notes: input.notes,
         shippingAddress: input.shippingAddress ?? {},
         billingAddress: input.billingAddress ?? {},
-        subtotal: String(subtotal),
-        taxAmount: '0',
-        totalAmount: String(subtotal),
+        subtotal: String(subtotal.toFixed(2)),
+        taxAmount: String(taxAmount.toFixed(2)),
+        totalAmount: String(totalAmount.toFixed(2)),
         blanketStartDate: input.blanketStartDate ? new Date(input.blanketStartDate) : null,
         blanketEndDate: input.blanketEndDate ? new Date(input.blanketEndDate) : null,
         blanketTotalLimit: input.blanketTotalLimit ? String(input.blanketTotalLimit) : null,
@@ -138,14 +193,18 @@ export class PurchaseOrdersService {
       await tx.insert(poLines).values(
         input.lines.map((l, i) => {
           const cr = lineComplianceResults[i];
+          const amounts = lineAmounts[i];
           return {
             purchaseOrderId: po.id,
             lineNumber: i + 1,
             description: l.description,
+            taxCodeId: l.taxCodeId ?? null,
+            taxAmount: String(amounts.taxAmount.toFixed(2)),
+            taxInclusive: l.taxInclusive ?? false,
             quantity: String(l.quantity),
             unitOfMeasure: l.unitOfMeasure,
             unitPrice: String(l.unitPrice),
-            totalPrice: String(l.quantity * l.unitPrice),
+            totalPrice: String(amounts.totalAmount.toFixed(2)),
             glAccount: l.glAccount,
             catalogItemId: l.catalogItemId,
             requisitionLineId: l.requisitionLineId,
@@ -224,7 +283,18 @@ export class PurchaseOrdersService {
 
       if (input.lines) {
         await tx.delete(poLines).where(eq(poLines.purchaseOrderId, id));
-        const subtotal = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
+        const taxCodeMap = await this.getTaxCodeMap(
+          organizationId,
+          input.lines.map((line) => line.taxCodeId).filter((value): value is string => !!value),
+        );
+        const lineAmounts = input.lines.map((line) => {
+          const taxCode = line.taxCodeId ? taxCodeMap.get(line.taxCodeId) : null;
+          const ratePercent = taxCode ? parseFloat(String(taxCode.ratePercent ?? '0')) : 0;
+          return this.calculateLineTax(line.quantity, line.unitPrice, ratePercent, !!line.taxInclusive);
+        });
+        const subtotal = lineAmounts.reduce((sum, line) => sum + line.subtotal, 0);
+        const taxAmount = lineAmounts.reduce((sum, line) => sum + line.taxAmount, 0);
+        const totalAmount = lineAmounts.reduce((sum, line) => sum + line.totalAmount, 0);
 
         // Compliance checks for change order lines
         const changeLineCompliance = this.contractCompliance
@@ -244,14 +314,18 @@ export class PurchaseOrdersService {
         await tx.insert(poLines).values(
           input.lines.map((l, i) => {
             const cr = changeLineCompliance[i];
+            const amounts = lineAmounts[i];
             return {
               purchaseOrderId: id,
               lineNumber: i + 1,
               description: l.description,
+              taxCodeId: l.taxCodeId ?? null,
+              taxAmount: String(amounts.taxAmount.toFixed(2)),
+              taxInclusive: l.taxInclusive ?? false,
               quantity: String(l.quantity),
               unitOfMeasure: l.unitOfMeasure,
               unitPrice: String(l.unitPrice),
-              totalPrice: String(l.quantity * l.unitPrice),
+              totalPrice: String(amounts.totalAmount.toFixed(2)),
               glAccount: l.glAccount,
               contractComplianceStatus: cr?.status ?? null,
               contractComplianceDeltaPercent: cr?.deltaPercent != null ? String(cr.deltaPercent) : null,
@@ -266,8 +340,9 @@ export class PurchaseOrdersService {
           version: newVersion,
           notes: input.notes ?? po.notes,
           paymentTerms: input.paymentTerms ?? po.paymentTerms,
-          subtotal: subtotalStr,
-          totalAmount: subtotalStr,
+          subtotal: String(subtotal.toFixed(2)),
+          taxAmount: String(taxAmount.toFixed(2)),
+          totalAmount: String(totalAmount.toFixed(2)),
           status: 'draft', // Change orders reset to draft for re-approval
           updatedAt: new Date(),
         }).where(eq(purchaseOrders.id, id));

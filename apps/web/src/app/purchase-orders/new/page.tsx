@@ -16,6 +16,14 @@ interface LineItem {
   qty: string;
   uom: string;
   unitPrice: string;
+  taxCodeId: string;
+  taxInclusive: boolean;
+}
+
+interface TaxCode {
+  id: string;
+  code: string;
+  ratePercent: string;
 }
 
 interface ComplianceResult {
@@ -28,7 +36,7 @@ interface ComplianceResult {
   deviationThreshold?: number;
 }
 
-const EMPTY_LINE: LineItem = { description: '', qty: '1', uom: 'each', unitPrice: '0' };
+const EMPTY_LINE: LineItem = { description: '', qty: '1', uom: 'each', unitPrice: '0', taxCodeId: '', taxInclusive: false };
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
@@ -137,6 +145,7 @@ export default function NewPurchaseOrderPage() {
   // Vendors
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [vendorsLoading, setVendorsLoading] = useState(true);
+  const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
 
   // Form state
   const [vendorId, setVendorId] = useState('');
@@ -162,6 +171,10 @@ export default function NewPurchaseOrderPage() {
       })
       .catch(() => {})
       .finally(() => setVendorsLoading(false));
+
+    api.taxCodes.list()
+      .then((data) => setTaxCodes(Array.isArray(data) ? data : []))
+      .catch(() => {});
 
     // Load deviation threshold from settings
     api.settings.getAll()
@@ -224,9 +237,15 @@ export default function NewPurchaseOrderPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vendorId]);
 
-  const total = lines.reduce((sum, l) => {
-    return sum + (parseFloat(l.qty) || 0) * (parseFloat(l.unitPrice) || 0);
-  }, 0);
+  function getLineTotal(line: LineItem) {
+    const raw = (parseFloat(line.qty) || 0) * (parseFloat(line.unitPrice) || 0);
+    const taxCode = taxCodes.find((entry) => entry.id === line.taxCodeId);
+    if (!taxCode) return raw;
+    const rate = parseFloat(taxCode.ratePercent || '0') / 100;
+    return line.taxInclusive ? raw : raw * (1 + rate);
+  }
+
+  const total = lines.reduce((sum, line) => sum + getLineTotal(line), 0);
 
   function addLine() {
     setLines((prev) => [...prev, { ...EMPTY_LINE }]);
@@ -288,6 +307,8 @@ export default function NewPurchaseOrderPage() {
           quantity: parseFloat(l.qty) || 1,
           unitOfMeasure: l.uom || 'each',
           unitPrice: parseFloat(l.unitPrice) || 0,
+          taxCodeId: l.taxCodeId || undefined,
+          taxInclusive: l.taxInclusive,
         })),
       };
 
@@ -470,7 +491,7 @@ export default function NewPurchaseOrderPage() {
           </div>
 
           {lines.map((line, idx) => {
-            const lineTotal = (parseFloat(line.qty) || 0) * (parseFloat(line.unitPrice) || 0);
+            const lineTotal = getLineTotal(line);
             const compliance = lineCompliance[idx];
             return (
               <div key={idx} style={{ marginBottom: '0.625rem' }}>
@@ -482,13 +503,41 @@ export default function NewPurchaseOrderPage() {
                     alignItems: 'center',
                   }}
                 >
-                  <input
-                    type="text"
-                    value={line.description}
-                    onChange={(e) => updateLine(idx, 'description', e.target.value)}
-                    placeholder="Item description"
-                    style={inputStyle}
-                  />
+                  <div>
+                    <input
+                      type="text"
+                      value={line.description}
+                      onChange={(e) => updateLine(idx, 'description', e.target.value)}
+                      placeholder="Item description"
+                      style={inputStyle}
+                    />
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem', marginTop: '0.4rem', alignItems: 'center' }}>
+                      <select
+                        value={line.taxCodeId}
+                        onChange={(e) => updateLine(idx, 'taxCodeId', e.target.value)}
+                        style={{ ...inputStyle, fontSize: '0.8rem', padding: '0.4rem 0.5rem' }}
+                      >
+                        <option value="">No tax code</option>
+                        {taxCodes.map((taxCode) => (
+                          <option key={taxCode.id} value={taxCode.id}>
+                            {taxCode.code} ({taxCode.ratePercent}%)
+                          </option>
+                        ))}
+                      </select>
+                      <label style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', fontSize: '0.75rem', color: COLORS.textSecondary }}>
+                        <input
+                          type="checkbox"
+                          checked={line.taxInclusive}
+                          onChange={(e) =>
+                            setLines((prev) => prev.map((entry, entryIdx) => (
+                              entryIdx === idx ? { ...entry, taxInclusive: e.target.checked } : entry
+                            )))
+                          }
+                        />
+                        Incl.
+                      </label>
+                    </div>
+                  </div>
                   <input
                     type="number"
                     value={line.qty}

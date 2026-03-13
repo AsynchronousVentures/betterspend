@@ -152,6 +152,13 @@ export const api = {
     oauthConnect: (provider: 'qbo' | 'xero') => apiFetch<{ url: string }>(`/gl/oauth/${provider}/connect`),
     oauthDisconnect: (provider: 'qbo' | 'xero') => apiFetch<void>(`/gl/oauth/${provider}`, { method: 'DELETE' }),
   },
+  taxCodes: {
+    list: () => apiFetch<any[]>('/tax-codes'),
+    get: (id: string) => apiFetch<any>(`/tax-codes/${id}`),
+    create: (data: unknown) => apiFetch<any>('/tax-codes', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: unknown) => apiFetch<any>(`/tax-codes/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    remove: (id: string) => apiFetch<any>(`/tax-codes/${id}`, { method: 'DELETE' }),
+  },
   requisitions: {
     list: () => apiFetch<any[]>('/requisitions'),
     get: (id: string) => apiFetch<any>(`/requisitions/${id}`),

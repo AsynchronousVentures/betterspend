@@ -32,6 +32,8 @@ export interface CreateInvoiceInput {
     quantity: number;
     unitPrice: number;
     glAccount?: string;
+    taxCodeId?: string;
+    taxInclusive?: boolean;
   }>;
 }
 
@@ -75,6 +77,38 @@ export class InvoicesService {
     private readonly entitiesService: EntitiesService,
   ) {}
 
+  private calculateLineTax(quantity: number, unitPrice: number, ratePercent: number, taxInclusive: boolean) {
+    const rawAmount = quantity * unitPrice;
+    if (taxInclusive) {
+      const subtotal = ratePercent > 0 ? rawAmount / (1 + ratePercent / 100) : rawAmount;
+      return {
+        subtotal,
+        taxAmount: rawAmount - subtotal,
+        totalAmount: rawAmount,
+      };
+    }
+
+    const subtotal = rawAmount;
+    const taxAmount = subtotal * (ratePercent / 100);
+    return {
+      subtotal,
+      taxAmount,
+      totalAmount: subtotal + taxAmount,
+    };
+  }
+
+  private async getTaxCodeMap(organizationId: string, taxCodeIds: string[]) {
+    if (taxCodeIds.length === 0) return new Map<string, any>();
+    const records = await this.db.query.taxCodes.findMany({
+      where: (record, { and, eq, inArray }) =>
+        and(eq(record.orgId, organizationId), inArray(record.id, taxCodeIds)),
+    });
+    if (records.length !== taxCodeIds.length) {
+      throw new BadRequestException('One or more tax codes are invalid for this organization');
+    }
+    return new Map(records.map((record) => [record.id, record]));
+  }
+
   async findAll(organizationId: string, entityId?: string) {
     return this.db.query.invoices.findMany({
       where: (i, { and, eq }) => and(
@@ -93,7 +127,7 @@ export class InvoicesService {
         vendor: true,
         entity: true,
         purchaseOrder: { with: { lines: true } },
-        lines: { with: { matchResults: true } },
+        lines: { with: { matchResults: true, taxCode: true } },
       },
     });
     if (!invoice) throw new NotFoundException(`Invoice ${id} not found`);
@@ -127,9 +161,19 @@ export class InvoicesService {
     }
 
     const internalNumber = await this.sequenceService.next(organizationId, 'invoice');
+    const taxCodeMap = await this.getTaxCodeMap(
+      organizationId,
+      input.lines.map((line) => line.taxCodeId).filter((value): value is string => !!value),
+    );
 
-    const subtotal = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
-    const totalAmount = subtotal; // no tax calculation for now
+    const lineAmounts = input.lines.map((line) => {
+      const taxCode = line.taxCodeId ? taxCodeMap.get(line.taxCodeId) : null;
+      const ratePercent = taxCode ? parseFloat(String(taxCode.ratePercent ?? '0')) : 0;
+      return this.calculateLineTax(line.quantity, line.unitPrice, ratePercent, !!line.taxInclusive);
+    });
+    const subtotal = lineAmounts.reduce((sum, line) => sum + line.subtotal, 0);
+    const taxAmount = lineAmounts.reduce((sum, line) => sum + line.taxAmount, 0);
+    const totalAmount = lineAmounts.reduce((sum, line) => sum + line.totalAmount, 0);
 
     const invoiceId = await this.db.transaction(async (tx) => {
       const [inv] = await tx.insert(invoices).values({
@@ -146,7 +190,7 @@ export class InvoicesService {
         earlyPaymentDiscountBy: input.earlyPaymentDiscountBy ?? null,
         currency: input.currency ?? 'USD',
         subtotal: String(subtotal.toFixed(2)),
-        taxAmount: '0',
+        taxAmount: String(taxAmount.toFixed(2)),
         totalAmount: String(totalAmount.toFixed(2)),
         status: 'pending_match',
         matchStatus: 'unmatched',
@@ -154,16 +198,22 @@ export class InvoicesService {
 
       if (input.lines.length > 0) {
         await tx.insert(invoiceLines).values(
-          input.lines.map((l) => ({
-            invoiceId: inv.id,
-            poLineId: l.poLineId ?? null,
-            lineNumber: String(l.lineNumber),
-            description: l.description,
-            quantity: String(l.quantity),
-            unitPrice: String(l.unitPrice),
-            totalPrice: String((l.quantity * l.unitPrice).toFixed(2)),
-            glAccount: l.glAccount ?? null,
-          })),
+          input.lines.map((l, index) => {
+            const amounts = lineAmounts[index];
+            return {
+              invoiceId: inv.id,
+              poLineId: l.poLineId ?? null,
+              lineNumber: String(l.lineNumber),
+              description: l.description,
+              quantity: String(l.quantity),
+              unitPrice: String(l.unitPrice),
+              taxCodeId: l.taxCodeId ?? null,
+              taxAmount: String(amounts.taxAmount.toFixed(2)),
+              taxInclusive: l.taxInclusive ?? false,
+              totalPrice: String(amounts.totalAmount.toFixed(2)),
+              glAccount: l.glAccount ?? null,
+            };
+          }),
         );
       }
 
@@ -435,7 +485,15 @@ export class InvoicesService {
           });
           if (req?.departmentId) {
             const fiscalYear = new Date().getFullYear();
-            await this.budgets.recordSpend(organizationId, req.departmentId, parseFloat((approved as any).totalAmount ?? '0'), fiscalYear);
+            const recoverableTaxAmount = ((approved as any).lines ?? [])
+              .filter((line: any) => line.taxCode?.isRecoverable)
+              .reduce((sum: number, line: any) => sum + parseFloat(String(line.taxAmount ?? '0')), 0);
+            await this.budgets.recordSpend(
+              organizationId,
+              req.departmentId,
+              parseFloat((approved as any).totalAmount ?? '0') - recoverableTaxAmount,
+              fiscalYear,
+            );
           }
         }
       } catch {

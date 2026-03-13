@@ -41,6 +41,7 @@ import { InventoryModule } from './modules/inventory/inventory.module';
 import { RequisitionTemplatesModule } from './modules/requisition-templates/requisition-templates.module';
 import { ExportModule } from './modules/export/export.module';
 import { EntitiesModule } from './modules/entities/entities.module';
+import { TaxCodesModule } from './modules/tax-codes/tax-codes.module';
 
 @Module({
   imports: [
@@ -71,6 +72,7 @@ import { EntitiesModule } from './modules/entities/entities.module';
     DepartmentsModule,
     ProjectsModule,
     EntitiesModule,
+    TaxCodesModule,
     AuditModule,
     ReportsModule,
     SearchModule,

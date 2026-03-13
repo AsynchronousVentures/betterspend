@@ -398,6 +398,7 @@ export class BudgetsService {
     amount: number,
     fiscalYear: number,
   ) {
+    const normalizedAmount = Math.max(amount, 0);
     const budget = await this.db.query.budgets.findFirst({
       where: (b, { and, eq }) => and(
         eq(b.organizationId, organizationId),
@@ -413,7 +414,7 @@ export class BudgetsService {
 
     await this.db.update(budgets)
       .set({
-        spentAmount: sql`${budgets.spentAmount} + ${String(amount)}`,
+        spentAmount: sql`${budgets.spentAmount} + ${String(normalizedAmount)}`,
         updatedAt: new Date(),
       })
       .where(and(eq(budgets.id, budget.id), eq(budgets.organizationId, organizationId)));
@@ -421,7 +422,7 @@ export class BudgetsService {
     // Also update the period that covers today's date
     await this.db.update(budgetPeriods)
       .set({
-        spentAmount: sql`${budgetPeriods.spentAmount} + ${String(amount)}`,
+        spentAmount: sql`${budgetPeriods.spentAmount} + ${String(normalizedAmount)}`,
       })
       .where(
         and(

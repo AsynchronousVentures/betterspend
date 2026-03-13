@@ -18,6 +18,7 @@ import { systemSettings } from './schema/system-settings';
 import { vendorPortalTokens } from './schema/vendor-portal-tokens';
 import { notifications } from './schema/notifications';
 import { paymentRuns, paymentRunInvoices } from './schema/payment-runs';
+import { taxCodes } from './schema/tax-codes';
 
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -98,6 +99,7 @@ export const requisitionLinesRelations = relations(requisitionLines, ({ one }) =
 
 export const poLinesRelations = relations(poLines, ({ one }) => ({
   purchaseOrder: one(purchaseOrders, { fields: [poLines.purchaseOrderId], references: [purchaseOrders.id] }),
+  taxCode: one(taxCodes, { fields: [poLines.taxCodeId], references: [taxCodes.id] }),
 }));
 
 export const poVersionsRelations = relations(poVersions, ({ one }) => ({
@@ -150,7 +152,14 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
 export const invoiceLinesRelations = relations(invoiceLines, ({ one, many }) => ({
   invoice: one(invoices, { fields: [invoiceLines.invoiceId], references: [invoices.id] }),
   poLine: one(poLines, { fields: [invoiceLines.poLineId], references: [poLines.id] }),
+  taxCode: one(taxCodes, { fields: [invoiceLines.taxCodeId], references: [taxCodes.id] }),
   matchResults: many(matchResults),
+}));
+
+export const taxCodesRelations = relations(taxCodes, ({ one, many }) => ({
+  organization: one(organizations, { fields: [taxCodes.orgId], references: [organizations.id] }),
+  poLines: many(poLines),
+  invoiceLines: many(invoiceLines),
 }));
 
 export const matchResultsRelations = relations(matchResults, ({ one }) => ({
