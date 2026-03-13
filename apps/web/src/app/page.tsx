@@ -15,6 +15,36 @@ function fmt(n: string | number | null | undefined) {
   }).format(Number(n));
 }
 
+function formatRelativeTime(value: string | Date | null | undefined, now = Date.now()) {
+  if (!value) return '';
+
+  const date = value instanceof Date ? value : new Date(value);
+  const timestamp = date.getTime();
+  if (Number.isNaN(timestamp)) return '';
+
+  const diffMs = now - timestamp;
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (diffMs < minute) return 'Just now';
+  if (diffMs < hour) {
+    const minutes = Math.max(1, Math.floor(diffMs / minute));
+    return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  }
+  if (diffMs < day) {
+    const hours = Math.max(1, Math.floor(diffMs / hour));
+    return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  }
+  if (diffMs < day * 2) return 'Yesterday';
+  if (diffMs < day * 7) {
+    const days = Math.max(1, Math.floor(diffMs / day));
+    return `${days} days ago`;
+  }
+
+  return date.toLocaleDateString();
+}
+
 const ACCENT_MAP: Record<string, { border: string; light: string; text: string }> = {
   blue: { border: COLORS.accentBlue, light: COLORS.accentBlueLight, text: COLORS.accentBlueDark },
   green: {
@@ -165,6 +195,7 @@ export default function HomePage() {
   } | null>(null);
   const [autoApproveThreshold, setAutoApproveThreshold] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  const [relativeNow, setRelativeNow] = useState(() => Date.now());
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -191,6 +222,11 @@ export default function HomePage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setRelativeNow(Date.now()), 30 * 1000);
+    return () => window.clearInterval(intervalId);
   }, []);
 
   const po = kpis?.purchaseOrders;
@@ -397,7 +433,7 @@ export default function HomePage() {
             boxShadow: SHADOWS.card,
           }}
         >
-          <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.cardBorder}` }}>
+          <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.cardBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
             <h2
               style={{
                 margin: 0,
@@ -408,6 +444,17 @@ export default function HomePage() {
             >
               Recent Activity
             </h2>
+            <Link
+              href="/audit"
+              style={{
+                fontSize: '0.75rem',
+                color: COLORS.accentBlue,
+                fontWeight: 500,
+                textDecoration: 'none',
+              }}
+            >
+              View audit log &rarr;
+            </Link>
           </div>
           {loading ? (
             <div
@@ -470,8 +517,9 @@ export default function HomePage() {
                         color: COLORS.textMuted,
                         marginTop: '0.125rem',
                       }}
+                      title={item.createdAt ? new Date(item.createdAt).toISOString() : undefined}
                     >
-                      {item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}
+                      {formatRelativeTime(item.createdAt, relativeNow)}
                     </div>
                   </div>
                 </div>
@@ -523,7 +571,7 @@ export default function HomePage() {
                   textDecoration: 'none',
                 }}
               >
-                View all →
+                View all contracts &rarr;
               </Link>
             </div>
             <div>
@@ -639,7 +687,7 @@ export default function HomePage() {
                   textDecoration: 'none',
                 }}
               >
-                View all &rarr;
+                Go to inventory &rarr;
               </Link>
             </div>
             <div>
