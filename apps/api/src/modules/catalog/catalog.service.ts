@@ -72,7 +72,19 @@ export class CatalogService {
       with: { vendor: true },
     });
     if (!item) throw new NotFoundException(`Catalog item ${id} not found`);
-    return item;
+    const proposals = await this.db.query.catalogPriceProposals.findMany({
+      where: (proposal, { and, eq }) =>
+        and(eq(proposal.organizationId, organizationId), eq(proposal.itemId, id)),
+      with: {
+        vendor: true,
+        reviewer: true,
+      },
+      orderBy: (proposal, { desc }) => desc(proposal.submittedAt),
+    });
+    return {
+      ...item,
+      priceProposals: proposals,
+    };
   }
 
   async create(organizationId: string, input: CreateCatalogItemInput) {

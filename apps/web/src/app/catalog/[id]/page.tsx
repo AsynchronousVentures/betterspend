@@ -20,6 +20,10 @@ function Field({ label, value }: { label: string; value: string | null | undefin
   );
 }
 
+function formatPrice(price: string | number, currency: string) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(parseFloat(String(price || 0)));
+}
+
 export default function CatalogItemDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const [item, setItem] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -86,7 +90,7 @@ export default function CatalogItemDetailPage({ params }: { params: Promise<{ id
   if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>Loading…</div>;
   if (!item) return <div style={{ padding: '2rem', color: COLORS.accentRedDark }}>Item not found. <Link href="/catalog" style={{ color: COLORS.accentBlueDark }}>Back to catalog</Link></div>;
 
-  const price = new Intl.NumberFormat('en-US', { style: 'currency', currency: item.currency || 'USD' }).format(parseFloat(item.unitPrice || '0'));
+  const price = formatPrice(item.unitPrice || '0', item.currency || 'USD');
 
   return (
     <div style={{ padding: '2rem', maxWidth: '700px' }}>
@@ -195,6 +199,52 @@ export default function CatalogItemDetailPage({ params }: { params: Promise<{ id
           <Link href={`/vendors/${item.vendor.id}`} style={{ color: COLORS.accentBlueDark, fontWeight: 600, textDecoration: 'none', fontSize: '0.9rem' }}>
             {item.vendor.name}
           </Link>
+        </div>
+      )}
+
+      {!!item.priceProposals?.length && (
+        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.25rem', boxShadow: SHADOWS.card, marginTop: '1.5rem' }}>
+          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: COLORS.textMuted, textTransform: 'uppercase', marginBottom: '0.75rem' }}>
+            Supplier Price Proposal History
+          </div>
+          <div style={{ display: 'grid', gap: '0.75rem' }}>
+            {item.priceProposals.map((proposal: any) => (
+              <div key={proposal.id} style={{ border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '0.9rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 600, color: COLORS.textPrimary }}>
+                    {formatPrice(proposal.currentPrice, item.currency || 'USD')} {'->'} {formatPrice(proposal.proposedPrice, item.currency || 'USD')}
+                  </div>
+                  <span style={{
+                    padding: '0.18rem 0.55rem',
+                    borderRadius: '999px',
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    background: proposal.status === 'approved' ? COLORS.accentGreenLight : proposal.status === 'rejected' ? COLORS.accentRedLight : COLORS.accentAmberLight,
+                    color: proposal.status === 'approved' ? COLORS.accentGreenDark : proposal.status === 'rejected' ? COLORS.accentRedDark : COLORS.accentAmberDark,
+                    textTransform: 'uppercase',
+                  }}>
+                    {proposal.status}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.82rem', color: COLORS.textSecondary }}>
+                  <div>Supplier: {proposal.vendor?.name ?? '—'}</div>
+                  <div>Submitted: {proposal.submittedAt ? new Date(proposal.submittedAt).toLocaleDateString() : '—'}</div>
+                  <div>Effective: {proposal.effectiveDate ? new Date(proposal.effectiveDate).toLocaleDateString() : 'Immediate'}</div>
+                  <div>Reviewed by: {proposal.reviewer?.name ?? 'Pending review'}</div>
+                </div>
+                {proposal.note && (
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', color: COLORS.textSecondary }}>
+                    Supplier note: {proposal.note}
+                  </div>
+                )}
+                {proposal.reviewNote && (
+                  <div style={{ marginTop: '0.35rem', fontSize: '0.82rem', color: COLORS.textSecondary }}>
+                    Review note: {proposal.reviewNote}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
