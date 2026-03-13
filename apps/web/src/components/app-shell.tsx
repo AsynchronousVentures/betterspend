@@ -42,6 +42,7 @@ const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 const SHORTCUTS_DISABLED_KEY = 'betterspend:shortcuts-disabled';
 const SIDEBAR_COLLAPSED_KEY = 'betterspend:sidebar-collapsed';
 const RECENT_SEARCHES_KEY = 'betterspend:recent-searches';
+const NOTIFICATION_LAST_VIEWED_KEY = 'betterspend:notification-last-viewed-at';
 const TYPE_LABELS: Record<string, string> = {
   requisition: 'Req',
   purchase_order: 'PO',
@@ -485,6 +486,7 @@ function NotificationBell() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [hasNewSinceLastView, setHasNewSinceLastView] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [preferences, setPreferences] = useState<NotificationPreferences>({
     emailEnabled: true,
@@ -506,8 +508,24 @@ function NotificationBell() {
   }
 
   const fetchCount = useCallback(() => {
-    api.notifications.unreadCount()
-      .then((data) => setUnreadCount(data.count))
+    Promise.all([
+      api.notifications.unreadCount(),
+      api.notifications.list({ limit: 1 }),
+    ])
+      .then(([countData, latestData]) => {
+        setUnreadCount(countData.count);
+        const lastViewedAt = typeof window === 'undefined'
+          ? null
+          : window.localStorage.getItem(NOTIFICATION_LAST_VIEWED_KEY);
+        const latest = latestData.items[0];
+        setHasNewSinceLastView(
+          Boolean(
+            latest?.createdAt
+            && lastViewedAt
+            && new Date(latest.createdAt).getTime() > new Date(lastViewedAt).getTime(),
+          ),
+        );
+      })
       .catch(() => {});
   }, []);
 
@@ -541,6 +559,10 @@ function NotificationBell() {
   function handleBellClick() {
     if (!open) {
       setLoading(true);
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(NOTIFICATION_LAST_VIEWED_KEY, new Date().toISOString());
+      }
+      setHasNewSinceLastView(false);
       api.notifications.list({ limit: 10 })
         .then((data) => setNotifications(data.items.filter((item) => preferences.enabledTypes.includes(item.type))))
         .catch(() => {})
@@ -591,6 +613,20 @@ function NotificationBell() {
         onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
       >
         <BellIcon hasUnread={unreadCount > 0} />
+        {hasNewSinceLastView && unreadCount === 0 && (
+          <span
+            style={{
+              position: 'absolute',
+              top: '3px',
+              right: '3px',
+              width: '8px',
+              height: '8px',
+              borderRadius: '999px',
+              background: COLORS.badgeRed,
+              border: `2px solid ${COLORS.white}`,
+            }}
+          />
+        )}
         {unreadCount > 0 && (
           <span
             style={{
