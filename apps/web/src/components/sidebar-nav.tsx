@@ -58,6 +58,7 @@ const NAV_CONFIG: NavEntry[] = [
       { label: 'Receiving', href: '/receiving' },
       { label: 'Inventory', href: '/inventory' },
       { label: 'Invoices', href: '/invoices' },
+      { label: 'Intake Queue', href: '/intake' },
       { label: 'OCR Jobs', href: '/ocr' },
     ],
   },

@@ -28,6 +28,7 @@ import { exchangeRates } from './schema/exchange-rates';
 import { spendGuardAlerts } from './schema/spend-guard-alerts';
 import { softwareLicenses } from './schema/software-licenses';
 import { catalogPriceProposals } from './schema/catalog-price-proposals';
+import { emailIntakeItems } from './schema/email-intake';
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   legalEntities: many(legalEntities),
@@ -41,6 +42,7 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   exchangeRates: many(exchangeRates),
   spendGuardAlerts: many(spendGuardAlerts),
   softwareLicenses: many(softwareLicenses),
+  emailIntakeItems: many(emailIntakeItems),
 }));
 
 export const exchangeRatesRelations = relations(exchangeRates, ({ one }) => ({
@@ -89,6 +91,13 @@ export const usersRelations = relations(users, ({ one, many }) => ({
 
 export const notificationsRelations = relations(notifications, ({ one }) => ({
   user: one(users, { fields: [notifications.userId], references: [users.id] }),
+}));
+
+export const emailIntakeItemsRelations = relations(emailIntakeItems, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [emailIntakeItems.organizationId],
+    references: [organizations.id],
+  }),
 }));
 
 export const userRolesRelations = relations(userRoles, ({ one }) => ({

@@ -21,6 +21,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Approval workflow simulator with readable approver labels and safe dry-run rule matching.
 - Notification center pagination, server-side notification preferences, and bell activity indicators.
 - Recurring purchase order schedule controls, history visibility, skip-next, and run-now actions.
+- First-pass email intake queue support for manually triaging forwarded quote, invoice, and requisition emails.
 
 ### Changed
 

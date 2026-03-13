@@ -586,6 +586,12 @@ export const api = {
     markRead: (id: string) => apiFetch<void>(`/notifications/${id}/read`, { method: 'POST' }),
     markAllRead: () => apiFetch<void>('/notifications/read-all', { method: 'POST' }),
   },
+  emailIntake: {
+    list: () => apiFetch<any[]>('/email-intake'),
+    create: (data: { sourceEmail: string; subject: string; body: string }) =>
+      apiFetch<any>('/email-intake', { method: 'POST', body: JSON.stringify(data) }),
+    discard: (id: string) => apiFetch<any>(`/email-intake/${id}/discard`, { method: 'POST' }),
+  },
   settings: {
     getAll: () => apiFetch<Record<string, string>>('/settings'),
     getBranding: () => apiFetch<Record<string, string>>('/settings/branding'),
