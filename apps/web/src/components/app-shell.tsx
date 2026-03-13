@@ -38,6 +38,7 @@ function OfflineIndicator() {
 
 const AUTH_PATHS = ['/login', '/signup', '/punchout', '/forgot-password', '/reset-password', '/vendor-portal'];
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
+const SHORTCUTS_DISABLED_KEY = 'betterspend:shortcuts-disabled';
 
 const TYPE_LABELS: Record<string, string> = {
   requisition: 'Req',
@@ -133,6 +134,8 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   return (
     <div ref={containerRef} style={{ position: 'relative', width: isMobile ? '100%' : '360px' }}>
       <input
+        data-global-search="true"
+        aria-label="Global search"
         ref={inputRef}
         value={query}
         onChange={(e) => { setQuery(e.target.value); if (e.target.value.length >= 2) setOpen(true); }}
@@ -354,6 +357,15 @@ function NotificationBell() {
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    function handleShortcutEscape() {
+      setOpen(false);
+    }
+
+    window.addEventListener('betterspend:escape', handleShortcutEscape as EventListener);
+    return () => window.removeEventListener('betterspend:escape', handleShortcutEscape as EventListener);
   }, []);
 
   function handleBellClick() {
@@ -580,19 +592,224 @@ function NotificationBell() {
   );
 }
 
+function ShortcutsModal({
+  open,
+  shortcutsDisabled,
+  onClose,
+  onToggleDisabled,
+}: {
+  open: boolean;
+  shortcutsDisabled: boolean;
+  onClose: () => void;
+  onToggleDisabled: (nextValue: boolean) => void;
+}) {
+  useEffect(() => {
+    if (!open) return;
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+    }
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [onClose, open]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: SHADOWS.overlay,
+        zIndex: 120,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '1rem',
+      }}
+    >
+      <div
+        onClick={(event) => event.stopPropagation()}
+        style={{
+          width: '100%',
+          maxWidth: '520px',
+          background: COLORS.white,
+          borderRadius: '12px',
+          border: `1px solid ${COLORS.border}`,
+          boxShadow: SHADOWS.dropdown,
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '1rem 1.25rem', borderBottom: `1px solid ${COLORS.border}` }}>
+          <div style={{ fontSize: '1rem', fontWeight: 700, color: COLORS.textPrimary }}>Keyboard Shortcuts</div>
+          <div style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginTop: '0.25rem' }}>
+            Global navigation and form actions for faster workflows.
+          </div>
+        </div>
+        <div style={{ padding: '1rem 1.25rem', display: 'grid', gap: '0.75rem' }}>
+          {[
+            ['/', 'Focus global search'],
+            ['Ctrl/Cmd + K', 'Focus global search'],
+            ['Esc', 'Close open dropdowns or help modal'],
+            ['?', 'Show keyboard shortcuts help'],
+            ['Ctrl/Cmd + Enter', 'Submit the current form'],
+            ['Ctrl/Cmd + S', 'Save the current form'],
+          ].map(([shortcut, action]) => (
+            <div key={shortcut} style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '1rem', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: COLORS.textPrimary, fontFamily: 'monospace', background: COLORS.contentBg, padding: '0.25rem 0.5rem', borderRadius: '6px', border: `1px solid ${COLORS.border}` }}>
+                {shortcut}
+              </span>
+              <span style={{ fontSize: '0.875rem', color: COLORS.textSecondary }}>{action}</span>
+            </div>
+          ))}
+          <label style={{ display: 'flex', gap: '0.625rem', alignItems: 'flex-start', marginTop: '0.5rem', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={shortcutsDisabled}
+              onChange={(event) => onToggleDisabled(event.target.checked)}
+              style={{ marginTop: '0.2rem' }}
+            />
+            <div>
+              <div style={{ fontSize: '0.875rem', fontWeight: 600, color: COLORS.textPrimary }}>Disable keyboard shortcuts</div>
+              <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.125rem' }}>
+                Stores your preference in this browser for accessibility or screen-reader compatibility.
+              </div>
+            </div>
+          </label>
+        </div>
+        <div style={{ padding: '1rem 1.25rem', borderTop: `1px solid ${COLORS.border}`, display: 'flex', justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.55rem 0.9rem',
+              borderRadius: '8px',
+              border: 'none',
+              background: COLORS.accentBlue,
+              color: COLORS.white,
+              fontSize: '0.8125rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── AppShell ── */
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+  const [shortcutsDisabled, setShortcutsDisabled] = useState(false);
   const isAuthPage = AUTH_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'));
   const branding = useBranding();
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setShortcutsDisabled(window.localStorage.getItem(SHORTCUTS_DISABLED_KEY) === 'true');
+  }, []);
 
   // Close sidebar on navigation (mobile)
   useEffect(() => {
     setSidebarOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    if (shortcutsDisabled) return;
+
+    function isTypingTarget(target: EventTarget | null) {
+      const element = target as HTMLElement | null;
+      if (!element) return false;
+      const tagName = element.tagName;
+      return tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || element.isContentEditable;
+    }
+
+    function focusGlobalSearch() {
+      const input = document.querySelector<HTMLInputElement>('input[data-global-search="true"]');
+      input?.focus();
+      input?.select();
+    }
+
+    function triggerFormAction(action: 'submit' | 'save') {
+      const activeElement = document.activeElement as HTMLElement | null;
+      const form = activeElement?.closest('form');
+      if (!form) return;
+
+      const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"], input[type="submit"]');
+      if (submitButton) {
+        submitButton.click();
+        return;
+      }
+
+      if (action === 'submit') {
+        form.requestSubmit();
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      const typing = isTypingTarget(event.target);
+      const lowerKey = event.key.toLowerCase();
+      const hasMeta = event.metaKey || event.ctrlKey;
+
+      if (event.key === 'Escape') {
+        window.dispatchEvent(new Event('betterspend:escape'));
+        setSidebarOpen(false);
+        setShowShortcutsModal(false);
+        return;
+      }
+
+      if (hasMeta && lowerKey === 'k') {
+        event.preventDefault();
+        focusGlobalSearch();
+        return;
+      }
+
+      if (hasMeta && lowerKey === 'enter') {
+        event.preventDefault();
+        triggerFormAction('submit');
+        return;
+      }
+
+      if (hasMeta && lowerKey === 's') {
+        const activeElement = document.activeElement as HTMLElement | null;
+        if (activeElement?.closest('form')) {
+          event.preventDefault();
+          triggerFormAction('save');
+        }
+        return;
+      }
+
+      if (!typing && event.key === '/') {
+        event.preventDefault();
+        focusGlobalSearch();
+        return;
+      }
+
+      if (!typing && event.key === '?') {
+        event.preventDefault();
+        setShowShortcutsModal(true);
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [shortcutsDisabled]);
+
+  function handleToggleShortcutsDisabled(nextValue: boolean) {
+    setShortcutsDisabled(nextValue);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(SHORTCUTS_DISABLED_KEY, nextValue ? 'true' : 'false');
+    }
+  }
 
   if (isAuthPage) {
     return <>{children}</>;
@@ -668,6 +885,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: COLORS.contentBg }}>
+      <ShortcutsModal
+        open={showShortcutsModal}
+        shortcutsDisabled={shortcutsDisabled}
+        onClose={() => setShowShortcutsModal(false)}
+        onToggleDisabled={handleToggleShortcutsDisabled}
+      />
       {/* Desktop sidebar */}
       {!isMobile && sidebar}
 
