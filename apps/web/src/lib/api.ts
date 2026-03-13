@@ -535,12 +535,31 @@ export const api = {
       }),
   },
   notifications: {
-    list: (params?: { unreadOnly?: boolean; limit?: number }) => {
+    list: (params?: {
+      unreadOnly?: boolean;
+      limit?: number;
+      offset?: number;
+      type?: string;
+      status?: 'all' | 'read' | 'unread';
+      sort?: 'newest' | 'oldest';
+    }) => {
       const q = new URLSearchParams();
       if (params?.unreadOnly) q.set('unreadOnly', 'true');
       if (params?.limit) q.set('limit', String(params.limit));
-      return apiFetch<any[]>(`/notifications${q.toString() ? '?' + q : ''}`);
+      if (params?.offset) q.set('offset', String(params.offset));
+      if (params?.type && params.type !== 'all') q.set('type', params.type);
+      if (params?.status && params.status !== 'all') q.set('status', params.status);
+      if (params?.sort) q.set('sort', params.sort);
+      return apiFetch<{ items: any[]; total: number; limit: number; offset: number }>(`/notifications${q.toString() ? '?' + q : ''}`);
     },
+    types: () => apiFetch<string[]>('/notifications/types'),
+    getPreferences: () =>
+      apiFetch<{ emailEnabled: boolean; frequency: 'instant' | 'daily' | 'weekly'; enabledTypes: string[] }>('/notifications/preferences'),
+    updatePreferences: (data: { emailEnabled?: boolean; frequency?: 'instant' | 'daily' | 'weekly'; enabledTypes?: string[] }) =>
+      apiFetch<{ emailEnabled: boolean; frequency: 'instant' | 'daily' | 'weekly'; enabledTypes: string[] }>('/notifications/preferences', {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
     unreadCount: () => apiFetch<{ count: number }>('/notifications/unread-count'),
     markRead: (id: string) => apiFetch<void>(`/notifications/${id}/read`, { method: 'POST' }),
     markAllRead: () => apiFetch<void>('/notifications/read-all', { method: 'POST' }),

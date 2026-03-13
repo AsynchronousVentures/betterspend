@@ -162,6 +162,13 @@
       "when": 1774900000000,
       "tag": "0022_recurring_po_history",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1775000000000,
+      "tag": "0023_notification_preferences",
+      "breakpoints": true
     }
   ]
 }

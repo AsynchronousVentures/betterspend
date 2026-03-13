@@ -42,8 +42,6 @@ const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 const SHORTCUTS_DISABLED_KEY = 'betterspend:shortcuts-disabled';
 const SIDEBAR_COLLAPSED_KEY = 'betterspend:sidebar-collapsed';
 const RECENT_SEARCHES_KEY = 'betterspend:recent-searches';
-const NOTIFICATION_PREFS_KEY = 'betterspend:notification-preferences';
-
 const TYPE_LABELS: Record<string, string> = {
   requisition: 'Req',
   purchase_order: 'PO',
@@ -58,6 +56,12 @@ const TYPE_COLORS: Record<string, { bg: string; text: string }> = {
   invoice: { bg: COLORS.accentAmberLight, text: COLORS.accentAmberDark },
   vendor: { bg: COLORS.accentPurpleLight, text: COLORS.accentPurpleDark },
   catalog_item: { bg: '#f0f9ff', text: '#0369a1' },
+};
+
+type NotificationPreferences = {
+  emailEnabled: boolean;
+  frequency: 'instant' | 'daily' | 'weekly';
+  enabledTypes: string[];
 };
 
 /* ── Hamburger Icon ── */
@@ -482,26 +486,23 @@ function NotificationBell() {
   const [loading, setLoading] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [preferences, setPreferences] = useState({
+  const [preferences, setPreferences] = useState<NotificationPreferences>({
     emailEnabled: true,
     frequency: 'instant',
     enabledTypes: ['approval_request', 'po_issued', 'invoice_exception', 'invoice_approved', 'spend_guard', 'software_license'],
   });
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const stored = window.localStorage.getItem(NOTIFICATION_PREFS_KEY);
-      if (stored) setPreferences((prev) => ({ ...prev, ...JSON.parse(stored) }));
-    } catch {}
+    api.notifications.getPreferences()
+      .then((stored) => setPreferences((prev) => ({ ...prev, ...stored })))
+      .catch(() => {});
   }, []);
 
-  function updatePreferences(nextValue: Partial<typeof preferences>) {
-    const merged = { ...preferences, ...nextValue };
+  async function updatePreferences(nextValue: Partial<NotificationPreferences>) {
+    const merged: NotificationPreferences = { ...preferences, ...nextValue };
     setPreferences(merged);
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify(merged));
-    }
+    const saved = await api.notifications.updatePreferences(merged).catch(() => merged);
+    setPreferences((prev) => ({ ...prev, ...saved }));
   }
 
   const fetchCount = useCallback(() => {
@@ -541,7 +542,7 @@ function NotificationBell() {
     if (!open) {
       setLoading(true);
       api.notifications.list({ limit: 10 })
-        .then((data) => setNotifications(data.filter((item) => preferences.enabledTypes.includes(item.type))))
+        .then((data) => setNotifications(data.items.filter((item) => preferences.enabledTypes.includes(item.type))))
         .catch(() => {})
         .finally(() => setLoading(false));
     }
@@ -635,7 +636,7 @@ function NotificationBell() {
           </div>
           <div style={{ padding: '0.875rem 1rem', display: 'grid', gap: '0.875rem' }}>
             <label style={{ display: 'flex', gap: '0.625rem', alignItems: 'flex-start' }}>
-              <input type="checkbox" checked={preferences.emailEnabled} onChange={(event) => updatePreferences({ emailEnabled: event.target.checked })} />
+              <input type="checkbox" checked={preferences.emailEnabled} onChange={(event) => { void updatePreferences({ emailEnabled: event.target.checked }); }} />
               <div>
                 <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: COLORS.textPrimary }}>Enable email notifications</div>
                 <div style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>Saved locally for now. Server-side delivery preferences are still pending.</div>
@@ -643,7 +644,7 @@ function NotificationBell() {
             </label>
             <div>
               <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, fontWeight: 600, textTransform: 'uppercase', marginBottom: '0.35rem' }}>Frequency</div>
-              <select value={preferences.frequency} onChange={(event) => updatePreferences({ frequency: event.target.value })} style={{ width: '100%', padding: '0.5rem 0.65rem', borderRadius: '8px', border: `1px solid ${COLORS.border}`, fontSize: '0.8125rem' }}>
+              <select value={preferences.frequency} onChange={(event) => { void updatePreferences({ frequency: event.target.value as NotificationPreferences['frequency'] }); }} style={{ width: '100%', padding: '0.5rem 0.65rem', borderRadius: '8px', border: `1px solid ${COLORS.border}`, fontSize: '0.8125rem' }}>
                 <option value="instant">Instant</option>
                 <option value="daily">Daily digest</option>
                 <option value="weekly">Weekly digest</option>
@@ -657,13 +658,13 @@ function NotificationBell() {
                     <input
                       type="checkbox"
                       checked={preferences.enabledTypes.includes(type)}
-                      onChange={(event) =>
-                        updatePreferences({
+                      onChange={(event) => {
+                        void updatePreferences({
                           enabledTypes: event.target.checked
                             ? [...preferences.enabledTypes, type]
                             : preferences.enabledTypes.filter((item) => item !== type),
-                        })
-                      }
+                        });
+                      }}
                     />
                     {type.replace(/_/g, ' ')}
                   </label>

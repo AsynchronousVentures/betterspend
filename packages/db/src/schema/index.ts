@@ -19,6 +19,7 @@ export * from './system-settings';
 export * from './password-reset-tokens';
 export * from './vendor-portal-tokens';
 export * from './notifications';
+export * from './notification-preferences';
 export * from './approval-delegations';
 export * from './rfq';
 export * from './recurring-pos';
