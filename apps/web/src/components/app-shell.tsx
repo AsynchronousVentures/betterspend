@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import SidebarNav from './sidebar-nav';
 import { api } from '../lib/api';
 import { COLORS, SHADOWS } from '../lib/theme';
-import { useIsMobile } from '../lib/use-media-query';
+import { useIsMobile, useMediaQuery } from '../lib/use-media-query';
 import { useBranding } from '../lib/branding';
 
 /* ── Offline Indicator ── */
@@ -267,6 +267,7 @@ function timeAgo(dateStr: string): string {
 function EntitySwitcher() {
   const [entities, setEntities] = useState<any[]>([]);
   const [selectedEntityId, setSelectedEntityId] = useState('');
+  const compactEntitySwitcher = useMediaQuery('(max-width: 479px)');
 
   useEffect(() => {
     const stored = typeof window !== 'undefined' ? window.localStorage.getItem(ENTITY_STORAGE_KEY) ?? '' : '';
@@ -277,9 +278,13 @@ function EntitySwitcher() {
   if (entities.length === 0) return null;
 
   return (
-    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem', color: COLORS.textSecondary }}>
-      <span style={{ whiteSpace: 'nowrap' }}>Entity</span>
+    <label
+      title="Choose the active entity scope"
+      style={{ display: 'flex', alignItems: 'center', gap: compactEntitySwitcher ? 0 : '0.5rem', fontSize: '0.75rem', color: COLORS.textSecondary }}
+    >
+      {!compactEntitySwitcher ? <span style={{ whiteSpace: 'nowrap' }}>Entity</span> : null}
       <select
+        aria-label="Select active entity"
         value={selectedEntityId}
         onChange={(e) => {
           const nextValue = e.target.value;
@@ -291,7 +296,7 @@ function EntitySwitcher() {
           }
         }}
         style={{
-          minWidth: '180px',
+          minWidth: compactEntitySwitcher ? '120px' : '180px',
           padding: '0.45rem 0.65rem',
           border: `1px solid ${COLORS.border}`,
           borderRadius: '8px',
