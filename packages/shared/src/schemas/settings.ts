@@ -15,6 +15,9 @@ export const SETTING_KEYS = [
   'smtp_pass',
   'smtp_from',
   'smtp_secure',
+  'auto_approve_threshold',
+  'auto_approve_require_budget_check',
+  'auto_approve_notify_manager',
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];
@@ -34,6 +37,9 @@ export const DEFAULT_SETTINGS: Record<SettingKey, string> = {
   smtp_pass: '',
   smtp_from: 'noreply@betterspend.io',
   smtp_secure: 'false',
+  auto_approve_threshold: '0',
+  auto_approve_require_budget_check: 'false',
+  auto_approve_notify_manager: 'true',
 };
 
 export const brandingSettingsSchema = z.object({
@@ -54,4 +60,10 @@ export const smtpSettingsSchema = z.object({
   smtp_pass: z.string().optional(),
   smtp_from: z.string().email().or(z.literal('')).optional(),
   smtp_secure: z.enum(['true', 'false']).optional(),
+});
+
+export const approvalPolicySettingsSchema = z.object({
+  auto_approve_threshold: z.string().regex(/^\d+(\.\d{1,2})?$/, 'Must be a valid dollar amount').optional(),
+  auto_approve_require_budget_check: z.enum(['true', 'false']).optional(),
+  auto_approve_notify_manager: z.enum(['true', 'false']).optional(),
 });

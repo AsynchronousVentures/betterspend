@@ -74,6 +74,8 @@ export default function HomePage() {
   const [activity, setActivity] = useState<any[]>([]);
   const [expiringContracts, setExpiringContracts] = useState<any[]>([]);
   const [lowStockItems, setLowStockItems] = useState<any[]>([]);
+  const [autoApprovedSummary, setAutoApprovedSummary] = useState<{ count: number; totalAmount: number } | null>(null);
+  const [autoApproveThreshold, setAutoApproveThreshold] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const isMobile = useIsMobile();
 
@@ -84,12 +86,19 @@ export default function HomePage() {
       api.analytics.recentActivity(),
       api.contracts.expiring(30).catch(() => []),
       api.inventory.lowStock().catch(() => []),
-    ]).then(([k, p, a, ec, ls]) => {
+      api.approvals.autoApprovedSummary().catch(() => null),
+      api.settings.getAll().catch(() => ({})),
+    ]).then(([k, p, a, ec, ls, aas, settings]) => {
       setKpis(k);
       setPending(p);
       setActivity(Array.isArray(a) ? a : []);
       setExpiringContracts(Array.isArray(ec) ? ec : []);
       setLowStockItems(Array.isArray(ls) ? ls : []);
+      if (aas) setAutoApprovedSummary(aas);
+      const settingsMap = settings as Record<string, string>;
+      if (settingsMap && settingsMap.auto_approve_threshold) {
+        setAutoApproveThreshold(parseFloat(settingsMap.auto_approve_threshold) || 0);
+      }
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
@@ -280,6 +289,52 @@ export default function HomePage() {
                   </div>
                 </Link>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auto-approved this month widget */}
+      {!loading && autoApproveThreshold > 0 && autoApprovedSummary !== null && (
+        <div style={{ marginBottom: '1.5rem' }}>
+          <div style={{
+            background: COLORS.cardBg,
+            border: `1px solid ${COLORS.cardBorder}`,
+            borderLeft: `3px solid ${COLORS.accentGreen}`,
+            borderRadius: '8px',
+            padding: '1rem 1.25rem',
+            boxShadow: SHADOWS.card,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '1rem',
+          }}>
+            <div>
+              <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>
+                Auto-approved this month
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
+                <span style={{ fontSize: '1.375rem', fontWeight: 700, color: COLORS.textPrimary }}>
+                  {autoApprovedSummary.count}
+                </span>
+                <span style={{ fontSize: '0.8125rem', color: COLORS.textSecondary }}>
+                  requisition{autoApprovedSummary.count !== 1 ? 's' : ''} &middot; {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(autoApprovedSummary.totalAmount)} total
+                </span>
+              </div>
+              <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.25rem' }}>
+                Fast lane threshold: ${autoApproveThreshold.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+              </div>
+            </div>
+            <div style={{
+              background: COLORS.accentGreenLight,
+              color: COLORS.accentGreenDark,
+              padding: '0.375rem 0.875rem',
+              borderRadius: '6px',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              flexShrink: 0,
+            }}>
+              Fast Lane Active
             </div>
           </div>
         </div>

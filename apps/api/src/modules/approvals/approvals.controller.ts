@@ -17,6 +17,12 @@ export class ApprovalsController {
     return this.approvalEngineService.listPending(orgId);
   }
 
+  @Get('auto-approved-summary')
+  @ApiOperation({ summary: 'Get count and total spend of auto-approved requisitions this month' })
+  getAutoApprovedSummary(@CurrentOrgId() orgId: string) {
+    return this.approvalEngineService.getAutoApprovedSummary(orgId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get approval request detail' })
   getRequest(@Param('id', ParseUUIDPipe) id: string) {

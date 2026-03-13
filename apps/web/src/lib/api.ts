@@ -170,6 +170,7 @@ export const api = {
     get: (id: string) => apiFetch<any>(`/approvals/${id}`),
     approve: (id: string, data: unknown) => apiFetch<any>(`/approvals/${id}/approve`, { method: 'POST', body: JSON.stringify(data) }),
     reject: (id: string, data: unknown) => apiFetch<any>(`/approvals/${id}/reject`, { method: 'POST', body: JSON.stringify(data) }),
+    autoApprovedSummary: () => apiFetch<{ count: number; totalAmount: number }>('/approvals/auto-approved-summary'),
   },
   receiving: {
     list: () => apiFetch<any[]>('/receiving'),
@@ -324,6 +325,7 @@ export const api = {
     updateBranding: (data: unknown) => apiFetch<any>('/settings/branding', { method: 'PUT', body: JSON.stringify(data) }),
     updateSmtp: (data: unknown) => apiFetch<any>('/settings/smtp', { method: 'PUT', body: JSON.stringify(data) }),
     updateContractCompliance: (data: unknown) => apiFetch<any>('/settings/contract-compliance', { method: 'PUT', body: JSON.stringify(data) }),
+    updateApprovalPolicy: (data: unknown) => apiFetch<any>('/settings/approval-policy', { method: 'PUT', body: JSON.stringify(data) }),
   },
   supplierScorecard: {
     list: (params?: { limit?: number }) => apiFetch<any[]>('/supplier-scorecard' + (params?.limit ? `?limit=${params.limit}` : '')),

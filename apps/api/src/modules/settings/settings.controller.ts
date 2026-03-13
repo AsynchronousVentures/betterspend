@@ -1,7 +1,7 @@
 import { Controller, Get, Put, Body } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { SettingsService } from './settings.service';
-import { brandingSettingsSchema, smtpSettingsSchema } from '@betterspend/shared';
+import { brandingSettingsSchema, smtpSettingsSchema, approvalPolicySettingsSchema } from '@betterspend/shared';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -37,6 +37,14 @@ export class SettingsController {
   @ApiOperation({ summary: 'Update SMTP / email settings' })
   updateSmtp(@Body() body: unknown, @CurrentOrgId() orgId: string) {
     const parsed = smtpSettingsSchema.parse(body);
+    return this.settingsService.updateMany(orgId, parsed as Record<string, string>);
+  }
+
+  @Put('approval-policy')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Update approval policy settings (auto-approval threshold)' })
+  updateApprovalPolicy(@Body() body: unknown, @CurrentOrgId() orgId: string) {
+    const parsed = approvalPolicySettingsSchema.parse(body);
     return this.settingsService.updateMany(orgId, parsed as Record<string, string>);
   }
 }

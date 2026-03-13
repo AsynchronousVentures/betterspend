@@ -1,13 +1,16 @@
 import { Injectable, Inject, Optional, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, gte, lte } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { approvalRules, approvalRuleSteps, approvalRequests, approvalActions, requisitions, purchaseOrders } from '@betterspend/db';
+import { approvalRules, approvalRuleSteps, approvalRequests, approvalActions, requisitions, purchaseOrders, systemSettings } from '@betterspend/db';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ApprovalDelegationsService } from '../approval-delegations/approval-delegations.service';
+import { SettingsService } from '../settings/settings.service';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
+// System user ID used for auto-approval actions (must be a valid UUID in users table)
+const SYSTEM_USER_ID = DEMO_ADMIN_USER_ID;
 
 @Injectable()
 export class ApprovalEngineService {
@@ -16,6 +19,7 @@ export class ApprovalEngineService {
     private readonly webhookEvents: WebhookEventService,
     @Optional() private readonly notifications: NotificationsService,
     @Optional() private readonly delegations: ApprovalDelegationsService,
+    @Optional() private readonly settingsService: SettingsService,
   ) {}
 
   // Evaluate a JSONB condition expression against an entity object
@@ -72,6 +76,31 @@ export class ApprovalEngineService {
     return null;
   }
 
+  // Check if a requisition qualifies for fast-lane auto-approval based on threshold setting
+  private async checkFastLaneAutoApproval(
+    organizationId: string,
+    entity: Record<string, any>,
+  ): Promise<{ eligible: boolean; threshold: number; notifyManager: boolean }> {
+    if (!this.settingsService) {
+      return { eligible: false, threshold: 0, notifyManager: false };
+    }
+
+    const thresholdStr = await this.settingsService.get(organizationId, 'auto_approve_threshold');
+    const notifyManagerStr = await this.settingsService.get(organizationId, 'auto_approve_notify_manager');
+
+    const threshold = parseFloat(thresholdStr || '0');
+    const notifyManager = notifyManagerStr !== 'false';
+
+    if (threshold <= 0) {
+      return { eligible: false, threshold: 0, notifyManager };
+    }
+
+    const totalAmount = parseFloat(entity.totalAmount ?? entity.total_amount ?? '0');
+    const eligible = totalAmount <= threshold;
+
+    return { eligible, threshold, notifyManager };
+  }
+
   // Initiate approval flow for a submitted entity
   async initiateApproval(
     organizationId: string,
@@ -91,6 +120,14 @@ export class ApprovalEngineService {
       }) ?? null;
     }
     if (!entity) throw new NotFoundException(`Entity ${entityId} not found`);
+
+    // Check fast-lane auto-approval threshold (only for requisitions)
+    if (entityType === 'requisition') {
+      const { eligible, threshold, notifyManager } = await this.checkFastLaneAutoApproval(organizationId, entity);
+      if (eligible) {
+        return this.applyFastLaneApproval(organizationId, entityId, entity, threshold, notifyManager, initiatedBy);
+      }
+    }
 
     const rule = await this.findMatchingRule(organizationId, entityType, entity);
 
@@ -169,6 +206,96 @@ export class ApprovalEngineService {
     }
 
     return { autoApproved: false, rule, requestId };
+  }
+
+  // Apply fast-lane auto-approval for low-value requisitions
+  private async applyFastLaneApproval(
+    organizationId: string,
+    entityId: string,
+    entity: Record<string, any>,
+    threshold: number,
+    notifyManager: boolean,
+    initiatedBy: string,
+  ) {
+    const totalAmount = parseFloat(entity.totalAmount ?? entity.total_amount ?? '0');
+    const note = `Auto-approved: requisition total $${totalAmount.toFixed(2)} is below the configured threshold of $${threshold.toFixed(2)}`;
+
+    // Create an approval request in auto-approved state and record the action
+    const requestId = await this.db.transaction(async (tx) => {
+      const [req] = await tx.insert(approvalRequests).values({
+        approvableType: 'requisition',
+        approvableId: entityId,
+        approvalRuleId: null,
+        currentStep: 1,
+        status: 'approved',
+      }).returning();
+
+      // Record submission action
+      await tx.insert(approvalActions).values({
+        approvalRequestId: req.id,
+        stepOrder: 1,
+        approverId: initiatedBy,
+        action: 'submitted',
+        comment: 'Submitted for approval',
+      });
+
+      // Record auto-approved action
+      await tx.insert(approvalActions).values({
+        approvalRequestId: req.id,
+        stepOrder: 1,
+        approverId: SYSTEM_USER_ID,
+        action: 'approved',
+        comment: notifyManager ? note : 'Auto-approved: below configured threshold',
+      });
+
+      return req.id;
+    });
+
+    // Update the requisition status to approved
+    await this.db.update(requisitions)
+      .set({ status: 'approved', updatedAt: new Date() })
+      .where(eq(requisitions.id, entityId));
+
+    this.webhookEvents.emit(organizationId, 'requisition.approved', {
+      requisitionId: entityId,
+      autoApproved: true,
+      fastLane: true,
+      threshold,
+    });
+
+    return { autoApproved: true, fastLane: true, rule: null, requestId };
+  }
+
+  // Get auto-approved summary for the current calendar month
+  async getAutoApprovedSummary(organizationId: string): Promise<{ count: number; totalAmount: number }> {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    // Find approval requests that were auto-approved (no rule, status approved) for this org's requisitions
+    // We detect fast-lane auto-approvals by looking for approval_requests with status='approved' and
+    // an action comment containing 'Auto-approved: requisition total'
+    const rows = await this.db.execute(sql`
+      SELECT
+        COUNT(DISTINCT ar.id)::int AS count,
+        COALESCE(SUM(r.total_amount), 0) AS total_amount
+      FROM approval_requests ar
+      INNER JOIN approval_actions aa ON aa.approval_request_id = ar.id
+        AND aa.action = 'approved'
+        AND (aa.comment LIKE 'Auto-approved:%' OR aa.comment LIKE 'Auto-approved:%')
+      INNER JOIN requisitions r ON r.id = ar.approvable_id
+        AND ar.approvable_type = 'requisition'
+        AND r.organization_id = ${organizationId}
+      WHERE ar.status = 'approved'
+        AND ar.created_at >= ${startOfMonth.toISOString()}
+        AND ar.created_at <= ${endOfMonth.toISOString()}
+    `) as any[];
+
+    const row = rows[0] ?? { count: 0, total_amount: '0' };
+    return {
+      count: Number(row.count ?? 0),
+      totalAmount: parseFloat(row.total_amount ?? '0'),
+    };
   }
 
   // Enrich approval requests with entity summary (title/number, link, amount)
