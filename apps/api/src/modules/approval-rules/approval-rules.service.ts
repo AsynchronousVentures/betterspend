@@ -1,8 +1,8 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { eq, and, asc } from 'drizzle-orm';
+import { eq, and, asc, inArray } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { approvalRules, approvalRuleSteps } from '@betterspend/db';
+import { approvalRules, approvalRuleSteps, users } from '@betterspend/db';
 import { EntitiesService } from '../entities/entities.service';
 
 export interface CreateApprovalRuleInput {
@@ -210,9 +210,20 @@ export class ApprovalRulesService {
     return 'Always matches';
   }
 
-  private formatApprover(step: { approverType: string; approverId?: string | null; approverRole?: string | null }) {
+  private formatApprover(
+    step: { approverType: string; approverId?: string | null; approverRole?: string | null },
+    userMap: Map<string, { id: string; name: string; email: string }>,
+  ) {
     if (step.approverType === 'user') {
-      return { id: step.approverId ?? null, label: step.approverId ? `User ${step.approverId}` : 'Unassigned user' };
+      const matchedUser = step.approverId ? userMap.get(step.approverId) : null;
+      return {
+        id: step.approverId ?? null,
+        label: matchedUser
+          ? `${matchedUser.name} (${matchedUser.email})`
+          : step.approverId
+            ? `User ${step.approverId}`
+            : 'Unassigned user',
+      };
     }
     if (step.approverType === 'role') {
       return { id: null, label: `Role: ${step.approverRole ?? 'approver'}` };
@@ -254,6 +265,25 @@ export class ApprovalRulesService {
       })
       .filter((result) => result.matched);
 
+    const userIds = [...new Set(
+      matchedRules.flatMap(({ rule }) =>
+        rule.steps
+          .map((step) => step.approverId)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    )];
+
+    const approverUsers = userIds.length
+      ? await this.db
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(and(
+            eq(users.organizationId, organizationId),
+            inArray(users.id, userIds),
+          ))
+      : [];
+    const approverUserMap = new Map(approverUsers.map((user) => [user.id, user]));
+
     const steps = matchedRules.flatMap(({ rule, conditions }) =>
       [...rule.steps]
         .sort((a, b) => a.stepOrder - b.stepOrder)
@@ -265,7 +295,7 @@ export class ApprovalRulesService {
           stepOrder: step.stepOrder,
           approverType: step.approverType,
           requiredCount: step.requiredCount,
-          approvers: [this.formatApprover(step)],
+          approvers: [this.formatApprover(step, approverUserMap)],
           conditionExplanation: this.describeCondition(conditions),
         })),
     );
