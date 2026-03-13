@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { COLORS, SHADOWS, FONT } from '../../lib/theme';
 import { api } from '../../lib/api';
 
@@ -31,6 +32,10 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   cancelled: { bg: COLORS.accentRedLight, text: COLORS.accentRedDark },
 };
 
+function formatMoney(amount: string | number, currency = 'USD') {
+  return Number(amount).toLocaleString('en-US', { style: 'currency', currency });
+}
+
 export default function RfqPage() {
   const [rfqs, setRfqs] = useState<RfqSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,8 +44,12 @@ export default function RfqPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailTab, setDetailTab] = useState<'overview' | 'responses'>('overview');
+  const [responseSort, setResponseSort] = useState<'price' | 'supplier' | 'delivery'>('price');
+  const [rejectDrafts, setRejectDrafts] = useState<Record<string, string>>({});
+  const [awardingId, setAwardingId] = useState<string | null>(null);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
 
-  // New RFQ form
   const [form, setForm] = useState({
     title: '',
     description: '',
@@ -52,6 +61,7 @@ export default function RfqPage() {
   const [selectedVendors, setSelectedVendors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
 
   useEffect(() => {
     loadRfqs();
@@ -73,6 +83,7 @@ export default function RfqPage() {
   async function loadDetail(id: string) {
     setSelected(id);
     setDetailLoading(true);
+    setDetailTab('overview');
     try {
       const data = await (api as any).rfq.get(id);
       setDetail(data);
@@ -83,8 +94,13 @@ export default function RfqPage() {
     }
   }
 
+  function showSuccess(message: string) {
+    setSuccessMsg(message);
+    setTimeout(() => setSuccessMsg(''), 4500);
+  }
+
   async function handleCreate() {
-    if (!form.title || lines.some((l) => !l.description || !l.quantity)) {
+    if (!form.title || lines.some((line) => !line.description || !line.quantity)) {
       setError('Title and at least one line item are required');
       return;
     }
@@ -93,11 +109,11 @@ export default function RfqPage() {
     try {
       await (api as any).rfq.create({
         ...form,
-        lines: lines.map((l) => ({
-          description: l.description,
-          quantity: Number(l.quantity),
-          unitOfMeasure: l.unitOfMeasure,
-          targetPrice: l.targetPrice ? Number(l.targetPrice) : undefined,
+        lines: lines.map((line) => ({
+          description: line.description,
+          quantity: Number(line.quantity),
+          unitOfMeasure: line.unitOfMeasure,
+          targetPrice: line.targetPrice ? Number(line.targetPrice) : undefined,
         })),
         vendorIds: selectedVendors,
       });
@@ -106,6 +122,7 @@ export default function RfqPage() {
       setLines([{ description: '', quantity: 1, unitOfMeasure: 'each', targetPrice: '' }]);
       setSelectedVendors([]);
       loadRfqs();
+      showSuccess('RFQ created');
     } catch {
       setError('Failed to create RFQ');
     } finally {
@@ -133,9 +150,48 @@ export default function RfqPage() {
     }
   }
 
+  async function handleAward(responseId: string) {
+    if (!detail) return;
+    if (!confirm('Award this response and create a draft purchase order from it?')) return;
+    setAwardingId(responseId);
+    setError('');
+    try {
+      const result = await (api as any).rfq.award(detail.id, responseId);
+      setDetail(result.rfq);
+      loadRfqs();
+      showSuccess(`Awarded response and created draft PO ${result.purchaseOrderNumber}.`);
+    } catch (e: any) {
+      setError(e.message || 'Failed to award response');
+    } finally {
+      setAwardingId(null);
+    }
+  }
+
+  async function handleReject(responseId: string) {
+    if (!detail) return;
+    const reason = rejectDrafts[responseId]?.trim();
+    if (!reason) {
+      setError('A rejection reason is required');
+      return;
+    }
+    setRejectingId(responseId);
+    setError('');
+    try {
+      const result = await (api as any).rfq.reject(detail.id, responseId, reason);
+      setDetail(result);
+      loadRfqs();
+      setRejectDrafts((current) => ({ ...current, [responseId]: '' }));
+      showSuccess('Response rejected');
+    } catch (e: any) {
+      setError(e.message || 'Failed to reject response');
+    } finally {
+      setRejectingId(null);
+    }
+  }
+
   const addLine = () =>
     setLines([...lines, { description: '', quantity: 1, unitOfMeasure: 'each', targetPrice: '' }]);
-  const removeLine = (i: number) => setLines(lines.filter((_, idx) => idx !== i));
+  const removeLine = (index: number) => setLines(lines.filter((_, idx) => idx !== index));
 
   const inp: React.CSSProperties = {
     width: '100%',
@@ -148,9 +204,20 @@ export default function RfqPage() {
     boxSizing: 'border-box',
   };
 
+  const sortedResponses = detail?.responses
+    ? [...detail.responses].sort((a: any, b: any) => {
+        if (responseSort === 'supplier') return (a.vendor?.name ?? '').localeCompare(b.vendor?.name ?? '');
+        if (responseSort === 'delivery') {
+          const aLead = Math.min(...(a.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER));
+          const bLead = Math.min(...(b.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER));
+          return aLead - bLead;
+        }
+        return Number(a.totalAmount) - Number(b.totalAmount);
+      })
+    : [];
+
   return (
     <div style={{ padding: '1.5rem', background: COLORS.contentBg, minHeight: '100vh' }}>
-      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
         <div>
           <h1 style={{ fontSize: FONT.xl, fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>RFQ / e-Sourcing</h1>
@@ -175,9 +242,13 @@ export default function RfqPage() {
           {error}
         </div>
       )}
+      {successMsg && (
+        <div style={{ background: COLORS.accentGreenLight, color: COLORS.accentGreenDark, padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem', fontSize: FONT.sm }}>
+          {successMsg}
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: '1.5rem' }}>
-        {/* List panel */}
         <div style={{ flex: 1, minWidth: 0 }}>
           {loading ? (
             <div style={{ textAlign: 'center', padding: '3rem', color: COLORS.textMuted }}>Loading...</div>
@@ -220,7 +291,7 @@ export default function RfqPage() {
                     <div style={{ fontSize: FONT.base, fontWeight: 600, color: COLORS.textPrimary, marginBottom: '0.25rem' }}>
                       {rfq.title}
                     </div>
-                    <div style={{ display: 'flex', gap: '1.25rem' }}>
+                    <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap' }}>
                       <span style={{ fontSize: FONT.xs, color: COLORS.textSecondary }}>
                         {rfq.invitationCount} vendors invited
                       </span>
@@ -240,10 +311,9 @@ export default function RfqPage() {
           )}
         </div>
 
-        {/* Detail panel */}
         {selected && (
           <div style={{
-            width: 420,
+            width: 460,
             flexShrink: 0,
             background: COLORS.cardBg,
             border: `1px solid ${COLORS.cardBorder}`,
@@ -269,8 +339,7 @@ export default function RfqPage() {
                   <p style={{ fontSize: FONT.sm, color: COLORS.textSecondary, marginBottom: '1rem' }}>{detail.description}</p>
                 )}
 
-                {/* Action buttons */}
-                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
                   {detail.status === 'draft' && (
                     <button onClick={() => handleOpen(detail.id)} style={{ background: COLORS.accentBlue, color: '#fff', border: 'none', borderRadius: 6, padding: '0.35rem 0.75rem', fontSize: FONT.xs, fontWeight: 600, cursor: 'pointer' }}>
                       Open for Bids
@@ -283,73 +352,193 @@ export default function RfqPage() {
                   )}
                 </div>
 
-                {/* Lines */}
-                <div style={{ marginBottom: '1.25rem' }}>
-                  <div style={{ fontSize: FONT.xs, fontWeight: 700, color: COLORS.textMuted, textTransform: 'uppercase', marginBottom: '0.5rem' }}>
-                    Line Items ({detail.lines?.length ?? 0})
-                  </div>
-                  {detail.lines?.map((l: any, i: number) => (
-                    <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0', borderBottom: `1px solid ${COLORS.border}`, fontSize: FONT.sm }}>
-                      <span style={{ color: COLORS.textPrimary }}>{i + 1}. {l.description}</span>
-                      <span style={{ color: COLORS.textSecondary }}>{l.quantity} {l.unitOfMeasure}</span>
-                    </div>
-                  ))}
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                  {[
+                    { key: 'overview', label: 'Overview' },
+                    { key: 'responses', label: `Responses (${detail.responses?.length ?? 0})` },
+                  ].map((tab) => {
+                    const active = detailTab === tab.key;
+                    return (
+                      <button
+                        key={tab.key}
+                        onClick={() => setDetailTab(tab.key as 'overview' | 'responses')}
+                        style={{
+                          background: active ? COLORS.accentBlue : COLORS.contentBg,
+                          color: active ? '#fff' : COLORS.textSecondary,
+                          border: `1px solid ${active ? COLORS.accentBlue : COLORS.border}`,
+                          borderRadius: 20,
+                          padding: '0.35rem 0.75rem',
+                          fontSize: FONT.xs,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {tab.label}
+                      </button>
+                    );
+                  })}
                 </div>
 
-                {/* Invitations */}
-                <div style={{ marginBottom: '1.25rem' }}>
-                  <div style={{ fontSize: FONT.xs, fontWeight: 700, color: COLORS.textMuted, textTransform: 'uppercase', marginBottom: '0.5rem' }}>
-                    Invited Vendors ({detail.invitations?.length ?? 0})
-                  </div>
-                  {detail.invitations?.map((inv: any) => (
-                    <div key={inv.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.35rem 0', fontSize: FONT.sm }}>
-                      <span style={{ color: COLORS.textPrimary }}>{inv.vendor?.name ?? '—'}</span>
-                      <span style={{ color: inv.respondedAt ? COLORS.accentGreen : COLORS.textMuted, fontSize: FONT.xs }}>
-                        {inv.respondedAt ? 'Responded' : 'Pending'}
-                      </span>
+                {detailTab === 'overview' && (
+                  <>
+                    <div style={{ marginBottom: '1.25rem' }}>
+                      <div style={{ fontSize: FONT.xs, fontWeight: 700, color: COLORS.textMuted, textTransform: 'uppercase', marginBottom: '0.5rem' }}>
+                        Line Items ({detail.lines?.length ?? 0})
+                      </div>
+                      {detail.lines?.map((line: any, index: number) => (
+                        <div key={line.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0', borderBottom: `1px solid ${COLORS.border}`, fontSize: FONT.sm }}>
+                          <span style={{ color: COLORS.textPrimary }}>{index + 1}. {line.description}</span>
+                          <span style={{ color: COLORS.textSecondary }}>{line.quantity} {line.unitOfMeasure}</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
 
-                {/* Responses / Bids */}
-                {detail.responses?.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: FONT.xs, fontWeight: 700, color: COLORS.textMuted, textTransform: 'uppercase', marginBottom: '0.5rem' }}>
-                      Bids Received ({detail.responses.length})
-                    </div>
-                    {detail.responses.map((res: any) => (
-                      <div key={res.id} style={{
-                        background: res.awarded ? COLORS.accentGreenLight : COLORS.contentBg,
-                        border: `1px solid ${res.awarded ? COLORS.accentGreen : COLORS.border}`,
-                        borderRadius: 8,
-                        padding: '0.75rem',
-                        marginBottom: '0.5rem',
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                          <span style={{ fontSize: FONT.sm, fontWeight: 600, color: COLORS.textPrimary }}>{res.vendor?.name}</span>
-                          <span style={{ fontSize: FONT.sm, fontWeight: 700, color: res.awarded ? COLORS.accentGreenDark : COLORS.textPrimary }}>
-                            {Number(res.totalAmount).toLocaleString('en-US', { style: 'currency', currency: detail.currency ?? 'USD' })}
+                    <div style={{ marginBottom: '1.25rem' }}>
+                      <div style={{ fontSize: FONT.xs, fontWeight: 700, color: COLORS.textMuted, textTransform: 'uppercase', marginBottom: '0.5rem' }}>
+                        Invited Vendors ({detail.invitations?.length ?? 0})
+                      </div>
+                      {detail.invitations?.map((invitation: any) => (
+                        <div key={invitation.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.35rem 0', fontSize: FONT.sm }}>
+                          <span style={{ color: COLORS.textPrimary }}>{invitation.vendor?.name ?? '—'}</span>
+                          <span style={{ color: invitation.respondedAt ? COLORS.accentGreen : COLORS.textMuted, fontSize: FONT.xs }}>
+                            {invitation.respondedAt ? 'Responded' : 'Pending'}
                           </span>
                         </div>
-                        {res.awarded && (
-                          <span style={{ fontSize: FONT.xs, color: COLORS.accentGreenDark, fontWeight: 600 }}>✓ AWARDED</span>
-                        )}
-                        {detail.status === 'closed' && !detail.responses.some((r: any) => r.awarded) && (
-                          <button
-                            onClick={async () => {
-                              try {
-                                await (api as any).rfq.award(detail.id, res.id);
-                                loadDetail(detail.id);
-                                loadRfqs();
-                              } catch {}
-                            }}
-                            style={{ marginTop: '0.25rem', background: COLORS.accentBlue, color: '#fff', border: 'none', borderRadius: 5, padding: '0.25rem 0.6rem', fontSize: FONT.xs, cursor: 'pointer' }}
-                          >
-                            Award
-                          </button>
-                        )}
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {detailTab === 'responses' && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                      <div style={{ fontSize: FONT.xs, fontWeight: 700, color: COLORS.textMuted, textTransform: 'uppercase' }}>
+                        Evaluate Responses ({sortedResponses.length})
                       </div>
-                    ))}
+                      <select
+                        value={responseSort}
+                        onChange={(event) => setResponseSort(event.target.value as 'price' | 'supplier' | 'delivery')}
+                        style={{ ...inp, width: 150, padding: '0.3rem 0.5rem', fontSize: FONT.xs }}
+                      >
+                        <option value="price">Sort by price</option>
+                        <option value="supplier">Sort by supplier</option>
+                        <option value="delivery">Sort by delivery</option>
+                      </select>
+                    </div>
+
+                    {sortedResponses.length === 0 ? (
+                      <div style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>No responses received yet.</div>
+                    ) : (
+                      sortedResponses.map((response: any, index: number) => {
+                        const bestPrice = Math.min(...sortedResponses.map((item: any) => Number(item.totalAmount)));
+                        const responseLead = Math.min(...(response.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER));
+                        const bestLead = Math.min(...sortedResponses.map((item: any) => Math.min(...(item.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER))));
+                        const priceScore = bestPrice > 0 ? Math.max(0, 100 - (((Number(response.totalAmount) - bestPrice) / bestPrice) * 100)) : 100;
+                        const deliveryScore = Number.isFinite(responseLead) && Number.isFinite(bestLead) ? Math.max(0, 100 - Math.max(responseLead - bestLead, 0) * 5) : 60;
+                        const rejectValue = rejectDrafts[response.id] ?? '';
+
+                        return (
+                          <div key={response.id} style={{
+                            background: response.awarded ? COLORS.accentGreenLight : COLORS.contentBg,
+                            border: `1px solid ${response.awarded ? COLORS.accentGreen : COLORS.border}`,
+                            borderRadius: 8,
+                            padding: '0.85rem',
+                            marginBottom: '0.75rem',
+                          }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 0.9fr 0.9fr', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                              <div>
+                                <div style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary }}>{response.vendor?.name}</div>
+                                <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, marginTop: 2 }}>
+                                  Rank #{index + 1} by {responseSort}
+                                </div>
+                              </div>
+                              <div>
+                                <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700 }}>Quoted price</div>
+                                <div style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary }}>
+                                  {formatMoney(response.totalAmount, detail.currency ?? 'USD')}
+                                </div>
+                              </div>
+                              <div>
+                                <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700 }}>Lead time</div>
+                                <div style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary }}>
+                                  {Number.isFinite(responseLead) ? `${responseLead} days` : 'Not provided'}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                              <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '0.55rem 0.65rem' }}>
+                                <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700 }}>Price score</div>
+                                <div style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary }}>{Math.round(priceScore)}</div>
+                              </div>
+                              <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '0.55rem 0.65rem' }}>
+                                <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700 }}>Delivery score</div>
+                                <div style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary }}>{Math.round(deliveryScore)}</div>
+                              </div>
+                              <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '0.55rem 0.65rem' }}>
+                                <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700 }}>Status</div>
+                                <div style={{ fontSize: FONT.sm, fontWeight: 700, color: response.awarded ? COLORS.accentGreenDark : COLORS.textPrimary }}>
+                                  {response.awarded ? 'Awarded' : response.status}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'grid', gap: '0.4rem', marginBottom: '0.75rem' }}>
+                              {(response.lines ?? []).map((line: any) => (
+                                <div key={line.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', fontSize: FONT.xs, borderBottom: `1px solid ${COLORS.border}`, paddingBottom: '0.35rem' }}>
+                                  <span style={{ color: COLORS.textPrimary }}>
+                                    {line.rfqLine?.description} ({line.rfqLine?.quantity} {line.rfqLine?.unitOfMeasure})
+                                  </span>
+                                  <span style={{ color: COLORS.textSecondary }}>
+                                    {formatMoney(line.unitPrice, detail.currency ?? 'USD')} / {line.rfqLine?.unitOfMeasure ?? 'ea'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div style={{ display: 'grid', gap: '0.5rem' }}>
+                              <input
+                                value={rejectValue}
+                                onChange={(event) => setRejectDrafts((current) => ({ ...current, [response.id]: event.target.value }))}
+                                placeholder="Reject reason"
+                                style={{ ...inp, fontSize: FONT.xs }}
+                              />
+                              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                {!response.awarded && detail.status !== 'awarded' && (
+                                  <button
+                                    onClick={() => handleAward(response.id)}
+                                    disabled={!!awardingId || response.status === 'rejected'}
+                                    style={{ background: COLORS.accentBlue, color: '#fff', border: 'none', borderRadius: 5, padding: '0.3rem 0.7rem', fontSize: FONT.xs, fontWeight: 600, cursor: awardingId ? 'not-allowed' : 'pointer', opacity: awardingId ? 0.6 : 1 }}
+                                  >
+                                    {awardingId === response.id ? 'Awarding...' : 'Award'}
+                                  </button>
+                                )}
+                                {!response.awarded && response.status !== 'rejected' && detail.status !== 'awarded' && (
+                                  <button
+                                    onClick={() => handleReject(response.id)}
+                                    disabled={rejectingId === response.id}
+                                    style={{ background: COLORS.accentRedLight, color: COLORS.accentRedDark, border: 'none', borderRadius: 5, padding: '0.3rem 0.7rem', fontSize: FONT.xs, fontWeight: 600, cursor: 'pointer', opacity: rejectingId === response.id ? 0.6 : 1 }}
+                                  >
+                                    {rejectingId === response.id ? 'Rejecting...' : 'Reject'}
+                                  </button>
+                                )}
+                                {response.awarded && (
+                                  <Link href="/purchase-orders" style={{ fontSize: FONT.xs, color: COLORS.accentBlueDark, fontWeight: 600, textDecoration: 'none', paddingTop: '0.35rem' }}>
+                                    Review purchase orders
+                                  </Link>
+                                )}
+                              </div>
+                            </div>
+
+                            {response.notes && (
+                              <div style={{ marginTop: '0.5rem', fontSize: FONT.xs, color: COLORS.textMuted }}>
+                                {response.notes}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
                 )}
               </>
@@ -358,7 +547,6 @@ export default function RfqPage() {
         )}
       </div>
 
-      {/* New RFQ Modal */}
       {showNew && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{
@@ -381,52 +569,50 @@ export default function RfqPage() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Title *</label>
-                <input style={inp} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Q2 Office Supplies" />
+                <input style={inp} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="e.g. Q2 Office Supplies" />
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Description</label>
-                <textarea style={{ ...inp, height: 70, resize: 'vertical' }} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Scope and requirements..." />
+                <textarea style={{ ...inp, height: 70, resize: 'vertical' }} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Scope and requirements..." />
               </div>
               <div>
                 <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Response Due Date</label>
-                <input type="date" style={inp} value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} />
+                <input type="date" style={inp} value={form.dueDate} onChange={(event) => setForm({ ...form, dueDate: event.target.value })} />
               </div>
               <div>
                 <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Currency</label>
-                <select style={inp} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
+                <select style={inp} value={form.currency} onChange={(event) => setForm({ ...form, currency: event.target.value })}>
                   <option>USD</option><option>EUR</option><option>GBP</option><option>CAD</option>
                 </select>
               </div>
             </div>
 
-            {/* Line items */}
             <div style={{ marginBottom: '1rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                 <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary }}>Line Items *</label>
                 <button onClick={addLine} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: FONT.xs, color: COLORS.accentBlue, fontWeight: 600 }}>+ Add Line</button>
               </div>
-              {lines.map((line, i) => (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: '3fr 1fr 1fr 1fr auto', gap: '0.4rem', marginBottom: '0.4rem', alignItems: 'center' }}>
-                  <input style={inp} placeholder="Description" value={line.description} onChange={(e) => { const ls = [...lines]; ls[i] = { ...ls[i], description: e.target.value }; setLines(ls); }} />
-                  <input type="number" style={inp} placeholder="Qty" value={line.quantity} min={0.01} step={0.01} onChange={(e) => { const ls = [...lines]; ls[i] = { ...ls[i], quantity: Number(e.target.value) }; setLines(ls); }} />
-                  <input style={inp} placeholder="UOM" value={line.unitOfMeasure} onChange={(e) => { const ls = [...lines]; ls[i] = { ...ls[i], unitOfMeasure: e.target.value }; setLines(ls); }} />
-                  <input type="number" style={inp} placeholder="Target $" value={line.targetPrice} onChange={(e) => { const ls = [...lines]; ls[i] = { ...ls[i], targetPrice: e.target.value }; setLines(ls); }} />
-                  <button onClick={() => removeLine(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.accentRed, fontSize: 16, padding: '0 4px' }} disabled={lines.length === 1}>✕</button>
+              {lines.map((line, index) => (
+                <div key={index} style={{ display: 'grid', gridTemplateColumns: '3fr 1fr 1fr 1fr auto', gap: '0.4rem', marginBottom: '0.4rem', alignItems: 'center' }}>
+                  <input style={inp} placeholder="Description" value={line.description} onChange={(event) => { const next = [...lines]; next[index] = { ...next[index], description: event.target.value }; setLines(next); }} />
+                  <input type="number" style={inp} placeholder="Qty" value={line.quantity} min={0.01} step={0.01} onChange={(event) => { const next = [...lines]; next[index] = { ...next[index], quantity: Number(event.target.value) }; setLines(next); }} />
+                  <input style={inp} placeholder="UOM" value={line.unitOfMeasure} onChange={(event) => { const next = [...lines]; next[index] = { ...next[index], unitOfMeasure: event.target.value }; setLines(next); }} />
+                  <input type="number" style={inp} placeholder="Target $" value={line.targetPrice} onChange={(event) => { const next = [...lines]; next[index] = { ...next[index], targetPrice: event.target.value }; setLines(next); }} />
+                  <button onClick={() => removeLine(index)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.accentRed, fontSize: 16, padding: '0 4px' }} disabled={lines.length === 1}>✕</button>
                 </div>
               ))}
             </div>
 
-            {/* Vendor selection */}
             {vendors.length > 0 && (
               <div style={{ marginBottom: '1.25rem' }}>
                 <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 6 }}>Invite Vendors</label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', maxHeight: 120, overflowY: 'auto', padding: '0.5rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: 6 }}>
-                  {vendors.map((v) => {
-                    const isSelected = selectedVendors.includes(v.id);
+                  {vendors.map((vendor) => {
+                    const isSelected = selectedVendors.includes(vendor.id);
                     return (
                       <button
-                        key={v.id}
-                        onClick={() => setSelectedVendors(isSelected ? selectedVendors.filter((id) => id !== v.id) : [...selectedVendors, v.id])}
+                        key={vendor.id}
+                        onClick={() => setSelectedVendors(isSelected ? selectedVendors.filter((id) => id !== vendor.id) : [...selectedVendors, vendor.id])}
                         style={{
                           background: isSelected ? COLORS.accentBlue : COLORS.contentBg,
                           color: isSelected ? '#fff' : COLORS.textSecondary,
@@ -438,7 +624,7 @@ export default function RfqPage() {
                           fontWeight: isSelected ? 600 : 400,
                         }}
                       >
-                        {v.name}
+                        {vendor.name}
                       </button>
                     );
                   })}

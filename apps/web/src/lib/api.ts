@@ -576,6 +576,8 @@ export const api = {
     close: (id: string) => apiFetch<any>(`/rfq/${id}/close`, { method: 'POST' }),
     award: (id: string, responseId: string) =>
       apiFetch<any>(`/rfq/${id}/award`, { method: 'POST', body: JSON.stringify({ responseId }) }),
+    reject: (id: string, responseId: string, reason: string) =>
+      apiFetch<any>(`/rfq/${id}/reject`, { method: 'POST', body: JSON.stringify({ responseId, reason }) }),
     submitResponse: (id: string, data: unknown) =>
       apiFetch<any>(`/rfq/${id}/responses`, { method: 'POST', body: JSON.stringify(data) }),
   },

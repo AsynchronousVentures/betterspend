@@ -65,10 +65,21 @@ export class RfqController {
   @ApiOperation({ summary: 'Award an RFQ to a vendor response' })
   award(
     @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
     @Param('id') id: string,
     @Body('responseId') responseId: string,
   ) {
-    return this.rfqService.award(orgId, id, responseId);
+    return this.rfqService.award(orgId, id, responseId, userId);
+  }
+
+  @Post(':id/reject')
+  @ApiOperation({ summary: 'Reject an RFQ response with a reason' })
+  reject(
+    @CurrentOrgId() orgId: string,
+    @Param('id') id: string,
+    @Body() dto: { responseId: string; reason: string },
+  ) {
+    return this.rfqService.rejectResponse(orgId, id, dto.responseId, dto.reason);
   }
 
   @Post(':id/responses')

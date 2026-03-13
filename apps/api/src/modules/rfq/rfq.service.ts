@@ -4,7 +4,7 @@ import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import {
   rfqRequests, rfqLines, rfqInvitations, rfqResponses, rfqResponseLines,
-  vendors, users, sequences,
+  vendors, users, sequences, purchaseOrders, poLines,
 } from '@betterspend/db';
 
 @Injectable()
@@ -28,6 +28,25 @@ export class RfqService {
       return `RFQ-${year}-0001`;
     }
     return `RFQ-${year}-${String(rows[0].lastValue).padStart(4, '0')}`;
+  }
+
+  private async nextPoNumber(orgId: string): Promise<string> {
+    const year = new Date().getFullYear();
+    const rows = await this.db
+      .update(sequences)
+      .set({ lastValue: sql`${sequences.lastValue} + 1`, updatedAt: new Date() })
+      .where(and(eq(sequences.organizationId, orgId), eq(sequences.entityType, 'purchase_order'), eq(sequences.year, year)))
+      .returning();
+    if (!rows.length) {
+      await this.db.insert(sequences).values({
+        organizationId: orgId,
+        entityType: 'purchase_order',
+        year,
+        lastValue: 1,
+      });
+      return `PO-${year}-0001`;
+    }
+    return `PO-${year}-${String(rows[0].lastValue).padStart(4, '0')}`;
   }
 
   async list(orgId: string) {
@@ -104,13 +123,41 @@ export class RfqService {
       .where(eq(rfqResponses.rfqId, id))
       .orderBy(rfqResponses.totalAmount);
 
+    const responseIds = responses.map((response) => response.res.id);
+    const responseLineRows = responseIds.length
+      ? await this.db
+          .select({
+            responseLine: rfqResponseLines,
+            rfqLine: {
+              id: rfqLines.id,
+              description: rfqLines.description,
+              quantity: rfqLines.quantity,
+              unitOfMeasure: rfqLines.unitOfMeasure,
+              targetPrice: rfqLines.targetPrice,
+            },
+          })
+          .from(rfqResponseLines)
+          .leftJoin(rfqLines, eq(rfqResponseLines.rfqLineId, rfqLines.id))
+          .where(inArray(rfqResponseLines.responseId, responseIds))
+      : [];
+
+    const linesByResponseId = responseLineRows.reduce<Record<string, Array<any>>>((acc, row) => {
+      const list = acc[row.responseLine.responseId] ?? [];
+      list.push({
+        ...row.responseLine,
+        rfqLine: row.rfqLine,
+      });
+      acc[row.responseLine.responseId] = list;
+      return acc;
+    }, {});
+
     return {
       ...row.rfq,
       requester: row.requester,
       awardedVendor: row.awardedVendor,
       lines,
       invitations: invitations.map((i) => ({ ...i.inv, vendor: i.vendor })),
-      responses: responses.map((r) => ({ ...r.res, vendor: r.vendor })),
+      responses: responses.map((r) => ({ ...r.res, vendor: r.vendor, lines: linesByResponseId[r.res.id] ?? [] })),
     };
   }
 
@@ -197,7 +244,7 @@ export class RfqService {
     return this.update(orgId, id, { status: 'closed' });
   }
 
-  async award(orgId: string, id: string, responseId: string) {
+  async award(orgId: string, id: string, responseId: string, userId: string) {
     const rfq = await this.findOne(orgId, id);
     if (!['closed', 'open'].includes(rfq.status)) {
       throw new BadRequestException('RFQ must be open or closed to award');
@@ -210,22 +257,110 @@ export class RfqService {
 
     if (!response) throw new NotFoundException('Response not found');
 
-    await this.db
-      .update(rfqResponses)
-      .set({ awarded: false })
-      .where(eq(rfqResponses.rfqId, id));
+    const responseLines = await this.db
+      .select({
+        responseLine: rfqResponseLines,
+        rfqLine: rfqLines,
+      })
+      .from(rfqResponseLines)
+      .leftJoin(rfqLines, eq(rfqResponseLines.rfqLineId, rfqLines.id))
+      .where(eq(rfqResponseLines.responseId, responseId))
+      .orderBy(rfqLines.lineNumber);
+
+    if (!responseLines.length) throw new BadRequestException('Response has no quoted line items');
+
+    const poNumber = await this.nextPoNumber(orgId);
+
+    let purchaseOrderId = '';
+
+    await this.db.transaction(async (tx) => {
+      const [po] = await tx
+        .insert(purchaseOrders)
+        .values({
+          organizationId: orgId,
+          vendorId: response.vendorId,
+          number: poNumber,
+          version: 1,
+          poType: 'standard',
+          status: 'draft',
+          issuedBy: userId,
+          currency: rfq.currency,
+          notes: `Created from RFQ ${rfq.number}${rfq.title ? `: ${rfq.title}` : ''}`,
+          shippingAddress: {},
+          billingAddress: {},
+          subtotal: String(response.totalAmount),
+          taxAmount: '0',
+          totalAmount: String(response.totalAmount),
+          baseCurrency: rfq.currency,
+          exchangeRate: '1',
+          baseSubtotal: String(response.totalAmount),
+          baseTaxAmount: '0',
+          baseTotalAmount: String(response.totalAmount),
+        })
+        .returning();
+
+      purchaseOrderId = po.id;
+
+      await tx.insert(poLines).values(
+        responseLines.map((row, index) => ({
+          purchaseOrderId: po.id,
+          lineNumber: index + 1,
+          description: row.rfqLine?.description ?? `RFQ line ${index + 1}`,
+          quantity: row.rfqLine?.quantity ?? '1',
+          unitOfMeasure: row.rfqLine?.unitOfMeasure ?? 'each',
+          unitPrice: String(row.responseLine.unitPrice),
+          totalPrice: String(row.responseLine.totalPrice),
+        })),
+      );
+
+      await tx
+        .update(rfqResponses)
+        .set({
+          awarded: false,
+          status: sql`case when ${rfqResponses.id} = ${responseId} then 'accepted' else 'rejected' end`,
+        })
+        .where(eq(rfqResponses.rfqId, id));
+
+      await tx
+        .update(rfqRequests)
+        .set({ status: 'awarded', awardedVendorId: response.vendorId, updatedAt: new Date() })
+        .where(eq(rfqRequests.id, id));
+    });
 
     await this.db
       .update(rfqResponses)
       .set({ awarded: true, status: 'accepted' })
       .where(eq(rfqResponses.id, responseId));
 
-    await this.db
-      .update(rfqRequests)
-      .set({ status: 'awarded', awardedVendorId: response.vendorId, updatedAt: new Date() })
-      .where(eq(rfqRequests.id, id));
+    const updatedRfq = await this.findOne(orgId, id);
+    return {
+      rfq: updatedRfq,
+      purchaseOrderId,
+      purchaseOrderNumber: poNumber,
+    };
+  }
 
-    return this.findOne(orgId, id);
+  async rejectResponse(orgId: string, rfqId: string, responseId: string, reason: string) {
+    if (!reason.trim()) throw new BadRequestException('Rejection reason is required');
+    const rfq = await this.findOne(orgId, rfqId);
+    if (rfq.status === 'awarded') throw new BadRequestException('Cannot reject responses after the RFQ has been awarded');
+
+    const [response] = await this.db
+      .select()
+      .from(rfqResponses)
+      .where(and(eq(rfqResponses.id, responseId), eq(rfqResponses.rfqId, rfqId)));
+
+    if (!response) throw new NotFoundException('Response not found');
+
+    await this.db
+      .update(rfqResponses)
+      .set({
+        status: 'rejected',
+        notes: response.notes ? `${response.notes}\n\nRejected: ${reason.trim()}` : `Rejected: ${reason.trim()}`,
+      })
+      .where(eq(rfqResponses.id, responseId));
+
+    return this.findOne(orgId, rfqId);
   }
 
   async submitResponse(orgId: string, rfqId: string, dto: {
