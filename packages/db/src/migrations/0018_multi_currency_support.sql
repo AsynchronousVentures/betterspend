@@ -1,48 +1,60 @@
-ALTER TABLE "organizations" ADD COLUMN "base_currency" varchar(3) DEFAULT 'USD' NOT NULL;
+ALTER TABLE "organizations" ADD COLUMN IF NOT EXISTS "base_currency" varchar(3) DEFAULT 'USD' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "exchange_rates" ADD COLUMN "created_at" timestamp with time zone DEFAULT now() NOT NULL;
+CREATE TABLE IF NOT EXISTS "exchange_rates" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "org_id" uuid NOT NULL REFERENCES "organizations"("id"),
+  "from_currency" varchar(3) NOT NULL,
+  "to_currency" varchar(3) NOT NULL,
+  "rate" numeric(18,8) NOT NULL,
+  "fetched_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "is_manual" boolean DEFAULT false NOT NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
 --> statement-breakpoint
-ALTER TABLE "budgets" ADD COLUMN "base_currency" varchar(3) DEFAULT 'USD' NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS "exchange_rates_org_from_to_uniq"
+  ON "exchange_rates" ("org_id", "from_currency", "to_currency");
 --> statement-breakpoint
-ALTER TABLE "budgets" ADD COLUMN "exchange_rate" numeric(18,8) DEFAULT 1 NOT NULL;
+ALTER TABLE "budgets" ADD COLUMN IF NOT EXISTS "base_currency" varchar(3) DEFAULT 'USD' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "budgets" ADD COLUMN "base_total_amount" numeric(14,2) DEFAULT '0' NOT NULL;
+ALTER TABLE "budgets" ADD COLUMN IF NOT EXISTS "exchange_rate" numeric(18,8) DEFAULT 1 NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "budgets" ADD COLUMN "base_allocated_amount" numeric(14,2) DEFAULT '0' NOT NULL;
+ALTER TABLE "budgets" ADD COLUMN IF NOT EXISTS "base_total_amount" numeric(14,2) DEFAULT '0' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "budgets" ADD COLUMN "base_spent_amount" numeric(14,2) DEFAULT '0' NOT NULL;
+ALTER TABLE "budgets" ADD COLUMN IF NOT EXISTS "base_allocated_amount" numeric(14,2) DEFAULT '0' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "purchase_orders" ADD COLUMN "base_currency" varchar(3) DEFAULT 'USD' NOT NULL;
+ALTER TABLE "budgets" ADD COLUMN IF NOT EXISTS "base_spent_amount" numeric(14,2) DEFAULT '0' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "purchase_orders" ADD COLUMN "exchange_rate" numeric(18,8) DEFAULT 1 NOT NULL;
+ALTER TABLE "purchase_orders" ADD COLUMN IF NOT EXISTS "base_currency" varchar(3) DEFAULT 'USD' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "purchase_orders" ADD COLUMN "base_subtotal" numeric(14,2) DEFAULT '0' NOT NULL;
+ALTER TABLE "purchase_orders" ADD COLUMN IF NOT EXISTS "exchange_rate" numeric(18,8) DEFAULT 1 NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "purchase_orders" ADD COLUMN "base_tax_amount" numeric(14,2) DEFAULT '0' NOT NULL;
+ALTER TABLE "purchase_orders" ADD COLUMN IF NOT EXISTS "base_subtotal" numeric(14,2) DEFAULT '0' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "purchase_orders" ADD COLUMN "base_total_amount" numeric(14,2) DEFAULT '0' NOT NULL;
+ALTER TABLE "purchase_orders" ADD COLUMN IF NOT EXISTS "base_tax_amount" numeric(14,2) DEFAULT '0' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "po_lines" ADD COLUMN "exchange_rate" numeric(18,8) DEFAULT 1 NOT NULL;
+ALTER TABLE "purchase_orders" ADD COLUMN IF NOT EXISTS "base_total_amount" numeric(14,2) DEFAULT '0' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "po_lines" ADD COLUMN "base_unit_price" numeric(12,2) DEFAULT '0' NOT NULL;
+ALTER TABLE "po_lines" ADD COLUMN IF NOT EXISTS "exchange_rate" numeric(18,8) DEFAULT 1 NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "po_lines" ADD COLUMN "base_total_price" numeric(14,2) DEFAULT '0' NOT NULL;
+ALTER TABLE "po_lines" ADD COLUMN IF NOT EXISTS "base_unit_price" numeric(12,2) DEFAULT '0' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "invoices" ADD COLUMN "base_currency" varchar(3) DEFAULT 'USD' NOT NULL;
+ALTER TABLE "po_lines" ADD COLUMN IF NOT EXISTS "base_total_price" numeric(14,2) DEFAULT '0' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "invoices" ADD COLUMN "exchange_rate" numeric(18,8) DEFAULT 1 NOT NULL;
+ALTER TABLE "invoices" ADD COLUMN IF NOT EXISTS "base_currency" varchar(3) DEFAULT 'USD' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "invoices" ADD COLUMN "base_subtotal" numeric(14,2) DEFAULT '0' NOT NULL;
+ALTER TABLE "invoices" ADD COLUMN IF NOT EXISTS "exchange_rate" numeric(18,8) DEFAULT 1 NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "invoices" ADD COLUMN "base_tax_amount" numeric(14,2) DEFAULT '0' NOT NULL;
+ALTER TABLE "invoices" ADD COLUMN IF NOT EXISTS "base_subtotal" numeric(14,2) DEFAULT '0' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "invoices" ADD COLUMN "base_total_amount" numeric(14,2) DEFAULT '0' NOT NULL;
+ALTER TABLE "invoices" ADD COLUMN IF NOT EXISTS "base_tax_amount" numeric(14,2) DEFAULT '0' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "invoice_lines" ADD COLUMN "exchange_rate" numeric(18,8) DEFAULT 1 NOT NULL;
+ALTER TABLE "invoices" ADD COLUMN IF NOT EXISTS "base_total_amount" numeric(14,2) DEFAULT '0' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "invoice_lines" ADD COLUMN "base_unit_price" numeric(12,2) DEFAULT '0' NOT NULL;
+ALTER TABLE "invoice_lines" ADD COLUMN IF NOT EXISTS "exchange_rate" numeric(18,8) DEFAULT 1 NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "invoice_lines" ADD COLUMN "base_total_price" numeric(14,2) DEFAULT '0' NOT NULL;
+ALTER TABLE "invoice_lines" ADD COLUMN IF NOT EXISTS "base_unit_price" numeric(12,2) DEFAULT '0' NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "invoice_lines" ADD COLUMN IF NOT EXISTS "base_total_price" numeric(14,2) DEFAULT '0' NOT NULL;
 --> statement-breakpoint
 UPDATE "organizations"
 SET "base_currency" = COALESCE("settings"->>'currency', 'USD')
