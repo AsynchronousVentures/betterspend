@@ -27,6 +27,15 @@ function isGroup(entry: NavEntry): entry is NavGroup {
   return 'children' in entry;
 }
 
+function compactLabel(label: string) {
+  return label
+    .split(/[\s/&-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('');
+}
+
 /* ── Navigation config ── */
 
 const NAV_CONFIG: NavEntry[] = [
@@ -130,7 +139,13 @@ function Chevron({ open }: { open: boolean }) {
 
 /* ── Component ── */
 
-export default function SidebarNav({ onClose }: { onClose?: () => void }) {
+export default function SidebarNav({
+  onClose,
+  collapsed = false,
+}: {
+  onClose?: () => void;
+  collapsed?: boolean;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
@@ -221,16 +236,22 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
   function renderLink(item: NavChild, indented: boolean) {
     const active = isActive(item.href);
     const badge = getBadge(item.href);
+    const initials = compactLabel(item.label);
     return (
       <Link
         key={item.href}
         href={item.href}
+        title={collapsed ? item.label : undefined}
         onClick={handleLinkClick}
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: indented ? '0.5rem 1rem 0.5rem 2.5rem' : '0.5rem 1rem 0.5rem 1.25rem',
+          padding: collapsed
+            ? '0.5rem 0.625rem'
+            : indented
+              ? '0.5rem 1rem 0.5rem 2.5rem'
+              : '0.5rem 1rem 0.5rem 1.25rem',
           color: active ? COLORS.sidebarTextActive : COLORS.sidebarText,
           textDecoration: 'none',
           fontSize: '0.8125rem',
@@ -239,6 +260,7 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
           borderLeft: active ? `2px solid ${COLORS.sidebarAccent}` : '2px solid transparent',
           transition: 'background 0.15s, color 0.15s',
           lineHeight: '1.4',
+          gap: '0.625rem',
         }}
         onMouseEnter={(e) => {
           if (!active) {
@@ -253,7 +275,26 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
           }
         }}
       >
-        <span>{item.label}</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', minWidth: 0 }}>
+          <span
+            style={{
+              width: '28px',
+              height: '28px',
+              borderRadius: '8px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: active ? COLORS.sidebarAccent : COLORS.sidebarHover,
+              color: COLORS.sidebarTextActive,
+              fontSize: '0.6875rem',
+              fontWeight: 700,
+              flexShrink: 0,
+            }}
+          >
+            {initials}
+          </span>
+          {!collapsed ? <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.label}</span> : null}
+        </span>
         {badge != null && badge > 0 && (
           <span
             style={{
@@ -282,17 +323,19 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
     const open = openGroups.has(group.label);
     const hasActiveChild = group.children.some((c) => isActive(c.href));
     const groupBadge = group.children.reduce((sum, c) => sum + (getBadge(c.href) ?? 0), 0);
+    const initials = compactLabel(group.label);
 
     return (
       <div key={group.label} style={{ marginBottom: '0.125rem' }}>
         <button
           onClick={() => toggleGroup(group.label)}
+          title={collapsed ? group.label : undefined}
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             width: '100%',
-            padding: '0.625rem 1rem 0.625rem 1.25rem',
+            padding: collapsed ? '0.625rem 0.625rem' : '0.625rem 1rem 0.625rem 1.25rem',
             background: 'transparent',
             border: 'none',
             cursor: 'pointer',
@@ -314,7 +357,27 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
           }}
         >
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            {group.label}
+            {collapsed ? (
+              <span
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '8px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: hasActiveChild ? COLORS.sidebarAccent : COLORS.sidebarHover,
+                  color: COLORS.sidebarTextActive,
+                  fontSize: '0.6875rem',
+                  fontWeight: 700,
+                  flexShrink: 0,
+                }}
+              >
+                {initials}
+              </span>
+            ) : (
+              group.label
+            )}
             {!open && groupBadge > 0 && (
               <span
                 style={{
@@ -335,7 +398,7 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
               </span>
             )}
           </span>
-          <Chevron open={open} />
+          {!collapsed ? <Chevron open={open} /> : null}
         </button>
         {open && <div>{group.children.map((child) => renderLink(child, true))}</div>}
       </div>
@@ -355,6 +418,7 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
       {/* Sign out */}
       <div style={{ padding: '0.5rem 1rem', borderTop: `1px solid ${COLORS.sidebarBorder}` }}>
         <button
+          title={collapsed ? 'Sign out' : undefined}
           onClick={handleSignOut}
           style={{
             width: '100%',
@@ -362,7 +426,7 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
             border: 'none',
             color: COLORS.sidebarText,
             fontSize: '0.8125rem',
-            textAlign: 'left',
+            textAlign: collapsed ? 'center' : 'left',
             padding: '0.5rem 0.25rem',
             cursor: 'pointer',
             borderRadius: '4px',
@@ -377,23 +441,24 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
             (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
           }}
         >
-          Sign out
+          {collapsed ? 'SO' : 'Sign out'}
         </button>
       </div>
 
       {/* Copyright / branding footer */}
       <div
         style={{
-          padding: '0.625rem 1.25rem',
+          padding: collapsed ? '0.625rem 0.5rem' : '0.625rem 1.25rem',
           borderTop: `1px solid ${COLORS.sidebarBorder}`,
           fontSize: '0.6875rem',
           color: COLORS.sidebarGroupLabel,
           lineHeight: 1.5,
+          textAlign: collapsed ? 'center' : 'left',
         }}
       >
-        <div style={{ opacity: 0.8 }}>{branding.copyright_text}</div>
-        <div style={{ opacity: 0.65, marginTop: '0.125rem' }}>Version {appReleaseVersion}</div>
-        {branding.hide_powered_by !== 'true' && (
+        {!collapsed ? <div style={{ opacity: 0.8 }}>{branding.copyright_text}</div> : null}
+        <div style={{ opacity: 0.65, marginTop: '0.125rem' }}>{collapsed ? `v${appReleaseVersion}` : `Version ${appReleaseVersion}`}</div>
+        {!collapsed && branding.hide_powered_by !== 'true' && (
           <div style={{ opacity: 0.5, marginTop: '0.125rem' }}>Powered by BetterSpend</div>
         )}
       </div>

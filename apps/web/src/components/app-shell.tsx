@@ -39,6 +39,7 @@ function OfflineIndicator() {
 const AUTH_PATHS = ['/login', '/signup', '/punchout', '/forgot-password', '/reset-password', '/vendor-portal'];
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 const SHORTCUTS_DISABLED_KEY = 'betterspend:shortcuts-disabled';
+const SIDEBAR_COLLAPSED_KEY = 'betterspend:sidebar-collapsed';
 
 const TYPE_LABELS: Record<string, string> = {
   requisition: 'Req',
@@ -72,6 +73,20 @@ function CloseIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
       <path d="M5 5l10 10M15 5L5 15" stroke={COLORS.sidebarText} strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function CollapseIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+      <path
+        d={collapsed ? 'M7 5l5 5-5 5' : 'M13 5l-5 5 5 5'}
+        stroke={COLORS.sidebarText}
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -708,6 +723,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [shortcutsDisabled, setShortcutsDisabled] = useState(false);
   const isAuthPage = AUTH_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'));
@@ -716,6 +732,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     setShortcutsDisabled(window.localStorage.getItem(SHORTCUTS_DISABLED_KEY) === 'true');
+    setSidebarCollapsed(window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true');
   }, []);
 
   // Close sidebar on navigation (mobile)
@@ -815,7 +832,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
-  const SIDEBAR_WIDTH = isMobile ? 280 : 240;
+  const SIDEBAR_WIDTH = isMobile ? 280 : sidebarCollapsed ? 72 : 240;
+
+  function handleToggleSidebarCollapsed() {
+    const nextValue = !sidebarCollapsed;
+    setSidebarCollapsed(nextValue);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, nextValue ? 'true' : 'false');
+    }
+  }
 
   const sidebar = (
     <aside
@@ -827,6 +852,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         display: 'flex',
         flexDirection: 'column',
         height: '100vh',
+        transition: 'width 0.2s ease',
         ...(isMobile ? {
           position: 'fixed' as const,
           top: 0,
@@ -852,34 +878,60 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {branding.app_logo_url ? (
           <img src={branding.app_logo_url} alt={branding.app_name} style={{ maxHeight: '32px', objectFit: 'contain' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
         ) : (
-          <span style={{
-            fontWeight: 700,
-            fontSize: '1.0625rem',
-            color: COLORS.sidebarTextActive,
-            letterSpacing: '-0.02em',
-          }}>
-            {branding.app_name}
+          <span
+            title={sidebarCollapsed ? branding.app_name : undefined}
+            style={{
+              fontWeight: 700,
+              fontSize: sidebarCollapsed ? '0.875rem' : '1.0625rem',
+              color: COLORS.sidebarTextActive,
+              letterSpacing: '-0.02em',
+              overflow: 'hidden',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {sidebarCollapsed ? branding.app_name.slice(0, 2).toUpperCase() : branding.app_name}
           </span>
         )}
-        {isMobile && (
-          <button
-            onClick={() => setSidebarOpen(false)}
-            style={{
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              padding: '0.25rem',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-            aria-label="Close sidebar"
-          >
-            <CloseIcon />
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+          {!isMobile && (
+            <button
+              onClick={handleToggleSidebarCollapsed}
+              style={{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '0.25rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '6px',
+              }}
+              title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              <CollapseIcon collapsed={sidebarCollapsed} />
+            </button>
+          )}
+          {isMobile && (
+            <button
+              onClick={() => setSidebarOpen(false)}
+              style={{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '0.25rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              aria-label="Close sidebar"
+            >
+              <CloseIcon />
+            </button>
+          )}
+        </div>
       </div>
-      <SidebarNav onClose={() => setSidebarOpen(false)} />
+      <SidebarNav onClose={() => setSidebarOpen(false)} collapsed={!isMobile && sidebarCollapsed} />
     </aside>
   );
 
