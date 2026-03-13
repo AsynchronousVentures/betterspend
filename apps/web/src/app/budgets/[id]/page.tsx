@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
 import { COLORS, SHADOWS } from '../../../lib/theme';
+import Breadcrumbs from '../../../components/breadcrumbs';
 
 function formatCurrency(amount: string | number | null, currency = 'USD') {
   if (amount === null || amount === undefined) return '—';
@@ -94,6 +95,7 @@ export default function BudgetDetailPage({ params }: { params: Promise<{ id: str
 
   return (
     <div style={{ padding: '2rem', maxWidth: '800px' }}>
+      <Breadcrumbs items={[{ label: 'Budgets', href: '/budgets' }, { label: budget.name }]} />
       {error && (
         <div style={{ marginBottom: '1rem', background: COLORS.accentRedLight, border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.625rem 1rem', color: COLORS.accentRedDark, fontSize: '0.875rem', display: 'flex', justifyContent: 'space-between' }}>
           {error}

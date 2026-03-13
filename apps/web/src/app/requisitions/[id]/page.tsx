@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api } from '../../../lib/api';
 import { COLORS, SHADOWS } from '../../../lib/theme';
+import Breadcrumbs from '../../../components/breadcrumbs';
 
 interface RequisitionLine {
   id: string;
@@ -163,6 +164,7 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
 
   return (
     <div style={{ padding: '2rem', maxWidth: '960px' }}>
+      <Breadcrumbs items={[{ label: 'Requisitions', href: '/requisitions' }, { label: req.number }]} />
       <Link href="/requisitions" style={{ color: COLORS.textSecondary, fontSize: '0.875rem', textDecoration: 'none' }}>
         &larr; Back to Requisitions
       </Link>

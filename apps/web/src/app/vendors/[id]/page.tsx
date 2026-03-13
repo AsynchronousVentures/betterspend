@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { api } from '../../../lib/api';
 import { COLORS, SHADOWS } from '../../../lib/theme';
 import { useToast } from '../../../components/toast';
+import Breadcrumbs from '../../../components/breadcrumbs';
 
 export default function VendorDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -105,6 +106,7 @@ export default function VendorDetailPage() {
 
   return (
     <div style={{ padding: '2rem', maxWidth: '800px' }}>
+      <Breadcrumbs items={[{ label: 'Vendors', href: '/vendors' }, { label: vendor.name }]} />
       <div style={{ marginBottom: '1.5rem' }}>
         <Link href="/vendors" style={{ color: COLORS.accentBlue, textDecoration: 'none', fontSize: '0.875rem' }}>← Vendors</Link>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>

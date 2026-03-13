@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
 import { COLORS, SHADOWS } from '../../../lib/theme';
+import Breadcrumbs from '../../../components/breadcrumbs';
 
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`,
@@ -89,6 +90,7 @@ export default function CatalogItemDetailPage({ params }: { params: Promise<{ id
 
   return (
     <div style={{ padding: '2rem', maxWidth: '700px' }}>
+      <Breadcrumbs items={[{ label: 'Catalog', href: '/catalog' }, { label: item.name }]} />
       <Link href="/catalog" style={{ color: COLORS.textSecondary, fontSize: '0.875rem', textDecoration: 'none' }}>
         &larr; Back to Catalog
       </Link>

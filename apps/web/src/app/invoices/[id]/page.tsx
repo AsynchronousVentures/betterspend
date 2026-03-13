@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { api } from '../../../lib/api';
 import { COLORS, SHADOWS } from '../../../lib/theme';
 import { DocumentUploader } from '../../../components/document-uploader';
+import Breadcrumbs from '../../../components/breadcrumbs';
 
 interface MatchResult {
   id: string;
@@ -188,6 +189,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
 
   return (
     <div style={{ padding: '2rem', maxWidth: '1000px' }}>
+      <Breadcrumbs items={[{ label: 'Invoices', href: '/invoices' }, { label: invoice.internalNumber }]} />
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
         <div>
           <div style={{ fontSize: '0.875rem', color: COLORS.textSecondary, marginBottom: '0.25rem' }}>

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { api } from '../../../lib/api';
 import { COLORS, SHADOWS } from '../../../lib/theme';
 import { DocumentUploader } from '../../../components/document-uploader';
+import Breadcrumbs from '../../../components/breadcrumbs';
 
 const CONTRACT_TYPE_LABELS: Record<string, string> = {
   msa:                'MSA',
@@ -137,6 +138,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
 
   return (
     <div style={{ padding: '2rem', maxWidth: '900px' }}>
+      <Breadcrumbs items={[{ label: 'Contracts', href: '/contracts' }, { label: contract.title }]} />
       {/* Breadcrumb */}
       <div style={{ marginBottom: '1rem' }}>
         <Link href="/contracts" style={{ color: COLORS.accentBlue, textDecoration: 'none', fontSize: '0.875rem' }}>← Contracts</Link>

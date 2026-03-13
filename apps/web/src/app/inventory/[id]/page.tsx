@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
 import { COLORS, SHADOWS } from '../../../lib/theme';
+import Breadcrumbs from '../../../components/breadcrumbs';
 
 const STATUS_STYLES: Record<string, { background: string; color: string }> = {
   ok:            { background: COLORS.accentGreenLight, color: COLORS.accentGreenDark },
@@ -164,6 +165,7 @@ export default function InventoryItemDetailPage() {
 
   return (
     <div style={{ padding: '2rem', maxWidth: '960px' }}>
+      <Breadcrumbs items={[{ label: 'Inventory', href: '/inventory' }, { label: item.name }]} />
       {/* Breadcrumb */}
       <div style={{ marginBottom: '1.25rem' }}>
         <Link href="/inventory" style={{ fontSize: '0.875rem', color: COLORS.accentBlue, textDecoration: 'none' }}>

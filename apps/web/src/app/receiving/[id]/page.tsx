@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
 import { COLORS, SHADOWS } from '../../../lib/theme';
+import Breadcrumbs from '../../../components/breadcrumbs';
 
 interface GRNLine {
   id: string;
@@ -84,6 +85,7 @@ export default function GRNDetailPage({ params }: { params: Promise<{ id: string
 
   return (
     <div style={{ padding: '2rem', maxWidth: '900px' }}>
+      <Breadcrumbs items={[{ label: 'Receiving', href: '/receiving' }, { label: grn.number }]} />
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
         <div>
           <div style={{ fontSize: '0.875rem', color: COLORS.textSecondary, marginBottom: '0.25rem' }}>

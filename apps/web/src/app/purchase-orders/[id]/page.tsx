@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
 import { COLORS, SHADOWS } from '../../../lib/theme';
+import Breadcrumbs from '../../../components/breadcrumbs';
 
 interface POLine {
   id: string;
@@ -251,6 +252,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
 
   return (
     <div style={{ padding: '2rem', maxWidth: '960px' }}>
+      <Breadcrumbs items={[{ label: 'Purchase Orders', href: '/purchase-orders' }, { label: po.number }]} />
       <Link href="/purchase-orders" style={{ color: COLORS.textSecondary, fontSize: '0.875rem', textDecoration: 'none' }}>
         &larr; Back to Purchase Orders
       </Link>
