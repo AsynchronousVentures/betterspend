@@ -2,7 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { api } from '../../lib/api';
 import { COLORS, SHADOWS } from '../../lib/theme';
 import { invalidateBrandingCache } from '../../lib/branding';
@@ -25,9 +25,16 @@ interface OAuthStatus {
 }
 
 function SettingsContent() {
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const initialTab = (searchParams.get('tab') as Tab | null) ?? 'branding';
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
+
+  useEffect(() => {
+    const nextTab = (searchParams.get('tab') as Tab | null) ?? 'branding';
+    setActiveTab(nextTab);
+  }, [searchParams]);
 
   const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [pwSaving, setPwSaving] = useState(false);
@@ -118,6 +125,13 @@ function SettingsContent() {
     color: active ? COLORS.textPrimary : COLORS.textSecondary, cursor: 'pointer', background: 'none', border: 'none',
     borderBottom: `2px solid ${active ? COLORS.accentBlue : 'transparent'}`,
   });
+
+  function handleTabChange(tab: Tab) {
+    setActiveTab(tab);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('tab', tab);
+    router.push(`${pathname}?${params.toString()}`);
+  }
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault(); setPwError(''); setPwMsg('');
@@ -232,7 +246,7 @@ function SettingsContent() {
       <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary, marginBottom: '1.5rem' }}>Settings</h1>
       <div style={{ display: 'flex', gap: 0, borderBottom: `1px solid ${COLORS.border}`, marginBottom: '1.5rem', flexWrap: 'wrap' }}>
         {(['branding', 'email', 'approval', 'compliance', 'integrations', 'org', 'password'] as Tab[]).map((t) => (
-          <button key={t} style={tabStyle(activeTab === t)} onClick={() => setActiveTab(t)}>
+          <button key={t} style={tabStyle(activeTab === t)} onClick={() => handleTabChange(t)}>
             {t === 'branding' ? 'Branding' : t === 'email' ? 'Email / SMTP' : t === 'approval' ? 'Approval Policy' : t === 'compliance' ? 'Contract Compliance' : t === 'integrations' ? 'Integrations' : t === 'org' ? 'System Info' : 'Change Password'}
           </button>
         ))}
