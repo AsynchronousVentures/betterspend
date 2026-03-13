@@ -6,10 +6,72 @@ import {
   rfqRequests, rfqLines, rfqInvitations, rfqResponses, rfqResponseLines,
   vendors, users, sequences, purchaseOrders, poLines,
 } from '@betterspend/db';
+import { MailService } from '../../common/mail/mail.service';
+import { SettingsService } from '../settings/settings.service';
 
 @Injectable()
 export class RfqService {
-  constructor(@Inject(DB_TOKEN) private db: Db) {}
+  constructor(
+    @Inject(DB_TOKEN) private db: Db,
+    private readonly mailService: MailService,
+    private readonly settingsService: SettingsService,
+  ) {}
+
+  private async sendDecisionEmail(orgId: string, params: {
+    vendorId: string;
+    rfqNumber: string;
+    rfqTitle?: string | null;
+    status: 'accepted' | 'rejected';
+    reason?: string;
+    purchaseOrderNumber?: string;
+  }) {
+    const vendor = await this.db.query.vendors.findFirst({
+      where: (v, { and, eq }) => and(eq(v.organizationId, orgId), eq(v.id, params.vendorId)),
+    });
+    const vendorEmail = (vendor?.contactInfo as any)?.email;
+    if (!vendor || !vendorEmail) return;
+
+    const settings = await this.settingsService.getAll(orgId);
+    const smtpHost = settings['smtp_host'] || '';
+    if (!smtpHost) return;
+
+    const appName = settings['app_name'] || 'BetterSpend';
+    const subject = params.status === 'accepted'
+      ? `[${appName}] RFQ ${params.rfqNumber} Awarded`
+      : `[${appName}] RFQ ${params.rfqNumber} Update`;
+    const summary = params.status === 'accepted'
+      ? `Your response for RFQ ${params.rfqNumber} has been selected.`
+      : `Your response for RFQ ${params.rfqNumber} was not selected.`;
+    const detail = params.status === 'accepted' && params.purchaseOrderNumber
+      ? `Purchase order ${params.purchaseOrderNumber} has been created from the award decision.`
+      : params.reason
+        ? `Reason: ${params.reason}`
+        : 'Thank you for participating in the sourcing event.';
+
+    await this.mailService.sendMail({
+      host: smtpHost,
+      port: parseInt(settings['smtp_port'] || '587', 10),
+      secure: settings['smtp_secure'] === 'true',
+      user: settings['smtp_user'] || '',
+      pass: settings['smtp_pass'] || '',
+      from: settings['smtp_from'] || `noreply@${smtpHost}`,
+    }, {
+      to: vendorEmail,
+      subject,
+      html: `
+        <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+          <h2 style="color:#0f172a">${params.status === 'accepted' ? 'RFQ Awarded' : 'RFQ Response Update'}</h2>
+          <p>Dear ${vendor.name},</p>
+          <p>${summary}</p>
+          ${params.rfqTitle ? `<p><strong>${params.rfqTitle}</strong></p>` : ''}
+          <p>${detail}</p>
+          <hr style="margin:24px 0;border:none;border-top:1px solid #e2e8f0">
+          <p style="color:#94a3b8;font-size:12px">This is an automated notification from ${appName}.</p>
+        </div>
+      `,
+      text: `${summary}\n\n${detail}`,
+    });
+  }
 
   private async nextNumber(orgId: string): Promise<string> {
     const year = new Date().getFullYear();
@@ -251,8 +313,12 @@ export class RfqService {
     }
 
     const [response] = await this.db
-      .select()
+      .select({
+        response: rfqResponses,
+        vendor: vendors,
+      })
       .from(rfqResponses)
+      .leftJoin(vendors, eq(rfqResponses.vendorId, vendors.id))
       .where(and(eq(rfqResponses.id, responseId), eq(rfqResponses.rfqId, id)));
 
     if (!response) throw new NotFoundException('Response not found');
@@ -278,7 +344,7 @@ export class RfqService {
         .insert(purchaseOrders)
         .values({
           organizationId: orgId,
-          vendorId: response.vendorId,
+          vendorId: response.response.vendorId,
           number: poNumber,
           version: 1,
           poType: 'standard',
@@ -288,14 +354,14 @@ export class RfqService {
           notes: `Created from RFQ ${rfq.number}${rfq.title ? `: ${rfq.title}` : ''}`,
           shippingAddress: {},
           billingAddress: {},
-          subtotal: String(response.totalAmount),
+          subtotal: String(response.response.totalAmount),
           taxAmount: '0',
-          totalAmount: String(response.totalAmount),
+          totalAmount: String(response.response.totalAmount),
           baseCurrency: rfq.currency,
           exchangeRate: '1',
-          baseSubtotal: String(response.totalAmount),
+          baseSubtotal: String(response.response.totalAmount),
           baseTaxAmount: '0',
-          baseTotalAmount: String(response.totalAmount),
+          baseTotalAmount: String(response.response.totalAmount),
         })
         .returning();
 
@@ -323,7 +389,7 @@ export class RfqService {
 
       await tx
         .update(rfqRequests)
-        .set({ status: 'awarded', awardedVendorId: response.vendorId, updatedAt: new Date() })
+        .set({ status: 'awarded', awardedVendorId: response.response.vendorId, updatedAt: new Date() })
         .where(eq(rfqRequests.id, id));
     });
 
@@ -331,6 +397,25 @@ export class RfqService {
       .update(rfqResponses)
       .set({ awarded: true, status: 'accepted' })
       .where(eq(rfqResponses.id, responseId));
+
+    const otherResponses = rfq.responses.filter((item) => item.id !== responseId);
+    await Promise.all([
+      this.sendDecisionEmail(orgId, {
+        vendorId: response.response.vendorId,
+        rfqNumber: rfq.number,
+        rfqTitle: rfq.title,
+        status: 'accepted',
+        purchaseOrderNumber: poNumber,
+      }),
+      ...otherResponses.map((item) =>
+        this.sendDecisionEmail(orgId, {
+          vendorId: item.vendorId,
+          rfqNumber: rfq.number,
+          rfqTitle: rfq.title,
+          status: 'rejected',
+          reason: 'Another response was selected for award.',
+        })),
+    ]);
 
     const updatedRfq = await this.findOne(orgId, id);
     return {
@@ -359,6 +444,14 @@ export class RfqService {
         notes: response.notes ? `${response.notes}\n\nRejected: ${reason.trim()}` : `Rejected: ${reason.trim()}`,
       })
       .where(eq(rfqResponses.id, responseId));
+
+    await this.sendDecisionEmail(orgId, {
+      vendorId: response.vendorId,
+      rfqNumber: rfq.number,
+      rfqTitle: rfq.title,
+      status: 'rejected',
+      reason: reason.trim(),
+    });
 
     return this.findOne(orgId, rfqId);
   }
