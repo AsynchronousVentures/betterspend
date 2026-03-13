@@ -3,6 +3,7 @@ import { organizations } from './organizations';
 import { users } from './users';
 import { vendors, catalogItems } from './vendors';
 import { requisitions, requisitionLines } from './requisitions';
+import { contracts } from './contracts';
 
 export const purchaseOrders = pgTable('purchase_orders', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -47,6 +48,11 @@ export const poLines = pgTable('po_lines', {
   quantityReceived: numeric('quantity_received', { precision: 10, scale: 2 }).notNull().default('0'),
   quantityInvoiced: numeric('quantity_invoiced', { precision: 10, scale: 2 }).notNull().default('0'),
   glAccount: varchar('gl_account', { length: 50 }),
+  // Contract compliance fields
+  contractComplianceStatus: varchar('contract_compliance_status', { length: 20 }),
+  contractComplianceDeltaPercent: numeric('contract_compliance_delta_percent', { precision: 8, scale: 4 }),
+  matchedContractId: uuid('matched_contract_id').references(() => contracts.id),
+  contractedUnitPrice: numeric('contracted_unit_price', { precision: 15, scale: 4 }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

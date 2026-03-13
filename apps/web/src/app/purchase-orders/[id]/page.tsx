@@ -7,10 +7,15 @@ import { COLORS, SHADOWS } from '../../../lib/theme';
 
 interface POLine {
   id: string;
+  lineNumber?: number;
   description: string;
   qty: string | number;
   uom: string;
   unitPrice: string | number;
+  contractComplianceStatus?: string | null;
+  contractComplianceDeltaPercent?: string | null;
+  matchedContractId?: string | null;
+  contractedUnitPrice?: string | null;
 }
 
 interface POVersion {
@@ -98,6 +103,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
   const [releases, setReleases] = useState<BlanketRelease[]>([]);
   const [receivingLines, setReceivingLines] = useState<ReceivingLine[]>([]);
   const [releaseDialogOpen, setReleaseDialogOpen] = useState(false);
+  const [complianceReport, setComplianceReport] = useState<any>(null);
   const [releaseAmount, setReleaseAmount] = useState('');
   const [releaseDesc, setReleaseDesc] = useState('');
   const [releaseError, setReleaseError] = useState('');
@@ -114,6 +120,8 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
           }
           // Always fetch receiving summary for progress tracking
           api.purchaseOrders.receivingSummary(pid).then(setReceivingLines).catch(() => {});
+          // Fetch compliance report
+          api.purchaseOrders.complianceReport(pid).then(setComplianceReport).catch(() => {});
         })
         .catch(() => setPo(null))
         .finally(() => setLoading(false));
@@ -383,6 +391,62 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
           </div>
         )}
       </div>
+
+      {/* Contract Compliance Panel */}
+      {complianceReport && complianceReport.lines && complianceReport.lines.length > 0 && (
+        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', overflow: 'hidden', marginBottom: '1.25rem', boxShadow: SHADOWS.card }}>
+          <div style={{ padding: '1rem 1.5rem', borderBottom: `1px solid ${COLORS.tableBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <h2 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary }}>Contract Compliance</h2>
+            <span style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>
+              {complianceReport.summary?.compliantLines ?? 0} of {complianceReport.summary?.totalLines ?? 0} lines compliant
+              {(complianceReport.summary?.deviationLines ?? 0) > 0 && (
+                <span style={{ marginLeft: '0.5rem', background: COLORS.accentAmberLight, color: COLORS.accentAmberDark, padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>
+                  {complianceReport.summary.deviationLines} deviation{complianceReport.summary.deviationLines > 1 ? 's' : ''}
+                </span>
+              )}
+            </span>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+              <thead>
+                <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
+                  {['#', 'Description', 'Unit Price', 'Contract Price', 'Delta', 'Status'].map((col) => (
+                    <th key={col} style={{ padding: '0.625rem 1rem', textAlign: 'left', fontWeight: 600, color: COLORS.textSecondary, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{col}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {complianceReport.lines.map((cl: any, idx: number) => {
+                  const st = cl.contractComplianceStatus ?? 'no_contract';
+                  const delta = cl.contractComplianceDeltaPercent ? parseFloat(cl.contractComplianceDeltaPercent) : null;
+                  let statusBg: string = COLORS.hoverBg;
+                  let statusColor: string = COLORS.textMuted;
+                  let statusLabel = 'No contract';
+                  if (st === 'compliant') { statusBg = COLORS.accentGreenLight; statusColor = COLORS.accentGreenDark; statusLabel = 'Compliant'; }
+                  else if (st === 'deviation') { statusBg = COLORS.accentAmberLight; statusColor = COLORS.accentAmberDark; statusLabel = 'Deviation'; }
+                  else if (st === 'exempt') { statusBg = COLORS.accentBlueLight; statusColor = '#1e40af'; statusLabel = 'Exempt'; }
+                  return (
+                    <tr key={cl.id} style={{ borderBottom: idx < complianceReport.lines.length - 1 ? `1px solid ${COLORS.hoverBg}` : undefined }}>
+                      <td style={{ padding: '0.75rem 1rem', color: COLORS.textMuted, width: '2rem' }}>{cl.lineNumber ?? idx + 1}</td>
+                      <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary }}>{cl.description}</td>
+                      <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary }}>{cl.unitPrice != null ? formatCurrency(cl.unitPrice, po.currency) : '—'}</td>
+                      <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary }}>{cl.contractedUnitPrice != null ? formatCurrency(cl.contractedUnitPrice, po.currency) : '—'}</td>
+                      <td style={{ padding: '0.75rem 1rem', color: delta != null && delta > 0 ? COLORS.accentAmberDark : COLORS.textMuted }}>
+                        {delta != null ? `${delta > 0 ? '+' : ''}${delta.toFixed(1)}%` : '—'}
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem' }}>
+                        <span style={{ background: statusBg, color: statusColor, padding: '0.2rem 0.6rem', borderRadius: '9999px', fontSize: '0.75rem', fontWeight: 600 }}>
+                          {statusLabel}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Receiving Progress */}
       {receivingLines.length > 0 && (

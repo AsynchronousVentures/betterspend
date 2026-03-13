@@ -1,6 +1,6 @@
 import {
   Controller, Get, Post, Patch, Delete, Param, Body, Query, ParseUUIDPipe,
-  HttpCode, HttpStatus, Res,
+  HttpCode, HttpStatus, Res, BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import type { Response } from 'express';
@@ -45,6 +45,30 @@ export class PurchaseOrdersController {
   @ApiOperation({ summary: 'Get receiving progress per PO line' })
   getReceivingSummary(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
     return this.purchaseOrdersService.getReceivingSummary(id, orgId);
+  }
+
+  @Get(':id/compliance-report')
+  @ApiOperation({ summary: 'Get contract compliance report for PO' })
+  getComplianceReport(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
+    return this.purchaseOrdersService.getComplianceReport(id, orgId);
+  }
+
+  @Post('check-compliance')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Check contract compliance for a line item (does not modify data)' })
+  checkCompliance(
+    @Body() body: { vendorId: string; unitPrice: number; catalogItemId?: string; description?: string },
+    @CurrentOrgId() orgId: string,
+  ) {
+    if (!body.vendorId) throw new BadRequestException('vendorId is required');
+    if (body.unitPrice == null) throw new BadRequestException('unitPrice is required');
+    return this.purchaseOrdersService.checkLineCompliance(
+      orgId,
+      body.vendorId,
+      body.unitPrice,
+      body.catalogItemId,
+      body.description,
+    );
   }
 
   @Get(':id/pdf')

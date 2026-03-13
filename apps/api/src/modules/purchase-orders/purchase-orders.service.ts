@@ -5,6 +5,7 @@ import { SequenceService } from '../../common/services/sequence.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ContractComplianceService } from './contract-compliance.service';
 import type { Db } from '@betterspend/db';
 import { purchaseOrders, poLines, poVersions, blanketReleases, requisitions } from '@betterspend/db';
 
@@ -61,6 +62,7 @@ export class PurchaseOrdersService {
     private readonly webhookEvents: WebhookEventService,
     private readonly audit: AuditService,
     @Optional() private readonly notifications: NotificationsService,
+    @Optional() private readonly contractCompliance: ContractComplianceService,
   ) {}
 
   async findAll(organizationId: string, filters?: { status?: string; vendorId?: string }) {
@@ -88,6 +90,21 @@ export class PurchaseOrdersService {
   async create(organizationId: string, issuedBy: string, input: CreatePoInput) {
     const number = await this.sequenceService.next(organizationId, 'purchase_order');
 
+    // Run compliance checks for each line before the transaction
+    const lineComplianceResults = this.contractCompliance
+      ? await Promise.all(
+          input.lines.map((l) =>
+            this.contractCompliance!.checkCompliance(
+              organizationId,
+              input.vendorId,
+              l.unitPrice,
+              l.catalogItemId ?? null,
+              l.description,
+            ).catch(() => null),
+          ),
+        )
+      : input.lines.map(() => null);
+
     const createdId = await this.db.transaction(async (tx) => {
       const subtotal = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
 
@@ -113,18 +130,25 @@ export class PurchaseOrdersService {
       }).returning();
 
       await tx.insert(poLines).values(
-        input.lines.map((l, i) => ({
-          purchaseOrderId: po.id,
-          lineNumber: i + 1,
-          description: l.description,
-          quantity: String(l.quantity),
-          unitOfMeasure: l.unitOfMeasure,
-          unitPrice: String(l.unitPrice),
-          totalPrice: String(l.quantity * l.unitPrice),
-          glAccount: l.glAccount,
-          catalogItemId: l.catalogItemId,
-          requisitionLineId: l.requisitionLineId,
-        })),
+        input.lines.map((l, i) => {
+          const cr = lineComplianceResults[i];
+          return {
+            purchaseOrderId: po.id,
+            lineNumber: i + 1,
+            description: l.description,
+            quantity: String(l.quantity),
+            unitOfMeasure: l.unitOfMeasure,
+            unitPrice: String(l.unitPrice),
+            totalPrice: String(l.quantity * l.unitPrice),
+            glAccount: l.glAccount,
+            catalogItemId: l.catalogItemId,
+            requisitionLineId: l.requisitionLineId,
+            contractComplianceStatus: cr?.status ?? null,
+            contractComplianceDeltaPercent: cr?.deltaPercent != null ? String(cr.deltaPercent) : null,
+            matchedContractId: cr?.contractId ?? null,
+            contractedUnitPrice: cr?.contractedUnitPrice != null ? String(cr.contractedUnitPrice) : null,
+          };
+        }),
       );
 
       // If created from a requisition, mark it as converted
@@ -195,17 +219,40 @@ export class PurchaseOrdersService {
       if (input.lines) {
         await tx.delete(poLines).where(eq(poLines.purchaseOrderId, id));
         const subtotal = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
+
+        // Compliance checks for change order lines
+        const changeLineCompliance = this.contractCompliance
+          ? await Promise.all(
+              input.lines.map((l) =>
+                this.contractCompliance!.checkCompliance(
+                  organizationId,
+                  po.vendorId,
+                  l.unitPrice,
+                  null,
+                  l.description,
+                ).catch(() => null),
+              ),
+            )
+          : input.lines.map(() => null);
+
         await tx.insert(poLines).values(
-          input.lines.map((l, i) => ({
-            purchaseOrderId: id,
-            lineNumber: i + 1,
-            description: l.description,
-            quantity: String(l.quantity),
-            unitOfMeasure: l.unitOfMeasure,
-            unitPrice: String(l.unitPrice),
-            totalPrice: String(l.quantity * l.unitPrice),
-            glAccount: l.glAccount,
-          })),
+          input.lines.map((l, i) => {
+            const cr = changeLineCompliance[i];
+            return {
+              purchaseOrderId: id,
+              lineNumber: i + 1,
+              description: l.description,
+              quantity: String(l.quantity),
+              unitOfMeasure: l.unitOfMeasure,
+              unitPrice: String(l.unitPrice),
+              totalPrice: String(l.quantity * l.unitPrice),
+              glAccount: l.glAccount,
+              contractComplianceStatus: cr?.status ?? null,
+              contractComplianceDeltaPercent: cr?.deltaPercent != null ? String(cr.deltaPercent) : null,
+              matchedContractId: cr?.contractId ?? null,
+              contractedUnitPrice: cr?.contractedUnitPrice != null ? String(cr.contractedUnitPrice) : null,
+            };
+          }),
         );
 
         const subtotalStr = String(subtotal);
@@ -326,6 +373,55 @@ export class PurchaseOrdersService {
     }
 
     return updated;
+  }
+
+  async getComplianceReport(id: string, organizationId: string) {
+    const po = await this.findOne(id, organizationId);
+    const lines = po.lines ?? [];
+    const totalLines = lines.length;
+    const compliantLines = lines.filter((l: any) => l.contractComplianceStatus === 'compliant').length;
+    const deviationLines = lines.filter((l: any) => l.contractComplianceStatus === 'deviation').length;
+    const noContractLines = lines.filter((l: any) => l.contractComplianceStatus === 'no_contract' || !l.contractComplianceStatus).length;
+
+    return {
+      purchaseOrderId: id,
+      number: po.number,
+      summary: {
+        totalLines,
+        compliantLines,
+        deviationLines,
+        noContractLines,
+      },
+      lines: lines.map((l: any) => ({
+        id: l.id,
+        lineNumber: l.lineNumber,
+        description: l.description,
+        unitPrice: l.unitPrice,
+        contractComplianceStatus: l.contractComplianceStatus ?? 'no_contract',
+        contractComplianceDeltaPercent: l.contractComplianceDeltaPercent,
+        matchedContractId: l.matchedContractId,
+        contractedUnitPrice: l.contractedUnitPrice,
+      })),
+    };
+  }
+
+  async checkLineCompliance(
+    organizationId: string,
+    vendorId: string,
+    unitPrice: number,
+    catalogItemId?: string,
+    description?: string,
+  ) {
+    if (!this.contractCompliance) {
+      return { status: 'no_contract', deltaPercent: null, contractId: null, contractedUnitPrice: null };
+    }
+    return this.contractCompliance.checkCompliance(
+      organizationId,
+      vendorId,
+      unitPrice,
+      catalogItemId,
+      description,
+    );
   }
 
   async getReceivingSummary(id: string, organizationId: string) {

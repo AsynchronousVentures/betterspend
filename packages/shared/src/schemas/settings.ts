@@ -18,6 +18,8 @@ export const SETTING_KEYS = [
   'auto_approve_threshold',
   'auto_approve_require_budget_check',
   'auto_approve_notify_manager',
+  'contract_price_deviation_threshold',
+  'contract_price_deviation_action',
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];
@@ -40,6 +42,8 @@ export const DEFAULT_SETTINGS: Record<SettingKey, string> = {
   auto_approve_threshold: '0',
   auto_approve_require_budget_check: 'false',
   auto_approve_notify_manager: 'true',
+  contract_price_deviation_threshold: '5',
+  contract_price_deviation_action: 'warn',
 };
 
 export const brandingSettingsSchema = z.object({
@@ -66,4 +70,9 @@ export const approvalPolicySettingsSchema = z.object({
   auto_approve_threshold: z.string().regex(/^\d+(\.\d{1,2})?$/, 'Must be a valid dollar amount').optional(),
   auto_approve_require_budget_check: z.enum(['true', 'false']).optional(),
   auto_approve_notify_manager: z.enum(['true', 'false']).optional(),
+});
+
+export const contractComplianceSettingsSchema = z.object({
+  contract_price_deviation_threshold: z.string().regex(/^\d+(\.\d+)?$/).optional(),
+  contract_price_deviation_action: z.enum(['warn', 'block']).optional(),
 });

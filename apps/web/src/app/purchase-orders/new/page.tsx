@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
@@ -16,6 +16,16 @@ interface LineItem {
   qty: string;
   uom: string;
   unitPrice: string;
+}
+
+interface ComplianceResult {
+  status: 'compliant' | 'deviation' | 'no_contract' | 'exempt';
+  deltaPercent: number | null;
+  contractId: string | null;
+  contractedUnitPrice: number | null;
+  contractNumber?: string | null;
+  deviationAction?: string;
+  deviationThreshold?: number;
 }
 
 const EMPTY_LINE: LineItem = { description: '', qty: '1', uom: 'each', unitPrice: '0' };
@@ -44,6 +54,83 @@ function formatCurrency(amount: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
 }
 
+function ComplianceBadge({
+  result,
+  deviationThreshold,
+}: {
+  result: ComplianceResult | null | undefined;
+  deviationThreshold: number;
+}) {
+  if (!result) return null;
+
+  if (result.status === 'no_contract') {
+    return (
+      <span
+        style={{
+          display: 'inline-block',
+          fontSize: '0.7rem',
+          fontWeight: 600,
+          padding: '0.2rem 0.5rem',
+          borderRadius: '4px',
+          background: COLORS.hoverBg,
+          color: COLORS.textMuted,
+          border: `1px solid ${COLORS.border}`,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        No contract
+      </span>
+    );
+  }
+
+  if (result.status === 'compliant') {
+    return (
+      <span
+        style={{
+          display: 'inline-block',
+          fontSize: '0.7rem',
+          fontWeight: 600,
+          padding: '0.2rem 0.5rem',
+          borderRadius: '4px',
+          background: COLORS.accentGreenLight,
+          color: COLORS.accentGreenDark,
+          border: '1px solid #bbf7d0',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        Contract: {formatCurrency(result.contractedUnitPrice ?? 0)}
+      </span>
+    );
+  }
+
+  if (result.status === 'deviation') {
+    const delta = result.deltaPercent ?? 0;
+    const exceeded = delta > deviationThreshold;
+    const isBlock = result.deviationAction === 'block';
+    const severe = exceeded && isBlock;
+
+    return (
+      <span
+        style={{
+          display: 'inline-block',
+          fontSize: '0.7rem',
+          fontWeight: 600,
+          padding: '0.2rem 0.5rem',
+          borderRadius: '4px',
+          background: severe ? COLORS.accentRedLight : COLORS.accentAmberLight,
+          color: severe ? COLORS.accentRedDark : COLORS.accentAmberDark,
+          border: `1px solid ${severe ? '#fca5a5' : '#fde68a'}`,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {severe ? '\u26d4' : '\u26a0'} Contract: {formatCurrency(result.contractedUnitPrice ?? 0)} (+{delta.toFixed(1)}%)
+      </span>
+    );
+  }
+
+  return null;
+}
+
 export default function NewPurchaseOrderPage() {
   const router = useRouter();
 
@@ -60,6 +147,12 @@ export default function NewPurchaseOrderPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  // Compliance state per line
+  const [lineCompliance, setLineCompliance] = useState<Array<ComplianceResult | null>>([null]);
+  const [deviationThreshold, setDeviationThreshold] = useState(5);
+  const [deviationAction, setDeviationAction] = useState('warn');
+  const debounceTimers = useRef<Array<ReturnType<typeof setTimeout> | null>>([null]);
+
   useEffect(() => {
     api.vendors.list()
       .then((data) => {
@@ -69,7 +162,67 @@ export default function NewPurchaseOrderPage() {
       })
       .catch(() => {})
       .finally(() => setVendorsLoading(false));
+
+    // Load deviation threshold from settings
+    api.settings.getAll()
+      .then((all) => {
+        const threshold = parseFloat(all.contract_price_deviation_threshold || '5');
+        const action = all.contract_price_deviation_action || 'warn';
+        if (!isNaN(threshold)) setDeviationThreshold(threshold);
+        setDeviationAction(action);
+      })
+      .catch(() => {});
   }, []);
+
+  const runComplianceCheck = useCallback(
+    (lineIdx: number, vid: string, price: number, desc: string) => {
+      if (!vid || isNaN(price) || price <= 0) {
+        setLineCompliance((prev) => {
+          const next = [...prev];
+          next[lineIdx] = null;
+          return next;
+        });
+        return;
+      }
+
+      // Clear existing timer for this line
+      if (debounceTimers.current[lineIdx]) {
+        clearTimeout(debounceTimers.current[lineIdx]!);
+      }
+
+      debounceTimers.current[lineIdx] = setTimeout(async () => {
+        try {
+          const result = await api.purchaseOrders.checkCompliance({
+            vendorId: vid,
+            unitPrice: price,
+            description: desc || undefined,
+          });
+          setLineCompliance((prev) => {
+            const next = [...prev];
+            next[lineIdx] = result;
+            return next;
+          });
+          if (result.deviationThreshold != null) setDeviationThreshold(result.deviationThreshold);
+          if (result.deviationAction) setDeviationAction(result.deviationAction);
+        } catch {
+          // silent fail
+        }
+      }, 600);
+    },
+    [],
+  );
+
+  // Re-run compliance checks when vendor changes
+  useEffect(() => {
+    if (!vendorId) return;
+    lines.forEach((line, idx) => {
+      const price = parseFloat(line.unitPrice);
+      if (!isNaN(price) && price > 0) {
+        runComplianceCheck(idx, vendorId, price, line.description);
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vendorId]);
 
   const total = lines.reduce((sum, l) => {
     return sum + (parseFloat(l.qty) || 0) * (parseFloat(l.unitPrice) || 0);
@@ -77,17 +230,34 @@ export default function NewPurchaseOrderPage() {
 
   function addLine() {
     setLines((prev) => [...prev, { ...EMPTY_LINE }]);
+    setLineCompliance((prev) => [...prev, null]);
+    debounceTimers.current.push(null);
   }
 
   function removeLine(idx: number) {
     setLines((prev) => prev.filter((_, i) => i !== idx));
+    setLineCompliance((prev) => prev.filter((_, i) => i !== idx));
+    debounceTimers.current = debounceTimers.current.filter((_, i) => i !== idx);
   }
 
   function updateLine(idx: number, field: keyof LineItem, value: string) {
     setLines((prev) =>
       prev.map((line, i) => (i === idx ? { ...line, [field]: value } : line)),
     );
+
+    if (field === 'unitPrice' || field === 'description') {
+      const updatedLine = { ...lines[idx], [field]: value };
+      const price = parseFloat(field === 'unitPrice' ? value : updatedLine.unitPrice);
+      const desc = field === 'description' ? value : updatedLine.description;
+      if (vendorId) {
+        runComplianceCheck(idx, vendorId, price, desc);
+      }
+    }
   }
+
+  // Check if any line has a 'block' level deviation
+  const hasBlockingDeviation = deviationAction === 'block' &&
+    lineCompliance.some((c) => c?.status === 'deviation' && (c.deltaPercent ?? 0) > deviationThreshold);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -101,6 +271,10 @@ export default function NewPurchaseOrderPage() {
       setError('At least one line item is required.');
       return;
     }
+    if (hasBlockingDeviation) {
+      setError('One or more line items exceed the contract price deviation threshold. Please correct the prices or contact your administrator.');
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -111,8 +285,8 @@ export default function NewPurchaseOrderPage() {
         notes: notes.trim() || undefined,
         lines: lines.map((l) => ({
           description: l.description,
-          qty: parseFloat(l.qty) || 1,
-          uom: l.uom || 'each',
+          quantity: parseFloat(l.qty) || 1,
+          unitOfMeasure: l.uom || 'each',
           unitPrice: parseFloat(l.unitPrice) || 0,
         })),
       };
@@ -274,7 +448,7 @@ export default function NewPurchaseOrderPage() {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '3fr 80px 80px 120px 100px 40px',
+              gridTemplateColumns: '3fr 80px 80px 130px 120px 40px',
               gap: '0.5rem',
               marginBottom: '0.5rem',
             }}
@@ -297,74 +471,81 @@ export default function NewPurchaseOrderPage() {
 
           {lines.map((line, idx) => {
             const lineTotal = (parseFloat(line.qty) || 0) * (parseFloat(line.unitPrice) || 0);
+            const compliance = lineCompliance[idx];
             return (
-              <div
-                key={idx}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '3fr 80px 80px 120px 100px 40px',
-                  gap: '0.5rem',
-                  marginBottom: '0.5rem',
-                  alignItems: 'center',
-                }}
-              >
-                <input
-                  type="text"
-                  value={line.description}
-                  onChange={(e) => updateLine(idx, 'description', e.target.value)}
-                  placeholder="Item description"
-                  style={inputStyle}
-                />
-                <input
-                  type="number"
-                  value={line.qty}
-                  min="0"
-                  step="any"
-                  onChange={(e) => updateLine(idx, 'qty', e.target.value)}
-                  style={inputStyle}
-                />
-                <input
-                  type="text"
-                  value={line.uom}
-                  onChange={(e) => updateLine(idx, 'uom', e.target.value)}
-                  placeholder="each"
-                  style={inputStyle}
-                />
-                <input
-                  type="number"
-                  value={line.unitPrice}
-                  min="0"
-                  step="any"
-                  onChange={(e) => updateLine(idx, 'unitPrice', e.target.value)}
-                  style={inputStyle}
-                />
+              <div key={idx} style={{ marginBottom: '0.625rem' }}>
                 <div
                   style={{
-                    fontSize: '0.875rem',
-                    color: COLORS.textSecondary,
-                    fontVariantNumeric: 'tabular-nums',
-                    textAlign: 'right',
-                    paddingRight: '0.25rem',
+                    display: 'grid',
+                    gridTemplateColumns: '3fr 80px 80px 130px 120px 40px',
+                    gap: '0.5rem',
+                    alignItems: 'center',
                   }}
                 >
-                  {formatCurrency(lineTotal)}
+                  <input
+                    type="text"
+                    value={line.description}
+                    onChange={(e) => updateLine(idx, 'description', e.target.value)}
+                    placeholder="Item description"
+                    style={inputStyle}
+                  />
+                  <input
+                    type="number"
+                    value={line.qty}
+                    min="0"
+                    step="any"
+                    onChange={(e) => updateLine(idx, 'qty', e.target.value)}
+                    style={inputStyle}
+                  />
+                  <input
+                    type="text"
+                    value={line.uom}
+                    onChange={(e) => updateLine(idx, 'uom', e.target.value)}
+                    placeholder="each"
+                    style={inputStyle}
+                  />
+                  <input
+                    type="number"
+                    value={line.unitPrice}
+                    min="0"
+                    step="any"
+                    onChange={(e) => updateLine(idx, 'unitPrice', e.target.value)}
+                    style={inputStyle}
+                  />
+                  <div
+                    style={{
+                      fontSize: '0.875rem',
+                      color: COLORS.textSecondary,
+                      fontVariantNumeric: 'tabular-nums',
+                      textAlign: 'right',
+                      paddingRight: '0.25rem',
+                    }}
+                  >
+                    {formatCurrency(lineTotal)}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeLine(idx)}
+                    disabled={lines.length === 1}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: lines.length === 1 ? 'not-allowed' : 'pointer',
+                      color: lines.length === 1 ? COLORS.inputBorder : COLORS.accentRed,
+                      fontSize: '1rem',
+                      padding: '0.25rem',
+                    }}
+                    title="Remove line"
+                  >
+                    &times;
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => removeLine(idx)}
-                  disabled={lines.length === 1}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: lines.length === 1 ? 'not-allowed' : 'pointer',
-                    color: lines.length === 1 ? COLORS.inputBorder : COLORS.accentRed,
-                    fontSize: '1rem',
-                    padding: '0.25rem',
-                  }}
-                  title="Remove line"
-                >
-                  &times;
-                </button>
+                {/* Compliance badge row */}
+                {compliance && (
+                  <div style={{ paddingLeft: '0', marginTop: '0.25rem' }}>
+                    <ComplianceBadge result={compliance} deviationThreshold={deviationThreshold} />
+                  </div>
+                )}
               </div>
             );
           })}
@@ -414,11 +595,29 @@ export default function NewPurchaseOrderPage() {
           </div>
         )}
 
+        {/* Blocking deviation warning */}
+        {hasBlockingDeviation && (
+          <div
+            style={{
+              background: COLORS.accentRedLight,
+              border: '1px solid #fca5a5',
+              borderRadius: '6px',
+              padding: '0.75rem 1rem',
+              color: COLORS.accentRedDark,
+              fontSize: '0.875rem',
+              marginBottom: '1rem',
+              fontWeight: 500,
+            }}
+          >
+            One or more line prices exceed the contract deviation threshold ({deviationThreshold}%). Submission is blocked. Please correct prices or contact your administrator.
+          </div>
+        )}
+
         {/* Actions */}
         <div style={{ display: 'flex', gap: '0.75rem' }}>
           <button
             type="submit"
-            disabled={submitting || vendorsLoading}
+            disabled={submitting || vendorsLoading || hasBlockingDeviation}
             style={{
               background: COLORS.textPrimary,
               color: COLORS.white,
@@ -427,8 +626,8 @@ export default function NewPurchaseOrderPage() {
               padding: '0.625rem 1.5rem',
               fontSize: '0.875rem',
               fontWeight: 600,
-              cursor: submitting || vendorsLoading ? 'not-allowed' : 'pointer',
-              opacity: submitting || vendorsLoading ? 0.7 : 1,
+              cursor: submitting || vendorsLoading || hasBlockingDeviation ? 'not-allowed' : 'pointer',
+              opacity: submitting || vendorsLoading || hasBlockingDeviation ? 0.7 : 1,
             }}
           >
             {submitting ? 'Saving...' : 'Create Purchase Order'}

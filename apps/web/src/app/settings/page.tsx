@@ -6,7 +6,7 @@ import { api } from '../../lib/api';
 import { COLORS, SHADOWS } from '../../lib/theme';
 import { invalidateBrandingCache } from '../../lib/branding';
 
-type Tab = 'org' | 'branding' | 'email' | 'password' | 'integrations' | 'approval';
+type Tab = 'org' | 'branding' | 'email' | 'password' | 'integrations' | 'approval' | 'compliance';
 
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`,
@@ -59,6 +59,15 @@ function SettingsContent() {
   const [approvalPolicyMsg, setApprovalPolicyMsg] = useState('');
   const [approvalPolicyError, setApprovalPolicyError] = useState('');
 
+  // Contract compliance state
+  const [compliance, setCompliance] = useState({
+    contract_price_deviation_threshold: '5',
+    contract_price_deviation_action: 'warn' as 'warn' | 'block',
+  });
+  const [complianceSaving, setComplianceSaving] = useState(false);
+  const [complianceMsg, setComplianceMsg] = useState('');
+  const [complianceError, setComplianceError] = useState('');
+
   // Integrations state
   const [oauthStatus, setOauthStatus] = useState<OAuthStatus>({ qbo: false, xero: false });
   const [oauthLoading, setOauthLoading] = useState(false);
@@ -70,6 +79,10 @@ function SettingsContent() {
       setBranding((b) => ({ ...b, ...Object.fromEntries(Object.entries(all).filter(([k]) => Object.keys(b).includes(k))) }));
       setSmtp((s) => ({ ...s, ...Object.fromEntries(Object.entries(all).filter(([k]) => Object.keys(s).includes(k))) }));
       setApprovalPolicy((p) => ({ ...p, ...Object.fromEntries(Object.entries(all).filter(([k]) => Object.keys(p).includes(k))) }));
+      setCompliance((c) => ({
+        contract_price_deviation_threshold: all.contract_price_deviation_threshold ?? c.contract_price_deviation_threshold,
+        contract_price_deviation_action: (all.contract_price_deviation_action as 'warn' | 'block') ?? c.contract_price_deviation_action,
+      }));
     }).catch(() => {});
   }, []);
 
@@ -133,6 +146,14 @@ function SettingsContent() {
     } catch (e: any) { setApprovalPolicyError(e.message); } finally { setApprovalPolicySaving(false); }
   }
 
+  async function handleSaveCompliance(e: React.FormEvent) {
+    e.preventDefault(); setComplianceError(''); setComplianceMsg(''); setComplianceSaving(true);
+    try {
+      await api.settings.updateContractCompliance(compliance);
+      setComplianceMsg('Contract compliance settings saved.');
+    } catch (e: any) { setComplianceError(e.message); } finally { setComplianceSaving(false); }
+  }
+
   async function handleConnectQbo() {
     setIntegrationsError(''); setIntegrationsMsg(''); setOauthLoading(true);
     try {
@@ -176,9 +197,9 @@ function SettingsContent() {
     <div style={{ padding: '2rem', maxWidth: '720px' }}>
       <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary, marginBottom: '1.5rem' }}>Settings</h1>
       <div style={{ display: 'flex', gap: 0, borderBottom: `1px solid ${COLORS.border}`, marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-        {(['branding', 'email', 'approval', 'integrations', 'org', 'password'] as Tab[]).map((t) => (
+        {(['branding', 'email', 'approval', 'compliance', 'integrations', 'org', 'password'] as Tab[]).map((t) => (
           <button key={t} style={tabStyle(activeTab === t)} onClick={() => setActiveTab(t)}>
-            {t === 'branding' ? 'Branding' : t === 'email' ? 'Email / SMTP' : t === 'approval' ? 'Approval Policy' : t === 'integrations' ? 'Integrations' : t === 'org' ? 'System Info' : 'Change Password'}
+            {t === 'branding' ? 'Branding' : t === 'email' ? 'Email / SMTP' : t === 'approval' ? 'Approval Policy' : t === 'compliance' ? 'Contract Compliance' : t === 'integrations' ? 'Integrations' : t === 'org' ? 'System Info' : 'Change Password'}
           </button>
         ))}
       </div>
@@ -289,6 +310,145 @@ function SettingsContent() {
         </form>
       )}
 
+      {activeTab === 'approval' && (
+        <form onSubmit={handleSaveApprovalPolicy}>
+          <div style={card}>
+            <h2 style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.25rem', color: COLORS.textPrimary }}>Approval Policy</h2>
+            <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginBottom: '1.5rem', marginTop: '0.25rem' }}>
+              Configure the low-value purchase fast lane. Requisitions at or below the threshold are automatically approved without requiring manual review.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              <div>
+                <label style={labelStyle}>Auto-approve Threshold</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '1rem', color: COLORS.textSecondary, fontWeight: 600 }}>$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    style={{ ...inputStyle, maxWidth: '200px' }}
+                    value={approvalPolicy.auto_approve_threshold}
+                    onChange={(e) => setApprovalPolicy((p) => ({ ...p, auto_approve_threshold: e.target.value }))}
+                    placeholder="0"
+                  />
+                </div>
+                <p style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.375rem' }}>
+                  Set to 0 to disable auto-approval. Requisitions at or below this amount are approved instantly.
+                </p>
+              </div>
+              <label style={{ display: 'flex', gap: '0.625rem', alignItems: 'flex-start', cursor: 'pointer', fontSize: '0.875rem', color: COLORS.textPrimary }}>
+                <input
+                  type="checkbox"
+                  style={{ marginTop: '2px', flexShrink: 0 }}
+                  checked={approvalPolicy.auto_approve_require_budget_check === 'true'}
+                  onChange={(e) => setApprovalPolicy((p) => ({ ...p, auto_approve_require_budget_check: e.target.checked ? 'true' : 'false' }))}
+                />
+                <div>
+                  <div style={{ fontWeight: 500 }}>Require budget check</div>
+                  <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.125rem' }}>Only auto-approve if the requisition is within budget limits</div>
+                </div>
+              </label>
+              <label style={{ display: 'flex', gap: '0.625rem', alignItems: 'flex-start', cursor: 'pointer', fontSize: '0.875rem', color: COLORS.textPrimary }}>
+                <input
+                  type="checkbox"
+                  style={{ marginTop: '2px', flexShrink: 0 }}
+                  checked={approvalPolicy.auto_approve_notify_manager === 'true'}
+                  onChange={(e) => setApprovalPolicy((p) => ({ ...p, auto_approve_notify_manager: e.target.checked ? 'true' : 'false' }))}
+                />
+                <div>
+                  <div style={{ fontWeight: 500 }}>Add audit note when auto-approving</div>
+                  <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.125rem' }}>Adds a detailed note to the approval record explaining why it was auto-approved</div>
+                </div>
+              </label>
+              {Number(approvalPolicy.auto_approve_threshold) > 0 && (
+                <div style={{ padding: '0.75rem 1rem', background: COLORS.accentGreenLight, borderRadius: '6px', border: `1px solid ${COLORS.accentGreen}`, fontSize: '0.8125rem', color: COLORS.accentGreenDark }}>
+                  Fast lane active: requisitions up to ${Number(approvalPolicy.auto_approve_threshold).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} will be auto-approved.
+                </div>
+              )}
+            </div>
+            {approvalPolicyError && <div style={errorStyle}>{approvalPolicyError}</div>}
+            {approvalPolicyMsg && <div style={successStyle}>{approvalPolicyMsg}</div>}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
+              <button type="submit" disabled={approvalPolicySaving} style={btnPrimary}>
+                {approvalPolicySaving ? 'Saving...' : 'Save Approval Policy'}
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
+
+      {activeTab === 'compliance' && (
+        <form onSubmit={handleSaveCompliance}>
+          <div style={card}>
+            <h2 style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.25rem', color: COLORS.textPrimary }}>Contract Compliance</h2>
+            <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginBottom: '1.5rem', marginTop: '0.25rem' }}>
+              Configure how the system handles purchase order line prices that deviate from contracted rates. Compliance is checked automatically when creating or modifying PO lines.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              <div>
+                <label style={labelStyle}>Deviation Threshold</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    style={{ ...inputStyle, maxWidth: '120px' }}
+                    value={compliance.contract_price_deviation_threshold}
+                    onChange={(e) => setCompliance((c) => ({ ...c, contract_price_deviation_threshold: e.target.value }))}
+                  />
+                  <span style={{ fontSize: '0.875rem', color: COLORS.textSecondary, fontWeight: 500 }}>%</span>
+                </div>
+                <p style={{ fontSize: '0.8rem', color: COLORS.textMuted, marginTop: '0.375rem', margin: '0.375rem 0 0' }}>
+                  Price deviations within this percentage of the contracted price are treated as minor deviations. Set to 0 to require exact price match.
+                </p>
+              </div>
+              <div>
+                <label style={labelStyle}>Action When Threshold Exceeded</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', marginTop: '0.25rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.625rem', cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="deviation_action"
+                      value="warn"
+                      checked={compliance.contract_price_deviation_action === 'warn'}
+                      onChange={() => setCompliance((c) => ({ ...c, contract_price_deviation_action: 'warn' }))}
+                      style={{ marginTop: '0.15rem' }}
+                    />
+                    <div>
+                      <div style={{ fontSize: '0.875rem', fontWeight: 500, color: COLORS.textPrimary }}>Warn</div>
+                      <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>Show an amber warning badge on the PO line, but allow submission.</div>
+                    </div>
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.625rem', cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="deviation_action"
+                      value="block"
+                      checked={compliance.contract_price_deviation_action === 'block'}
+                      onChange={() => setCompliance((c) => ({ ...c, contract_price_deviation_action: 'block' }))}
+                      style={{ marginTop: '0.15rem' }}
+                    />
+                    <div>
+                      <div style={{ fontSize: '0.875rem', fontWeight: 500, color: COLORS.textPrimary }}>Block submission</div>
+                      <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>Prevent PO creation if any line price exceeds the threshold.</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+              <div style={{ padding: '0.75rem 1rem', background: COLORS.accentBlueLight, borderRadius: '6px', border: '1px solid #bfdbfe', fontSize: '0.8125rem', color: '#1e40af' }}>
+                Compliance is checked against active contracts for the selected vendor. Lines without a matching contract line are marked as "No contract" and are not subject to threshold enforcement.
+              </div>
+            </div>
+            {complianceError && <div style={errorStyle}>{complianceError}</div>}
+            {complianceMsg && <div style={successStyle}>{complianceMsg}</div>}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
+              <button type="submit" disabled={complianceSaving} style={btnPrimary}>{complianceSaving ? 'Saving...' : 'Save Compliance Settings'}</button>
+            </div>
+          </div>
+        </form>
+      )}
+
       {activeTab === 'integrations' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div style={card}>
@@ -371,73 +531,6 @@ function SettingsContent() {
             </div>
           </div>
         </div>
-      )}
-
-      {activeTab === 'approval' && (
-        <form onSubmit={handleSaveApprovalPolicy}>
-          <div style={card}>
-            <h2 style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.25rem', color: COLORS.textPrimary }}>Approval Policy</h2>
-            <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginBottom: '1.5rem', marginTop: '0.25rem' }}>
-              Configure the low-value purchase fast lane. Requisitions at or below the threshold are automatically approved without requiring manual review.
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div>
-                <label style={labelStyle}>Auto-approve Threshold</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '1rem', color: COLORS.textSecondary, fontWeight: 600 }}>$</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    style={{ ...inputStyle, maxWidth: '200px' }}
-                    value={approvalPolicy.auto_approve_threshold}
-                    onChange={(e) => setApprovalPolicy((p) => ({ ...p, auto_approve_threshold: e.target.value }))}
-                    placeholder="0"
-                  />
-                </div>
-                <p style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.375rem' }}>
-                  Set to 0 to disable auto-approval. Requisitions at or below this amount are approved instantly.
-                </p>
-              </div>
-              <label style={{ display: 'flex', gap: '0.625rem', alignItems: 'flex-start', cursor: 'pointer', fontSize: '0.875rem', color: COLORS.textPrimary }}>
-                <input
-                  type="checkbox"
-                  style={{ marginTop: '2px', flexShrink: 0 }}
-                  checked={approvalPolicy.auto_approve_require_budget_check === 'true'}
-                  onChange={(e) => setApprovalPolicy((p) => ({ ...p, auto_approve_require_budget_check: e.target.checked ? 'true' : 'false' }))}
-                />
-                <div>
-                  <div style={{ fontWeight: 500 }}>Require budget check</div>
-                  <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.125rem' }}>Only auto-approve if the requisition is within budget limits</div>
-                </div>
-              </label>
-              <label style={{ display: 'flex', gap: '0.625rem', alignItems: 'flex-start', cursor: 'pointer', fontSize: '0.875rem', color: COLORS.textPrimary }}>
-                <input
-                  type="checkbox"
-                  style={{ marginTop: '2px', flexShrink: 0 }}
-                  checked={approvalPolicy.auto_approve_notify_manager === 'true'}
-                  onChange={(e) => setApprovalPolicy((p) => ({ ...p, auto_approve_notify_manager: e.target.checked ? 'true' : 'false' }))}
-                />
-                <div>
-                  <div style={{ fontWeight: 500 }}>Add audit note when auto-approving</div>
-                  <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.125rem' }}>Adds a detailed note to the approval record explaining why it was auto-approved</div>
-                </div>
-              </label>
-              {Number(approvalPolicy.auto_approve_threshold) > 0 && (
-                <div style={{ padding: '0.75rem 1rem', background: COLORS.accentGreenLight, borderRadius: '6px', border: `1px solid ${COLORS.accentGreen}`, fontSize: '0.8125rem', color: COLORS.accentGreenDark }}>
-                  Fast lane active: requisitions up to ${Number(approvalPolicy.auto_approve_threshold).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} will be auto-approved.
-                </div>
-              )}
-            </div>
-            {approvalPolicyError && <div style={errorStyle}>{approvalPolicyError}</div>}
-            {approvalPolicyMsg && <div style={successStyle}>{approvalPolicyMsg}</div>}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
-              <button type="submit" disabled={approvalPolicySaving} style={btnPrimary}>
-                {approvalPolicySaving ? 'Saving...' : 'Save Approval Policy'}
-              </button>
-            </div>
-          </div>
-        </form>
       )}
 
       {activeTab === 'org' && (
