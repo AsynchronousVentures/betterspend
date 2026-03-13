@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, numeric, boolean, timestamp, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, numeric, boolean, timestamp, jsonb, date } from 'drizzle-orm/pg-core';
 import { organizations } from './organizations';
 import { vendors } from './vendors';
 import { users } from './users';
@@ -15,6 +15,11 @@ export const invoices = pgTable('invoices', {
   status: varchar('status', { length: 30 }).notNull().default('draft'),
   invoiceDate: timestamp('invoice_date', { withTimezone: true }).notNull(),
   dueDate: timestamp('due_date', { withTimezone: true }),
+  paymentTerms: varchar('payment_terms', { length: 20 }),
+  earlyPaymentDiscountPercent: numeric('early_payment_discount_percent', { precision: 5, scale: 2 }),
+  earlyPaymentDiscountBy: date('early_payment_discount_by'),
+  paidAt: timestamp('paid_at', { withTimezone: true }),
+  paymentReference: varchar('payment_reference', { length: 255 }),
   subtotal: numeric('subtotal', { precision: 14, scale: 2 }).notNull().default('0'),
   taxAmount: numeric('tax_amount', { precision: 14, scale: 2 }).notNull().default('0'),
   totalAmount: numeric('total_amount', { precision: 14, scale: 2 }).notNull().default('0'),

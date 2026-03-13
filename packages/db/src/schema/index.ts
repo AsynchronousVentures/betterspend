@@ -24,3 +24,4 @@ export * from './rfq';
 export * from './recurring-pos';
 export * from './inventory';
 export * from './requisition-templates';
+export * from './payment-runs';

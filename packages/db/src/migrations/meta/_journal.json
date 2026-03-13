@@ -99,6 +99,20 @@
       "when": 1773900000000,
       "tag": "0013_requisition_templates",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1774000000000,
+      "tag": "0014_ap_aging_payment_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1774100000000,
+      "tag": "0015_contract_compliance",
+      "breakpoints": true
     }
   ]
 }

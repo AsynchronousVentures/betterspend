@@ -1,5 +1,5 @@
 import { Injectable, Inject, Optional, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull, lte, gte, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { invoices, invoiceLines, purchaseOrders, requisitions } from '@betterspend/db';
@@ -19,6 +19,9 @@ export interface CreateInvoiceInput {
   invoiceNumber: string;
   invoiceDate: string;
   dueDate?: string;
+  paymentTerms?: string;
+  earlyPaymentDiscountPercent?: number;
+  earlyPaymentDiscountBy?: string;
   currency?: string;
   lines: Array<{
     poLineId?: string;
@@ -28,6 +31,28 @@ export interface CreateInvoiceInput {
     unitPrice: number;
     glAccount?: string;
   }>;
+}
+
+export interface AgingBucket {
+  count: number;
+  totalAmount: string;
+}
+
+export interface AgingReport {
+  current: AgingBucket;
+  days_1_30: AgingBucket;
+  days_31_60: AgingBucket;
+  days_61_90: AgingBucket;
+  days_90_plus: AgingBucket;
+}
+
+export interface CashFlowWeek {
+  weekStart: string;
+  totalAmount: string;
+}
+
+export interface MarkPaidInput {
+  paymentReference?: string;
 }
 
 @Injectable()
@@ -93,6 +118,9 @@ export class InvoicesService {
         internalNumber,
         invoiceDate: new Date(input.invoiceDate),
         dueDate: input.dueDate ? new Date(input.dueDate) : null,
+        paymentTerms: input.paymentTerms ?? null,
+        earlyPaymentDiscountPercent: input.earlyPaymentDiscountPercent != null ? String(input.earlyPaymentDiscountPercent) : null,
+        earlyPaymentDiscountBy: input.earlyPaymentDiscountBy ?? null,
         currency: input.currency ?? 'USD',
         subtotal: String(subtotal.toFixed(2)),
         taxAmount: '0',
@@ -159,18 +187,144 @@ export class InvoicesService {
     return this.matchingService.runMatch(id);
   }
 
-  async markPaid(id: string, organizationId: string, userId: string) {
+  async markPaid(id: string, organizationId: string, userId: string, input?: MarkPaidInput) {
     const invoice = await this.findOne(id, organizationId);
     if ((invoice as any).status !== 'approved') {
       throw new BadRequestException('Only approved invoices can be marked as paid');
     }
     await this.db.update(invoices)
-      .set({ status: 'paid', updatedAt: new Date() } as any)
+      .set({
+        status: 'paid',
+        paidAt: new Date(),
+        paymentReference: input?.paymentReference ?? null,
+        updatedAt: new Date(),
+      } as any)
       .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
     const updated = await this.findOne(id, organizationId);
-    this.audit.log(organizationId, userId, 'invoice', id, 'paid', { totalAmount: (updated as any).totalAmount }).catch(() => {});
+    this.audit.log(organizationId, userId, 'invoice', id, 'paid', { totalAmount: (updated as any).totalAmount, paymentReference: input?.paymentReference }).catch(() => {});
     this.webhookEvents.emit(organizationId, 'invoice.paid', { invoice: updated });
     return updated;
+  }
+
+  async getAgingReport(organizationId: string): Promise<AgingReport> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Fetch all unpaid invoices (paidAt IS NULL and status != 'paid')
+    const unpaidInvoices = await this.db.query.invoices.findMany({
+      where: (i, { and, eq, isNull, ne }) => and(
+        eq(i.organizationId, organizationId),
+        isNull(i.paidAt),
+        ne(i.status, 'paid'),
+      ),
+      with: { vendor: true },
+    });
+
+    const emptyBucket = (): AgingBucket => ({ count: 0, totalAmount: '0.00' });
+
+    const result: AgingReport = {
+      current: emptyBucket(),
+      days_1_30: emptyBucket(),
+      days_31_60: emptyBucket(),
+      days_61_90: emptyBucket(),
+      days_90_plus: emptyBucket(),
+    };
+
+    const addToBucket = (bucket: AgingBucket, amount: string) => {
+      bucket.count++;
+      bucket.totalAmount = (parseFloat(bucket.totalAmount) + parseFloat(amount || '0')).toFixed(2);
+    };
+
+    for (const inv of unpaidInvoices) {
+      const amount = (inv as any).totalAmount || '0';
+      const dueDate = (inv as any).dueDate ? new Date((inv as any).dueDate) : null;
+
+      if (!dueDate) {
+        addToBucket(result.current, amount);
+        continue;
+      }
+
+      dueDate.setHours(0, 0, 0, 0);
+      const diffMs = today.getTime() - dueDate.getTime();
+      const daysOverdue = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+      if (daysOverdue <= 0) {
+        addToBucket(result.current, amount);
+      } else if (daysOverdue <= 30) {
+        addToBucket(result.days_1_30, amount);
+      } else if (daysOverdue <= 60) {
+        addToBucket(result.days_31_60, amount);
+      } else if (daysOverdue <= 90) {
+        addToBucket(result.days_61_90, amount);
+      } else {
+        addToBucket(result.days_90_plus, amount);
+      }
+    }
+
+    return result;
+  }
+
+  async getCashFlowForecast(organizationId: string): Promise<CashFlowWeek[]> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const twelveWeeksOut = new Date(today);
+    twelveWeeksOut.setDate(twelveWeeksOut.getDate() + 7 * 12);
+
+    // Build 12 weekly buckets
+    const weeks: CashFlowWeek[] = [];
+    for (let i = 0; i < 12; i++) {
+      const weekStart = new Date(today);
+      weekStart.setDate(weekStart.getDate() + i * 7);
+      weeks.push({ weekStart: weekStart.toISOString().split('T')[0], totalAmount: '0.00' });
+    }
+
+    const unpaidInvoices = await this.db.query.invoices.findMany({
+      where: (i, { and, eq, isNull, ne }) => and(
+        eq(i.organizationId, organizationId),
+        isNull(i.paidAt),
+        ne(i.status, 'paid'),
+      ),
+    });
+
+    for (const inv of unpaidInvoices) {
+      const dueDate = (inv as any).dueDate ? new Date((inv as any).dueDate) : null;
+      if (!dueDate) continue;
+
+      dueDate.setHours(0, 0, 0, 0);
+      if (dueDate < today || dueDate > twelveWeeksOut) continue;
+
+      const diffDays = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      const weekIndex = Math.min(Math.floor(diffDays / 7), 11);
+      const amount = parseFloat((inv as any).totalAmount || '0');
+      weeks[weekIndex].totalAmount = (parseFloat(weeks[weekIndex].totalAmount) + amount).toFixed(2);
+    }
+
+    return weeks;
+  }
+
+  async getEarlyPaymentOpportunities(organizationId: string) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const cutoff = new Date(today);
+    cutoff.setDate(cutoff.getDate() + 14);
+
+    const unpaidInvoices = await this.db.query.invoices.findMany({
+      where: (i, { and, eq, isNull, ne }) => and(
+        eq(i.organizationId, organizationId),
+        isNull(i.paidAt),
+        ne(i.status, 'paid'),
+      ),
+      with: { vendor: true },
+    });
+
+    return unpaidInvoices.filter((inv) => {
+      const discountBy = (inv as any).earlyPaymentDiscountBy;
+      if (!discountBy || !(inv as any).earlyPaymentDiscountPercent) return false;
+      const discountDate = new Date(discountBy);
+      discountDate.setHours(0, 0, 0, 0);
+      return discountDate >= today && discountDate <= cutoff;
+    });
   }
 
   async bulkApprove(ids: string[], organizationId: string, approverId: string) {

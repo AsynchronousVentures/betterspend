@@ -17,6 +17,7 @@ import { contracts, contractLines, contractAmendments } from './schema/contracts
 import { systemSettings } from './schema/system-settings';
 import { vendorPortalTokens } from './schema/vendor-portal-tokens';
 import { notifications } from './schema/notifications';
+import { paymentRuns, paymentRunInvoices } from './schema/payment-runs';
 
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -212,4 +213,15 @@ export const vendorPortalTokensRelations = relations(vendorPortalTokens, ({ one 
 export const requisitionTemplatesRelations = relations(requisitionTemplates, ({ one }) => ({
   organization: one(organizations, { fields: [requisitionTemplates.organizationId], references: [organizations.id] }),
   createdBy: one(users, { fields: [requisitionTemplates.createdById], references: [users.id] }),
+}));
+
+export const paymentRunsRelations = relations(paymentRuns, ({ one, many }) => ({
+  organization: one(organizations, { fields: [paymentRuns.orgId], references: [organizations.id] }),
+  createdByUser: one(users, { fields: [paymentRuns.createdBy], references: [users.id] }),
+  paymentRunInvoices: many(paymentRunInvoices),
+}));
+
+export const paymentRunInvoicesRelations = relations(paymentRunInvoices, ({ one }) => ({
+  paymentRun: one(paymentRuns, { fields: [paymentRunInvoices.paymentRunId], references: [paymentRuns.id] }),
+  invoice: one(invoices, { fields: [paymentRunInvoices.invoiceId], references: [invoices.id] }),
 }));

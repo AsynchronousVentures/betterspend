@@ -143,6 +143,9 @@ export const api = {
     cancelRelease: (id: string, releaseId: string) =>
       apiFetch<any>(`/purchase-orders/${id}/releases/${releaseId}`, { method: 'DELETE' }),
     receivingSummary: (id: string) => apiFetch<any[]>(`/purchase-orders/${id}/receiving-summary`),
+    complianceReport: (id: string) => apiFetch<any>(`/purchase-orders/${id}/compliance-report`),
+    checkCompliance: (data: { vendorId: string; unitPrice: number; catalogItemId?: string; description?: string }) =>
+      apiFetch<any>('/purchase-orders/check-compliance', { method: 'POST', body: JSON.stringify(data) }),
     pdf: (id: string) => {
       const token = getCookie('bs_token');
       return fetch(`${API_BASE}/api/v1/purchase-orders/${id}/pdf`, {
@@ -320,6 +323,7 @@ export const api = {
     getBranding: () => apiFetch<Record<string, string>>('/settings/branding'),
     updateBranding: (data: unknown) => apiFetch<any>('/settings/branding', { method: 'PUT', body: JSON.stringify(data) }),
     updateSmtp: (data: unknown) => apiFetch<any>('/settings/smtp', { method: 'PUT', body: JSON.stringify(data) }),
+    updateContractCompliance: (data: unknown) => apiFetch<any>('/settings/contract-compliance', { method: 'PUT', body: JSON.stringify(data) }),
   },
   supplierScorecard: {
     list: (params?: { limit?: number }) => apiFetch<any[]>('/supplier-scorecard' + (params?.limit ? `?limit=${params.limit}` : '')),

@@ -63,6 +63,7 @@ const NAV_CONFIG: NavEntry[] = [
     label: 'Finance',
     children: [
       { label: 'Budgets', href: '/budgets' },
+      { label: 'AP Aging', href: '/ap-aging' },
       { label: 'GL Integration', href: '/gl-mappings' },
       { label: 'GL Export Jobs', href: '/gl-export-jobs' },
     ],

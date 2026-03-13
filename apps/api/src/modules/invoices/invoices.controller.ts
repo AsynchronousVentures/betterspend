@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Patch, Body, Param, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { InvoicesService, CreateInvoiceInput } from './invoices.service';
+import { InvoicesService, CreateInvoiceInput, MarkPaidInput } from './invoices.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 
@@ -14,6 +14,24 @@ export class InvoicesController {
   @ApiOperation({ summary: 'List all invoices' })
   findAll(@CurrentOrgId() orgId: string) {
     return this.invoicesService.findAll(orgId);
+  }
+
+  @Get('aging')
+  @ApiOperation({ summary: 'AP aging report bucketed by days overdue' })
+  getAgingReport(@CurrentOrgId() orgId: string) {
+    return this.invoicesService.getAgingReport(orgId);
+  }
+
+  @Get('cash-flow-forecast')
+  @ApiOperation({ summary: 'Cash flow forecast for next 12 weeks based on due dates' })
+  getCashFlowForecast(@CurrentOrgId() orgId: string) {
+    return this.invoicesService.getCashFlowForecast(orgId);
+  }
+
+  @Get('early-payment-opportunities')
+  @ApiOperation({ summary: 'Invoices with early payment discounts expiring within 14 days' })
+  getEarlyPaymentOpportunities(@CurrentOrgId() orgId: string) {
+    return this.invoicesService.getEarlyPaymentOpportunities(orgId);
   }
 
   @Get(':id')
@@ -48,7 +66,7 @@ export class InvoicesController {
 
   @Patch(':id/mark-paid')
   @ApiOperation({ summary: 'Mark an approved invoice as paid' })
-  markPaid(@Param('id') id: string, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
-    return this.invoicesService.markPaid(id, orgId, userId);
+  markPaid(@Param('id') id: string, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string, @Body() body: MarkPaidInput) {
+    return this.invoicesService.markPaid(id, orgId, userId, body);
   }
 }
