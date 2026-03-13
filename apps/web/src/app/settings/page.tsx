@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { api } from '../../lib/api';
 import { COLORS, SHADOWS } from '../../lib/theme';
 import { invalidateBrandingCache } from '../../lib/branding';
+import { appReleaseLabel } from '../../lib/release';
 
 type Tab = 'org' | 'branding' | 'email' | 'password' | 'integrations' | 'approval' | 'compliance';
 
@@ -573,7 +574,7 @@ function SettingsContent() {
             <InfoRow label="Organization ID" value="00000000-0000-0000-0000-000000000001" mono />
             <InfoRow label="Demo Organization" value="Acme Corp" />
             <InfoRow label="API Base URL" value={process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001'} mono />
-            <InfoRow label="Version" value="BetterSpend v1.0.0-beta" />
+            <InfoRow label="Version" value={appReleaseLabel} />
             <InfoRow label="License" value="MIT License" />
             <InfoRow label="Source Code" value="github.com/AsyncronousVentures/betterspend" />
           </div>

@@ -7,6 +7,7 @@ import { signOut } from '../lib/auth-client';
 import { api } from '../lib/api';
 import { COLORS } from '../lib/theme';
 import { useBranding } from '../lib/branding';
+import { appReleaseVersion } from '../lib/release';
 
 /* ── Types ── */
 
@@ -387,6 +388,7 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
         }}
       >
         <div style={{ opacity: 0.8 }}>{branding.copyright_text}</div>
+        <div style={{ opacity: 0.65, marginTop: '0.125rem' }}>Version {appReleaseVersion}</div>
         {branding.hide_powered_by !== 'true' && (
           <div style={{ opacity: 0.5, marginTop: '0.125rem' }}>Powered by BetterSpend</div>
         )}

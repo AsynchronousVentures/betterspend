@@ -1,5 +1,6 @@
 {
   "name": "betterspend",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "turbo dev",
@@ -11,7 +12,9 @@
     "db:migrate": "turbo db:migrate",
     "db:seed": "turbo db:seed",
     "db:studio": "turbo db:studio",
-    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\""
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
+    "release:tag": "git tag -a v$npm_package_version -m \"Release v$npm_package_version\"",
+    "release:push": "git push origin main --follow-tags"
   },
   "devDependencies": {
     "turbo": "^2.5.0",
