@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useEffect, Suspense, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { api } from '../../lib/api';
@@ -22,6 +22,25 @@ interface OAuthStatus {
   xero: boolean;
   qboRealmId?: string;
   xeroTenantId?: string;
+}
+
+interface SettingsSnapshots {
+  branding: Record<string, string>;
+  smtp: Record<string, string>;
+  approvalPolicy: Record<string, string>;
+  compliance: {
+    contract_price_deviation_threshold: string;
+    contract_price_deviation_action: 'warn' | 'block';
+  };
+  org: {
+    baseCurrency: string;
+    rateForm: {
+      fromCurrency: string;
+      toCurrency: string;
+      rate: string;
+    };
+    editingRateId: string | null;
+  };
 }
 
 function SettingsContent() {
@@ -89,24 +108,93 @@ function SettingsContent() {
   const [orgSaving, setOrgSaving] = useState(false);
   const [orgMsg, setOrgMsg] = useState('');
   const [orgError, setOrgError] = useState('');
+  const [snapshots, setSnapshots] = useState<SettingsSnapshots>({
+    branding: {
+      app_name: 'BetterSpend',
+      app_logo_url: '',
+      app_favicon_url: '',
+      copyright_text: '© 2026 BetterSpend. Open source under MIT License.',
+      support_email: '',
+      primary_color: '#3b82f6',
+      accent_color: '#0f172a',
+      hide_powered_by: 'false',
+    },
+    smtp: {
+      smtp_host: '',
+      smtp_port: '587',
+      smtp_user: '',
+      smtp_pass: '',
+      smtp_from: 'noreply@betterspend.io',
+      smtp_secure: 'false',
+    },
+    approvalPolicy: {
+      auto_approve_threshold: '0',
+      auto_approve_require_budget_check: 'false',
+      auto_approve_notify_manager: 'true',
+    },
+    compliance: {
+      contract_price_deviation_threshold: '5',
+      contract_price_deviation_action: 'warn',
+    },
+    org: {
+      baseCurrency: 'USD',
+      rateForm: { fromCurrency: 'EUR', toCurrency: 'USD', rate: '1.08' },
+      editingRateId: null,
+    },
+  });
+
+  function confirmLeaveIfDirty() {
+    return window.confirm('You have unsaved changes. Are you sure you want to leave?');
+  }
+
+  const isBrandingDirty = JSON.stringify(branding) !== JSON.stringify(snapshots.branding);
+  const isSmtpDirty = JSON.stringify(smtp) !== JSON.stringify(snapshots.smtp);
+  const isApprovalDirty = JSON.stringify(approvalPolicy) !== JSON.stringify(snapshots.approvalPolicy);
+  const isComplianceDirty = JSON.stringify(compliance) !== JSON.stringify(snapshots.compliance);
+  const isOrgDirty =
+    baseCurrency !== snapshots.org.baseCurrency ||
+    JSON.stringify(rateForm) !== JSON.stringify(snapshots.org.rateForm) ||
+    editingRateId !== snapshots.org.editingRateId;
+  const hasUnsavedChanges =
+    isBrandingDirty || isSmtpDirty || isApprovalDirty || isComplianceDirty || isOrgDirty;
 
   async function refreshExchangeRateSettings() {
     const [base, rates] = await Promise.all([api.exchangeRates.getBaseCurrency(), api.exchangeRates.list()]);
     setBaseCurrency(base.baseCurrency ?? 'USD');
     setExchangeRates(rates);
+    setSnapshots((prev) => ({
+      ...prev,
+      org: {
+        baseCurrency: base.baseCurrency ?? 'USD',
+        rateForm: { fromCurrency: 'EUR', toCurrency: 'USD', rate: '1.08' },
+        editingRateId: null,
+      },
+    }));
   }
 
   useEffect(() => {
     api.settings.getAll().then((all) => {
-      setBranding((b) => ({ ...b, ...Object.fromEntries(Object.entries(all).filter(([k]) => Object.keys(b).includes(k))) }));
-      setSmtp((s) => ({ ...s, ...Object.fromEntries(Object.entries(all).filter(([k]) => Object.keys(s).includes(k))) }));
-      setApprovalPolicy((p) => ({ ...p, ...Object.fromEntries(Object.entries(all).filter(([k]) => Object.keys(p).includes(k))) }));
-      setCompliance((c) => ({
-        contract_price_deviation_threshold: all.contract_price_deviation_threshold ?? c.contract_price_deviation_threshold,
-        contract_price_deviation_action: (all.contract_price_deviation_action as 'warn' | 'block') ?? c.contract_price_deviation_action,
+      const nextBranding = { ...branding, ...Object.fromEntries(Object.entries(all).filter(([k]) => Object.keys(branding).includes(k))) };
+      const nextSmtp = { ...smtp, ...Object.fromEntries(Object.entries(all).filter(([k]) => Object.keys(smtp).includes(k))) };
+      const nextApprovalPolicy = { ...approvalPolicy, ...Object.fromEntries(Object.entries(all).filter(([k]) => Object.keys(approvalPolicy).includes(k))) };
+      const nextCompliance = {
+        contract_price_deviation_threshold: all.contract_price_deviation_threshold ?? '5',
+        contract_price_deviation_action: (all.contract_price_deviation_action as 'warn' | 'block') ?? 'warn',
+      };
+      setBranding(nextBranding);
+      setSmtp(nextSmtp);
+      setApprovalPolicy(nextApprovalPolicy);
+      setCompliance(nextCompliance);
+      setSnapshots((prev) => ({
+        ...prev,
+        branding: nextBranding,
+        smtp: nextSmtp,
+        approvalPolicy: nextApprovalPolicy,
+        compliance: nextCompliance,
       }));
     }).catch(() => {});
     refreshExchangeRateSettings().catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Load OAuth connection status and handle callback params
@@ -133,11 +221,50 @@ function SettingsContent() {
   });
 
   function handleTabChange(tab: Tab) {
+    if (tab !== activeTab && hasUnsavedChanges && !confirmLeaveIfDirty()) return;
     setActiveTab(tab);
     const params = new URLSearchParams(searchParams.toString());
     params.set('tab', tab);
     router.push(`${pathname}?${params.toString()}`);
   }
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    const handleDocumentClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const anchor = target?.closest('a') as HTMLAnchorElement | null;
+      if (!anchor) return;
+      const href = anchor.getAttribute('href');
+      if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
+      if (href.startsWith('/settings')) return;
+      if (!confirmLeaveIfDirty()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    const currentUrl = `${pathname}?${searchParams.toString()}`.replace(/\?$/, '');
+    const handlePopState = () => {
+      if (confirmLeaveIfDirty()) return;
+      window.history.pushState(null, '', currentUrl);
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('click', handleDocumentClick, true);
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('click', handleDocumentClick, true);
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [hasUnsavedChanges, pathname, searchParams]);
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault(); setPwError(''); setPwMsg('');
@@ -156,6 +283,7 @@ function SettingsContent() {
     try {
       await api.settings.updateBranding(branding);
       invalidateBrandingCache();
+      setSnapshots((prev) => ({ ...prev, branding }));
       setBrandingMsg('Branding settings saved. Reload the page to see changes in the sidebar.');
     } catch (e: any) { setBrandingError(e.message); } finally { setBrandingSaving(false); }
   }
@@ -164,6 +292,7 @@ function SettingsContent() {
     e.preventDefault(); setSmtpError(''); setSmtpMsg(''); setSmtpSaving(true);
     try {
       await api.settings.updateSmtp(smtp);
+      setSnapshots((prev) => ({ ...prev, smtp }));
       setSmtpMsg('SMTP settings saved.');
     } catch (e: any) { setSmtpError(e.message); } finally { setSmtpSaving(false); }
   }
@@ -172,6 +301,7 @@ function SettingsContent() {
     e.preventDefault(); setApprovalPolicyError(''); setApprovalPolicyMsg(''); setApprovalPolicySaving(true);
     try {
       await api.settings.updateApprovalPolicy(approvalPolicy);
+      setSnapshots((prev) => ({ ...prev, approvalPolicy }));
       setApprovalPolicyMsg('Approval policy saved.');
     } catch (e: any) { setApprovalPolicyError(e.message); } finally { setApprovalPolicySaving(false); }
   }
@@ -180,6 +310,7 @@ function SettingsContent() {
     e.preventDefault(); setComplianceError(''); setComplianceMsg(''); setComplianceSaving(true);
     try {
       await api.settings.updateContractCompliance(compliance);
+      setSnapshots((prev) => ({ ...prev, compliance }));
       setComplianceMsg('Contract compliance settings saved.');
     } catch (e: any) { setComplianceError(e.message); } finally { setComplianceSaving(false); }
   }
