@@ -1,4 +1,10 @@
-import { Injectable, Inject, Optional, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  Optional,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { eq, and, isNull, lte, gte, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
@@ -12,6 +18,7 @@ import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EntitiesService } from '../entities/entities.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
+import { SpendGuardService } from '../spend-guard/spend-guard.service';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 
@@ -78,9 +85,15 @@ export class InvoicesService {
     @Optional() private readonly notifications: NotificationsService,
     private readonly entitiesService: EntitiesService,
     private readonly exchangeRatesService: ExchangeRatesService,
+    private readonly spendGuard: SpendGuardService,
   ) {}
 
-  private calculateLineTax(quantity: number, unitPrice: number, ratePercent: number, taxInclusive: boolean) {
+  private calculateLineTax(
+    quantity: number,
+    unitPrice: number,
+    ratePercent: number,
+    taxInclusive: boolean,
+  ) {
     const rawAmount = quantity * unitPrice;
     if (taxInclusive) {
       const subtotal = ratePercent > 0 ? rawAmount / (1 + ratePercent / 100) : rawAmount;
@@ -114,10 +127,8 @@ export class InvoicesService {
 
   async findAll(organizationId: string, entityId?: string) {
     return this.db.query.invoices.findMany({
-      where: (i, { and, eq }) => and(
-        eq(i.organizationId, organizationId),
-        entityId ? eq(i.entityId, entityId) : undefined,
-      ),
+      where: (i, { and, eq }) =>
+        and(eq(i.organizationId, organizationId), entityId ? eq(i.entityId, entityId) : undefined),
       with: { vendor: true, purchaseOrder: true, entity: true },
       orderBy: (i, { desc }) => desc(i.createdAt),
     });
@@ -155,11 +166,12 @@ export class InvoicesService {
 
     // Duplicate invoice detection: same vendor + same invoice number in this org
     const duplicate = await this.db.query.invoices.findFirst({
-      where: (i, { and, eq }) => and(
-        eq(i.organizationId, organizationId),
-        eq(i.vendorId, input.vendorId),
-        eq(i.invoiceNumber, input.invoiceNumber),
-      ),
+      where: (i, { and, eq }) =>
+        and(
+          eq(i.organizationId, organizationId),
+          eq(i.vendorId, input.vendorId),
+          eq(i.invoiceNumber, input.invoiceNumber),
+        ),
     });
     if (duplicate) {
       throw new BadRequestException(
@@ -181,58 +193,73 @@ export class InvoicesService {
     const subtotal = lineAmounts.reduce((sum, line) => sum + line.subtotal, 0);
     const taxAmount = lineAmounts.reduce((sum, line) => sum + line.taxAmount, 0);
     const totalAmount = lineAmounts.reduce((sum, line) => sum + line.totalAmount, 0);
-    const { baseCurrency, exchangeRate, baseAmount } = await this.exchangeRatesService.convertToBase(
-      organizationId,
-      totalAmount,
-      resolvedCurrency,
-      resolvedExchangeRate,
-    );
+    const { baseCurrency, exchangeRate, baseAmount } =
+      await this.exchangeRatesService.convertToBase(
+        organizationId,
+        totalAmount,
+        resolvedCurrency,
+        resolvedExchangeRate,
+      );
 
     const invoiceId = await this.db.transaction(async (tx) => {
-      const [inv] = await tx.insert(invoices).values({
-        organizationId,
-        purchaseOrderId: input.purchaseOrderId ?? null,
-        entityId: resolvedEntityId,
-        vendorId: input.vendorId,
-        invoiceNumber: input.invoiceNumber,
-        internalNumber,
-        invoiceDate: new Date(input.invoiceDate),
-        dueDate: input.dueDate ? new Date(input.dueDate) : null,
-        paymentTerms: input.paymentTerms ?? null,
-        earlyPaymentDiscountPercent: input.earlyPaymentDiscountPercent != null ? String(input.earlyPaymentDiscountPercent) : null,
-        earlyPaymentDiscountBy: input.earlyPaymentDiscountBy ?? null,
-        currency: resolvedCurrency,
-        baseCurrency,
-        exchangeRate: String(exchangeRate),
-        subtotal: String(subtotal.toFixed(2)),
-        taxAmount: String(taxAmount.toFixed(2)),
-        totalAmount: String(totalAmount.toFixed(2)),
-        baseSubtotal: String(this.exchangeRatesService.roundMoney(subtotal * exchangeRate).toFixed(2)),
-        baseTaxAmount: String(this.exchangeRatesService.roundMoney(taxAmount * exchangeRate).toFixed(2)),
-        baseTotalAmount: String(baseAmount.toFixed(2)),
-        status: 'pending_match',
-        matchStatus: 'unmatched',
-      }).returning();
+      const [inv] = await tx
+        .insert(invoices)
+        .values({
+          organizationId,
+          purchaseOrderId: input.purchaseOrderId ?? null,
+          entityId: resolvedEntityId,
+          vendorId: input.vendorId,
+          invoiceNumber: input.invoiceNumber,
+          internalNumber,
+          invoiceDate: new Date(input.invoiceDate),
+          dueDate: input.dueDate ? new Date(input.dueDate) : null,
+          paymentTerms: input.paymentTerms ?? null,
+          earlyPaymentDiscountPercent:
+            input.earlyPaymentDiscountPercent != null
+              ? String(input.earlyPaymentDiscountPercent)
+              : null,
+          earlyPaymentDiscountBy: input.earlyPaymentDiscountBy ?? null,
+          currency: resolvedCurrency,
+          baseCurrency,
+          exchangeRate: String(exchangeRate),
+          subtotal: String(subtotal.toFixed(2)),
+          taxAmount: String(taxAmount.toFixed(2)),
+          totalAmount: String(totalAmount.toFixed(2)),
+          baseSubtotal: String(
+            this.exchangeRatesService.roundMoney(subtotal * exchangeRate).toFixed(2),
+          ),
+          baseTaxAmount: String(
+            this.exchangeRatesService.roundMoney(taxAmount * exchangeRate).toFixed(2),
+          ),
+          baseTotalAmount: String(baseAmount.toFixed(2)),
+          status: 'pending_match',
+          matchStatus: 'unmatched',
+        })
+        .returning();
 
       if (input.lines.length > 0) {
         await tx.insert(invoiceLines).values(
           input.lines.map((l, index) => {
             const amounts = lineAmounts[index];
             return {
-            invoiceId: inv.id,
-            poLineId: l.poLineId ?? null,
-            lineNumber: String(l.lineNumber),
-            description: l.description,
-            quantity: String(l.quantity),
-            unitPrice: String(l.unitPrice),
-            taxCodeId: l.taxCodeId ?? null,
-            taxAmount: String(amounts.taxAmount.toFixed(2)),
-            taxInclusive: l.taxInclusive ?? false,
-            totalPrice: String(amounts.totalAmount.toFixed(2)),
-            exchangeRate: String(exchangeRate),
-            baseUnitPrice: String(this.exchangeRatesService.roundMoney(l.unitPrice * exchangeRate).toFixed(2)),
-            baseTotalPrice: String(this.exchangeRatesService.roundMoney(amounts.totalAmount * exchangeRate).toFixed(2)),
-            glAccount: l.glAccount ?? null,
+              invoiceId: inv.id,
+              poLineId: l.poLineId ?? null,
+              lineNumber: String(l.lineNumber),
+              description: l.description,
+              quantity: String(l.quantity),
+              unitPrice: String(l.unitPrice),
+              taxCodeId: l.taxCodeId ?? null,
+              taxAmount: String(amounts.taxAmount.toFixed(2)),
+              taxInclusive: l.taxInclusive ?? false,
+              totalPrice: String(amounts.totalAmount.toFixed(2)),
+              exchangeRate: String(exchangeRate),
+              baseUnitPrice: String(
+                this.exchangeRatesService.roundMoney(l.unitPrice * exchangeRate).toFixed(2),
+              ),
+              baseTotalPrice: String(
+                this.exchangeRatesService.roundMoney(amounts.totalAmount * exchangeRate).toFixed(2),
+              ),
+              glAccount: l.glAccount ?? null,
             };
           }),
         );
@@ -244,35 +271,47 @@ export class InvoicesService {
     // Auto-run 3-way match if PO is linked
     if (input.purchaseOrderId) {
       const matchResult = await this.matchingService.runMatch(invoiceId);
-      const newStatus = matchResult.matchStatus === 'full_match' ? 'matched'
-        : matchResult.matchStatus === 'exception' ? 'exception'
-        : 'partial_match';
-      await this.db.update(invoices)
+      const newStatus =
+        matchResult.matchStatus === 'full_match'
+          ? 'matched'
+          : matchResult.matchStatus === 'exception'
+            ? 'exception'
+            : 'partial_match';
+      await this.db
+        .update(invoices)
         .set({ status: newStatus, updatedAt: new Date() })
         .where(eq(invoices.id, invoiceId));
     }
 
     const created = await this.findOne(invoiceId, organizationId);
-    this.audit.log(organizationId, null, 'invoice', invoiceId, 'created', { invoiceNumber: input.invoiceNumber, totalAmount: (created as any).totalAmount }).catch(() => {});
+    this.audit
+      .log(organizationId, null, 'invoice', invoiceId, 'created', {
+        invoiceNumber: input.invoiceNumber,
+        totalAmount: (created as any).totalAmount,
+      })
+      .catch(() => {});
     if (input.purchaseOrderId) {
       const matchSt = (created as any).matchStatus;
       if (matchSt === 'exception') {
         this.webhookEvents.emit(organizationId, 'invoice.exception', { invoice: created });
         if (this.notifications) {
-          this.notifications.create(
-            organizationId,
-            DEMO_ADMIN_USER_ID,
-            'invoice_exception',
-            'Invoice Match Exception',
-            `Invoice ${(created as any).internalNumber} has a 3-way match exception and requires review.`,
-            'invoice',
-            invoiceId,
-          ).catch(() => {});
+          this.notifications
+            .create(
+              organizationId,
+              DEMO_ADMIN_USER_ID,
+              'invoice_exception',
+              'Invoice Match Exception',
+              `Invoice ${(created as any).internalNumber} has a 3-way match exception and requires review.`,
+              'invoice',
+              invoiceId,
+            )
+            .catch(() => {});
         }
       } else {
         this.webhookEvents.emit(organizationId, 'invoice.matched', { invoice: created });
       }
     }
+    await this.spendGuard.analyzeInvoice(organizationId, invoiceId).catch(() => {});
     return created;
   }
 
@@ -286,7 +325,8 @@ export class InvoicesService {
     if ((invoice as any).status !== 'approved') {
       throw new BadRequestException('Only approved invoices can be marked as paid');
     }
-    await this.db.update(invoices)
+    await this.db
+      .update(invoices)
       .set({
         status: 'paid',
         paidAt: new Date(),
@@ -295,7 +335,12 @@ export class InvoicesService {
       } as any)
       .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
     const updated = await this.findOne(id, organizationId);
-    this.audit.log(organizationId, userId, 'invoice', id, 'paid', { totalAmount: (updated as any).totalAmount, paymentReference: input?.paymentReference }).catch(() => {});
+    this.audit
+      .log(organizationId, userId, 'invoice', id, 'paid', {
+        totalAmount: (updated as any).totalAmount,
+        paymentReference: input?.paymentReference,
+      })
+      .catch(() => {});
     this.webhookEvents.emit(organizationId, 'invoice.paid', { invoice: updated });
     return updated;
   }
@@ -306,11 +351,8 @@ export class InvoicesService {
 
     // Fetch all unpaid invoices (paidAt IS NULL and status != 'paid')
     const unpaidInvoices = await this.db.query.invoices.findMany({
-      where: (i, { and, eq, isNull, ne }) => and(
-        eq(i.organizationId, organizationId),
-        isNull(i.paidAt),
-        ne(i.status, 'paid'),
-      ),
+      where: (i, { and, eq, isNull, ne }) =>
+        and(eq(i.organizationId, organizationId), isNull(i.paidAt), ne(i.status, 'paid')),
       with: { vendor: true },
     });
 
@@ -374,11 +416,8 @@ export class InvoicesService {
     }
 
     const unpaidInvoices = await this.db.query.invoices.findMany({
-      where: (i, { and, eq, isNull, ne }) => and(
-        eq(i.organizationId, organizationId),
-        isNull(i.paidAt),
-        ne(i.status, 'paid'),
-      ),
+      where: (i, { and, eq, isNull, ne }) =>
+        and(eq(i.organizationId, organizationId), isNull(i.paidAt), ne(i.status, 'paid')),
     });
 
     for (const inv of unpaidInvoices) {
@@ -404,11 +443,8 @@ export class InvoicesService {
     cutoff.setDate(cutoff.getDate() + 14);
 
     const unpaidInvoices = await this.db.query.invoices.findMany({
-      where: (i, { and, eq, isNull, ne }) => and(
-        eq(i.organizationId, organizationId),
-        isNull(i.paidAt),
-        ne(i.status, 'paid'),
-      ),
+      where: (i, { and, eq, isNull, ne }) =>
+        and(eq(i.organizationId, organizationId), isNull(i.paidAt), ne(i.status, 'paid')),
       with: { vendor: true },
     });
 
@@ -434,17 +470,24 @@ export class InvoicesService {
     return results;
   }
 
-  async resolveException(id: string, organizationId: string, reviewerId: string, input?: ResolveExceptionInput) {
+  async resolveException(
+    id: string,
+    organizationId: string,
+    reviewerId: string,
+    input?: ResolveExceptionInput,
+  ) {
     const invoice = await this.findOne(id, organizationId);
     if (invoice.matchStatus !== 'exception') {
       throw new BadRequestException('Invoice does not have an active exception');
     }
 
-    const existingDetails = invoice.matchDetails && typeof invoice.matchDetails === 'object'
-      ? invoice.matchDetails as Record<string, unknown>
-      : {};
+    const existingDetails =
+      invoice.matchDetails && typeof invoice.matchDetails === 'object'
+        ? (invoice.matchDetails as Record<string, unknown>)
+        : {};
 
-    await this.db.update(invoices)
+    await this.db
+      .update(invoices)
       .set({
         status: 'pending_match',
         matchStatus: 'partial_match',
@@ -462,11 +505,13 @@ export class InvoicesService {
       .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
 
     const resolved = await this.findOne(id, organizationId);
-    this.audit.log(organizationId, reviewerId, 'invoice', id, 'exception_resolved', {
-      previousMatchStatus: 'exception',
-      newMatchStatus: 'partial_match',
-      reason: input?.reason?.trim() || null,
-    }).catch(() => {});
+    this.audit
+      .log(organizationId, reviewerId, 'invoice', id, 'exception_resolved', {
+        previousMatchStatus: 'exception',
+        newMatchStatus: 'partial_match',
+        reason: input?.reason?.trim() || null,
+      })
+      .catch(() => {});
     return resolved;
   }
 
@@ -475,22 +520,34 @@ export class InvoicesService {
     if (invoice.matchStatus === 'exception') {
       throw new BadRequestException('Cannot approve invoice with unresolved exceptions');
     }
-    await this.db.update(invoices)
-      .set({ status: 'approved', approvedBy: approverId, approvedAt: new Date(), updatedAt: new Date() })
+    await this.db
+      .update(invoices)
+      .set({
+        status: 'approved',
+        approvedBy: approverId,
+        approvedAt: new Date(),
+        updatedAt: new Date(),
+      })
       .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
     const approved = await this.findOne(id, organizationId);
     this.webhookEvents.emit(organizationId, 'invoice.approved', { invoice: approved });
-    this.audit.log(organizationId, approverId, 'invoice', id, 'approved', { totalAmount: (approved as any).totalAmount }).catch(() => {});
+    this.audit
+      .log(organizationId, approverId, 'invoice', id, 'approved', {
+        totalAmount: (approved as any).totalAmount,
+      })
+      .catch(() => {});
     if (this.notifications) {
-      this.notifications.create(
-        organizationId,
-        DEMO_ADMIN_USER_ID,
-        'invoice_approved',
-        'Invoice Approved',
-        `Invoice ${(approved as any).internalNumber} has been approved for payment.`,
-        'invoice',
-        id,
-      ).catch(() => {});
+      this.notifications
+        .create(
+          organizationId,
+          DEMO_ADMIN_USER_ID,
+          'invoice_approved',
+          'Invoice Approved',
+          `Invoice ${(approved as any).internalNumber} has been approved for payment.`,
+          'invoice',
+          id,
+        )
+        .catch(() => {});
     }
     this.glExport.enqueue(organizationId, id, 'qbo');
 
@@ -508,7 +565,10 @@ export class InvoicesService {
             const fiscalYear = new Date().getFullYear();
             const recoverableTaxAmount = ((approved as any).lines ?? [])
               .filter((line: any) => line.taxCode?.isRecoverable)
-              .reduce((sum: number, line: any) => sum + parseFloat(String(line.taxAmount ?? '0')), 0);
+              .reduce(
+                (sum: number, line: any) => sum + parseFloat(String(line.taxAmount ?? '0')),
+                0,
+              );
             await this.budgets.recordSpend(
               organizationId,
               req.departmentId,

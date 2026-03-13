@@ -63,6 +63,7 @@ const NAV_CONFIG: NavEntry[] = [
     label: 'Finance',
     children: [
       { label: 'Budgets', href: '/budgets' },
+      { label: 'Spend Guard', href: '/spend-guard' },
       { label: 'Tax Codes', href: '/tax-codes' },
       { label: 'AP Aging', href: '/ap-aging' },
       { label: 'GL Integration', href: '/gl-mappings' },
@@ -132,6 +133,7 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
   const router = useRouter();
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
   const [invoiceExceptionCount, setInvoiceExceptionCount] = useState(0);
+  const [spendGuardCount, setSpendGuardCount] = useState(0);
   const branding = useBranding();
 
   // Determine which groups should be open initially
@@ -169,10 +171,12 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
 
   // Fetch pending count
   useEffect(() => {
-    api.analytics.pendingItems()
+    api.analytics
+      .pendingItems()
       .then((data: any) => {
         setPendingApprovalsCount(data?.pendingApprovals ?? 0);
         setInvoiceExceptionCount(data?.invoiceExceptions ?? 0);
+        setSpendGuardCount(data?.spendGuardAlerts ?? 0);
       })
       .catch(() => {});
   }, [pathname]);
@@ -203,6 +207,7 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
   function getBadge(href: string): number | undefined {
     if (href === '/approvals' && pendingApprovalsCount > 0) return pendingApprovalsCount;
     if (href === '/invoices' && invoiceExceptionCount > 0) return invoiceExceptionCount;
+    if (href === '/spend-guard' && spendGuardCount > 0) return spendGuardCount;
     return undefined;
   }
 
@@ -245,20 +250,22 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
       >
         <span>{item.label}</span>
         {badge != null && badge > 0 && (
-          <span style={{
-            background: COLORS.badgeRed,
-            color: '#fff',
-            borderRadius: '9999px',
-            fontSize: '0.625rem',
-            fontWeight: 600,
-            minWidth: '18px',
-            height: '18px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '0 5px',
-            flexShrink: 0,
-          }}>
+          <span
+            style={{
+              background: COLORS.badgeRed,
+              color: '#fff',
+              borderRadius: '9999px',
+              fontSize: '0.625rem',
+              fontWeight: 600,
+              minWidth: '18px',
+              height: '18px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '0 5px',
+              flexShrink: 0,
+            }}
+          >
             {badge > 99 ? '99+' : badge}
           </span>
         )}
@@ -304,30 +311,28 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             {group.label}
             {!open && groupBadge > 0 && (
-              <span style={{
-                background: COLORS.badgeRed,
-                color: '#fff',
-                borderRadius: '9999px',
-                fontSize: '0.5625rem',
-                fontWeight: 600,
-                minWidth: '16px',
-                height: '16px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '0 4px',
-              }}>
+              <span
+                style={{
+                  background: COLORS.badgeRed,
+                  color: '#fff',
+                  borderRadius: '9999px',
+                  fontSize: '0.5625rem',
+                  fontWeight: 600,
+                  minWidth: '16px',
+                  height: '16px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '0 4px',
+                }}
+              >
                 {groupBadge > 99 ? '99+' : groupBadge}
               </span>
             )}
           </span>
           <Chevron open={open} />
         </button>
-        {open && (
-          <div>
-            {group.children.map((child) => renderLink(child, true))}
-          </div>
-        )}
+        {open && <div>{group.children.map((child) => renderLink(child, true))}</div>}
       </div>
     );
   }
@@ -338,7 +343,7 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
     <>
       <nav style={{ flex: 1, paddingTop: '0.5rem', overflowY: 'auto' }}>
         {NAV_CONFIG.map((entry) =>
-          isGroup(entry) ? renderGroup(entry) : renderLink(entry, false)
+          isGroup(entry) ? renderGroup(entry) : renderLink(entry, false),
         )}
       </nav>
 
@@ -372,13 +377,15 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
       </div>
 
       {/* Copyright / branding footer */}
-      <div style={{
-        padding: '0.625rem 1.25rem',
-        borderTop: `1px solid ${COLORS.sidebarBorder}`,
-        fontSize: '0.6875rem',
-        color: COLORS.sidebarGroupLabel,
-        lineHeight: 1.5,
-      }}>
+      <div
+        style={{
+          padding: '0.625rem 1.25rem',
+          borderTop: `1px solid ${COLORS.sidebarBorder}`,
+          fontSize: '0.6875rem',
+          color: COLORS.sidebarGroupLabel,
+          lineHeight: 1.5,
+        }}
+      >
         <div style={{ opacity: 0.8 }}>{branding.copyright_text}</div>
         {branding.hide_powered_by !== 'true' && (
           <div style={{ opacity: 0.5, marginTop: '0.125rem' }}>Powered by BetterSpend</div>

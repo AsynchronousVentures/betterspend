@@ -134,6 +134,13 @@
       "when": 1774500000000,
       "tag": "0018_multi_currency_support",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1774600000000,
+      "tag": "0019_spend_guard_alerts",
+      "breakpoints": true
     }
   ]
 }

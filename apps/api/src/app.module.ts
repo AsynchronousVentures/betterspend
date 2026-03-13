@@ -43,6 +43,7 @@ import { ExportModule } from './modules/export/export.module';
 import { EntitiesModule } from './modules/entities/entities.module';
 import { TaxCodesModule } from './modules/tax-codes/tax-codes.module';
 import { ExchangeRatesModule } from './modules/exchange-rates/exchange-rates.module';
+import { SpendGuardModule } from './modules/spend-guard/spend-guard.module';
 
 @Module({
   imports: [
@@ -75,6 +76,7 @@ import { ExchangeRatesModule } from './modules/exchange-rates/exchange-rates.mod
     EntitiesModule,
     TaxCodesModule,
     ExchangeRatesModule,
+    SpendGuardModule,
     AuditModule,
     ReportsModule,
     SearchModule,

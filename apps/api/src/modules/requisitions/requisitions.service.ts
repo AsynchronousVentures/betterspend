@@ -6,6 +6,7 @@ import { ApprovalEngineService } from '../approvals/approval-engine.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { AuditService } from '../audit/audit.service';
 import { BudgetsService } from '../budgets/budgets.service';
+import { SpendGuardService } from '../spend-guard/spend-guard.service';
 import type { Db } from '@betterspend/db';
 import { requisitions, requisitionLines } from '@betterspend/db';
 import type { CreateRequisitionInput } from '@betterspend/shared';
@@ -19,6 +20,7 @@ export class RequisitionsService {
     private readonly webhookEvents: WebhookEventService,
     private readonly audit: AuditService,
     private readonly budgets: BudgetsService,
+    private readonly spendGuard: SpendGuardService,
   ) {}
 
   async findAll(organizationId: string, filters?: { status?: string; departmentId?: string }) {
@@ -47,26 +49,26 @@ export class RequisitionsService {
     const number = await this.sequenceService.next(organizationId, 'requisition');
 
     const createdId = await this.db.transaction(async (tx) => {
-      const totalAmount = input.lines.reduce(
-        (sum, l) => sum + l.quantity * l.unitPrice,
-        0,
-      );
+      const totalAmount = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
 
-      const [req] = await tx.insert(requisitions).values({
-        organizationId,
-        requesterId,
-        number,
-        title: input.title,
-        description: input.description,
-        departmentId: input.departmentId,
-        projectId: input.projectId,
-        priority: input.priority ?? 'normal',
-        neededBy: input.neededBy ? new Date(input.neededBy) : null,
-        currency: input.currency ?? 'USD',
-        totalAmount: String(totalAmount),
-        status: 'draft',
-        sourceType: 'manual',
-      }).returning();
+      const [req] = await tx
+        .insert(requisitions)
+        .values({
+          organizationId,
+          requesterId,
+          number,
+          title: input.title,
+          description: input.description,
+          departmentId: input.departmentId,
+          projectId: input.projectId,
+          priority: input.priority ?? 'normal',
+          neededBy: input.neededBy ? new Date(input.neededBy) : null,
+          currency: input.currency ?? 'USD',
+          totalAmount: String(totalAmount),
+          status: 'draft',
+          sourceType: 'manual',
+        })
+        .returning();
 
       await tx.insert(requisitionLines).values(
         input.lines.map((l, i) => ({
@@ -87,7 +89,13 @@ export class RequisitionsService {
     });
 
     const created = await this.findOne(createdId, organizationId);
-    this.audit.log(organizationId, requesterId, 'requisition', createdId, 'created', { number: (created as any).number, title: input.title }).catch(() => {});
+    this.audit
+      .log(organizationId, requesterId, 'requisition', createdId, 'created', {
+        number: (created as any).number,
+        title: input.title,
+      })
+      .catch(() => {});
+    await this.spendGuard.analyzeRequisition(organizationId, createdId).catch(() => {});
     return created;
   }
 
@@ -119,7 +127,8 @@ export class RequisitionsService {
         );
       }
 
-      await tx.update(requisitions)
+      await tx
+        .update(requisitions)
         .set({
           title: input.title ?? req.title,
           description: input.description ?? req.description,
@@ -149,17 +158,23 @@ export class RequisitionsService {
     if (req.departmentId && req.totalAmount) {
       const fiscalYear = new Date().getFullYear();
       const amount = parseFloat(String(req.totalAmount));
-      const budgetCheck = await this.budgets.checkBudget(organizationId, req.departmentId, amount, fiscalYear);
+      const budgetCheck = await this.budgets.checkBudget(
+        organizationId,
+        req.departmentId,
+        amount,
+        fiscalYear,
+      );
       if (!budgetCheck.withinBudget) {
         throw new BadRequestException(
           `Budget exceeded for department. Remaining: $${budgetCheck.remaining?.toFixed(2) ?? '0'}, ` +
-          `Requested: $${amount.toFixed(2)}. ` +
-          `Budget: ${budgetCheck.budgetName} (Allocated: $${budgetCheck.allocated?.toFixed(2) ?? '0'}, Spent: $${budgetCheck.spent?.toFixed(2) ?? '0'})`,
+            `Requested: $${amount.toFixed(2)}. ` +
+            `Budget: ${budgetCheck.budgetName} (Allocated: $${budgetCheck.allocated?.toFixed(2) ?? '0'}, Spent: $${budgetCheck.spent?.toFixed(2) ?? '0'})`,
         );
       }
     }
 
-    await this.db.update(requisitions)
+    await this.db
+      .update(requisitions)
       .set({ status: 'pending_approval', submittedAt: new Date(), updatedAt: new Date() })
       .where(eq(requisitions.id, id));
 
@@ -170,7 +185,9 @@ export class RequisitionsService {
 
     const submitted = await this.findOne(id, organizationId);
     this.webhookEvents.emit(organizationId, 'requisition.submitted', { requisition: submitted });
-    this.audit.log(organizationId, actorId, 'requisition', id, 'submitted', { status: submitted.status }).catch(() => {});
+    this.audit
+      .log(organizationId, actorId, 'requisition', id, 'submitted', { status: submitted.status })
+      .catch(() => {});
     return submitted;
   }
 
@@ -180,7 +197,8 @@ export class RequisitionsService {
       throw new BadRequestException(`Cannot cancel a ${req.status} requisition`);
     }
 
-    const [updated] = await this.db.update(requisitions)
+    const [updated] = await this.db
+      .update(requisitions)
       .set({ status: 'cancelled', updatedAt: new Date() })
       .where(eq(requisitions.id, id))
       .returning();
