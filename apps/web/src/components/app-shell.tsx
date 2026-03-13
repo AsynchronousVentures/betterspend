@@ -40,6 +40,7 @@ const AUTH_PATHS = ['/login', '/signup', '/punchout', '/forgot-password', '/rese
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 const SHORTCUTS_DISABLED_KEY = 'betterspend:shortcuts-disabled';
 const SIDEBAR_COLLAPSED_KEY = 'betterspend:sidebar-collapsed';
+const RECENT_SEARCHES_KEY = 'betterspend:recent-searches';
 
 const TYPE_LABELS: Record<string, string> = {
   requisition: 'Req',
@@ -97,15 +98,33 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   const router = useRouter();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
+  const [totalResults, setTotalResults] = useState(0);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const stored = window.localStorage.getItem(RECENT_SEARCHES_KEY);
+      setRecentSearches(stored ? JSON.parse(stored) : []);
+    } catch {
+      setRecentSearches([]);
+    }
+  }, []);
+
+  useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (query.length < 2) { setResults([]); return; }
+    if (query.length < 2) {
+      setResults([]);
+      setTotalResults(0);
+      setActiveIndex(-1);
+      return;
+    }
     debounceRef.current = setTimeout(() => {
       setLoading(true);
       api.search.query(query)
@@ -117,10 +136,16 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
             ...data.vendors,
             ...data.catalogItems,
           ];
+          setTotalResults(all.length);
           setResults(all.slice(0, 10));
+          setActiveIndex(all.length > 0 ? 0 : -1);
           setOpen(true);
         })
-        .catch(() => setResults([]))
+        .catch(() => {
+          setResults([]);
+          setTotalResults(0);
+          setActiveIndex(-1);
+        })
         .finally(() => setLoading(false));
     }, 300);
   }, [query]);
@@ -137,13 +162,62 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
 
   function navigate(href: string) {
     setOpen(false);
-    setQuery('');
-    setResults([]);
+    const normalizedQuery = query.trim();
+    if (normalizedQuery) {
+      const nextRecentSearches = [normalizedQuery, ...recentSearches.filter((item) => item !== normalizedQuery)].slice(0, 5);
+      setRecentSearches(nextRecentSearches);
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(nextRecentSearches));
+      }
+    }
+    setActiveIndex(-1);
     router.push(href);
   }
 
+  function applyRecentSearch(searchValue: string) {
+    setQuery(searchValue);
+    setOpen(true);
+    inputRef.current?.focus();
+  }
+
+  function clearRecentSearches() {
+    setRecentSearches([]);
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(RECENT_SEARCHES_KEY);
+    }
+  }
+
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Escape') { setOpen(false); inputRef.current?.blur(); }
+    if (e.key === 'Escape') {
+      if (query) {
+        setQuery('');
+        setResults([]);
+        setTotalResults(0);
+      }
+      setOpen(false);
+      setActiveIndex(-1);
+      inputRef.current?.blur();
+      return;
+    }
+
+    if (!open || results.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveIndex((prev) => (prev + 1) % results.length);
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIndex((prev) => (prev <= 0 ? results.length - 1 : prev - 1));
+      return;
+    }
+
+    if (e.key === 'Enter' && activeIndex >= 0 && results[activeIndex]) {
+      e.preventDefault();
+      navigate(results[activeIndex]._href);
+    }
   }
 
   return (
@@ -153,8 +227,13 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
         aria-label="Global search"
         ref={inputRef}
         value={query}
-        onChange={(e) => { setQuery(e.target.value); if (e.target.value.length >= 2) setOpen(true); }}
-        onFocus={() => { if (results.length > 0) setOpen(true); }}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          if (e.target.value.length >= 2 || recentSearches.length > 0) setOpen(true);
+        }}
+        onFocus={() => {
+          if (results.length > 0 || recentSearches.length > 0) setOpen(true);
+        }}
         onKeyDown={handleKeyDown}
         placeholder="Search requisitions, POs, invoices..."
         style={{
@@ -181,7 +260,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
       {loading && (
         <div style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: COLORS.textMuted, fontSize: '0.75rem' }}>...</div>
       )}
-      {open && results.length > 0 && (
+      {open && (results.length > 0 || (query.length < 2 && recentSearches.length > 0)) && (
         <div style={{
           position: 'absolute',
           top: 'calc(100% + 6px)',
@@ -194,7 +273,43 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
           zIndex: 100,
           overflow: 'hidden',
         }}>
-          {results.map((r) => {
+          {query.length < 2 && recentSearches.length > 0 ? (
+            <>
+              <div style={{ padding: '0.625rem 0.875rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${COLORS.contentBg}` }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: COLORS.textSecondary }}>Recent Searches</span>
+                <button
+                  type="button"
+                  onClick={clearRecentSearches}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: COLORS.accentBlue, padding: 0 }}
+                >
+                  Clear
+                </button>
+              </div>
+              {recentSearches.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => applyRecentSearch(item)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    width: '100%',
+                    padding: '0.625rem 0.875rem',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    borderBottom: `1px solid ${COLORS.contentBg}`,
+                    fontSize: '0.8125rem',
+                    color: COLORS.textPrimary,
+                  }}
+                >
+                  {item}
+                </button>
+              ))}
+            </>
+          ) : null}
+          {results.map((r, index) => {
             const tc = TYPE_COLORS[r._type] ?? { bg: COLORS.contentBg, text: COLORS.textSecondary };
             return (
               <button
@@ -206,15 +321,14 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
                   gap: '0.625rem',
                   width: '100%',
                   padding: '0.625rem 0.875rem',
-                  background: 'none',
+                  background: activeIndex === index ? COLORS.hoverBg : 'none',
                   border: 'none',
                   cursor: 'pointer',
                   textAlign: 'left',
                   borderBottom: `1px solid ${COLORS.contentBg}`,
                   transition: 'background 0.1s',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = COLORS.hoverBg)}
-                onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                onMouseEnter={() => setActiveIndex(index)}
               >
                 <span style={{
                   background: tc.bg,
@@ -243,6 +357,22 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
               </button>
             );
           })}
+          {query.length >= 2 && totalResults > 0 && (
+            <div style={{ padding: '0.625rem 0.875rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: COLORS.contentBg }}>
+              <span style={{ fontSize: '0.75rem', color: COLORS.textSecondary }}>
+                Showing {Math.min(results.length, 10)} of {totalResults} results
+              </span>
+              {totalResults > 10 ? (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/search?q=${encodeURIComponent(query.trim())}`)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '0.75rem', color: COLORS.accentBlue, fontWeight: 600 }}
+                >
+                  See all results
+                </button>
+              ) : null}
+            </div>
+          )}
         </div>
       )}
     </div>
