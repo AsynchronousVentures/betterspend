@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import SidebarNav from './sidebar-nav';
@@ -41,6 +42,7 @@ const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 const SHORTCUTS_DISABLED_KEY = 'betterspend:shortcuts-disabled';
 const SIDEBAR_COLLAPSED_KEY = 'betterspend:sidebar-collapsed';
 const RECENT_SEARCHES_KEY = 'betterspend:recent-searches';
+const NOTIFICATION_PREFS_KEY = 'betterspend:notification-preferences';
 
 const TYPE_LABELS: Record<string, string> = {
   requisition: 'Req',
@@ -478,7 +480,29 @@ function NotificationBell() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const [preferences, setPreferences] = useState({
+    emailEnabled: true,
+    frequency: 'instant',
+    enabledTypes: ['approval_request', 'po_issued', 'invoice_exception', 'invoice_approved', 'spend_guard', 'software_license'],
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const stored = window.localStorage.getItem(NOTIFICATION_PREFS_KEY);
+      if (stored) setPreferences((prev) => ({ ...prev, ...JSON.parse(stored) }));
+    } catch {}
+  }, []);
+
+  function updatePreferences(nextValue: Partial<typeof preferences>) {
+    const merged = { ...preferences, ...nextValue };
+    setPreferences(merged);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify(merged));
+    }
+  }
 
   const fetchCount = useCallback(() => {
     api.notifications.unreadCount()
@@ -517,7 +541,7 @@ function NotificationBell() {
     if (!open) {
       setLoading(true);
       api.notifications.list({ limit: 10 })
-        .then((data) => setNotifications(data))
+        .then((data) => setNotifications(data.filter((item) => preferences.enabledTypes.includes(item.type))))
         .catch(() => {})
         .finally(() => setLoading(false));
     }
@@ -591,6 +615,65 @@ function NotificationBell() {
         )}
       </button>
 
+      {preferencesOpen && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 8px)',
+            right: 0,
+            width: '320px',
+            background: COLORS.white,
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '12px',
+            boxShadow: SHADOWS.dropdown,
+            zIndex: 101,
+            overflow: 'hidden',
+          }}
+        >
+          <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.border}`, fontWeight: 600, fontSize: '0.875rem', color: COLORS.textPrimary }}>
+            Notification Preferences
+          </div>
+          <div style={{ padding: '0.875rem 1rem', display: 'grid', gap: '0.875rem' }}>
+            <label style={{ display: 'flex', gap: '0.625rem', alignItems: 'flex-start' }}>
+              <input type="checkbox" checked={preferences.emailEnabled} onChange={(event) => updatePreferences({ emailEnabled: event.target.checked })} />
+              <div>
+                <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: COLORS.textPrimary }}>Enable email notifications</div>
+                <div style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>Saved locally for now. Server-side delivery preferences are still pending.</div>
+              </div>
+            </label>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, fontWeight: 600, textTransform: 'uppercase', marginBottom: '0.35rem' }}>Frequency</div>
+              <select value={preferences.frequency} onChange={(event) => updatePreferences({ frequency: event.target.value })} style={{ width: '100%', padding: '0.5rem 0.65rem', borderRadius: '8px', border: `1px solid ${COLORS.border}`, fontSize: '0.8125rem' }}>
+                <option value="instant">Instant</option>
+                <option value="daily">Daily digest</option>
+                <option value="weekly">Weekly digest</option>
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, fontWeight: 600, textTransform: 'uppercase', marginBottom: '0.35rem' }}>Visible Types</div>
+              <div style={{ display: 'grid', gap: '0.4rem' }}>
+                {['approval_request', 'po_issued', 'invoice_exception', 'invoice_approved', 'spend_guard', 'software_license'].map((type) => (
+                  <label key={type} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8125rem', color: COLORS.textPrimary }}>
+                    <input
+                      type="checkbox"
+                      checked={preferences.enabledTypes.includes(type)}
+                      onChange={(event) =>
+                        updatePreferences({
+                          enabledTypes: event.target.checked
+                            ? [...preferences.enabledTypes, type]
+                            : preferences.enabledTypes.filter((item) => item !== type),
+                        })
+                      }
+                    />
+                    {type.replace(/_/g, ' ')}
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {open && (
         <div
           style={{
@@ -619,22 +702,38 @@ function NotificationBell() {
             <span style={{ fontWeight: 600, fontSize: '0.875rem', color: COLORS.textPrimary }}>
               Notifications
             </span>
-            {unreadCount > 0 && (
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
               <button
-                onClick={handleMarkAllRead}
+                onClick={() => setPreferencesOpen((value) => !value)}
                 style={{
                   background: 'none',
                   border: 'none',
                   cursor: 'pointer',
                   fontSize: '0.75rem',
-                  color: COLORS.accentBlue,
+                  color: COLORS.textSecondary,
                   padding: 0,
                   fontWeight: 500,
                 }}
               >
-                Mark all read
+                Preferences
               </button>
-            )}
+              {unreadCount > 0 && (
+                <button
+                  onClick={handleMarkAllRead}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '0.75rem',
+                    color: COLORS.accentBlue,
+                    padding: 0,
+                    fontWeight: 500,
+                  }}
+                >
+                  Mark all read
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Body */}
@@ -730,6 +829,12 @@ function NotificationBell() {
                 </button>
               );
             })}
+          </div>
+          <div style={{ padding: '0.75rem 1rem', borderTop: `1px solid ${COLORS.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>Showing up to 10 notifications</span>
+            <Link href="/notifications" onClick={() => setOpen(false)} style={{ fontSize: '0.75rem', color: COLORS.accentBlue, textDecoration: 'none', fontWeight: 600 }}>
+              See all &rarr;
+            </Link>
           </div>
         </div>
       )}
