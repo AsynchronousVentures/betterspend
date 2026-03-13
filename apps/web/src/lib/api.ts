@@ -72,6 +72,13 @@ export const api = {
     update: (id: string, data: unknown) => apiFetch<any>(`/entities/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     remove: (id: string) => apiFetch<any>(`/entities/${id}`, { method: 'DELETE' }),
   },
+  exchangeRates: {
+    list: () => apiFetch<any[]>('/exchange-rates'),
+    create: (data: unknown) => apiFetch<any>('/exchange-rates', { method: 'POST', body: JSON.stringify(data) }),
+    getBaseCurrency: () => apiFetch<{ baseCurrency: string }>('/exchange-rates/organization-base-currency'),
+    updateBaseCurrency: (baseCurrency: string) =>
+      apiFetch<any>('/exchange-rates/organization-base-currency', { method: 'PUT', body: JSON.stringify({ baseCurrency }) }),
+  },
   vendors: {
     list: () => apiFetch<any[]>(appendEntityId('/vendors')),
     get: (id: string) => apiFetch<any>(`/vendors/${id}`),

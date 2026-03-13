@@ -9,6 +9,7 @@ export const exchangeRates = pgTable('exchange_rates', {
   rate: numeric('rate', { precision: 18, scale: 8 }).notNull(),
   fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
   isManual: boolean('is_manual').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uniqOrgFromTo: unique('exchange_rates_org_from_to_uniq').on(t.orgId, t.fromCurrency, t.toCurrency),
 }));

@@ -21,16 +21,23 @@ export default function NewBudgetPage() {
   const router = useRouter();
   const [departments, setDepartments] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
+  const [baseCurrency, setBaseCurrency] = useState('USD');
   const [form, setForm] = useState({
     name: '', fiscalYear: String(CURRENT_YEAR), totalAmount: '', currency: 'USD',
-    budgetType: 'department', departmentId: '', projectId: '', glAccount: '',
+    exchangeRate: '1', budgetType: 'department', departmentId: '', projectId: '', glAccount: '',
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    Promise.all([api.departments.list(), api.projects.list()])
-      .then(([d, p]) => { setDepartments(d); setProjects(p); })
+    Promise.all([api.departments.list(), api.projects.list(), api.exchangeRates.getBaseCurrency()])
+      .then(([d, p, org]) => {
+        setDepartments(d);
+        setProjects(p);
+        const currency = org?.baseCurrency || 'USD';
+        setBaseCurrency(currency);
+        setForm((current) => ({ ...current, currency }));
+      })
       .catch(() => {});
   }, []);
 
@@ -52,6 +59,7 @@ export default function NewBudgetPage() {
         fiscalYear: parsedYear,
         totalAmount: parsedAmount,
         currency: form.currency.trim().toUpperCase() || 'USD',
+        exchangeRate: parseFloat(form.exchangeRate || '1') || 1,
       };
       if (form.budgetType === 'department' && form.departmentId) payload.departmentId = form.departmentId;
       else if (form.budgetType === 'project' && form.projectId) payload.projectId = form.projectId;
@@ -96,6 +104,15 @@ export default function NewBudgetPage() {
                 <label style={labelStyle}>Currency</label>
                 <input value={form.currency} onChange={(e) => set('currency', e.target.value.toUpperCase())} maxLength={3} style={inputStyle} />
               </div>
+              <div>
+                <label style={labelStyle}>Exchange Rate to {baseCurrency}</label>
+                <input value={form.exchangeRate} onChange={(e) => set('exchangeRate', e.target.value)} type="number" min="0" step="0.000001" style={inputStyle} />
+              </div>
+            </div>
+            <div style={{ fontSize: '0.8rem', color: COLORS.textMuted }}>
+              Budget base currency is {baseCurrency}. Use `1` when the budget is already denominated in {baseCurrency}.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
               <div>
                 <label style={labelStyle}>Budget Type *</label>
                 <select value={form.budgetType} onChange={(e) => set('budgetType', e.target.value)} style={inputStyle}>

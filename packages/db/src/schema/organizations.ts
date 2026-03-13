@@ -4,6 +4,7 @@ export const organizations = pgTable('organizations', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: varchar('name', { length: 255 }).notNull(),
   slug: varchar('slug', { length: 100 }).notNull().unique(),
+  baseCurrency: varchar('base_currency', { length: 3 }).notNull().default('USD'),
   settings: jsonb('settings').default({}),
   logoUrl: varchar('logo_url', { length: 500 }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

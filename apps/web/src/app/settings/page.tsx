@@ -74,6 +74,12 @@ function SettingsContent() {
   const [oauthLoading, setOauthLoading] = useState(false);
   const [integrationsMsg, setIntegrationsMsg] = useState('');
   const [integrationsError, setIntegrationsError] = useState('');
+  const [baseCurrency, setBaseCurrency] = useState('USD');
+  const [exchangeRates, setExchangeRates] = useState<any[]>([]);
+  const [rateForm, setRateForm] = useState({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '1.08' });
+  const [orgSaving, setOrgSaving] = useState(false);
+  const [orgMsg, setOrgMsg] = useState('');
+  const [orgError, setOrgError] = useState('');
 
   useEffect(() => {
     api.settings.getAll().then((all) => {
@@ -85,6 +91,8 @@ function SettingsContent() {
         contract_price_deviation_action: (all.contract_price_deviation_action as 'warn' | 'block') ?? c.contract_price_deviation_action,
       }));
     }).catch(() => {});
+    api.exchangeRates.getBaseCurrency().then((data) => setBaseCurrency(data.baseCurrency ?? 'USD')).catch(() => {});
+    api.exchangeRates.list().then(setExchangeRates).catch(() => {});
   }, []);
 
   // Load OAuth connection status and handle callback params
@@ -187,6 +195,30 @@ function SettingsContent() {
       setOauthStatus((s) => ({ ...s, xero: false, xeroTenantId: undefined }));
       setIntegrationsMsg('Xero disconnected.');
     } catch (e: any) { setIntegrationsError(e.message); }
+  }
+
+  async function handleSaveOrg(e: React.FormEvent) {
+    e.preventDefault();
+    setOrgError('');
+    setOrgMsg('');
+    setOrgSaving(true);
+    try {
+      await api.exchangeRates.updateBaseCurrency(baseCurrency);
+      await api.exchangeRates.create({
+        fromCurrency: rateForm.fromCurrency.toUpperCase(),
+        toCurrency: rateForm.toCurrency.toUpperCase(),
+        rate: parseFloat(rateForm.rate),
+        isManual: true,
+      });
+      const [base, rates] = await Promise.all([api.exchangeRates.getBaseCurrency(), api.exchangeRates.list()]);
+      setBaseCurrency(base.baseCurrency ?? 'USD');
+      setExchangeRates(rates);
+      setOrgMsg('Base currency and exchange rates saved.');
+    } catch (e: any) {
+      setOrgError(e.message);
+    } finally {
+      setOrgSaving(false);
+    }
   }
 
   const successStyle: React.CSSProperties = { background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', padding: '0.75rem', color: '#15803d', fontSize: '0.875rem', marginTop: '1rem' };
@@ -535,7 +567,7 @@ function SettingsContent() {
       )}
 
       {activeTab === 'org' && (
-        <div style={card}>
+        <form onSubmit={handleSaveOrg} style={card}>
           <h2 style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '1rem', color: COLORS.textPrimary }}>System Information</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <InfoRow label="Organization ID" value="00000000-0000-0000-0000-000000000001" mono />
@@ -561,12 +593,52 @@ function SettingsContent() {
               </Link>
             </div>
           </div>
+          <div style={{ marginTop: '1.5rem', display: 'grid', gap: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div>
+                <label style={labelStyle}>Organization Base Currency</label>
+                <input style={inputStyle} maxLength={3} value={baseCurrency} onChange={(e) => setBaseCurrency(e.target.value.toUpperCase())} />
+              </div>
+              <div>
+                <label style={labelStyle}>Manual Exchange Rate</label>
+                <input style={inputStyle} type="number" min="0" step="0.00000001" value={rateForm.rate} onChange={(e) => setRateForm((prev) => ({ ...prev, rate: e.target.value }))} />
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div>
+                <label style={labelStyle}>From Currency</label>
+                <input style={inputStyle} maxLength={3} value={rateForm.fromCurrency} onChange={(e) => setRateForm((prev) => ({ ...prev, fromCurrency: e.target.value.toUpperCase() }))} />
+              </div>
+              <div>
+                <label style={labelStyle}>To Currency</label>
+                <input style={inputStyle} maxLength={3} value={rateForm.toCurrency} onChange={(e) => setRateForm((prev) => ({ ...prev, toCurrency: e.target.value.toUpperCase() }))} />
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.8rem', fontWeight: 600, color: COLORS.textSecondary, marginBottom: '0.5rem' }}>Latest Exchange Rates</div>
+              <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: '6px', overflow: 'hidden' }}>
+                {exchangeRates.length === 0 ? (
+                  <div style={{ padding: '0.875rem 1rem', fontSize: '0.875rem', color: COLORS.textMuted }}>No exchange rates configured yet.</div>
+                ) : exchangeRates.map((rate, idx) => (
+                  <div key={`${rate.fromCurrency}-${rate.toCurrency}-${rate.id ?? idx}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 1rem', borderBottom: idx < exchangeRates.length - 1 ? `1px solid ${COLORS.contentBg}` : undefined }}>
+                    <span style={{ fontSize: '0.875rem', color: COLORS.textPrimary }}>{rate.fromCurrency} → {rate.toCurrency}</span>
+                    <span style={{ fontSize: '0.875rem', color: COLORS.textSecondary, fontFamily: 'monospace' }}>{Number(rate.rate).toFixed(6)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          {orgError && <div style={errorStyle}>{orgError}</div>}
+          {orgMsg && <div style={successStyle}>{orgMsg}</div>}
           <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#fef9c3', borderRadius: '6px', border: '1px solid #fde68a' }}>
             <p style={{ fontSize: '0.85rem', color: COLORS.accentAmberDark, margin: 0 }}>
               <strong>Open Source (MIT):</strong> BetterSpend is free to use, modify, and distribute. White-labeling is fully supported via the Branding tab.
             </p>
           </div>
-        </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+            <button type="submit" disabled={orgSaving} style={btnPrimary}>{orgSaving ? 'Saving...' : 'Save Currency Settings'}</button>
+          </div>
+        </form>
       )}
 
       {activeTab === 'password' && (

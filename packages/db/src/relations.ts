@@ -19,6 +19,7 @@ import { vendorPortalTokens } from './schema/vendor-portal-tokens';
 import { notifications } from './schema/notifications';
 import { paymentRuns, paymentRunInvoices } from './schema/payment-runs';
 import { taxCodes } from './schema/tax-codes';
+import { exchangeRates } from './schema/exchange-rates';
 
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -29,6 +30,12 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   requisitions: many(requisitions),
   purchaseOrders: many(purchaseOrders),
   budgets: many(budgets),
+  taxCodes: many(taxCodes),
+  exchangeRates: many(exchangeRates),
+}));
+
+export const exchangeRatesRelations = relations(exchangeRates, ({ one }) => ({
+  organization: one(organizations, { fields: [exchangeRates.orgId], references: [organizations.id] }),
 }));
 
 export const legalEntitiesRelations = relations(legalEntities, ({ one, many }) => ({

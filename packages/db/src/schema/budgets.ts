@@ -14,6 +14,11 @@ export const budgets = pgTable('budgets', {
   allocatedAmount: numeric('allocated_amount', { precision: 14, scale: 2 }).notNull().default('0'),
   spentAmount: numeric('spent_amount', { precision: 14, scale: 2 }).notNull().default('0'),
   currency: varchar('currency', { length: 3 }).notNull().default('USD'),
+  baseCurrency: varchar('base_currency', { length: 3 }).notNull().default('USD'),
+  exchangeRate: numeric('exchange_rate', { precision: 18, scale: 8 }).notNull().default('1'),
+  baseTotalAmount: numeric('base_total_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+  baseAllocatedAmount: numeric('base_allocated_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+  baseSpentAmount: numeric('base_spent_amount', { precision: 14, scale: 2 }).notNull().default('0'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

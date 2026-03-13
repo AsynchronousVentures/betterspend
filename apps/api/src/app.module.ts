@@ -42,6 +42,7 @@ import { RequisitionTemplatesModule } from './modules/requisition-templates/requ
 import { ExportModule } from './modules/export/export.module';
 import { EntitiesModule } from './modules/entities/entities.module';
 import { TaxCodesModule } from './modules/tax-codes/tax-codes.module';
+import { ExchangeRatesModule } from './modules/exchange-rates/exchange-rates.module';
 
 @Module({
   imports: [
@@ -73,6 +74,7 @@ import { TaxCodesModule } from './modules/tax-codes/tax-codes.module';
     ProjectsModule,
     EntitiesModule,
     TaxCodesModule,
+    ExchangeRatesModule,
     AuditModule,
     ReportsModule,
     SearchModule,

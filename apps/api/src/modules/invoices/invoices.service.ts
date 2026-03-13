@@ -11,6 +11,7 @@ import { BudgetsService } from '../budgets/budgets.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EntitiesService } from '../entities/entities.service';
+import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 
@@ -25,6 +26,7 @@ export interface CreateInvoiceInput {
   earlyPaymentDiscountPercent?: number;
   earlyPaymentDiscountBy?: string;
   currency?: string;
+  exchangeRate?: number;
   lines: Array<{
     poLineId?: string;
     lineNumber: number;
@@ -75,6 +77,7 @@ export class InvoicesService {
     private readonly audit: AuditService,
     @Optional() private readonly notifications: NotificationsService,
     private readonly entitiesService: EntitiesService,
+    private readonly exchangeRatesService: ExchangeRatesService,
   ) {}
 
   private calculateLineTax(quantity: number, unitPrice: number, ratePercent: number, taxInclusive: boolean) {
@@ -136,6 +139,8 @@ export class InvoicesService {
 
   async create(organizationId: string, input: CreateInvoiceInput) {
     let resolvedEntityId = input.entityId ?? null;
+    let resolvedCurrency = input.currency ?? 'USD';
+    let resolvedExchangeRate = input.exchangeRate ?? null;
     if (input.purchaseOrderId) {
       const po = await this.db.query.purchaseOrders.findFirst({
         where: (record, { and, eq }) =>
@@ -143,6 +148,8 @@ export class InvoicesService {
       });
       if (!po) throw new BadRequestException(`Purchase order ${input.purchaseOrderId} not found`);
       resolvedEntityId = po.entityId ?? resolvedEntityId;
+      resolvedCurrency = input.currency ?? po.currency;
+      resolvedExchangeRate = input.exchangeRate ?? Number(po.exchangeRate ?? '1');
     }
     await this.entitiesService.assertBelongsToOrg(organizationId, resolvedEntityId);
 
@@ -174,6 +181,12 @@ export class InvoicesService {
     const subtotal = lineAmounts.reduce((sum, line) => sum + line.subtotal, 0);
     const taxAmount = lineAmounts.reduce((sum, line) => sum + line.taxAmount, 0);
     const totalAmount = lineAmounts.reduce((sum, line) => sum + line.totalAmount, 0);
+    const { baseCurrency, exchangeRate, baseAmount } = await this.exchangeRatesService.convertToBase(
+      organizationId,
+      totalAmount,
+      resolvedCurrency,
+      resolvedExchangeRate,
+    );
 
     const invoiceId = await this.db.transaction(async (tx) => {
       const [inv] = await tx.insert(invoices).values({
@@ -188,10 +201,15 @@ export class InvoicesService {
         paymentTerms: input.paymentTerms ?? null,
         earlyPaymentDiscountPercent: input.earlyPaymentDiscountPercent != null ? String(input.earlyPaymentDiscountPercent) : null,
         earlyPaymentDiscountBy: input.earlyPaymentDiscountBy ?? null,
-        currency: input.currency ?? 'USD',
+        currency: resolvedCurrency,
+        baseCurrency,
+        exchangeRate: String(exchangeRate),
         subtotal: String(subtotal.toFixed(2)),
         taxAmount: String(taxAmount.toFixed(2)),
         totalAmount: String(totalAmount.toFixed(2)),
+        baseSubtotal: String(this.exchangeRatesService.roundMoney(subtotal * exchangeRate).toFixed(2)),
+        baseTaxAmount: String(this.exchangeRatesService.roundMoney(taxAmount * exchangeRate).toFixed(2)),
+        baseTotalAmount: String(baseAmount.toFixed(2)),
         status: 'pending_match',
         matchStatus: 'unmatched',
       }).returning();
@@ -201,17 +219,20 @@ export class InvoicesService {
           input.lines.map((l, index) => {
             const amounts = lineAmounts[index];
             return {
-              invoiceId: inv.id,
-              poLineId: l.poLineId ?? null,
-              lineNumber: String(l.lineNumber),
-              description: l.description,
-              quantity: String(l.quantity),
-              unitPrice: String(l.unitPrice),
-              taxCodeId: l.taxCodeId ?? null,
-              taxAmount: String(amounts.taxAmount.toFixed(2)),
-              taxInclusive: l.taxInclusive ?? false,
-              totalPrice: String(amounts.totalAmount.toFixed(2)),
-              glAccount: l.glAccount ?? null,
+            invoiceId: inv.id,
+            poLineId: l.poLineId ?? null,
+            lineNumber: String(l.lineNumber),
+            description: l.description,
+            quantity: String(l.quantity),
+            unitPrice: String(l.unitPrice),
+            taxCodeId: l.taxCodeId ?? null,
+            taxAmount: String(amounts.taxAmount.toFixed(2)),
+            taxInclusive: l.taxInclusive ?? false,
+            totalPrice: String(amounts.totalAmount.toFixed(2)),
+            exchangeRate: String(exchangeRate),
+            baseUnitPrice: String(this.exchangeRatesService.roundMoney(l.unitPrice * exchangeRate).toFixed(2)),
+            baseTotalPrice: String(this.exchangeRatesService.roundMoney(amounts.totalAmount * exchangeRate).toFixed(2)),
+            glAccount: l.glAccount ?? null,
             };
           }),
         );

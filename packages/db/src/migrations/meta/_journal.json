@@ -127,6 +127,13 @@
       "when": 1774400000000,
       "tag": "0017_tax_code_management",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1774500000000,
+      "tag": "0018_multi_currency_support",
+      "breakpoints": true
     }
   ]
 }

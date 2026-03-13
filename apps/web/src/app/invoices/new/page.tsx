@@ -10,6 +10,8 @@ interface PO {
   number: string;
   vendorId: string;
   vendor: { id: string; name: string } | null;
+  currency?: string | null;
+  exchangeRate?: string | number | null;
   lines: Array<{ id: string; lineNumber: string; description: string; quantity: string; unitPrice: string }>;
 }
 
@@ -47,6 +49,9 @@ export default function NewInvoicePage() {
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [dueDate, setDueDate] = useState('');
+  const [baseCurrency, setBaseCurrency] = useState('USD');
+  const [currency, setCurrency] = useState('USD');
+  const [exchangeRate, setExchangeRate] = useState('1');
   const [lines, setLines] = useState<InvoiceLine[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -57,10 +62,22 @@ export default function NewInvoicePage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    api.purchaseOrders.list()
-      .then((data) => {
-        const arr = Array.isArray(data) ? data : (data as any).data ?? [];
-        setPOs(arr);
+    Promise.allSettled([
+      api.purchaseOrders.list(),
+      api.exchangeRates.getBaseCurrency(),
+    ])
+      .then(([poResult, currencyResult]) => {
+        if (poResult.status === 'fulfilled') {
+          const data = poResult.value;
+          const arr = Array.isArray(data) ? data : (data as any).data ?? [];
+          setPOs(arr);
+        }
+
+        if (currencyResult.status === 'fulfilled') {
+          const orgBaseCurrency = currencyResult.value?.baseCurrency || 'USD';
+          setBaseCurrency(orgBaseCurrency);
+          setCurrency(orgBaseCurrency);
+        }
       })
       .catch(() => {});
 
@@ -70,10 +87,19 @@ export default function NewInvoicePage() {
   }, []);
 
   const handlePOChange = async (poId: string) => {
-    if (!poId) { setSelectedPO(null); setLines([]); setVendorId(''); return; }
+    if (!poId) {
+      setSelectedPO(null);
+      setLines([]);
+      setVendorId('');
+      setCurrency(baseCurrency);
+      setExchangeRate('1');
+      return;
+    }
     const po: PO = await api.purchaseOrders.get(poId) as PO;
     setSelectedPO(po);
     setVendorId(po.vendor?.id ?? po.vendorId);
+    setCurrency((po.currency || baseCurrency).toUpperCase());
+    setExchangeRate(String(po.exchangeRate ?? '1'));
     setLines((po.lines ?? []).map((l, i) => ({
       poLineId: l.id,
       lineNumber: i + 1,
@@ -177,6 +203,8 @@ export default function NewInvoicePage() {
         vendorId,
         invoiceNumber,
         invoiceDate,
+        currency,
+        exchangeRate: parseFloat(exchangeRate || '1') || 1,
         dueDate: dueDate || undefined,
         lines: lines.map((l) => ({
           poLineId: l.poLineId || undefined,
@@ -251,6 +279,19 @@ export default function NewInvoicePage() {
               <label style={labelStyle}>Due Date</label>
               <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} style={inputStyle} />
             </div>
+
+            <div>
+              <label style={labelStyle}>Currency</label>
+              <input value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} maxLength={3} style={inputStyle} />
+            </div>
+
+            <div>
+              <label style={labelStyle}>Exchange Rate to {baseCurrency}</label>
+              <input type="number" min="0" step="0.000001" value={exchangeRate} onChange={(e) => setExchangeRate(e.target.value)} style={inputStyle} />
+            </div>
+          </div>
+          <div style={{ fontSize: '0.8rem', color: COLORS.textMuted, marginTop: '1rem' }}>
+            Organization base currency is {baseCurrency}. Linked POs default the invoice currency and exchange rate.
           </div>
         </div>
 

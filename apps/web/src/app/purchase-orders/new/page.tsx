@@ -36,7 +36,14 @@ interface ComplianceResult {
   deviationThreshold?: number;
 }
 
-const EMPTY_LINE: LineItem = { description: '', qty: '1', uom: 'each', unitPrice: '0', taxCodeId: '', taxInclusive: false };
+const EMPTY_LINE: LineItem = {
+  description: '',
+  qty: '1',
+  uom: 'each',
+  unitPrice: '0',
+  taxCodeId: '',
+  taxInclusive: false,
+};
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
@@ -150,7 +157,9 @@ export default function NewPurchaseOrderPage() {
   // Form state
   const [vendorId, setVendorId] = useState('');
   const [paymentTerms, setPaymentTerms] = useState('');
+  const [baseCurrency, setBaseCurrency] = useState('USD');
   const [currency, setCurrency] = useState('USD');
+  const [exchangeRate, setExchangeRate] = useState('1');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<LineItem[]>([{ ...EMPTY_LINE }]);
   const [submitting, setSubmitting] = useState(false);
@@ -163,28 +172,41 @@ export default function NewPurchaseOrderPage() {
   const debounceTimers = useRef<Array<ReturnType<typeof setTimeout> | null>>([null]);
 
   useEffect(() => {
-    api.vendors.list()
-      .then((data) => {
-        const list: Vendor[] = Array.isArray(data) ? data : (data as any).data ?? [];
-        setVendors(list);
-        if (list.length > 0) setVendorId(list[0].id);
+    Promise.allSettled([
+      api.vendors.list(),
+      api.taxCodes.list(),
+      api.settings.getAll(),
+      api.exchangeRates.getBaseCurrency(),
+    ])
+      .then(([vendorsResult, taxCodesResult, settingsResult, currencyResult]) => {
+        if (vendorsResult.status === 'fulfilled') {
+          const data = vendorsResult.value;
+          const list: Vendor[] = Array.isArray(data) ? data : (data as any).data ?? [];
+          setVendors(list);
+          if (list.length > 0) setVendorId(list[0].id);
+        }
+
+        if (taxCodesResult.status === 'fulfilled') {
+          const data = taxCodesResult.value;
+          setTaxCodes(Array.isArray(data) ? data : []);
+        }
+
+        if (settingsResult.status === 'fulfilled') {
+          const all = settingsResult.value;
+          const threshold = parseFloat(all.contract_price_deviation_threshold || '5');
+          const action = all.contract_price_deviation_action || 'warn';
+          if (!isNaN(threshold)) setDeviationThreshold(threshold);
+          setDeviationAction(action);
+        }
+
+        if (currencyResult.status === 'fulfilled') {
+          const orgBaseCurrency = currencyResult.value?.baseCurrency || 'USD';
+          setBaseCurrency(orgBaseCurrency);
+          setCurrency(orgBaseCurrency);
+        }
       })
       .catch(() => {})
       .finally(() => setVendorsLoading(false));
-
-    api.taxCodes.list()
-      .then((data) => setTaxCodes(Array.isArray(data) ? data : []))
-      .catch(() => {});
-
-    // Load deviation threshold from settings
-    api.settings.getAll()
-      .then((all) => {
-        const threshold = parseFloat(all.contract_price_deviation_threshold || '5');
-        const action = all.contract_price_deviation_action || 'warn';
-        if (!isNaN(threshold)) setDeviationThreshold(threshold);
-        setDeviationAction(action);
-      })
-      .catch(() => {});
   }, []);
 
   const runComplianceCheck = useCallback(
@@ -301,6 +323,7 @@ export default function NewPurchaseOrderPage() {
         vendorId,
         paymentTerms: paymentTerms.trim() || undefined,
         currency,
+        exchangeRate: parseFloat(exchangeRate || '1') || 1,
         notes: notes.trim() || undefined,
         lines: lines.map((l) => ({
           description: l.description,
@@ -388,7 +411,7 @@ export default function NewPurchaseOrderPage() {
             </div>
 
             {/* Payment terms / currency row */}
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '1rem' }}>
               <div>
                 <label style={labelStyle}>Payment Terms</label>
                 <input
@@ -409,6 +432,20 @@ export default function NewPurchaseOrderPage() {
                   style={inputStyle}
                 />
               </div>
+              <div>
+                <label style={labelStyle}>Exchange Rate to {baseCurrency}</label>
+                <input
+                  type="number"
+                  value={exchangeRate}
+                  onChange={(e) => setExchangeRate(e.target.value)}
+                  min="0"
+                  step="0.000001"
+                  style={inputStyle}
+                />
+              </div>
+            </div>
+            <div style={{ fontSize: '0.8rem', color: COLORS.textMuted }}>
+              Organization base currency is {baseCurrency}. Use `1` when the PO is already in {baseCurrency}.
             </div>
 
             {/* Notes */}
@@ -469,12 +506,12 @@ export default function NewPurchaseOrderPage() {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '3fr 80px 80px 130px 120px 40px',
+              gridTemplateColumns: '3fr 80px 80px 130px 150px 110px 120px 40px',
               gap: '0.5rem',
               marginBottom: '0.5rem',
             }}
           >
-            {['Description', 'Qty', 'UOM', 'Unit Price', 'Total', ''].map((h) => (
+            {['Description', 'Qty', 'UOM', 'Unit Price', 'Tax Code', 'Tax Mode', 'Total', ''].map((h) => (
               <div
                 key={h}
                 style={{
@@ -498,46 +535,18 @@ export default function NewPurchaseOrderPage() {
                 <div
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: '3fr 80px 80px 130px 120px 40px',
+                    gridTemplateColumns: '3fr 80px 80px 130px 150px 110px 120px 40px',
                     gap: '0.5rem',
                     alignItems: 'center',
                   }}
                 >
-                  <div>
-                    <input
-                      type="text"
-                      value={line.description}
-                      onChange={(e) => updateLine(idx, 'description', e.target.value)}
-                      placeholder="Item description"
-                      style={inputStyle}
-                    />
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem', marginTop: '0.4rem', alignItems: 'center' }}>
-                      <select
-                        value={line.taxCodeId}
-                        onChange={(e) => updateLine(idx, 'taxCodeId', e.target.value)}
-                        style={{ ...inputStyle, fontSize: '0.8rem', padding: '0.4rem 0.5rem' }}
-                      >
-                        <option value="">No tax code</option>
-                        {taxCodes.map((taxCode) => (
-                          <option key={taxCode.id} value={taxCode.id}>
-                            {taxCode.code} ({taxCode.ratePercent}%)
-                          </option>
-                        ))}
-                      </select>
-                      <label style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', fontSize: '0.75rem', color: COLORS.textSecondary }}>
-                        <input
-                          type="checkbox"
-                          checked={line.taxInclusive}
-                          onChange={(e) =>
-                            setLines((prev) => prev.map((entry, entryIdx) => (
-                              entryIdx === idx ? { ...entry, taxInclusive: e.target.checked } : entry
-                            )))
-                          }
-                        />
-                        Incl.
-                      </label>
-                    </div>
-                  </div>
+                  <input
+                    type="text"
+                    value={line.description}
+                    onChange={(e) => updateLine(idx, 'description', e.target.value)}
+                    placeholder="Item description"
+                    style={inputStyle}
+                  />
                   <input
                     type="number"
                     value={line.qty}
@@ -561,6 +570,36 @@ export default function NewPurchaseOrderPage() {
                     onChange={(e) => updateLine(idx, 'unitPrice', e.target.value)}
                     style={inputStyle}
                   />
+                  <select
+                    value={line.taxCodeId}
+                    onChange={(e) => updateLine(idx, 'taxCodeId', e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="">No tax</option>
+                    {taxCodes.map((taxCode) => (
+                      <option key={taxCode.id} value={taxCode.id}>
+                        {taxCode.code} ({taxCode.ratePercent}%)
+                      </option>
+                    ))}
+                  </select>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.4rem',
+                      fontSize: '0.8rem',
+                      color: COLORS.textSecondary,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={line.taxInclusive}
+                      onChange={(e) => setLines((prev) =>
+                        prev.map((entry, i) => (i === idx ? { ...entry, taxInclusive: e.target.checked } : entry)),
+                      )}
+                    />
+                    Inclusive
+                  </label>
                   <div
                     style={{
                       fontSize: '0.875rem',

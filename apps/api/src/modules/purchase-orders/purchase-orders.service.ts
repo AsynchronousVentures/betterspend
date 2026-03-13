@@ -7,8 +7,9 @@ import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ContractComplianceService } from './contract-compliance.service';
 import { EntitiesService } from '../entities/entities.service';
+import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import type { Db } from '@betterspend/db';
-import { purchaseOrders, poLines, poVersions, blanketReleases, requisitions, taxCodes } from '@betterspend/db';
+import { purchaseOrders, poLines, poVersions, blanketReleases, requisitions } from '@betterspend/db';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 import { z } from 'zod';
@@ -19,6 +20,7 @@ const createPoSchema = z.object({
   requisitionId: z.string().uuid().optional(),
   paymentTerms: z.string().optional(),
   currency: z.string().length(3).default('USD'),
+  exchangeRate: z.number().positive().optional(),
   notes: z.string().optional(),
   poType: z.enum(['standard', 'blanket']).default('standard'),
   shippingAddress: z.record(z.unknown()).optional(),
@@ -78,6 +80,7 @@ export class PurchaseOrdersService {
     @Optional() private readonly notifications: NotificationsService,
     @Optional() private readonly contractCompliance: ContractComplianceService,
     private readonly entitiesService: EntitiesService,
+    private readonly exchangeRatesService: ExchangeRatesService,
   ) {}
 
   private calculateLineTax(quantity: number, unitPrice: number, ratePercent: number, taxInclusive: boolean): LineTaxSnapshot {
@@ -138,6 +141,7 @@ export class PurchaseOrdersService {
   async create(organizationId: string, issuedBy: string, input: CreatePoInput) {
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
     const number = await this.sequenceService.next(organizationId, 'purchase_order');
+    const currency = input.currency ?? 'USD';
     const taxCodeMap = await this.getTaxCodeMap(
       organizationId,
       input.lines.map((line) => line.taxCodeId).filter((value): value is string => !!value),
@@ -167,6 +171,12 @@ export class PurchaseOrdersService {
       const subtotal = lineAmounts.reduce((sum, line) => sum + line.subtotal, 0);
       const taxAmount = lineAmounts.reduce((sum, line) => sum + line.taxAmount, 0);
       const totalAmount = lineAmounts.reduce((sum, line) => sum + line.totalAmount, 0);
+      const { baseCurrency, exchangeRate, baseAmount } = await this.exchangeRatesService.convertToBase(
+        organizationId,
+        totalAmount,
+        currency,
+        input.exchangeRate,
+      );
 
       const [po] = await tx.insert(purchaseOrders).values({
         organizationId,
@@ -178,13 +188,18 @@ export class PurchaseOrdersService {
         poType: input.poType ?? 'standard',
         status: 'draft',
         paymentTerms: input.paymentTerms,
-        currency: input.currency ?? 'USD',
+        currency,
+        baseCurrency,
+        exchangeRate: String(exchangeRate),
         notes: input.notes,
         shippingAddress: input.shippingAddress ?? {},
         billingAddress: input.billingAddress ?? {},
         subtotal: String(subtotal.toFixed(2)),
         taxAmount: String(taxAmount.toFixed(2)),
         totalAmount: String(totalAmount.toFixed(2)),
+        baseSubtotal: String(this.exchangeRatesService.roundMoney(subtotal * exchangeRate).toFixed(2)),
+        baseTaxAmount: String(this.exchangeRatesService.roundMoney(taxAmount * exchangeRate).toFixed(2)),
+        baseTotalAmount: String(baseAmount),
         blanketStartDate: input.blanketStartDate ? new Date(input.blanketStartDate) : null,
         blanketEndDate: input.blanketEndDate ? new Date(input.blanketEndDate) : null,
         blanketTotalLimit: input.blanketTotalLimit ? String(input.blanketTotalLimit) : null,
@@ -205,6 +220,9 @@ export class PurchaseOrdersService {
             unitOfMeasure: l.unitOfMeasure,
             unitPrice: String(l.unitPrice),
             totalPrice: String(amounts.totalAmount.toFixed(2)),
+            exchangeRate: String(exchangeRate),
+            baseUnitPrice: String(this.exchangeRatesService.roundMoney(l.unitPrice * exchangeRate)),
+            baseTotalPrice: String(this.exchangeRatesService.roundMoney(amounts.totalAmount * exchangeRate)),
             glAccount: l.glAccount,
             catalogItemId: l.catalogItemId,
             requisitionLineId: l.requisitionLineId,
@@ -295,6 +313,10 @@ export class PurchaseOrdersService {
         const subtotal = lineAmounts.reduce((sum, line) => sum + line.subtotal, 0);
         const taxAmount = lineAmounts.reduce((sum, line) => sum + line.taxAmount, 0);
         const totalAmount = lineAmounts.reduce((sum, line) => sum + line.totalAmount, 0);
+        const exchangeRate = Number(po.exchangeRate ?? '1');
+        const baseSubtotal = this.exchangeRatesService.roundMoney(subtotal * exchangeRate);
+        const baseTaxAmount = this.exchangeRatesService.roundMoney(taxAmount * exchangeRate);
+        const baseTotalAmount = this.exchangeRatesService.roundMoney(totalAmount * exchangeRate);
 
         // Compliance checks for change order lines
         const changeLineCompliance = this.contractCompliance
@@ -326,6 +348,9 @@ export class PurchaseOrdersService {
               unitOfMeasure: l.unitOfMeasure,
               unitPrice: String(l.unitPrice),
               totalPrice: String(amounts.totalAmount.toFixed(2)),
+              exchangeRate: String(exchangeRate),
+              baseUnitPrice: String(this.exchangeRatesService.roundMoney(l.unitPrice * exchangeRate)),
+              baseTotalPrice: String(this.exchangeRatesService.roundMoney(amounts.totalAmount * exchangeRate)),
               glAccount: l.glAccount,
               contractComplianceStatus: cr?.status ?? null,
               contractComplianceDeltaPercent: cr?.deltaPercent != null ? String(cr.deltaPercent) : null,
@@ -335,14 +360,19 @@ export class PurchaseOrdersService {
           }),
         );
 
-        const subtotalStr = String(subtotal);
+        const subtotalStr = String(subtotal.toFixed(2));
+        const taxAmountStr = String(taxAmount.toFixed(2));
+        const totalAmountStr = String(totalAmount.toFixed(2));
         await tx.update(purchaseOrders).set({
           version: newVersion,
           notes: input.notes ?? po.notes,
           paymentTerms: input.paymentTerms ?? po.paymentTerms,
-          subtotal: String(subtotal.toFixed(2)),
-          taxAmount: String(taxAmount.toFixed(2)),
-          totalAmount: String(totalAmount.toFixed(2)),
+          subtotal: subtotalStr,
+          taxAmount: taxAmountStr,
+          totalAmount: totalAmountStr,
+          baseSubtotal: String(baseSubtotal),
+          baseTaxAmount: String(baseTaxAmount),
+          baseTotalAmount: String(baseTotalAmount),
           status: 'draft', // Change orders reset to draft for re-approval
           updatedAt: new Date(),
         }).where(eq(purchaseOrders.id, id));

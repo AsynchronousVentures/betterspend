@@ -4,6 +4,7 @@ import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { budgets, budgetPeriods } from '@betterspend/db';
 import { EntitiesService } from '../entities/entities.service';
+import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 
 export interface CreateBudgetInput {
   name: string;
@@ -14,6 +15,7 @@ export interface CreateBudgetInput {
   fiscalYear: number;
   totalAmount: number;
   currency?: string;
+  exchangeRate?: number;
   periods?: Array<{
     periodType?: string;
     periodStart: string;
@@ -27,6 +29,7 @@ export class BudgetsService {
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly entitiesService: EntitiesService,
+    private readonly exchangeRatesService: ExchangeRatesService,
   ) {}
 
   async findAll(organizationId: string, entityId?: string) {
@@ -51,6 +54,13 @@ export class BudgetsService {
 
   async create(organizationId: string, input: CreateBudgetInput) {
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
+    const currency = input.currency ?? 'USD';
+    const { baseCurrency, exchangeRate, baseAmount } = await this.exchangeRatesService.convertToBase(
+      organizationId,
+      input.totalAmount,
+      currency,
+      input.exchangeRate,
+    );
     // Determine budgetType and scopeId from input
     let budgetType: string;
     let scopeId: string;
@@ -82,7 +92,12 @@ export class BudgetsService {
         fiscalYear: input.fiscalYear,
         periodType: 'annual',
         totalAmount: String(input.totalAmount),
-        currency: input.currency ?? 'USD',
+        currency,
+        baseCurrency,
+        exchangeRate: String(exchangeRate),
+        baseTotalAmount: String(baseAmount),
+        baseAllocatedAmount: '0',
+        baseSpentAmount: '0',
       }).returning();
 
       if (input.periods && input.periods.length > 0) {
@@ -149,12 +164,24 @@ export class BudgetsService {
   ) {
     await this.findOne(id, organizationId);
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
+    const existing = await this.findOne(id, organizationId);
+    const nextCurrency = input.currency ?? existing.currency;
+    const nextTotalAmount = input.totalAmount ?? Number(existing.totalAmount);
+    const { baseCurrency, exchangeRate, baseAmount } = await this.exchangeRatesService.convertToBase(
+      organizationId,
+      nextTotalAmount,
+      nextCurrency,
+      undefined,
+    );
     await this.db.update(budgets)
       .set({
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.totalAmount !== undefined ? { totalAmount: String(input.totalAmount) } : {}),
         ...(input.currency !== undefined ? { currency: input.currency } : {}),
         ...(input.entityId !== undefined ? { entityId: input.entityId } : {}),
+        baseCurrency,
+        exchangeRate: String(exchangeRate),
+        baseTotalAmount: String(baseAmount),
         updatedAt: new Date(),
       })
       .where(and(eq(budgets.id, id), eq(budgets.organizationId, organizationId)));
@@ -398,7 +425,6 @@ export class BudgetsService {
     amount: number,
     fiscalYear: number,
   ) {
-    const normalizedAmount = Math.max(amount, 0);
     const budget = await this.db.query.budgets.findFirst({
       where: (b, { and, eq }) => and(
         eq(b.organizationId, organizationId),
@@ -414,7 +440,8 @@ export class BudgetsService {
 
     await this.db.update(budgets)
       .set({
-        spentAmount: sql`${budgets.spentAmount} + ${String(normalizedAmount)}`,
+        spentAmount: sql`${budgets.spentAmount} + ${String(amount)}`,
+        baseSpentAmount: sql`${budgets.baseSpentAmount} + ${String(amount)}`,
         updatedAt: new Date(),
       })
       .where(and(eq(budgets.id, budget.id), eq(budgets.organizationId, organizationId)));
@@ -422,7 +449,7 @@ export class BudgetsService {
     // Also update the period that covers today's date
     await this.db.update(budgetPeriods)
       .set({
-        spentAmount: sql`${budgetPeriods.spentAmount} + ${String(normalizedAmount)}`,
+        spentAmount: sql`${budgetPeriods.spentAmount} + ${String(amount)}`,
       })
       .where(
         and(
