@@ -85,6 +85,7 @@ const NAV_CONFIG: NavEntry[] = [
       { label: 'Supplier Scorecard', href: '/supplier-scorecard' },
       { label: 'Supplier Diversity & ESG', href: '/supplier-diversity' },
       { label: 'Contracts', href: '/contracts' },
+      { label: 'Software Licenses', href: '/software-licenses' },
       { label: 'Users', href: '/users' },
       { label: 'Departments', href: '/departments' },
       { label: 'Projects', href: '/projects' },
@@ -135,6 +136,7 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
   const [invoiceExceptionCount, setInvoiceExceptionCount] = useState(0);
   const [spendGuardCount, setSpendGuardCount] = useState(0);
+  const [softwareRenewalCount, setSoftwareRenewalCount] = useState(0);
   const branding = useBranding();
 
   // Determine which groups should be open initially
@@ -178,6 +180,7 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
         setPendingApprovalsCount(data?.pendingApprovals ?? 0);
         setInvoiceExceptionCount(data?.invoiceExceptions ?? 0);
         setSpendGuardCount(data?.spendGuardAlerts ?? 0);
+        setSoftwareRenewalCount(data?.upcomingSoftwareRenewals ?? 0);
       })
       .catch(() => {});
   }, [pathname]);
@@ -209,6 +212,7 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
     if (href === '/approvals' && pendingApprovalsCount > 0) return pendingApprovalsCount;
     if (href === '/invoices' && invoiceExceptionCount > 0) return invoiceExceptionCount;
     if (href === '/spend-guard' && spendGuardCount > 0) return spendGuardCount;
+    if (href === '/software-licenses' && softwareRenewalCount > 0) return softwareRenewalCount;
     return undefined;
   }
 

@@ -461,6 +461,23 @@ export const api = {
     expiring: (days?: number) =>
       apiFetch<any[]>(`/contracts/expiring${days ? '?days=' + days : ''}`),
   },
+  softwareLicenses: {
+    list: (params?: { status?: string; vendorId?: string; renewingWithinDays?: number }) => {
+      const q = new URLSearchParams();
+      if (params?.status) q.set('status', params.status);
+      if (params?.vendorId) q.set('vendorId', params.vendorId);
+      if (params?.renewingWithinDays) q.set('renewingWithinDays', String(params.renewingWithinDays));
+      return apiFetch<any[]>(`/software-licenses${q.toString() ? '?' + q : ''}`);
+    },
+    get: (id: string) => apiFetch<any>(`/software-licenses/${id}`),
+    create: (data: unknown) =>
+      apiFetch<any>('/software-licenses', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: unknown) =>
+      apiFetch<any>(`/software-licenses/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    renewalCalendar: (days?: number) =>
+      apiFetch<any[]>(`/software-licenses/renewal-calendar${days ? `?days=${days}` : ''}`),
+    utilization: () => apiFetch<any[]>('/software-licenses/utilization'),
+  },
   passwordReset: {
     request: (email: string) =>
       apiFetch<{ success: boolean }>('/password-reset/request', {

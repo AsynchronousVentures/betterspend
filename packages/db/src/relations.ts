@@ -26,6 +26,7 @@ import { paymentRuns, paymentRunInvoices } from './schema/payment-runs';
 import { taxCodes } from './schema/tax-codes';
 import { exchangeRates } from './schema/exchange-rates';
 import { spendGuardAlerts } from './schema/spend-guard-alerts';
+import { softwareLicenses } from './schema/software-licenses';
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   legalEntities: many(legalEntities),
@@ -38,6 +39,7 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   taxCodes: many(taxCodes),
   exchangeRates: many(exchangeRates),
   spendGuardAlerts: many(spendGuardAlerts),
+  softwareLicenses: many(softwareLicenses),
 }));
 
 export const exchangeRatesRelations = relations(exchangeRates, ({ one }) => ({
@@ -81,6 +83,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   department: one(departments, { fields: [users.departmentId], references: [departments.id] }),
   userRoles: many(userRoles),
   notifications: many(notifications),
+  softwareLicenses: many(softwareLicenses),
 }));
 
 export const notificationsRelations = relations(notifications, ({ one }) => ({
@@ -98,6 +101,7 @@ export const vendorsRelations = relations(vendors, ({ one, many }) => ({
   }),
   entity: one(legalEntities, { fields: [vendors.entityId], references: [legalEntities.id] }),
   catalogItems: many(catalogItems),
+  softwareLicenses: many(softwareLicenses),
 }));
 
 export const catalogItemsRelations = relations(catalogItems, ({ one }) => ({
@@ -337,6 +341,21 @@ export const contractsRelations = relations(contracts, ({ one, many }) => ({
   }),
   lines: many(contractLines),
   amendments: many(contractAmendments),
+  softwareLicenses: many(softwareLicenses),
+}));
+
+export const softwareLicensesRelations = relations(softwareLicenses, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [softwareLicenses.organizationId],
+    references: [organizations.id],
+  }),
+  vendor: one(vendors, { fields: [softwareLicenses.vendorId], references: [vendors.id] }),
+  contract: one(contracts, { fields: [softwareLicenses.contractId], references: [contracts.id] }),
+  owner: one(users, {
+    fields: [softwareLicenses.ownerUserId],
+    references: [users.id],
+    relationName: 'softwareLicenseOwner',
+  }),
 }));
 
 export const contractLinesRelations = relations(contractLines, ({ one }) => ({

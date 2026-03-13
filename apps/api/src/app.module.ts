@@ -44,6 +44,7 @@ import { EntitiesModule } from './modules/entities/entities.module';
 import { TaxCodesModule } from './modules/tax-codes/tax-codes.module';
 import { ExchangeRatesModule } from './modules/exchange-rates/exchange-rates.module';
 import { SpendGuardModule } from './modules/spend-guard/spend-guard.module';
+import { SoftwareLicensesModule } from './modules/software-licenses/software-licenses.module';
 
 @Module({
   imports: [
@@ -77,6 +78,7 @@ import { SpendGuardModule } from './modules/spend-guard/spend-guard.module';
     TaxCodesModule,
     ExchangeRatesModule,
     SpendGuardModule,
+    SoftwareLicensesModule,
     AuditModule,
     ReportsModule,
     SearchModule,

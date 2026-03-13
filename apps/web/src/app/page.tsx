@@ -202,7 +202,8 @@ export default function HomePage() {
     ? (pending.pendingApprovals ?? 0) +
       (pending.invoiceExceptions ?? 0) +
       (pending.overdueInvoices ?? 0) +
-      (pending.spendGuardAlerts ?? 0)
+      (pending.spendGuardAlerts ?? 0) +
+      (pending.upcomingSoftwareRenewals ?? 0)
     : 0;
 
   return (
@@ -360,6 +361,11 @@ export default function HomePage() {
                 count={pending.spendGuardAlerts ?? 0}
                 href="/spend-guard"
                 urgent
+              />
+              <ActionItem
+                label="Software Renewals Due"
+                count={pending.upcomingSoftwareRenewals ?? 0}
+                href="/software-licenses"
               />
               <ActionItem
                 label="Requisitions Awaiting Approval"

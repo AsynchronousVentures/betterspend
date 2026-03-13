@@ -141,6 +141,13 @@
       "when": 1774600000000,
       "tag": "0019_spend_guard_alerts",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1774700000000,
+      "tag": "0020_software_licenses",
+      "breakpoints": true
     }
   ]
 }
