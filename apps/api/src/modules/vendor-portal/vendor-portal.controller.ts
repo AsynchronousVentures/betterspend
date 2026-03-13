@@ -14,6 +14,7 @@ import {
   VendorPortalService,
   SubmitInvoiceInput,
   SubmitCatalogPriceProposalInput,
+  BulkCatalogPriceProposalRow,
 } from './vendor-portal.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
@@ -101,5 +102,22 @@ export class VendorPortalController {
     if (!token) throw new UnauthorizedException('Token is required');
     const vendorId = await this.vendorPortalService.validateToken(token);
     return this.vendorPortalService.submitCatalogPriceProposal(vendorId, DEMO_ORG_ID, body);
+  }
+
+  @Post('catalog/price-proposals/bulk')
+  @Public()
+  @ApiOperation({ summary: 'Submit bulk catalog price proposals via portal token' })
+  @HttpCode(HttpStatus.CREATED)
+  async submitBulkCatalogPriceProposal(
+    @Query('token') token: string,
+    @Body() body: { rows?: BulkCatalogPriceProposalRow[] },
+  ) {
+    if (!token) throw new UnauthorizedException('Token is required');
+    const vendorId = await this.vendorPortalService.validateToken(token);
+    return this.vendorPortalService.submitBulkCatalogPriceProposals(
+      vendorId,
+      DEMO_ORG_ID,
+      Array.isArray(body?.rows) ? body.rows : [],
+    );
   }
 }

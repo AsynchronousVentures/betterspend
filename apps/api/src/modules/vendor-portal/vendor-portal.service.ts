@@ -46,6 +46,14 @@ export interface SubmitCatalogPriceProposalInput {
   note?: string;
 }
 
+export interface BulkCatalogPriceProposalRow {
+  itemId?: string;
+  sku?: string;
+  proposedPrice: number;
+  effectiveDate?: string;
+  note?: string;
+}
+
 @Injectable()
 export class VendorPortalService {
   private readonly logger = new Logger(VendorPortalService.name);
@@ -316,5 +324,76 @@ export class VendorPortalService {
       .returning();
 
     return proposal;
+  }
+
+  async submitBulkCatalogPriceProposals(
+    vendorId: string,
+    orgId: string,
+    rows: BulkCatalogPriceProposalRow[],
+  ) {
+    const results: Array<{
+      row: number;
+      itemId?: string;
+      sku?: string;
+      status: 'created' | 'error';
+      message?: string;
+    }> = [];
+
+    for (const [index, row] of rows.entries()) {
+      try {
+        const item = await this.db.query.catalogItems.findFirst({
+          where: (c, { and, eq }) =>
+            and(
+              eq(c.vendorId, vendorId),
+              eq(c.organizationId, orgId),
+              row.itemId ? eq(c.id, row.itemId) : eq(c.sku, row.sku ?? ''),
+            ),
+        });
+
+        if (!item) {
+          results.push({
+            row: index + 1,
+            itemId: row.itemId,
+            sku: row.sku,
+            status: 'error',
+            message: 'Catalog item not found for this vendor',
+          });
+          continue;
+        }
+
+        await this.db
+          .insert(catalogPriceProposals)
+          .values({
+            organizationId: orgId,
+            itemId: item.id,
+            vendorId,
+            proposedPrice: String(row.proposedPrice),
+            currentPrice: item.unitPrice,
+            effectiveDate: row.effectiveDate ? new Date(row.effectiveDate) : null,
+            note: row.note ?? null,
+          });
+
+        results.push({
+          row: index + 1,
+          itemId: item.id,
+          sku: item.sku ?? row.sku,
+          status: 'created',
+        });
+      } catch (error) {
+        results.push({
+          row: index + 1,
+          itemId: row.itemId,
+          sku: row.sku,
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Bulk import failed',
+        });
+      }
+    }
+
+    return {
+      createdCount: results.filter((row) => row.status === 'created').length,
+      errorCount: results.filter((row) => row.status === 'error').length,
+      results,
+    };
   }
 }

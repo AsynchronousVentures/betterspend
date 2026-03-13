@@ -15,6 +15,32 @@ function fmtDate(d: string | null | undefined) {
   return new Date(d).toLocaleDateString();
 }
 
+function parseCsvLine(line: string): string[] {
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      values.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  values.push(current.trim());
+  return values;
+}
+
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   draft: { bg: '#f1f5f9', text: '#475569' },
   issued: { bg: '#eff6ff', text: '#1d4ed8' },
@@ -315,6 +341,7 @@ function VendorPortalContent() {
     note: '',
   });
   const [proposalSaving, setProposalSaving] = useState(false);
+  const [bulkUploadMessage, setBulkUploadMessage] = useState('');
 
   useEffect(() => {
     if (!token) return;
@@ -395,6 +422,7 @@ function VendorPortalContent() {
     e.preventDefault();
     setProposalSaving(true);
     setError('');
+    setBulkUploadMessage('');
     try {
       await api.vendorPortal.submitPriceProposal(token, {
         itemId: proposalForm.itemId,
@@ -407,6 +435,53 @@ function VendorPortalContent() {
     } catch (e: any) {
       setError(e.message || 'Failed to submit price proposal.');
     } finally {
+      setProposalSaving(false);
+    }
+  }
+
+  async function handleBulkCsvUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setProposalSaving(true);
+    setError('');
+    setBulkUploadMessage('');
+    try {
+      const raw = await file.text();
+      const lines = raw
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      if (lines.length < 2) {
+        throw new Error('CSV must include a header row and at least one data row.');
+      }
+
+      const headers = parseCsvLine(lines[0]).map((value) => value.toLowerCase());
+      const rows = lines.slice(1).map((line) => {
+        const values = parseCsvLine(line);
+        const row = Object.fromEntries(headers.map((header, index) => [header, values[index] ?? '']));
+        const proposedPrice = Number(row.proposedprice ?? row.proposed_price ?? '');
+        if (!Number.isFinite(proposedPrice)) {
+          throw new Error(`Invalid proposed price in row: ${line}`);
+        }
+
+        return {
+          itemId: row.itemid || row.item_id || undefined,
+          sku: row.sku || undefined,
+          proposedPrice,
+          effectiveDate: row.effectivedate || row.effective_date || undefined,
+          note: row.note || undefined,
+        };
+      });
+
+      const result = await api.vendorPortal.submitBulkPriceProposals(token, rows);
+      setCatalogData(await api.vendorPortal.catalog(token));
+      setBulkUploadMessage(`${result.createdCount} proposal(s) created, ${result.errorCount} error(s).`);
+    } catch (e: any) {
+      setError(e.message || 'Failed to import CSV proposals.');
+    } finally {
+      event.target.value = '';
       setProposalSaving(false);
     }
   }
@@ -659,6 +734,25 @@ function VendorPortalContent() {
                   </button>
                 </div>
               </form>
+
+              <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, padding: '1rem' }}>
+                <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary }}>Bulk CSV Upload</h3>
+                <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary, lineHeight: 1.5, marginBottom: '0.75rem' }}>
+                  Upload a CSV with `itemId` or `sku`, `proposedPrice`, and optional `effectiveDate` and `note` columns.
+                </div>
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={handleBulkCsvUpload}
+                  disabled={proposalSaving}
+                  style={{ fontSize: '0.875rem', color: COLORS.textPrimary }}
+                />
+                {bulkUploadMessage && (
+                  <div style={{ marginTop: '0.75rem', fontSize: '0.8rem', color: '#065f46' }}>
+                    {bulkUploadMessage}
+                  </div>
+                )}
+              </div>
 
               <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, overflow: 'hidden' }}>
                 <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.tableBorder}`, fontWeight: 600, color: COLORS.textPrimary }}>

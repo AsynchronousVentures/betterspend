@@ -538,6 +538,14 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+    submitBulkPriceProposals: (
+      token: string,
+      rows: Array<{ itemId?: string; sku?: string; proposedPrice: number; effectiveDate?: string; note?: string }>,
+    ) =>
+      apiFetch<any>(`/vendor-portal/catalog/price-proposals/bulk?token=${encodeURIComponent(token)}`, {
+        method: 'POST',
+        body: JSON.stringify({ rows }),
+      }),
   },
   notifications: {
     list: (params?: {
