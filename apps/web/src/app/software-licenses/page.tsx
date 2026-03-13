@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api';
 import { COLORS, SHADOWS } from '../../lib/theme';
@@ -217,7 +218,11 @@ export default function SoftwareLicensesPage() {
                     const style = STATUS_STYLES[license.status] ?? { background: COLORS.contentBg, color: COLORS.textSecondary };
                     return (
                       <tr key={license.id} style={{ borderBottom: idx < licenses.length - 1 ? `1px solid ${COLORS.contentBg}` : undefined }}>
-                        <td style={{ padding: '0.875rem 1rem', fontWeight: 600, color: COLORS.textPrimary }}>{license.productName}</td>
+                        <td style={{ padding: '0.875rem 1rem', fontWeight: 600 }}>
+                          <Link href={`/software-licenses/${license.id}`} style={{ color: COLORS.textPrimary, textDecoration: 'none' }}>
+                            {license.productName}
+                          </Link>
+                        </td>
                         <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{license.vendor?.name ?? '—'}</td>
                         <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{license.seatsUsed}/{license.seatCount}</td>
                         <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{fmtDate(license.renewalDate)}</td>
@@ -299,7 +304,9 @@ export default function SoftwareLicensesPage() {
             {renewals.slice(0, 8).map((renewal) => (
               <div key={renewal.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 1rem', borderBottom: `1px solid ${COLORS.contentBg}` }}>
                 <div>
-                  <div style={{ fontWeight: 600, color: COLORS.textPrimary }}>{renewal.productName}</div>
+                  <Link href={`/software-licenses/${renewal.id}`} style={{ fontWeight: 600, color: COLORS.textPrimary, textDecoration: 'none' }}>
+                    {renewal.productName}
+                  </Link>
                   <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>{renewal.vendor?.name ?? '—'}</div>
                 </div>
                 <div style={{ fontSize: '0.8125rem', color: COLORS.textSecondary }}>{fmtDate(renewal.renewalDate)}</div>
@@ -315,7 +322,9 @@ export default function SoftwareLicensesPage() {
             {utilization.slice(0, 8).map((row) => (
               <div key={row.id} style={{ padding: '0.75rem 1rem', borderBottom: `1px solid ${COLORS.contentBg}` }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-                  <div style={{ fontWeight: 600, color: COLORS.textPrimary }}>{row.productName}</div>
+                  <Link href={`/software-licenses/${row.id}`} style={{ fontWeight: 600, color: COLORS.textPrimary, textDecoration: 'none' }}>
+                    {row.productName}
+                  </Link>
                   <div style={{ fontSize: '0.8125rem', color: COLORS.textSecondary }}>{Number(row.utilizationPct ?? 0).toFixed(1)}%</div>
                 </div>
                 <div style={{ height: '8px', background: COLORS.contentBg, borderRadius: '999px', overflow: 'hidden', marginBottom: '0.35rem' }}>
