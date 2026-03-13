@@ -64,6 +64,20 @@ const ACCENT_MAP: Record<string, { border: string; light: string; text: string }
   },
 };
 
+const ACTIVITY_ENTITY_ROUTES: Record<string, string> = {
+  requisition: '/requisitions',
+  purchase_order: '/purchase-orders',
+  invoice: '/invoices',
+  goods_receipt: '/receiving',
+  receiving: '/receiving',
+  approval_request: '/approvals',
+  approval: '/approvals',
+  vendor: '/vendors',
+  contract: '/contracts',
+  inventory_item: '/inventory',
+  budget: '/budgets',
+};
+
 function KpiCard({
   label,
   value,
@@ -480,50 +494,82 @@ export default function HomePage() {
             </div>
           ) : (
             <div style={{ overflowY: 'auto', maxHeight: '280px' }}>
-              {activity.slice(0, 12).map((item, i) => (
-                <div
-                  key={item.id ?? i}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    borderBottom: `1px solid ${COLORS.contentBg}`,
-                    display: 'flex',
-                    gap: '0.625rem',
-                    alignItems: 'flex-start',
-                  }}
-                >
+              {activity.slice(0, 12).map((item, i) => {
+                const baseRoute = ACTIVITY_ENTITY_ROUTES[String(item.entityType ?? '')];
+                const detailHref = baseRoute && item.entityId ? `${baseRoute}/${item.entityId}` : null;
+                const content = (
                   <div
                     style={{
-                      width: 5,
-                      height: 5,
-                      borderRadius: '50%',
-                      background: COLORS.accentBlue,
-                      marginTop: '0.4rem',
-                      flexShrink: 0,
+                      padding: '0.5rem 1rem',
+                      borderBottom: `1px solid ${COLORS.contentBg}`,
+                      display: 'flex',
+                      gap: '0.625rem',
+                      alignItems: 'flex-start',
+                      cursor: detailHref ? 'pointer' : 'default',
+                      transition: 'background 0.1s',
                     }}
-                  />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>
-                      <span style={{ fontWeight: 600, color: COLORS.textPrimary }}>
-                        {item.userName ?? 'System'}
-                      </span>{' '}
-                      <span>{item.action}</span>{' '}
-                      <span style={{ color: COLORS.textMuted, textTransform: 'capitalize' }}>
-                        {String(item.entityType ?? '').replace(/_/g, ' ')}
-                      </span>
-                    </div>
+                  >
                     <div
                       style={{
-                        fontSize: '0.6875rem',
-                        color: COLORS.textMuted,
-                        marginTop: '0.125rem',
+                        width: 5,
+                        height: 5,
+                        borderRadius: '50%',
+                        background: COLORS.accentBlue,
+                        marginTop: '0.4rem',
+                        flexShrink: 0,
                       }}
-                      title={item.createdAt ? new Date(item.createdAt).toISOString() : undefined}
-                    >
-                      {formatRelativeTime(item.createdAt, relativeNow)}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>
+                        <span style={{ fontWeight: 600, color: COLORS.textPrimary }}>
+                          {item.userName ?? 'System'}
+                        </span>{' '}
+                        <span>{item.action}</span>{' '}
+                        <span style={{ color: COLORS.textMuted, textTransform: 'capitalize' }}>
+                          {String(item.entityType ?? '').replace(/_/g, ' ')}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '0.6875rem',
+                          color: COLORS.textMuted,
+                          marginTop: '0.125rem',
+                        }}
+                        title={item.createdAt ? new Date(item.createdAt).toISOString() : undefined}
+                      >
+                        {formatRelativeTime(item.createdAt, relativeNow)}
+                      </div>
+                      {detailHref ? (
+                        <div style={{ fontSize: '0.6875rem', color: COLORS.accentBlue, marginTop: '0.2rem', fontWeight: 500 }}>
+                          Open record &rarr;
+                        </div>
+                      ) : null}
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+
+                if (!detailHref) {
+                  return <div key={item.id ?? i}>{content}</div>;
+                }
+
+                return (
+                  <Link
+                    key={item.id ?? i}
+                    href={detailHref}
+                    style={{ textDecoration: 'none' }}
+                    onMouseEnter={(e) => {
+                      const row = e.currentTarget.firstElementChild as HTMLElement | null;
+                      if (row) row.style.background = COLORS.hoverBg;
+                    }}
+                    onMouseLeave={(e) => {
+                      const row = e.currentTarget.firstElementChild as HTMLElement | null;
+                      if (row) row.style.background = 'transparent';
+                    }}
+                  >
+                    {content}
+                  </Link>
+                );
+              })}
             </div>
           )}
         </div>
