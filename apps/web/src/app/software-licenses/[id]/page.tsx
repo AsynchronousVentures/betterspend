@@ -39,6 +39,8 @@ export default function SoftwareLicenseDetailPage({ params }: { params: Promise<
   const [id, setId] = useState('');
   const [license, setLicense] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [actionNote, setActionNote] = useState('');
 
   useEffect(() => {
     params.then(({ id: value }) => {
@@ -56,6 +58,18 @@ export default function SoftwareLicenseDetailPage({ params }: { params: Promise<
   const annualizedValue = Number(license.billingCycle === 'monthly'
     ? Number(license.seatCount) * Number(license.pricePerSeat) * 12
     : Number(license.seatCount) * Number(license.pricePerSeat));
+
+  async function applyAction(action: 'renew' | 'renegotiate' | 'cancel') {
+    if (!id) return;
+    setActionLoading(action);
+    try {
+      const updated = await api.softwareLicenses.renewalAction(id, { action, note: actionNote || undefined });
+      setLicense(updated);
+      setActionNote('');
+    } finally {
+      setActionLoading(null);
+    }
+  }
 
   return (
     <div style={{ padding: '2rem', maxWidth: '820px' }}>
@@ -142,6 +156,29 @@ export default function SoftwareLicenseDetailPage({ params }: { params: Promise<
             <div style={{ fontSize: '0.92rem', fontWeight: 600, color: COLORS.textPrimary }}>
               {utilizationPct < 70 ? 'Review downsize or renegotiate' : license.autoRenews ? 'Confirm auto-renewal coverage' : 'Prepare manual renewal'}
             </div>
+          </div>
+        </div>
+        <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: `1px solid ${COLORS.tableBorder}` }}>
+          <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, fontWeight: 600, textTransform: 'uppercase', marginBottom: '0.45rem' }}>
+            Renewal Action
+          </div>
+          <textarea
+            value={actionNote}
+            onChange={(event) => setActionNote(event.target.value)}
+            placeholder="Optional context for the renewal decision"
+            rows={3}
+            style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', padding: '0.75rem', borderRadius: '8px', border: `1px solid ${COLORS.inputBorder}`, fontSize: '0.875rem' }}
+          />
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.85rem' }}>
+            <button type="button" onClick={() => applyAction('renew')} disabled={!!actionLoading} style={{ padding: '0.65rem 0.95rem', borderRadius: '8px', border: 'none', background: COLORS.accentGreen, color: '#fff', fontWeight: 700, cursor: actionLoading ? 'not-allowed' : 'pointer' }}>
+              {actionLoading === 'renew' ? 'Processing...' : 'Renew for Next Term'}
+            </button>
+            <button type="button" onClick={() => applyAction('renegotiate')} disabled={!!actionLoading} style={{ padding: '0.65rem 0.95rem', borderRadius: '8px', border: 'none', background: COLORS.accentBlue, color: '#fff', fontWeight: 700, cursor: actionLoading ? 'not-allowed' : 'pointer' }}>
+              {actionLoading === 'renegotiate' ? 'Processing...' : 'Start Renegotiation'}
+            </button>
+            <button type="button" onClick={() => applyAction('cancel')} disabled={!!actionLoading} style={{ padding: '0.65rem 0.95rem', borderRadius: '8px', border: 'none', background: COLORS.accentRed, color: '#fff', fontWeight: 700, cursor: actionLoading ? 'not-allowed' : 'pointer' }}>
+              {actionLoading === 'cancel' ? 'Processing...' : 'Prepare Cancellation'}
+            </button>
           </div>
         </div>
       </div>

@@ -493,6 +493,11 @@ export const api = {
       apiFetch<any>('/software-licenses', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: unknown) =>
       apiFetch<any>(`/software-licenses/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    renewalAction: (id: string, data: { action: 'renew' | 'renegotiate' | 'cancel'; note?: string }) =>
+      apiFetch<any>(`/software-licenses/${id}/renewal-action`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
     renewalCalendar: (days?: number) =>
       apiFetch<any[]>(`/software-licenses/renewal-calendar${days ? `?days=${days}` : ''}`),
     utilization: () => apiFetch<any[]>('/software-licenses/utilization'),

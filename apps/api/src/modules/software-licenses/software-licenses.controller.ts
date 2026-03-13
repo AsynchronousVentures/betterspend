@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { softwareLicenseSchema } from '@betterspend/shared';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
@@ -72,5 +72,19 @@ export class SoftwareLicensesController {
       ...parsed,
       renewalDate: parsed.renewalDate ? new Date(parsed.renewalDate) : undefined,
     } as any);
+  }
+
+  @Post(':id/renewal-action')
+  @ApiOperation({ summary: 'Apply a renewal action to a software license' })
+  renewalAction(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { action?: 'renew' | 'renegotiate' | 'cancel'; note?: string },
+    @CurrentOrgId() orgId: string,
+  ) {
+    const action = body?.action;
+    if (!action || !['renew', 'renegotiate', 'cancel'].includes(action)) {
+      throw new BadRequestException('Valid action is required');
+    }
+    return this.softwareLicensesService.applyRenewalAction(id, orgId, action, body.note);
   }
 }

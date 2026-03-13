@@ -130,6 +130,72 @@ export class SoftwareLicensesService {
     return Number(rows[0]?.count ?? 0);
   }
 
+  async applyRenewalAction(
+    id: string,
+    organizationId: string,
+    action: 'renew' | 'renegotiate' | 'cancel',
+    note?: string,
+  ) {
+    const license = await this.findOne(id, organizationId);
+    const actionNote = note?.trim();
+    const notePrefix = `[${new Date().toISOString()}] ${action.toUpperCase()}`;
+    const appendedNote = [license.notes, `${notePrefix}${actionNote ? `: ${actionNote}` : ''}`]
+      .filter(Boolean)
+      .join('\n\n');
+
+    const updates: Partial<typeof softwareLicenses.$inferInsert> & { updatedAt: Date } = {
+      updatedAt: new Date(),
+      notes: appendedNote,
+    };
+
+    if (action === 'renew') {
+      const currentRenewal = license.renewalDate ? new Date(license.renewalDate) : new Date();
+      if (license.billingCycle === 'monthly') {
+        currentRenewal.setMonth(currentRenewal.getMonth() + 1);
+      } else {
+        currentRenewal.setFullYear(currentRenewal.getFullYear() + 1);
+      }
+      updates.renewalDate = currentRenewal;
+      updates.status = 'active';
+    } else if (action === 'cancel') {
+      updates.autoRenews = false;
+      updates.status = 'renewal_due';
+    } else {
+      updates.status = 'renewal_due';
+    }
+
+    await this.db
+      .update(softwareLicenses)
+      .set(updates)
+      .where(and(eq(softwareLicenses.id, id), eq(softwareLicenses.organizationId, organizationId)));
+
+    if (license.ownerUserId) {
+      const actionTitle =
+        action === 'renew'
+          ? `${license.productName} renewal recorded`
+          : action === 'cancel'
+            ? `${license.productName} marked for cancellation review`
+            : `${license.productName} marked for renegotiation`;
+      const actionBody =
+        action === 'renew'
+          ? `${license.productName} was rolled into the next ${license.billingCycle} term.`
+          : action === 'cancel'
+            ? `${license.productName} auto-renew has been disabled and cancellation review is in progress.`
+            : `${license.productName} needs pricing or scope renegotiation before renewal.`;
+      await this.notificationsService.create(
+        organizationId,
+        license.ownerUserId,
+        'software_license_renewal_action',
+        actionTitle,
+        actionNote ? `${actionBody} Note: ${actionNote}` : actionBody,
+        'software_license',
+        license.id,
+      );
+    }
+
+    return this.findOne(id, organizationId);
+  }
+
   private async notifyIfRenewalDueSoon(license: typeof softwareLicenses.$inferSelect) {
     if (!license.ownerUserId || !license.renewalDate) return;
 
