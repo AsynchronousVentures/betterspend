@@ -4,6 +4,7 @@ import { users } from './users';
 import { vendors, catalogItems } from './vendors';
 import { requisitions, requisitionLines } from './requisitions';
 import { contracts } from './contracts';
+import { taxCodes } from './tax-codes';
 
 export const purchaseOrders = pgTable('purchase_orders', {
   id: uuid('id').primaryKey().defaultRandom(),
