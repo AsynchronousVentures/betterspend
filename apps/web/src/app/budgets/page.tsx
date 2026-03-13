@@ -97,6 +97,21 @@ type ForecastSummary = {
   topAtRiskBudgets: ForecastEntry[];
 };
 
+async function downloadCsv(type: string) {
+  const { api } = await import('../../lib/api');
+  const res = await api.export.download(type);
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `export-${type}-${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function BudgetsPage() {
   const [budgets, setBudgets] = useState<any[]>([]);
   const [forecasts, setForecasts] = useState<ForecastEntry[]>([]);
@@ -104,6 +119,12 @@ export default function BudgetsPage() {
   const [loading, setLoading] = useState(true);
   const [forecastLoading, setForecastLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'budgets' | 'forecast'>('budgets');
+  const [exporting, setExporting] = useState(false);
+
+  async function handleExportCsv() {
+    setExporting(true);
+    try { await downloadCsv('budgets'); } finally { setExporting(false); }
+  }
 
   useEffect(() => {
     api.budgets.list().then(setBudgets).catch(console.error).finally(() => setLoading(false));
@@ -131,9 +152,18 @@ export default function BudgetsPage() {
           <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: COLORS.textPrimary }}>Budgets</h1>
           <p style={{ margin: '0.25rem 0 0', color: COLORS.textSecondary, fontSize: '0.875rem' }}>Track department, project, and GL account budgets</p>
         </div>
-        <Link href="/budgets/new" style={{ background: COLORS.accentBlue, color: COLORS.white, padding: '0.5rem 1.25rem', borderRadius: '6px', textDecoration: 'none', fontSize: '0.875rem', fontWeight: 500 }}>
-          + New Budget
-        </Link>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          <button
+            onClick={handleExportCsv}
+            disabled={exporting}
+            style={{ padding: '0.5rem 1rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', background: COLORS.cardBg, cursor: exporting ? 'not-allowed' : 'pointer', fontSize: '0.875rem', color: COLORS.textSecondary, fontWeight: 500 }}
+          >
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
+          <Link href="/budgets/new" style={{ background: COLORS.accentBlue, color: COLORS.white, padding: '0.5rem 1.25rem', borderRadius: '6px', textDecoration: 'none', fontSize: '0.875rem', fontWeight: 500 }}>
+            + New Budget
+          </Link>
+        </div>
       </div>
 
       {/* Tab bar */}

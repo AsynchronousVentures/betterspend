@@ -39,6 +39,7 @@ import { RfqModule } from './modules/rfq/rfq.module';
 import { RecurringPoModule } from './modules/recurring-po/recurring-po.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { RequisitionTemplatesModule } from './modules/requisition-templates/requisition-templates.module';
+import { ExportModule } from './modules/export/export.module';
 
 @Module({
   imports: [
@@ -82,6 +83,7 @@ import { RequisitionTemplatesModule } from './modules/requisition-templates/requ
     RecurringPoModule,
     InventoryModule,
     RequisitionTemplatesModule,
+    ExportModule,
   ],
 })
 export class AppModule {}

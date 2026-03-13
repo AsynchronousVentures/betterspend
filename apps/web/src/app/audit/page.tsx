@@ -26,11 +26,32 @@ const ACTION_COLORS: Record<string, { bg: string; text: string }> = {
 
 const ENTITY_TYPES = ['requisition', 'purchase_order', 'invoice', 'goods_receipt', 'budget', 'vendor', 'user'];
 
+async function downloadCsv(type: string) {
+  const { api } = await import('../../lib/api');
+  const res = await api.export.download(type);
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `export-${type}-${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function AuditPage() {
   const [entries, setEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterEntity, setFilterEntity] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+
+  async function handleExportCsv() {
+    setExporting(true);
+    try { await downloadCsv('audit-log'); } finally { setExporting(false); }
+  }
 
   useEffect(() => {
     load();
@@ -55,9 +76,18 @@ export default function AuditPage() {
           <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary }}>Audit Log</h1>
           <p style={{ color: COLORS.textSecondary, fontSize: '0.875rem', marginTop: '0.25rem' }}>Immutable record of all system actions</p>
         </div>
-        <button onClick={load} style={{ padding: '0.5rem 1rem', border: `1px solid ${COLORS.border}`, borderRadius: '6px', background: COLORS.cardBg, cursor: 'pointer', fontSize: '0.875rem' }}>
-          Refresh
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          <button
+            onClick={handleExportCsv}
+            disabled={exporting}
+            style={{ padding: '0.5rem 1rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', background: COLORS.cardBg, cursor: exporting ? 'not-allowed' : 'pointer', fontSize: '0.875rem', color: COLORS.textSecondary, fontWeight: 500 }}
+          >
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
+          <button onClick={load} style={{ padding: '0.5rem 1rem', border: `1px solid ${COLORS.border}`, borderRadius: '6px', background: COLORS.cardBg, cursor: 'pointer', fontSize: '0.875rem' }}>
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', alignItems: 'center' }}>

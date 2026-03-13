@@ -47,10 +47,31 @@ function formatCurrency(amount: string | number | null, currency = 'USD') {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(amount));
 }
 
+async function downloadCsv(type: string) {
+  const { api } = await import('../../lib/api');
+  const res = await api.export.download(type);
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `export-${type}-${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function PurchaseOrdersPage() {
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
+  const [exporting, setExporting] = useState(false);
+
+  async function handleExportCsv() {
+    setExporting(true);
+    try { await downloadCsv('purchase-orders'); } finally { setExporting(false); }
+  }
 
   useEffect(() => {
     api.purchaseOrders.list()
@@ -77,6 +98,13 @@ export default function PurchaseOrdersPage() {
             <option value="">All Statuses</option>
             {Object.entries(STATUS_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
+          <button
+            onClick={handleExportCsv}
+            disabled={exporting}
+            style={{ padding: '0.5rem 1rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', background: COLORS.cardBg, cursor: exporting ? 'not-allowed' : 'pointer', fontSize: '0.875rem', color: COLORS.textSecondary, fontWeight: 500 }}
+          >
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
           <Link href="/purchase-orders/new" style={{ background: COLORS.textPrimary, color: COLORS.white, padding: '0.5rem 1.25rem', borderRadius: '6px', textDecoration: 'none', fontSize: '0.875rem', fontWeight: 500 }}>
             + New PO
           </Link>

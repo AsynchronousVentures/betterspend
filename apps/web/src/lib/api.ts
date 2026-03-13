@@ -156,8 +156,11 @@ export const api = {
     create: (data: unknown) => apiFetch<any>('/invoices', { method: 'POST', body: JSON.stringify(data) }),
     approve: (id: string) => apiFetch<any>(`/invoices/${id}/approve`, { method: 'PATCH' }),
     bulkApprove: (ids: string[]) => apiFetch<any[]>('/invoices/bulk-approve', { method: 'POST', body: JSON.stringify({ ids }) }),
-    markPaid: (id: string) => apiFetch<any>(`/invoices/${id}/mark-paid`, { method: 'PATCH' }),
+    markPaid: (id: string, data?: { paymentReference?: string }) => apiFetch<any>(`/invoices/${id}/mark-paid`, { method: 'PATCH', body: JSON.stringify(data ?? {}) }),
     rerunMatch: (id: string) => apiFetch<any>(`/invoices/${id}/match`, { method: 'POST' }),
+    aging: () => apiFetch<any>('/invoices/aging'),
+    cashFlowForecast: () => apiFetch<any[]>('/invoices/cash-flow-forecast'),
+    earlyPaymentOpportunities: () => apiFetch<any[]>('/invoices/early-payment-opportunities'),
   },
   approvals: {
     list: () => apiFetch<any[]>('/approvals'),
@@ -354,6 +357,22 @@ export const api = {
     create: (data: unknown) => apiFetch<any>('/inventory', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: unknown) => apiFetch<any>(`/inventory/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     adjust: (id: string, data: { quantity: number; notes?: string }) => apiFetch<any>(`/inventory/${id}/adjust`, { method: 'POST', body: JSON.stringify(data) }),
+  },
+  export: {
+    download: (type: string, params?: { from?: string; to?: string }) => {
+      const q = new URLSearchParams({ format: 'csv', ...(params ?? {}) });
+      const token = getCookie('bs_token');
+      const url = `${API_BASE}/api/v1/export/${type}?${q}`;
+      return fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    },
+    json: (type: string, params?: { from?: string; to?: string; page?: number; limit?: number }) => {
+      const filtered: Record<string, string> = {};
+      if (params?.from) filtered.from = params.from;
+      if (params?.to) filtered.to = params.to;
+      if (params?.page) filtered.page = String(params.page);
+      if (params?.limit) filtered.limit = String(params.limit);
+      return apiFetch<any>(`/export/${type}?` + new URLSearchParams(filtered));
+    },
   },
   requisitionTemplates: {
     list: () => apiFetch<any[]>('/requisition-templates'),
