@@ -27,6 +27,13 @@ export interface UpdateApprovalRuleInput {
   priority?: number;
   conditions?: object;
   entityId?: string | null;
+  steps?: Array<{
+    stepOrder: number;
+    approverType: string;
+    approverId?: string;
+    approverRole?: string;
+    requiredCount?: number;
+  }>;
 }
 
 @Injectable()
@@ -38,10 +45,8 @@ export class ApprovalRulesService {
 
   async findAll(organizationId: string, entityId?: string) {
     return this.db.query.approvalRules.findMany({
-      where: (r, { and, eq }) => and(
-        eq(r.organizationId, organizationId),
-        entityId ? eq(r.entityId, entityId) : undefined,
-      ),
+      where: (r, { and, eq }) =>
+        and(eq(r.organizationId, organizationId), entityId ? eq(r.entityId, entityId) : undefined),
       with: { steps: true, entity: true },
       orderBy: (r, { asc }) => asc(r.priority),
     });
@@ -59,15 +64,18 @@ export class ApprovalRulesService {
   async create(organizationId: string, input: CreateApprovalRuleInput) {
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
     const ruleId = await this.db.transaction(async (tx) => {
-      const [rule] = await tx.insert(approvalRules).values({
-        organizationId,
-        entityId: input.entityId ?? null,
-        name: input.name,
-        description: input.description,
-        priority: input.priority ?? 100,
-        conditions: JSON.stringify(input.conditions),
-        isActive: true,
-      }).returning();
+      const [rule] = await tx
+        .insert(approvalRules)
+        .values({
+          organizationId,
+          entityId: input.entityId ?? null,
+          name: input.name,
+          description: input.description,
+          priority: input.priority ?? 100,
+          conditions: JSON.stringify(input.conditions),
+          isActive: true,
+        })
+        .returning();
 
       if (input.steps && input.steps.length > 0) {
         await tx.insert(approvalRuleSteps).values(
@@ -92,16 +100,38 @@ export class ApprovalRulesService {
     await this.findOne(id, organizationId);
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
 
-    await this.db.update(approvalRules)
-      .set({
-        ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.description !== undefined ? { description: input.description } : {}),
-        ...(input.priority !== undefined ? { priority: input.priority } : {}),
-        ...(input.conditions !== undefined ? { conditions: JSON.stringify(input.conditions) } : {}),
-        ...(input.entityId !== undefined ? { entityId: input.entityId } : {}),
-        updatedAt: new Date(),
-      })
-      .where(and(eq(approvalRules.id, id), eq(approvalRules.organizationId, organizationId)));
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(approvalRules)
+        .set({
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          ...(input.priority !== undefined ? { priority: input.priority } : {}),
+          ...(input.conditions !== undefined
+            ? { conditions: JSON.stringify(input.conditions) }
+            : {}),
+          ...(input.entityId !== undefined ? { entityId: input.entityId } : {}),
+          updatedAt: new Date(),
+        })
+        .where(and(eq(approvalRules.id, id), eq(approvalRules.organizationId, organizationId)));
+
+      if (input.steps !== undefined) {
+        await tx.delete(approvalRuleSteps).where(eq(approvalRuleSteps.approvalRuleId, id));
+
+        if (input.steps.length > 0) {
+          await tx.insert(approvalRuleSteps).values(
+            input.steps.map((s) => ({
+              approvalRuleId: id,
+              stepOrder: s.stepOrder,
+              approverType: s.approverType,
+              approverId: s.approverId ?? null,
+              approverRole: s.approverRole ?? null,
+              requiredCount: s.requiredCount ?? 1,
+            })),
+          );
+        }
+      }
+    });
 
     return this.findOne(id, organizationId);
   }
@@ -109,7 +139,8 @@ export class ApprovalRulesService {
   async remove(id: string, organizationId: string) {
     await this.findOne(id, organizationId);
 
-    await this.db.update(approvalRules)
+    await this.db
+      .update(approvalRules)
       .set({ isActive: false, updatedAt: new Date() })
       .where(and(eq(approvalRules.id, id), eq(approvalRules.organizationId, organizationId)));
 
