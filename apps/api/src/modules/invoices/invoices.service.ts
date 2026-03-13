@@ -57,6 +57,10 @@ export interface MarkPaidInput {
   paymentReference?: string;
 }
 
+export interface ResolveExceptionInput {
+  reason?: string;
+}
+
 @Injectable()
 export class InvoicesService {
   constructor(
@@ -357,6 +361,42 @@ export class InvoicesService {
       }
     }
     return results;
+  }
+
+  async resolveException(id: string, organizationId: string, reviewerId: string, input?: ResolveExceptionInput) {
+    const invoice = await this.findOne(id, organizationId);
+    if (invoice.matchStatus !== 'exception') {
+      throw new BadRequestException('Invoice does not have an active exception');
+    }
+
+    const existingDetails = invoice.matchDetails && typeof invoice.matchDetails === 'object'
+      ? invoice.matchDetails as Record<string, unknown>
+      : {};
+
+    await this.db.update(invoices)
+      .set({
+        status: 'pending_match',
+        matchStatus: 'partial_match',
+        matchDetails: {
+          ...existingDetails,
+          resolution: {
+            resolvedAt: new Date().toISOString(),
+            resolvedBy: reviewerId,
+            reason: input?.reason?.trim() || 'Finance accepted the invoice exception after review.',
+            previousMatchStatus: 'exception',
+          },
+        } as any,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+
+    const resolved = await this.findOne(id, organizationId);
+    this.audit.log(organizationId, reviewerId, 'invoice', id, 'exception_resolved', {
+      previousMatchStatus: 'exception',
+      newMatchStatus: 'partial_match',
+      reason: input?.reason?.trim() || null,
+    }).catch(() => {});
+    return resolved;
   }
 
   async approve(id: string, organizationId: string, approverId: string) {

@@ -129,7 +129,8 @@ function Chevron({ open }: { open: boolean }) {
 export default function SidebarNav({ onClose }: { onClose?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [pendingCount, setPendingCount] = useState(0);
+  const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
+  const [invoiceExceptionCount, setInvoiceExceptionCount] = useState(0);
   const branding = useBranding();
 
   // Determine which groups should be open initially
@@ -168,7 +169,10 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
   // Fetch pending count
   useEffect(() => {
     api.analytics.pendingItems()
-      .then((data: any) => setPendingCount((data?.pendingApprovals ?? 0) + (data?.invoiceExceptions ?? 0)))
+      .then((data: any) => {
+        setPendingApprovalsCount(data?.pendingApprovals ?? 0);
+        setInvoiceExceptionCount(data?.invoiceExceptions ?? 0);
+      })
       .catch(() => {});
   }, [pathname]);
 
@@ -196,7 +200,8 @@ export default function SidebarNav({ onClose }: { onClose?: () => void }) {
   }
 
   function getBadge(href: string): number | undefined {
-    if (href === '/approvals' && pendingCount > 0) return pendingCount;
+    if (href === '/approvals' && pendingApprovalsCount > 0) return pendingApprovalsCount;
+    if (href === '/invoices' && invoiceExceptionCount > 0) return invoiceExceptionCount;
     return undefined;
   }
 

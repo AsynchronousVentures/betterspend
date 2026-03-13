@@ -58,6 +58,17 @@ export class InvoicesController {
     return this.invoicesService.approve(id, orgId, userId);
   }
 
+  @Patch(':id/resolve-exception')
+  @ApiOperation({ summary: 'Resolve an invoice match exception after finance review' })
+  resolveException(
+    @Param('id') id: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+    @Body() body: { reason?: string },
+  ) {
+    return this.invoicesService.resolveException(id, orgId, userId, body);
+  }
+
   @Post('bulk-approve')
   @ApiOperation({ summary: 'Bulk approve multiple matched invoices' })
   bulkApprove(@Body() body: { ids: string[] }, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {

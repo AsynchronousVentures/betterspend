@@ -91,6 +91,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [exceptionReason, setExceptionReason] = useState('');
   const [glSystem, setGlSystem] = useState<'qbo' | 'xero'>('qbo');
 
   useEffect(() => {
@@ -159,6 +160,23 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
     }
   }
 
+  async function doResolveException() {
+    setError('');
+    setSuccessMsg('');
+    setActionLoading('resolve');
+    try {
+      await api.invoices.resolveException(id, { reason: exceptionReason || undefined });
+      const updated = await api.invoices.get(id);
+      setInvoice(updated);
+      setExceptionReason('');
+      setSuccessMsg('Invoice exception marked as reviewed. It can now proceed through approval.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Resolve failed');
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   if (loading) return <div style={{ padding: '2rem', color: COLORS.textMuted, fontSize: '0.875rem' }}>Loading…</div>;
   if (!invoice) return (
     <div style={{ padding: '2rem', color: COLORS.textSecondary }}>
@@ -190,6 +208,30 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           <div>
             <div style={{ fontWeight: 600, color: COLORS.accentRedDark, fontSize: '0.875rem' }}>3-Way Match Exceptions Detected</div>
             <div style={{ fontSize: '0.8rem', color: '#b91c1c', marginTop: '0.25rem' }}>One or more lines have price or quantity variances outside tolerance. Finance review required before approval.</div>
+          </div>
+        </div>
+      )}
+
+      {hasExceptions && (
+        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1rem 1.25rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
+          <div style={{ fontWeight: 600, color: COLORS.textPrimary, fontSize: '0.9rem', marginBottom: '0.5rem' }}>Finance Exception Resolution</div>
+          <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary, marginBottom: '0.75rem' }}>
+            Accept the variance after review to move this invoice back into the payable workflow.
+          </div>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              value={exceptionReason}
+              onChange={(e) => setExceptionReason(e.target.value)}
+              placeholder="Reason for accepting this exception"
+              style={{ flex: '1 1 320px', minWidth: '260px', padding: '0.625rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }}
+            />
+            <button
+              onClick={doResolveException}
+              disabled={actionLoading !== null}
+              style={{ background: COLORS.accentBlueDark, color: COLORS.white, border: 'none', padding: '0.625rem 1rem', borderRadius: '6px', fontSize: '0.875rem', fontWeight: 600, cursor: actionLoading ? 'not-allowed' : 'pointer' }}
+            >
+              {actionLoading === 'resolve' ? 'Resolving…' : 'Accept Exception'}
+            </button>
           </div>
         </div>
       )}

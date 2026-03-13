@@ -189,6 +189,8 @@ export const api = {
     get: (id: string) => apiFetch<any>(`/invoices/${id}`),
     create: (data: unknown) => apiFetch<any>('/invoices', { method: 'POST', body: JSON.stringify(withEntityBody(data)) }),
     approve: (id: string) => apiFetch<any>(`/invoices/${id}/approve`, { method: 'PATCH' }),
+    resolveException: (id: string, data?: { reason?: string }) =>
+      apiFetch<any>(`/invoices/${id}/resolve-exception`, { method: 'PATCH', body: JSON.stringify(data ?? {}) }),
     bulkApprove: (ids: string[]) => apiFetch<any[]>('/invoices/bulk-approve', { method: 'POST', body: JSON.stringify({ ids }) }),
     markPaid: (id: string, data?: { paymentReference?: string }) => apiFetch<any>(`/invoices/${id}/mark-paid`, { method: 'PATCH', body: JSON.stringify(data ?? {}) }),
     rerunMatch: (id: string) => apiFetch<any>(`/invoices/${id}/match`, { method: 'POST' }),

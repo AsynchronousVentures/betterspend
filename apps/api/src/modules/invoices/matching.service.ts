@@ -1,5 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { invoices, invoiceLines, matchResults } from '@betterspend/db';
@@ -41,6 +41,7 @@ export class MatchingService {
     const po = invoice.purchaseOrder as any;
     const poLines: any[] = po.lines ?? [];
     const allGrnLines: any[] = (po.goodsReceipts ?? []).flatMap((g: any) => g.lines ?? []);
+    const invoiceLineIds = (invoice.lines as any[]).map((line) => line.id);
 
     const lineResults: Array<{
       invoiceLineId: string;
@@ -106,6 +107,10 @@ export class MatchingService {
         variancePct: Math.max(priceVariancePct, qtyVariancePct),
         grnLineId: grnLine?.id ?? null,
       });
+    }
+
+    if (invoiceLineIds.length > 0) {
+      await this.db.delete(matchResults).where(inArray(matchResults.invoiceLineId, invoiceLineIds));
     }
 
     // Persist match results
