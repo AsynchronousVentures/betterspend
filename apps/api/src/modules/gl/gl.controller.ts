@@ -92,7 +92,7 @@ export class GlController {
   // ── OAuth — Connection Status ───────────────────────────────────────────────
 
   @Get('oauth/status')
-  @ApiOperation({ summary: 'Get QBO and Xero connection status' })
+  @ApiOperation({ summary: 'Get QBO and Xero connection status using platform-managed OAuth apps' })
   getOAuthStatus(@CurrentOrgId() orgId: string) {
     return this.oauthService.getConnectionStatus(orgId);
   }
@@ -100,7 +100,7 @@ export class GlController {
   // ── OAuth — QuickBooks Online ───────────────────────────────────────────────
 
   @Get('oauth/qbo/connect')
-  @ApiOperation({ summary: 'Get QBO OAuth authorize URL' })
+  @ApiOperation({ summary: 'Get QBO OAuth authorize URL using the platform-managed app' })
   getQboConnectUrl(@CurrentOrgId() orgId: string) {
     const url = this.oauthService.getQboAuthUrl(orgId);
     return { url };
@@ -142,7 +142,7 @@ export class GlController {
   // ── OAuth — Xero ────────────────────────────────────────────────────────────
 
   @Get('oauth/xero/connect')
-  @ApiOperation({ summary: 'Get Xero OAuth authorize URL' })
+  @ApiOperation({ summary: 'Get Xero OAuth authorize URL using the platform-managed app' })
   getXeroConnectUrl(@CurrentOrgId() orgId: string) {
     const url = this.oauthService.getXeroAuthUrl(orgId);
     return { url };

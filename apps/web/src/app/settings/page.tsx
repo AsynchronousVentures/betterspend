@@ -22,6 +22,10 @@ interface OAuthStatus {
   xero: boolean;
   qboRealmId?: string;
   xeroTenantId?: string;
+  qboConfigured?: boolean;
+  xeroConfigured?: boolean;
+  qboConnectionMode?: 'platform';
+  xeroConnectionMode?: 'platform';
 }
 
 interface SettingsSnapshots {
@@ -700,7 +704,7 @@ function SettingsContent() {
           <div style={card}>
             <h2 style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.25rem', color: COLORS.textPrimary }}>GL Integrations</h2>
             <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginBottom: '1.5rem', marginTop: '0.25rem' }}>
-              Connect your accounting platform to automatically post approved invoices as bills or AP invoices. OAuth tokens are stored securely per organization.
+              Connect your accounting platform to automatically post approved invoices as bills or AP invoices. BetterSpend uses platform-managed OAuth apps; end users only authorize the connection for their QuickBooks or Xero company.
             </p>
 
             {integrationsMsg && <div style={successStyle}>{integrationsMsg}</div>}
@@ -719,7 +723,10 @@ function SettingsContent() {
                     )}
                   </div>
                   <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, margin: 0 }}>
-                    Posts approved invoices as Bills in QuickBooks Online using the Accounting API.
+                    Posts approved invoices as Bills in QuickBooks Online using AsyncronousVentures-managed OAuth credentials.
+                  </p>
+                  <p style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.25rem' }}>
+                    Connection mode: platform-managed OAuth
                   </p>
                   {oauthStatus.qbo && oauthStatus.qboRealmId && (
                     <p style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.25rem', fontFamily: 'monospace' }}>
@@ -730,6 +737,10 @@ function SettingsContent() {
                 <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0, marginLeft: '1rem' }}>
                   {oauthStatus.qbo ? (
                     <button onClick={handleDisconnectQbo} style={btnDanger}>Disconnect</button>
+                  ) : oauthStatus.qboConfigured === false ? (
+                    <button disabled style={{ ...btnPrimary, opacity: 0.6, cursor: 'not-allowed' }}>
+                      Platform App Not Configured
+                    </button>
                   ) : (
                     <button onClick={handleConnectQbo} disabled={oauthLoading} style={btnPrimary}>
                       {oauthLoading ? 'Redirecting...' : 'Connect QuickBooks'}
@@ -752,7 +763,10 @@ function SettingsContent() {
                     )}
                   </div>
                   <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, margin: 0 }}>
-                    Posts approved invoices as Accounts Payable invoices in Xero using the Accounting API.
+                    Posts approved invoices as Accounts Payable invoices in Xero using AsyncronousVentures-managed OAuth credentials.
+                  </p>
+                  <p style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.25rem' }}>
+                    Connection mode: platform-managed OAuth
                   </p>
                   {oauthStatus.xero && oauthStatus.xeroTenantId && (
                     <p style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.25rem', fontFamily: 'monospace' }}>
@@ -763,6 +777,10 @@ function SettingsContent() {
                 <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0, marginLeft: '1rem' }}>
                   {oauthStatus.xero ? (
                     <button onClick={handleDisconnectXero} style={btnDanger}>Disconnect</button>
+                  ) : oauthStatus.xeroConfigured === false ? (
+                    <button disabled style={{ ...btnPrimary, opacity: 0.6, cursor: 'not-allowed' }}>
+                      Platform App Not Configured
+                    </button>
                   ) : (
                     <button onClick={handleConnectXero} disabled={oauthLoading} style={btnPrimary}>
                       {oauthLoading ? 'Redirecting...' : 'Connect Xero'}
@@ -773,7 +791,7 @@ function SettingsContent() {
             </div>
 
             <div style={{ padding: '0.75rem 1rem', background: '#fef9c3', borderRadius: '6px', border: '1px solid #fde68a', fontSize: '0.8125rem', color: COLORS.accentAmberDark, marginTop: '1rem' }}>
-              Configure <code style={{ fontFamily: 'monospace' }}>QBO_CLIENT_ID</code>, <code style={{ fontFamily: 'monospace' }}>QBO_CLIENT_SECRET</code>, <code style={{ fontFamily: 'monospace' }}>XERO_CLIENT_ID</code>, and <code style={{ fontFamily: 'monospace' }}>XERO_CLIENT_SECRET</code> environment variables before connecting.
+              These integrations rely on platform-owned OAuth apps configured on the BetterSpend server. End users do not need to create or manage their own QuickBooks or Xero OAuth applications.
             </div>
           </div>
         </div>

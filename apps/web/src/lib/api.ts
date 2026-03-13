@@ -220,7 +220,16 @@ export const api = {
   },
   gl: {
     oauthStatus: () =>
-      apiFetch<{ qbo: boolean; xero: boolean; qboRealmId?: string; xeroTenantId?: string }>(
+      apiFetch<{
+        qbo: boolean;
+        xero: boolean;
+        qboRealmId?: string;
+        xeroTenantId?: string;
+        qboConfigured: boolean;
+        xeroConfigured: boolean;
+        qboConnectionMode: 'platform';
+        xeroConnectionMode: 'platform';
+      }>(
         '/gl/oauth/status',
       ),
     oauthConnect: (provider: 'qbo' | 'xero') =>

@@ -223,13 +223,26 @@ export class OAuthService {
     this.logger.log(`Xero disconnected for org ${organizationId}`);
   }
 
-  async getConnectionStatus(organizationId: string): Promise<{ qbo: boolean; xero: boolean; qboRealmId?: string; xeroTenantId?: string }> {
+  async getConnectionStatus(organizationId: string): Promise<{
+    qbo: boolean;
+    xero: boolean;
+    qboRealmId?: string;
+    xeroTenantId?: string;
+    qboConfigured: boolean;
+    xeroConfigured: boolean;
+    qboConnectionMode: 'platform';
+    xeroConnectionMode: 'platform';
+  }> {
     const all = await this.settingsService.getAll(organizationId);
     return {
       qbo: all['qbo_connected'] === 'true',
       xero: all['xero_connected'] === 'true',
       qboRealmId: all['qbo_realm_id'] || undefined,
       xeroTenantId: all['xero_tenant_id'] || undefined,
+      qboConfigured: Boolean(process.env.QBO_CLIENT_ID && process.env.QBO_CLIENT_SECRET),
+      xeroConfigured: Boolean(process.env.XERO_CLIENT_ID && process.env.XERO_CLIENT_SECRET),
+      qboConnectionMode: 'platform',
+      xeroConnectionMode: 'platform',
     };
   }
 }
