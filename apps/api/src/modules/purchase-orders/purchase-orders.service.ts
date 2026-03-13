@@ -6,6 +6,7 @@ import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ContractComplianceService } from './contract-compliance.service';
+import { EntitiesService } from '../entities/entities.service';
 import type { Db } from '@betterspend/db';
 import { purchaseOrders, poLines, poVersions, blanketReleases, requisitions } from '@betterspend/db';
 
@@ -13,6 +14,7 @@ const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 import { z } from 'zod';
 
 const createPoSchema = z.object({
+  entityId: z.string().uuid().optional(),
   vendorId: z.string().uuid(),
   requisitionId: z.string().uuid().optional(),
   paymentTerms: z.string().optional(),
@@ -63,17 +65,19 @@ export class PurchaseOrdersService {
     private readonly audit: AuditService,
     @Optional() private readonly notifications: NotificationsService,
     @Optional() private readonly contractCompliance: ContractComplianceService,
+    private readonly entitiesService: EntitiesService,
   ) {}
 
-  async findAll(organizationId: string, filters?: { status?: string; vendorId?: string }) {
+  async findAll(organizationId: string, filters?: { status?: string; vendorId?: string; entityId?: string }) {
     return this.db.query.purchaseOrders.findMany({
       where: (po, { and, eq }) => {
         const conditions = [eq(po.organizationId, organizationId)];
         if (filters?.status) conditions.push(eq(po.status, filters.status));
         if (filters?.vendorId) conditions.push(eq(po.vendorId, filters.vendorId));
+        if (filters?.entityId) conditions.push(eq(po.entityId, filters.entityId));
         return and(...conditions);
       },
-      with: { vendor: true, lines: true },
+      with: { vendor: true, lines: true, entity: true },
       orderBy: (po, { desc }) => desc(po.createdAt),
     });
   }
@@ -81,13 +85,14 @@ export class PurchaseOrdersService {
   async findOne(id: string, organizationId: string) {
     const po = await this.db.query.purchaseOrders.findFirst({
       where: (po, { and, eq }) => and(eq(po.id, id), eq(po.organizationId, organizationId)),
-      with: { vendor: true, lines: true, versions: true },
+      with: { vendor: true, lines: true, versions: true, entity: true },
     });
     if (!po) throw new NotFoundException(`Purchase Order ${id} not found`);
     return po;
   }
 
   async create(organizationId: string, issuedBy: string, input: CreatePoInput) {
+    await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
     const number = await this.sequenceService.next(organizationId, 'purchase_order');
 
     // Run compliance checks for each line before the transaction
@@ -110,6 +115,7 @@ export class PurchaseOrdersService {
 
       const [po] = await tx.insert(purchaseOrders).values({
         organizationId,
+        entityId: input.entityId ?? null,
         vendorId: input.vendorId,
         requisitionId: input.requisitionId,
         number,

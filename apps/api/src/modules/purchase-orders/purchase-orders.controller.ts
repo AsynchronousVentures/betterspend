@@ -21,12 +21,14 @@ export class PurchaseOrdersController {
   @ApiOperation({ summary: 'List purchase orders' })
   @ApiQuery({ name: 'status', required: false })
   @ApiQuery({ name: 'vendorId', required: false })
+  @ApiQuery({ name: 'entityId', required: false })
   findAll(
     @CurrentOrgId() orgId: string,
     @Query('status') status?: string,
     @Query('vendorId') vendorId?: string,
+    @Query('entityId') entityId?: string,
   ) {
-    return this.purchaseOrdersService.findAll(orgId, { status, vendorId });
+    return this.purchaseOrdersService.findAll(orgId, { status, vendorId, entityId });
   }
 
   @Get(':id')

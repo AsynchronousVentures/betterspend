@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm';
-import { organizations, departments, projects } from './schema/organizations';
+import { organizations, legalEntities, departments, projects } from './schema/organizations';
 import { users, userRoles } from './schema/users';
 import { requisitionTemplates } from './schema/requisition-templates';
 import { vendors, catalogItems } from './schema/vendors';
@@ -21,12 +21,22 @@ import { paymentRuns, paymentRunInvoices } from './schema/payment-runs';
 
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
+  legalEntities: many(legalEntities),
   departments: many(departments),
   users: many(users),
   vendors: many(vendors),
   requisitions: many(requisitions),
   purchaseOrders: many(purchaseOrders),
   budgets: many(budgets),
+}));
+
+export const legalEntitiesRelations = relations(legalEntities, ({ one, many }) => ({
+  organization: one(organizations, { fields: [legalEntities.organizationId], references: [organizations.id] }),
+  vendors: many(vendors),
+  purchaseOrders: many(purchaseOrders),
+  invoices: many(invoices),
+  budgets: many(budgets),
+  approvalRules: many(approvalRules),
 }));
 
 export const departmentsRelations = relations(departments, ({ one, many }) => ({
@@ -53,6 +63,7 @@ export const userRolesRelations = relations(userRoles, ({ one }) => ({
 
 export const vendorsRelations = relations(vendors, ({ one, many }) => ({
   organization: one(organizations, { fields: [vendors.organizationId], references: [organizations.id] }),
+  entity: one(legalEntities, { fields: [vendors.entityId], references: [legalEntities.id] }),
   catalogItems: many(catalogItems),
 }));
 
@@ -70,6 +81,7 @@ export const requisitionsRelations = relations(requisitions, ({ one, many }) => 
 
 export const purchaseOrdersRelations = relations(purchaseOrders, ({ one, many }) => ({
   organization: one(organizations, { fields: [purchaseOrders.organizationId], references: [organizations.id] }),
+  entity: one(legalEntities, { fields: [purchaseOrders.entityId], references: [legalEntities.id] }),
   vendor: one(vendors, { fields: [purchaseOrders.vendorId], references: [vendors.id] }),
   requisition: one(requisitions, { fields: [purchaseOrders.requisitionId], references: [requisitions.id] }),
   lines: many(poLines),
@@ -98,6 +110,7 @@ export const blanketReleasesRelations = relations(blanketReleases, ({ one }) => 
 
 export const approvalRulesRelations = relations(approvalRules, ({ one, many }) => ({
   organization: one(organizations, { fields: [approvalRules.organizationId], references: [organizations.id] }),
+  entity: one(legalEntities, { fields: [approvalRules.entityId], references: [legalEntities.id] }),
   steps: many(approvalRuleSteps),
   requests: many(approvalRequests),
 }));
@@ -128,6 +141,7 @@ export const goodsReceiptLinesRelations = relations(goodsReceiptLines, ({ one })
 
 export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   organization: one(organizations, { fields: [invoices.organizationId], references: [organizations.id] }),
+  entity: one(legalEntities, { fields: [invoices.entityId], references: [legalEntities.id] }),
   purchaseOrder: one(purchaseOrders, { fields: [invoices.purchaseOrderId], references: [purchaseOrders.id] }),
   vendor: one(vendors, { fields: [invoices.vendorId], references: [vendors.id] }),
   lines: many(invoiceLines),
@@ -147,6 +161,7 @@ export const matchResultsRelations = relations(matchResults, ({ one }) => ({
 
 export const budgetsRelations = relations(budgets, ({ one, many }) => ({
   organization: one(organizations, { fields: [budgets.organizationId], references: [organizations.id] }),
+  entity: one(legalEntities, { fields: [budgets.entityId], references: [legalEntities.id] }),
   periods: many(budgetPeriods),
 }));
 

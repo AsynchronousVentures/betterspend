@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, Query, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { InvoicesService, CreateInvoiceInput, MarkPaidInput } from './invoices.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
@@ -12,8 +12,8 @@ export class InvoicesController {
 
   @Get()
   @ApiOperation({ summary: 'List all invoices' })
-  findAll(@CurrentOrgId() orgId: string) {
-    return this.invoicesService.findAll(orgId);
+  findAll(@CurrentOrgId() orgId: string, @Query('entityId') entityId?: string) {
+    return this.invoicesService.findAll(orgId, entityId);
   }
 
   @Get('aging')

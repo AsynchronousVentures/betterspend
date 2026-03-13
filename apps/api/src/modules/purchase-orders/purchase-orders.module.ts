@@ -4,9 +4,10 @@ import { PurchaseOrdersService } from './purchase-orders.service';
 import { PdfService } from './pdf.service';
 import { ContractComplianceService } from './contract-compliance.service';
 import { SettingsModule } from '../settings/settings.module';
+import { EntitiesModule } from '../entities/entities.module';
 
 @Module({
-  imports: [SettingsModule],
+  imports: [SettingsModule, EntitiesModule],
   controllers: [PurchaseOrdersController],
   providers: [PurchaseOrdersService, PdfService, ContractComplianceService],
   exports: [PurchaseOrdersService, ContractComplianceService],

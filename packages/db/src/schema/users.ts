@@ -18,7 +18,7 @@ export const userRoles = pgTable('user_roles', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull().references(() => users.id),
   role: varchar('role', { length: 50 }).notNull(), // requester|approver|receiver|finance|admin
-  scopeType: varchar('scope_type', { length: 50 }).notNull().default('global'), // global|department|project
+  scopeType: varchar('scope_type', { length: 50 }).notNull().default('global'), // global|department|project|entity
   scopeId: uuid('scope_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });

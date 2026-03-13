@@ -1,5 +1,5 @@
 import { pgTable, uuid, varchar, text, numeric, boolean, timestamp, jsonb, date } from 'drizzle-orm/pg-core';
-import { organizations } from './organizations';
+import { organizations, legalEntities } from './organizations';
 import { vendors } from './vendors';
 import { users } from './users';
 import { purchaseOrders, poLines } from './purchase-orders';
@@ -8,6 +8,7 @@ import { goodsReceiptLines } from './receiving';
 export const invoices = pgTable('invoices', {
   id: uuid('id').primaryKey().defaultRandom(),
   organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+  entityId: uuid('entity_id').references(() => legalEntities.id),
   purchaseOrderId: uuid('purchase_order_id').references(() => purchaseOrders.id),
   vendorId: uuid('vendor_id').notNull().references(() => vendors.id),
   invoiceNumber: varchar('invoice_number', { length: 100 }).notNull(),

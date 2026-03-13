@@ -10,10 +10,12 @@ import { GlExportService } from '../gl/gl-export.service';
 import { BudgetsService } from '../budgets/budgets.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { EntitiesService } from '../entities/entities.service';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 
 export interface CreateInvoiceInput {
+  entityId?: string;
   purchaseOrderId?: string;
   vendorId: string;
   invoiceNumber: string;
@@ -66,12 +68,16 @@ export class InvoicesService {
     private readonly budgets: BudgetsService,
     private readonly audit: AuditService,
     @Optional() private readonly notifications: NotificationsService,
+    private readonly entitiesService: EntitiesService,
   ) {}
 
-  async findAll(organizationId: string) {
+  async findAll(organizationId: string, entityId?: string) {
     return this.db.query.invoices.findMany({
-      where: (i, { eq }) => eq(i.organizationId, organizationId),
-      with: { vendor: true, purchaseOrder: true },
+      where: (i, { and, eq }) => and(
+        eq(i.organizationId, organizationId),
+        entityId ? eq(i.entityId, entityId) : undefined,
+      ),
+      with: { vendor: true, purchaseOrder: true, entity: true },
       orderBy: (i, { desc }) => desc(i.createdAt),
     });
   }
@@ -81,6 +87,7 @@ export class InvoicesService {
       where: (i, { and, eq }) => and(eq(i.id, id), eq(i.organizationId, organizationId)),
       with: {
         vendor: true,
+        entity: true,
         purchaseOrder: { with: { lines: true } },
         lines: { with: { matchResults: true } },
       },
@@ -90,6 +97,17 @@ export class InvoicesService {
   }
 
   async create(organizationId: string, input: CreateInvoiceInput) {
+    let resolvedEntityId = input.entityId ?? null;
+    if (input.purchaseOrderId) {
+      const po = await this.db.query.purchaseOrders.findFirst({
+        where: (record, { and, eq }) =>
+          and(eq(record.id, input.purchaseOrderId!), eq(record.organizationId, organizationId)),
+      });
+      if (!po) throw new BadRequestException(`Purchase order ${input.purchaseOrderId} not found`);
+      resolvedEntityId = po.entityId ?? resolvedEntityId;
+    }
+    await this.entitiesService.assertBelongsToOrg(organizationId, resolvedEntityId);
+
     // Duplicate invoice detection: same vendor + same invoice number in this org
     const duplicate = await this.db.query.invoices.findFirst({
       where: (i, { and, eq }) => and(
@@ -113,6 +131,7 @@ export class InvoicesService {
       const [inv] = await tx.insert(invoices).values({
         organizationId,
         purchaseOrderId: input.purchaseOrderId ?? null,
+        entityId: resolvedEntityId,
         vendorId: input.vendorId,
         invoiceNumber: input.invoiceNumber,
         internalNumber,

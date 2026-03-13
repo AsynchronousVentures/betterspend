@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Patch, Delete, Param, Body, ParseUUIDPipe, HttpCode, HttpStatus,
+  Controller, Get, Post, Patch, Delete, Param, Body, Query, ParseUUIDPipe, HttpCode, HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ApprovalRulesService, CreateApprovalRuleInput, UpdateApprovalRuleInput } from './approval-rules.service';
@@ -13,8 +13,8 @@ export class ApprovalRulesController {
 
   @Get()
   @ApiOperation({ summary: 'List all approval rules' })
-  findAll(@CurrentOrgId() orgId: string) {
-    return this.approvalRulesService.findAll(orgId);
+  findAll(@CurrentOrgId() orgId: string, @Query('entityId') entityId?: string) {
+    return this.approvalRulesService.findAll(orgId, entityId);
   }
 
   @Get(':id')

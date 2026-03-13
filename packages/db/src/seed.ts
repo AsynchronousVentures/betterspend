@@ -1,5 +1,5 @@
 import { db } from './client';
-import { organizations, departments, users, userRoles, vendors } from './schema';
+import { organizations, legalEntities, departments, users, userRoles, vendors } from './schema';
 import { sql } from 'drizzle-orm';
 
 // Fixed UUIDs so demo controllers (DEMO_ORG_ID, DEMO_USER_ID) align with seeded data
@@ -9,6 +9,7 @@ const DEMO_REQUESTER_ID = '00000000-0000-0000-0000-000000000003';
 const DEMO_APPROVER_ID = '00000000-0000-0000-0000-000000000004';
 const DEMO_ENG_DEPT_ID = '00000000-0000-0000-0000-000000000010';
 const DEMO_MKT_DEPT_ID = '00000000-0000-0000-0000-000000000011';
+const DEMO_PARENT_ENTITY_ID = '00000000-0000-0000-0000-000000000020';
 
 async function seed() {
   console.log('Seeding database...');
@@ -18,6 +19,7 @@ async function seed() {
   await db.execute(sql`DELETE FROM users WHERE organization_id = ${DEMO_ORG_ID}`);
   await db.execute(sql`DELETE FROM departments WHERE organization_id = ${DEMO_ORG_ID}`);
   await db.execute(sql`DELETE FROM vendors WHERE organization_id = ${DEMO_ORG_ID}`);
+  await db.execute(sql`DELETE FROM legal_entities WHERE organization_id = ${DEMO_ORG_ID}`);
   await db.execute(sql`DELETE FROM organizations WHERE id = ${DEMO_ORG_ID}`);
 
   // Organization
@@ -28,6 +30,17 @@ async function seed() {
     settings: { currency: 'USD', fiscalYearStart: 1 },
   });
   console.log('Created organization: Acme Corp');
+
+  await db.insert(legalEntities).values({
+    id: DEMO_PARENT_ENTITY_ID,
+    organizationId: DEMO_ORG_ID,
+    name: 'Acme Holdings',
+    code: 'ACME-HQ',
+    currency: 'USD',
+    glAccountPrefix: '100',
+    taxId: '99-9999999',
+  });
+  console.log('Created legal entity: Acme Holdings');
 
   // Departments
   await db.insert(departments).values([
@@ -54,6 +67,7 @@ async function seed() {
   await db.insert(vendors).values([
     {
       organizationId: DEMO_ORG_ID,
+      entityId: DEMO_PARENT_ENTITY_ID,
       name: 'Acme Supplies Inc.',
       code: 'ACME-SUP',
       paymentTerms: 'Net 30',
@@ -62,6 +76,7 @@ async function seed() {
     },
     {
       organizationId: DEMO_ORG_ID,
+      entityId: DEMO_PARENT_ENTITY_ID,
       name: 'TechParts Global',
       code: 'TECHPARTS',
       paymentTerms: 'Net 60',

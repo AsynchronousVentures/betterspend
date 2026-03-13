@@ -1,9 +1,10 @@
 import { pgTable, uuid, varchar, boolean, jsonb, timestamp, text } from 'drizzle-orm/pg-core';
-import { organizations } from './organizations';
+import { organizations, legalEntities } from './organizations';
 
 export const vendors = pgTable('vendors', {
   id: uuid('id').primaryKey().defaultRandom(),
   organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+  entityId: uuid('entity_id').references(() => legalEntities.id),
   name: varchar('name', { length: 255 }).notNull(),
   code: varchar('code', { length: 50 }),
   taxId: varchar('tax_id', { length: 100 }),

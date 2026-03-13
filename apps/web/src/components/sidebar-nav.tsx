@@ -85,6 +85,7 @@ const NAV_CONFIG: NavEntry[] = [
       { label: 'Users', href: '/users' },
       { label: 'Departments', href: '/departments' },
       { label: 'Projects', href: '/projects' },
+      { label: 'Entities', href: '/entities' },
     ],
   },
   {

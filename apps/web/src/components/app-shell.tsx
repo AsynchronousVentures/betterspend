@@ -37,6 +37,7 @@ function OfflineIndicator() {
 }
 
 const AUTH_PATHS = ['/login', '/signup', '/punchout', '/forgot-password', '/reset-password', '/vendor-portal'];
+const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 
 const TYPE_LABELS: Record<string, string> = {
   requisition: 'Req',
@@ -261,6 +262,53 @@ function timeAgo(dateStr: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   return `${days}d ago`;
+}
+
+function EntitySwitcher() {
+  const [entities, setEntities] = useState<any[]>([]);
+  const [selectedEntityId, setSelectedEntityId] = useState('');
+
+  useEffect(() => {
+    const stored = typeof window !== 'undefined' ? window.localStorage.getItem(ENTITY_STORAGE_KEY) ?? '' : '';
+    setSelectedEntityId(stored);
+    api.entities.list().then(setEntities).catch(() => {});
+  }, []);
+
+  if (entities.length === 0) return null;
+
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem', color: COLORS.textSecondary }}>
+      <span style={{ whiteSpace: 'nowrap' }}>Entity</span>
+      <select
+        value={selectedEntityId}
+        onChange={(e) => {
+          const nextValue = e.target.value;
+          setSelectedEntityId(nextValue);
+          if (typeof window !== 'undefined') {
+            if (nextValue) window.localStorage.setItem(ENTITY_STORAGE_KEY, nextValue);
+            else window.localStorage.removeItem(ENTITY_STORAGE_KEY);
+            window.location.reload();
+          }
+        }}
+        style={{
+          minWidth: '180px',
+          padding: '0.45rem 0.65rem',
+          border: `1px solid ${COLORS.border}`,
+          borderRadius: '8px',
+          fontSize: '0.8125rem',
+          background: COLORS.contentBg,
+          color: COLORS.textPrimary,
+        }}
+      >
+        <option value="">All entities</option>
+        {entities.map((entity) => (
+          <option key={entity.id} value={entity.id}>
+            {entity.name} ({entity.code})
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 const ENTITY_ROUTES: Record<string, string> = {
@@ -673,6 +721,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </button>
           )}
           <GlobalSearch isMobile={isMobile} />
+          <EntitySwitcher />
           <div style={{ marginLeft: 'auto' }}>
             <NotificationBell />
           </div>

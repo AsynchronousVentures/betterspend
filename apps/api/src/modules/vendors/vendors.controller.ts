@@ -5,6 +5,7 @@ import {
   Patch,
   Param,
   Body,
+  Query,
   ParseUUIDPipe,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
@@ -19,8 +20,8 @@ export class VendorsController {
 
   @Get()
   @ApiOperation({ summary: 'List all vendors' })
-  findAll(@CurrentOrgId() orgId: string) {
-    return this.vendorsService.findAll(orgId);
+  findAll(@CurrentOrgId() orgId: string, @Query('entityId') entityId?: string) {
+    return this.vendorsService.findAll(orgId, entityId);
   }
 
   @Get(':id')
@@ -35,6 +36,7 @@ export class VendorsController {
     const parsed = vendorSchema.parse(body);
     return this.vendorsService.create({
       organizationId: orgId,
+      entityId: (body as any)?.entityId ?? null,
       ...parsed,
     });
   }
@@ -53,7 +55,7 @@ export class VendorsController {
     @CurrentOrgId() orgId: string,
   ) {
     const parsed = vendorSchema.partial().parse(body);
-    return this.vendorsService.update(id, orgId, parsed);
+    return this.vendorsService.update(id, orgId, { ...parsed, entityId: (body as any)?.entityId });
   }
 
   @Patch(':id/esg')

@@ -1,10 +1,11 @@
 import { pgTable, uuid, varchar, text, integer, boolean, timestamp } from 'drizzle-orm/pg-core';
-import { organizations } from './organizations';
+import { organizations, legalEntities } from './organizations';
 import { users } from './users';
 
 export const approvalRules = pgTable('approval_rules', {
   id: uuid('id').primaryKey().defaultRandom(),
   organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+  entityId: uuid('entity_id').references(() => legalEntities.id),
   name: varchar('name', { length: 255 }).notNull(),
   description: text('description'),
   priority: integer('priority').notNull().default(100),

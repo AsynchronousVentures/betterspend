@@ -40,6 +40,7 @@ import { RecurringPoModule } from './modules/recurring-po/recurring-po.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { RequisitionTemplatesModule } from './modules/requisition-templates/requisition-templates.module';
 import { ExportModule } from './modules/export/export.module';
+import { EntitiesModule } from './modules/entities/entities.module';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import { ExportModule } from './modules/export/export.module';
     AnalyticsModule,
     DepartmentsModule,
     ProjectsModule,
+    EntitiesModule,
     AuditModule,
     ReportsModule,
     SearchModule,

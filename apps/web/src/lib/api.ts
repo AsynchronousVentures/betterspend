@@ -1,4 +1,5 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001';
+const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 
 function getCookie(name: string): string | undefined {
   if (typeof document === 'undefined') return undefined;
@@ -13,6 +14,29 @@ function clearAuthAndRedirect() {
     document.cookie = 'bs_token=; Max-Age=0; path=/';
     window.location.href = '/login';
   }
+}
+
+function getSelectedEntityId(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const value = window.localStorage.getItem(ENTITY_STORAGE_KEY);
+  return value || undefined;
+}
+
+function appendEntityId(path: string, entityId?: string): string {
+  const selectedEntityId = entityId ?? getSelectedEntityId();
+  if (!selectedEntityId) return path;
+
+  const [pathname, query = ''] = path.split('?');
+  const params = new URLSearchParams(query);
+  params.set('entityId', selectedEntityId);
+  const nextQuery = params.toString();
+  return nextQuery ? `${pathname}?${nextQuery}` : pathname;
+}
+
+function withEntityBody(data: unknown): unknown {
+  const entityId = getSelectedEntityId();
+  if (!entityId || !data || typeof data !== 'object' || Array.isArray(data)) return data;
+  return { ...(data as Record<string, unknown>), entityId };
 }
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
@@ -41,11 +65,18 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  entities: {
+    list: (includeInactive = false) => apiFetch<any[]>(`/entities${includeInactive ? '?includeInactive=true' : ''}`),
+    get: (id: string) => apiFetch<any>(`/entities/${id}`),
+    create: (data: unknown) => apiFetch<any>('/entities', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: unknown) => apiFetch<any>(`/entities/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    remove: (id: string) => apiFetch<any>(`/entities/${id}`, { method: 'DELETE' }),
+  },
   vendors: {
-    list: () => apiFetch<any[]>('/vendors'),
+    list: () => apiFetch<any[]>(appendEntityId('/vendors')),
     get: (id: string) => apiFetch<any>(`/vendors/${id}`),
-    create: (data: unknown) => apiFetch<any>('/vendors', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id: string, data: unknown) => apiFetch<any>(`/vendors/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    create: (data: unknown) => apiFetch<any>('/vendors', { method: 'POST', body: JSON.stringify(withEntityBody(data)) }),
+    update: (id: string, data: unknown) => apiFetch<any>(`/vendors/${id}`, { method: 'PATCH', body: JSON.stringify(withEntityBody(data)) }),
     transactions: (id: string) => apiFetch<any>(`/vendors/${id}/transactions`),
     updateEsg: (id: string, data: unknown) => apiFetch<any>(`/vendors/${id}/esg`, { method: 'PATCH', body: JSON.stringify(data) }),
     diversitySummary: () => apiFetch<any>('/vendors/diversity/summary'),
@@ -83,10 +114,10 @@ export const api = {
     deliveries: (id: string) => apiFetch<any[]>(`/webhooks/${id}/deliveries`),
   },
   approvalRules: {
-    list: () => apiFetch<any[]>('/approval-rules'),
+    list: () => apiFetch<any[]>(appendEntityId('/approval-rules')),
     get: (id: string) => apiFetch<any>(`/approval-rules/${id}`),
-    create: (data: unknown) => apiFetch<any>('/approval-rules', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id: string, data: unknown) => apiFetch<any>(`/approval-rules/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    create: (data: unknown) => apiFetch<any>('/approval-rules', { method: 'POST', body: JSON.stringify(withEntityBody(data)) }),
+    update: (id: string, data: unknown) => apiFetch<any>(`/approval-rules/${id}`, { method: 'PATCH', body: JSON.stringify(withEntityBody(data)) }),
     remove: (id: string) => apiFetch<any>(`/approval-rules/${id}`, { method: 'DELETE' }),
   },
   catalog: {
@@ -130,9 +161,9 @@ export const api = {
     cancel: (id: string) => apiFetch<any>(`/requisitions/${id}/cancel`, { method: 'POST' }),
   },
   purchaseOrders: {
-    list: () => apiFetch<any[]>('/purchase-orders'),
+    list: () => apiFetch<any[]>(appendEntityId('/purchase-orders')),
     get: (id: string) => apiFetch<any>(`/purchase-orders/${id}`),
-    create: (data: unknown) => apiFetch<any>('/purchase-orders', { method: 'POST', body: JSON.stringify(data) }),
+    create: (data: unknown) => apiFetch<any>('/purchase-orders', { method: 'POST', body: JSON.stringify(withEntityBody(data)) }),
     issue: (id: string) => apiFetch<any>(`/purchase-orders/${id}/issue`, { method: 'POST' }),
     cancel: (id: string) => apiFetch<any>(`/purchase-orders/${id}/cancel`, { method: 'POST' }),
     changeOrder: (id: string, data: unknown) => apiFetch<any>(`/purchase-orders/${id}/change-order`, { method: 'POST', body: JSON.stringify(data) }),
@@ -154,9 +185,9 @@ export const api = {
     },
   },
   invoices: {
-    list: () => apiFetch<any[]>('/invoices'),
+    list: () => apiFetch<any[]>(appendEntityId('/invoices')),
     get: (id: string) => apiFetch<any>(`/invoices/${id}`),
-    create: (data: unknown) => apiFetch<any>('/invoices', { method: 'POST', body: JSON.stringify(data) }),
+    create: (data: unknown) => apiFetch<any>('/invoices', { method: 'POST', body: JSON.stringify(withEntityBody(data)) }),
     approve: (id: string) => apiFetch<any>(`/invoices/${id}/approve`, { method: 'PATCH' }),
     bulkApprove: (ids: string[]) => apiFetch<any[]>('/invoices/bulk-approve', { method: 'POST', body: JSON.stringify({ ids }) }),
     markPaid: (id: string, data?: { paymentReference?: string }) => apiFetch<any>(`/invoices/${id}/mark-paid`, { method: 'PATCH', body: JSON.stringify(data ?? {}) }),
@@ -180,18 +211,18 @@ export const api = {
     cancel: (id: string) => apiFetch<any>(`/receiving/${id}/cancel`, { method: 'PATCH' }),
   },
   budgets: {
-    list: () => apiFetch<any[]>('/budgets'),
+    list: () => apiFetch<any[]>(appendEntityId('/budgets')),
     get: (id: string) => apiFetch<any>(`/budgets/${id}`),
-    create: (data: unknown) => apiFetch<any>('/budgets', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id: string, data: unknown) => apiFetch<any>(`/budgets/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    create: (data: unknown) => apiFetch<any>('/budgets', { method: 'POST', body: JSON.stringify(withEntityBody(data)) }),
+    update: (id: string, data: unknown) => apiFetch<any>(`/budgets/${id}`, { method: 'PATCH', body: JSON.stringify(withEntityBody(data)) }),
     addPeriod: (id: string, data: { periodStart: string; periodEnd: string; allocatedAmount: number }) =>
       apiFetch<any>(`/budgets/${id}/periods`, { method: 'POST', body: JSON.stringify(data) }),
     removePeriod: (id: string, periodId: string) =>
       apiFetch<any>(`/budgets/${id}/periods/${periodId}`, { method: 'DELETE' }),
     forecast: (fiscalYear?: number) =>
-      apiFetch<any[]>('/budgets/forecast' + (fiscalYear ? `?fiscalYear=${fiscalYear}` : '')),
+      apiFetch<any[]>(appendEntityId('/budgets/forecast' + (fiscalYear ? `?fiscalYear=${fiscalYear}` : ''))),
     forecastSummary: (fiscalYear?: number) =>
-      apiFetch<any>('/budgets/forecast/summary' + (fiscalYear ? `?fiscalYear=${fiscalYear}` : '')),
+      apiFetch<any>(appendEntityId('/budgets/forecast/summary' + (fiscalYear ? `?fiscalYear=${fiscalYear}` : ''))),
   },
   audit: {
     list: (params?: { entityType?: string; entityId?: string; limit?: number }) => {

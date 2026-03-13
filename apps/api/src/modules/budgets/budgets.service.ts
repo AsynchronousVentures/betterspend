@@ -3,9 +3,11 @@ import { eq, and, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { budgets, budgetPeriods } from '@betterspend/db';
+import { EntitiesService } from '../entities/entities.service';
 
 export interface CreateBudgetInput {
   name: string;
+  entityId?: string;
   departmentId?: string;
   projectId?: string;
   glAccount?: string;
@@ -22,12 +24,18 @@ export interface CreateBudgetInput {
 
 @Injectable()
 export class BudgetsService {
-  constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
+  constructor(
+    @Inject(DB_TOKEN) private readonly db: Db,
+    private readonly entitiesService: EntitiesService,
+  ) {}
 
-  async findAll(organizationId: string) {
+  async findAll(organizationId: string, entityId?: string) {
     return this.db.query.budgets.findMany({
-      where: (b, { eq }) => eq(b.organizationId, organizationId),
-      with: { periods: true },
+      where: (b, { and, eq }) => and(
+        eq(b.organizationId, organizationId),
+        entityId ? eq(b.entityId, entityId) : undefined,
+      ),
+      with: { periods: true, entity: true },
       orderBy: (b, { desc }) => desc(b.createdAt),
     });
   }
@@ -35,13 +43,14 @@ export class BudgetsService {
   async findOne(id: string, organizationId: string) {
     const budget = await this.db.query.budgets.findFirst({
       where: (b, { and, eq }) => and(eq(b.id, id), eq(b.organizationId, organizationId)),
-      with: { periods: true },
+      with: { periods: true, entity: true },
     });
     if (!budget) throw new NotFoundException(`Budget ${id} not found`);
     return budget;
   }
 
   async create(organizationId: string, input: CreateBudgetInput) {
+    await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
     // Determine budgetType and scopeId from input
     let budgetType: string;
     let scopeId: string;
@@ -66,6 +75,7 @@ export class BudgetsService {
     const budgetId = await this.db.transaction(async (tx) => {
       const [budget] = await tx.insert(budgets).values({
         organizationId,
+        entityId: input.entityId ?? null,
         name: input.name,
         budgetType,
         scopeId,
@@ -135,14 +145,16 @@ export class BudgetsService {
   async update(
     id: string,
     organizationId: string,
-    input: { name?: string; totalAmount?: number; currency?: string },
+    input: { name?: string; totalAmount?: number; currency?: string; entityId?: string | null },
   ) {
     await this.findOne(id, organizationId);
+    await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
     await this.db.update(budgets)
       .set({
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.totalAmount !== undefined ? { totalAmount: String(input.totalAmount) } : {}),
         ...(input.currency !== undefined ? { currency: input.currency } : {}),
+        ...(input.entityId !== undefined ? { entityId: input.entityId } : {}),
         updatedAt: new Date(),
       })
       .where(and(eq(budgets.id, id), eq(budgets.organizationId, organizationId)));

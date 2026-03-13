@@ -1,9 +1,10 @@
 import { pgTable, uuid, varchar, numeric, integer, timestamp } from 'drizzle-orm/pg-core';
-import { organizations } from './organizations';
+import { organizations, legalEntities } from './organizations';
 
 export const budgets = pgTable('budgets', {
   id: uuid('id').primaryKey().defaultRandom(),
   organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+  entityId: uuid('entity_id').references(() => legalEntities.id),
   name: varchar('name', { length: 255 }).notNull(),
   budgetType: varchar('budget_type', { length: 30 }).notNull(), // department|project|gl_account
   scopeId: uuid('scope_id').notNull(),

@@ -113,6 +113,13 @@
       "when": 1774100000000,
       "tag": "0015_contract_compliance",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1774300000000,
+      "tag": "0016_multi_entity_support",
+      "breakpoints": true
     }
   ]
 }

@@ -3,15 +3,24 @@ import { eq, and, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { vendors } from '@betterspend/db';
+import { EntitiesService } from '../entities/entities.service';
 
 @Injectable()
 export class VendorsService {
-  constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
+  constructor(
+    @Inject(DB_TOKEN) private readonly db: Db,
+    private readonly entitiesService: EntitiesService,
+  ) {}
 
-  async findAll(organizationId: string) {
+  async findAll(organizationId: string, entityId?: string) {
     return this.db.query.vendors.findMany({
-      where: eq(vendors.organizationId, organizationId),
+      where: (v, { and, eq, isNull, or }) =>
+        and(
+          eq(v.organizationId, organizationId),
+          entityId ? or(eq(v.entityId, entityId), isNull(v.entityId)) : undefined,
+        ),
       orderBy: (v, { asc }) => asc(v.name),
+      with: { entity: true },
     });
   }
 
@@ -19,6 +28,7 @@ export class VendorsService {
     const vendor = await this.db.query.vendors.findFirst({
       where: (v, { and, eq }) =>
         and(eq(v.id, id), eq(v.organizationId, organizationId)),
+      with: { entity: true },
     });
 
     if (!vendor) throw new NotFoundException(`Vendor ${id} not found`);
@@ -26,15 +36,18 @@ export class VendorsService {
   }
 
   async create(data: typeof vendors.$inferInsert) {
+    await this.entitiesService.assertBelongsToOrg(data.organizationId, data.entityId);
     const [vendor] = await this.db.insert(vendors).values(data).returning();
     return vendor;
   }
 
   async update(id: string, organizationId: string, data: Partial<typeof vendors.$inferInsert>) {
+    await this.findOne(id, organizationId);
+    await this.entitiesService.assertBelongsToOrg(organizationId, data.entityId);
     const [vendor] = await this.db
       .update(vendors)
       .set({ ...data, updatedAt: new Date() })
-      .where(eq(vendors.id, id))
+      .where(and(eq(vendors.id, id), eq(vendors.organizationId, organizationId)))
       .returning();
 
     if (!vendor) throw new NotFoundException(`Vendor ${id} not found`);

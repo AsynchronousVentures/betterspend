@@ -50,8 +50,8 @@ export class BudgetsController {
 
   @Get()
   @ApiOperation({ summary: 'List all budgets' })
-  findAll(@CurrentOrgId() orgId: string) {
-    return this.budgetsService.findAll(orgId);
+  findAll(@CurrentOrgId() orgId: string, @Query('entityId') entityId?: string) {
+    return this.budgetsService.findAll(orgId, entityId);
   }
 
   @Get(':id')
@@ -70,7 +70,7 @@ export class BudgetsController {
   @ApiOperation({ summary: 'Update a budget' })
   update(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { name?: string; totalAmount?: number; currency?: string },
+    @Body() body: { name?: string; totalAmount?: number; currency?: string; entityId?: string },
     @CurrentOrgId() orgId: string,
   ) {
     return this.budgetsService.update(id, orgId, body);
