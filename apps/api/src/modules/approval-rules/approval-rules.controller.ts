@@ -2,7 +2,7 @@ import {
   Controller, Get, Post, Patch, Delete, Param, Body, Query, ParseUUIDPipe, HttpCode, HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { ApprovalRulesService, CreateApprovalRuleInput, UpdateApprovalRuleInput } from './approval-rules.service';
+import { ApprovalRulesService, CreateApprovalRuleInput, UpdateApprovalRuleInput, ApprovalRuleSimulationInput } from './approval-rules.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 
@@ -28,6 +28,13 @@ export class ApprovalRulesController {
   @ApiOperation({ summary: 'Create an approval rule with steps' })
   create(@Body() body: CreateApprovalRuleInput, @CurrentOrgId() orgId: string) {
     return this.approvalRulesService.create(orgId, body);
+  }
+
+  @Post('simulate')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Simulate approval rule matching for a hypothetical request' })
+  simulate(@Body() body: ApprovalRuleSimulationInput, @CurrentOrgId() orgId: string) {
+    return this.approvalRulesService.simulate(orgId, body);
   }
 
   @Patch(':id')

@@ -47,6 +47,14 @@ type RuleDraft = {
   steps: RuleStep[];
 };
 
+type SimulationForm = {
+  requesterId: string;
+  departmentId: string;
+  projectId: string;
+  totalAmount: string;
+  currency: string;
+};
+
 const ROLE_OPTIONS = ['approver', 'admin', 'finance', 'requester', 'receiver'];
 const APPROVER_TYPE_OPTIONS = [
   { value: 'role', label: 'Role' },
@@ -282,6 +290,16 @@ function formatStepSummary(step: RuleStep, users: UserRecord[]) {
   );
 }
 
+function createDefaultSimulation(): SimulationForm {
+  return {
+    requesterId: '',
+    departmentId: '',
+    projectId: '',
+    totalAmount: '2500',
+    currency: 'USD',
+  };
+}
+
 function RuleCard({
   rule,
   users,
@@ -389,13 +407,16 @@ export default function ApprovalRulesPage() {
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<'visual' | 'raw'>('visual');
+  const [activeTab, setActiveTab] = useState<'visual' | 'raw' | 'simulator'>('visual');
   const [draft, setDraft] = useState<RuleDraft>(createEmptyDraft());
   const [rawText, setRawText] = useState(stringifyDraft(createEmptyDraft()));
   const [rawError, setRawError] = useState('');
   const [saveError, setSaveError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
+  const [simulation, setSimulation] = useState<SimulationForm>(createDefaultSimulation());
+  const [simulationResult, setSimulationResult] = useState<any>(null);
+  const [simulationLoading, setSimulationLoading] = useState(false);
 
   useEffect(() => {
     load();
@@ -564,6 +585,24 @@ export default function ApprovalRulesPage() {
       setSaveError(error.message || 'Unable to save rule.');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function runSimulation() {
+    setSimulationLoading(true);
+    try {
+      const result = await api.approvalRules.simulate({
+        requesterId: simulation.requesterId || undefined,
+        departmentId: simulation.departmentId || undefined,
+        projectId: simulation.projectId || undefined,
+        totalAmount: Number(simulation.totalAmount || 0),
+        currency: simulation.currency,
+      });
+      setSimulationResult(result);
+    } catch (error: any) {
+      setSaveError(error.message || 'Unable to run approval simulation.');
+    } finally {
+      setSimulationLoading(false);
     }
   }
 
@@ -743,7 +782,7 @@ export default function ApprovalRulesPage() {
                 borderRadius: '999px',
               }}
             >
-              {(['visual', 'raw'] as const).map((tab) => (
+              {(['visual', 'raw', 'simulator'] as const).map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -759,7 +798,11 @@ export default function ApprovalRulesPage() {
                     fontWeight: 600,
                   }}
                 >
-                  {tab === 'visual' ? 'Visual builder' : 'Raw JSON'}
+                  {tab === 'visual'
+                    ? 'Visual builder'
+                    : tab === 'raw'
+                      ? 'Raw JSON'
+                      : 'Simulator'}
                 </button>
               ))}
             </div>
@@ -853,7 +896,145 @@ export default function ApprovalRulesPage() {
             />
           </div>
 
-          {activeTab === 'raw' ? (
+          {activeTab === 'simulator' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(18rem, 22rem) minmax(0, 1fr)', gap: '1rem' }}>
+              <div
+                style={{
+                  border: `1px solid ${COLORS.border}`,
+                  borderRadius: '14px',
+                  padding: '1rem',
+                  background: COLORS.contentBg,
+                }}
+              >
+                <h3 style={{ margin: 0, fontSize: FONT.lg, color: COLORS.textPrimary }}>Hypothetical request</h3>
+                <div style={{ marginTop: '0.35rem', color: COLORS.textSecondary, fontSize: FONT.sm }}>
+                  Test the currently active rules without creating a real requisition.
+                </div>
+                <div style={{ display: 'grid', gap: '0.75rem', marginTop: '1rem' }}>
+                  <input
+                    value={simulation.totalAmount}
+                    onChange={(event) => setSimulation((current) => ({ ...current, totalAmount: event.target.value }))}
+                    placeholder="Total amount"
+                    type="number"
+                    style={{ width: '100%', padding: '0.75rem 0.85rem', borderRadius: '10px', border: `1px solid ${COLORS.inputBorder}`, boxSizing: 'border-box' }}
+                  />
+                  <input
+                    value={simulation.currency}
+                    onChange={(event) => setSimulation((current) => ({ ...current, currency: event.target.value.toUpperCase() }))}
+                    placeholder="Currency"
+                    maxLength={3}
+                    style={{ width: '100%', padding: '0.75rem 0.85rem', borderRadius: '10px', border: `1px solid ${COLORS.inputBorder}`, boxSizing: 'border-box' }}
+                  />
+                  <input
+                    value={simulation.requesterId}
+                    onChange={(event) => setSimulation((current) => ({ ...current, requesterId: event.target.value }))}
+                    placeholder="Requester user ID"
+                    list="approval-rule-user-ids"
+                    style={{ width: '100%', padding: '0.75rem 0.85rem', borderRadius: '10px', border: `1px solid ${COLORS.inputBorder}`, boxSizing: 'border-box' }}
+                  />
+                  <datalist id="approval-rule-user-ids">
+                    {users.map((user) => (
+                      <option key={user.id} value={user.id}>{user.name}</option>
+                    ))}
+                  </datalist>
+                  <input
+                    value={simulation.departmentId}
+                    onChange={(event) => setSimulation((current) => ({ ...current, departmentId: event.target.value }))}
+                    placeholder="Department ID"
+                    style={{ width: '100%', padding: '0.75rem 0.85rem', borderRadius: '10px', border: `1px solid ${COLORS.inputBorder}`, boxSizing: 'border-box' }}
+                  />
+                  <input
+                    value={simulation.projectId}
+                    onChange={(event) => setSimulation((current) => ({ ...current, projectId: event.target.value }))}
+                    placeholder="Project ID"
+                    style={{ width: '100%', padding: '0.75rem 0.85rem', borderRadius: '10px', border: `1px solid ${COLORS.inputBorder}`, boxSizing: 'border-box' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={runSimulation}
+                    disabled={simulationLoading}
+                    style={{
+                      padding: '0.8rem 1rem',
+                      borderRadius: '10px',
+                      border: 'none',
+                      background: simulationLoading ? COLORS.textMuted : COLORS.accentBlue,
+                      color: COLORS.white,
+                      cursor: simulationLoading ? 'not-allowed' : 'pointer',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {simulationLoading ? 'Running...' : 'Run simulation'}
+                  </button>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  border: `1px solid ${COLORS.border}`,
+                  borderRadius: '14px',
+                  padding: '1rem',
+                  background: COLORS.contentBg,
+                }}
+              >
+                <h3 style={{ margin: 0, fontSize: FONT.lg, color: COLORS.textPrimary }}>Approval chain preview</h3>
+                <div style={{ marginTop: '0.35rem', color: COLORS.textSecondary, fontSize: FONT.sm }}>
+                  Review which rules would match, in what order, and why.
+                </div>
+                {!simulationResult ? (
+                  <div style={{ marginTop: '1rem', padding: '1rem', borderRadius: '12px', border: `1px dashed ${COLORS.border}`, color: COLORS.textMuted }}>
+                    Run a simulation to see the resulting approval flow.
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gap: '0.85rem', marginTop: '1rem' }}>
+                    {simulationResult.unmatchedWarning && (
+                      <div style={{ padding: '1rem', borderRadius: '12px', background: COLORS.accentAmberLight, color: COLORS.accentAmberDark }}>
+                        {simulationResult.unmatchedWarning}
+                      </div>
+                    )}
+                    {simulationResult.steps?.map((step: any) => (
+                      <div
+                        key={`${step.ruleId}-${step.stepOrder}`}
+                        style={{
+                          border: `1px solid ${COLORS.border}`,
+                          borderRadius: '12px',
+                          padding: '1rem',
+                          background: COLORS.cardBg,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ fontSize: FONT.sm, color: COLORS.textSecondary }}>Step {step.stepOrder}</div>
+                            <div style={{ marginTop: '0.2rem', fontWeight: 700, color: COLORS.textPrimary }}>{step.ruleName}</div>
+                          </div>
+                          <span style={{ fontSize: FONT.xs, color: COLORS.textSecondary }}>Priority {step.rulePriority}</span>
+                        </div>
+                        <div style={{ marginTop: '0.6rem', fontSize: FONT.sm, color: COLORS.textSecondary }}>
+                          {step.conditionExplanation}
+                        </div>
+                        <div style={{ marginTop: '0.6rem', display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                          {step.approvers?.map((approver: any, index: number) => (
+                            <span
+                              key={`${step.ruleId}-${step.stepOrder}-${index}`}
+                              style={{
+                                padding: '0.25rem 0.5rem',
+                                borderRadius: '999px',
+                                border: `1px solid ${COLORS.border}`,
+                                fontSize: FONT.xs,
+                                color: COLORS.textSecondary,
+                                background: COLORS.white,
+                              }}
+                            >
+                              {approver.label}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : activeTab === 'raw' ? (
             <div>
               <div
                 style={{ marginBottom: '0.6rem', color: COLORS.textSecondary, fontSize: FONT.sm }}

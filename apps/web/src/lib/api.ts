@@ -156,6 +156,11 @@ export const api = {
   approvalRules: {
     list: () => apiFetch<any[]>(appendEntityId('/approval-rules')),
     get: (id: string) => apiFetch<any>(`/approval-rules/${id}`),
+    simulate: (data: unknown) =>
+      apiFetch<any>('/approval-rules/simulate', {
+        method: 'POST',
+        body: JSON.stringify(withEntityBody(data)),
+      }),
     create: (data: unknown) =>
       apiFetch<any>('/approval-rules', {
         method: 'POST',

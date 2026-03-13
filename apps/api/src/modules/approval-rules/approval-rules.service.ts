@@ -36,6 +36,16 @@ export interface UpdateApprovalRuleInput {
   }>;
 }
 
+export interface ApprovalRuleSimulationInput {
+  entityId?: string;
+  requesterId?: string;
+  departmentId?: string;
+  projectId?: string;
+  totalAmount?: number;
+  currency?: string;
+  fields?: Record<string, unknown>;
+}
+
 @Injectable()
 export class ApprovalRulesService {
   constructor(
@@ -145,5 +155,129 @@ export class ApprovalRulesService {
       .where(and(eq(approvalRules.id, id), eq(approvalRules.organizationId, organizationId)));
 
     return { success: true };
+  }
+
+  private evaluateCondition(condition: any, entity: Record<string, any>): boolean {
+    if (!condition || Object.keys(condition).length === 0) return true;
+
+    if (condition.operator === 'AND') {
+      return Array.isArray(condition.conditions)
+        ? condition.conditions.every((child: any) => this.evaluateCondition(child, entity))
+        : true;
+    }
+    if (condition.operator === 'OR') {
+      return Array.isArray(condition.conditions)
+        ? condition.conditions.some((child: any) => this.evaluateCondition(child, entity))
+        : true;
+    }
+
+    const rawFieldValue = entity[condition.field];
+    const fieldValue =
+      rawFieldValue !== undefined && rawFieldValue !== null && rawFieldValue !== ''
+        ? (Number.isNaN(Number(rawFieldValue)) ? rawFieldValue : Number(rawFieldValue))
+        : rawFieldValue;
+    const condValue = condition.value;
+
+    switch (condition.operator) {
+      case '>=':
+        return Number(fieldValue) >= Number(condValue);
+      case '>':
+        return Number(fieldValue) > Number(condValue);
+      case '<=':
+        return Number(fieldValue) <= Number(condValue);
+      case '<':
+        return Number(fieldValue) < Number(condValue);
+      case '==':
+      case 'eq':
+        return String(fieldValue) === String(condValue);
+      case '!=':
+      case 'neq':
+        return String(fieldValue) !== String(condValue);
+      default:
+        return false;
+    }
+  }
+
+  private describeCondition(condition: any): string {
+    if (!condition || Object.keys(condition).length === 0) return 'Always matches';
+    if (condition.operator === 'AND' || condition.operator === 'OR') {
+      const count = Array.isArray(condition.conditions) ? condition.conditions.length : 0;
+      return `${condition.operator} ${count} condition${count === 1 ? '' : 's'}`;
+    }
+    if (typeof condition.field === 'string' && typeof condition.operator === 'string') {
+      return `${condition.field} ${condition.operator} ${String(condition.value ?? '')}`;
+    }
+    return 'Always matches';
+  }
+
+  private formatApprover(step: { approverType: string; approverId?: string | null; approverRole?: string | null }) {
+    if (step.approverType === 'user') {
+      return { id: step.approverId ?? null, label: step.approverId ? `User ${step.approverId}` : 'Unassigned user' };
+    }
+    if (step.approverType === 'role') {
+      return { id: null, label: `Role: ${step.approverRole ?? 'approver'}` };
+    }
+    return { id: null, label: step.approverType.replace(/_/g, ' ') };
+  }
+
+  async simulate(organizationId: string, input: ApprovalRuleSimulationInput) {
+    const simulationEntity = {
+      requesterId: input.requesterId ?? null,
+      departmentId: input.departmentId ?? null,
+      projectId: input.projectId ?? null,
+      totalAmount: input.totalAmount ?? 0,
+      total_amount: input.totalAmount ?? 0,
+      currency: input.currency ?? 'USD',
+      ...(input.fields ?? {}),
+    };
+
+    const rules = await this.db.query.approvalRules.findMany({
+      where: (rule, { and, eq }) =>
+        and(
+          eq(rule.organizationId, organizationId),
+          eq(rule.isActive, true),
+          input.entityId ? eq(rule.entityId, input.entityId) : undefined,
+        ),
+      with: { steps: true, entity: true },
+      orderBy: (rule, { asc }) => asc(rule.priority),
+    });
+
+    const matchedRules = rules
+      .map((rule) => {
+        let conditions: any = {};
+        try {
+          conditions = typeof rule.conditions === 'string' ? JSON.parse(rule.conditions) : rule.conditions;
+        } catch {
+          conditions = {};
+        }
+        return { rule, conditions, matched: this.evaluateCondition(conditions, simulationEntity) };
+      })
+      .filter((result) => result.matched);
+
+    const steps = matchedRules.flatMap(({ rule, conditions }) =>
+      [...rule.steps]
+        .sort((a, b) => a.stepOrder - b.stepOrder)
+        .map((step) => ({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          rulePriority: rule.priority,
+          entity: rule.entity ? { id: rule.entity.id, name: rule.entity.name } : null,
+          stepOrder: step.stepOrder,
+          approverType: step.approverType,
+          requiredCount: step.requiredCount,
+          approvers: [this.formatApprover(step)],
+          conditionExplanation: this.describeCondition(conditions),
+        })),
+    );
+
+    return {
+      entity: simulationEntity,
+      matchedRuleCount: matchedRules.length,
+      steps,
+      unmatchedWarning:
+        matchedRules.length === 0
+          ? 'No active approval rules matched this scenario. The request would auto-approve under the current engine.'
+          : null,
+    };
   }
 }
