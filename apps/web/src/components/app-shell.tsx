@@ -3,35 +3,45 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  Bell,
+  ChevronRight,
+  Command,
+  Menu,
+  Search,
+  Settings2,
+  WifiOff,
+  X,
+} from 'lucide-react';
 import SidebarNav from './sidebar-nav';
 import { api } from '../lib/api';
-import { COLORS, SHADOWS } from '../lib/theme';
 import { useIsMobile, useMediaQuery } from '../lib/use-media-query';
 import { useBranding } from '../lib/branding';
-
-/* ── Offline Indicator ── */
+import { Button } from './ui/button';
+import { Badge } from './ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Input } from './ui/input';
+import { Separator } from './ui/separator';
+import { cn } from '../lib/utils';
 
 function OfflineIndicator() {
   const [isOffline, setIsOffline] = useState(false);
+
   useEffect(() => {
-    const go = () => setIsOffline(!navigator.onLine);
-    window.addEventListener('online', go);
-    window.addEventListener('offline', go);
+    const update = () => setIsOffline(!navigator.onLine);
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
     return () => {
-      window.removeEventListener('online', go);
-      window.removeEventListener('offline', go);
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
     };
   }, []);
+
   if (!isOffline) return null;
+
   return (
-    <div style={{
-      background: '#f59e0b',
-      color: '#000',
-      textAlign: 'center',
-      padding: '0.25rem',
-      fontSize: '0.75rem',
-      fontWeight: 600,
-    }}>
+    <div className="flex items-center justify-center gap-2 border-b border-amber-300/70 bg-amber-100 px-4 py-2 text-xs font-semibold text-amber-950">
+      <WifiOff className="size-3.5" />
       You are offline — some features may be unavailable
     </div>
   );
@@ -43,6 +53,7 @@ const SHORTCUTS_DISABLED_KEY = 'betterspend:shortcuts-disabled';
 const SIDEBAR_COLLAPSED_KEY = 'betterspend:sidebar-collapsed';
 const RECENT_SEARCHES_KEY = 'betterspend:recent-searches';
 const NOTIFICATION_LAST_VIEWED_KEY = 'betterspend:notification-last-viewed-at';
+
 const TYPE_LABELS: Record<string, string> = {
   requisition: 'Req',
   purchase_order: 'PO',
@@ -51,12 +62,12 @@ const TYPE_LABELS: Record<string, string> = {
   catalog_item: 'Catalog',
 };
 
-const TYPE_COLORS: Record<string, { bg: string; text: string }> = {
-  requisition: { bg: COLORS.accentBlueLight, text: COLORS.accentBlueDark },
-  purchase_order: { bg: COLORS.accentGreenLight, text: COLORS.accentGreenDark },
-  invoice: { bg: COLORS.accentAmberLight, text: COLORS.accentAmberDark },
-  vendor: { bg: COLORS.accentPurpleLight, text: COLORS.accentPurpleDark },
-  catalog_item: { bg: '#f0f9ff', text: '#0369a1' },
+const TYPE_TONE: Record<string, string> = {
+  requisition: 'bg-primary/12 text-primary',
+  purchase_order: 'bg-emerald-100 text-emerald-800',
+  invoice: 'bg-amber-100 text-amber-800',
+  vendor: 'bg-violet-100 text-violet-800',
+  catalog_item: 'bg-sky-100 text-sky-800',
 };
 
 type NotificationPreferences = {
@@ -65,41 +76,16 @@ type NotificationPreferences = {
   enabledTypes: string[];
 };
 
-/* ── Hamburger Icon ── */
-
-function HamburgerIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-      <path d="M3 5h14M3 10h14M3 15h14" stroke={COLORS.textSecondary} strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
 }
-
-/* ── Close Icon ── */
-
-function CloseIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-      <path d="M5 5l10 10M15 5L5 15" stroke={COLORS.sidebarText} strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function CollapseIcon({ collapsed }: { collapsed: boolean }) {
-  return (
-    <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
-      <path
-        d={collapsed ? 'M7 5l5 5-5 5' : 'M13 5l-5 5 5 5'}
-        stroke={COLORS.sidebarText}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-/* ── Global Search ── */
 
 function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   const router = useRouter();
@@ -132,9 +118,11 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
       setActiveIndex(-1);
       return;
     }
+
     debounceRef.current = setTimeout(() => {
       setLoading(true);
-      api.search.query(query)
+      api.search
+        .query(query)
         .then((data: any) => {
           const all: any[] = [
             ...data.requisitions,
@@ -158,11 +146,12 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   }, [query]);
 
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setOpen(false);
       }
     }
+
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
@@ -171,7 +160,10 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
     setOpen(false);
     const normalizedQuery = query.trim();
     if (normalizedQuery) {
-      const nextRecentSearches = [normalizedQuery, ...recentSearches.filter((item) => item !== normalizedQuery)].slice(0, 5);
+      const nextRecentSearches = [
+        normalizedQuery,
+        ...recentSearches.filter((item) => item !== normalizedQuery),
+      ].slice(0, 5);
       setRecentSearches(nextRecentSearches);
       if (typeof window !== 'undefined') {
         window.localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(nextRecentSearches));
@@ -194,8 +186,8 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
     }
   }
 
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Escape') {
+  function handleKeyDown(event: React.KeyboardEvent) {
+    if (event.key === 'Escape') {
       if (query) {
         setQuery('');
         setResults([]);
@@ -209,85 +201,65 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
 
     if (!open || results.length === 0) return;
 
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
       setActiveIndex((prev) => (prev + 1) % results.length);
       return;
     }
 
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
       setActiveIndex((prev) => (prev <= 0 ? results.length - 1 : prev - 1));
       return;
     }
 
-    if (e.key === 'Enter' && activeIndex >= 0 && results[activeIndex]) {
-      e.preventDefault();
+    if (event.key === 'Enter' && activeIndex >= 0 && results[activeIndex]) {
+      event.preventDefault();
       navigate(results[activeIndex]._href);
     }
   }
 
   return (
-    <div ref={containerRef} style={{ position: 'relative', width: isMobile ? '100%' : '360px' }}>
-      <input
-        data-global-search="true"
-        aria-label="Global search"
-        ref={inputRef}
-        value={query}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          if (e.target.value.length >= 2 || recentSearches.length > 0) setOpen(true);
-        }}
-        onFocus={() => {
-          if (results.length > 0 || recentSearches.length > 0) setOpen(true);
-        }}
-        onKeyDown={handleKeyDown}
-        placeholder="Search requisitions, POs, invoices..."
-        style={{
-          width: '100%',
-          padding: '0.5rem 0.75rem',
-          border: `1px solid ${COLORS.border}`,
-          borderRadius: '8px',
-          fontSize: '0.8125rem',
-          background: COLORS.contentBg,
-          color: COLORS.textPrimary,
-          outline: 'none',
-          boxSizing: 'border-box',
-          transition: 'border-color 0.15s, box-shadow 0.15s',
-        }}
-        onFocusCapture={(e) => {
-          (e.currentTarget as HTMLInputElement).style.borderColor = COLORS.accentBlue;
-          (e.currentTarget as HTMLInputElement).style.boxShadow = SHADOWS.focusRing;
-        }}
-        onBlurCapture={(e) => {
-          (e.currentTarget as HTMLInputElement).style.borderColor = COLORS.border;
-          (e.currentTarget as HTMLInputElement).style.boxShadow = 'none';
-        }}
-      />
-      {loading && (
-        <div style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: COLORS.textMuted, fontSize: '0.75rem' }}>...</div>
-      )}
-      {open && (results.length > 0 || (query.length < 2 && recentSearches.length > 0)) && (
-        <div style={{
-          position: 'absolute',
-          top: 'calc(100% + 6px)',
-          left: 0,
-          right: 0,
-          background: COLORS.white,
-          border: `1px solid ${COLORS.border}`,
-          borderRadius: '10px',
-          boxShadow: SHADOWS.dropdown,
-          zIndex: 100,
-          overflow: 'hidden',
-        }}>
+    <div ref={containerRef} className={cn('relative', isMobile ? 'w-full' : 'w-[24rem]')}>
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          data-global-search="true"
+          aria-label="Global search"
+          ref={inputRef}
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            if (event.target.value.length >= 2 || recentSearches.length > 0) setOpen(true);
+          }}
+          onFocus={() => {
+            if (results.length > 0 || recentSearches.length > 0) setOpen(true);
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder="Search requisitions, POs, invoices..."
+          className="h-11 rounded-xl border-border/70 bg-background/85 pl-10 pr-10 shadow-none backdrop-blur"
+        />
+        {loading ? (
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">...</div>
+        ) : (
+          <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-md border border-border/70 bg-muted/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <Command className="mr-1 inline size-3" />K
+          </div>
+        )}
+      </div>
+
+      {open && (results.length > 0 || (query.length < 2 && recentSearches.length > 0)) ? (
+        <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-50 overflow-hidden rounded-2xl border border-border/70 bg-card shadow-[0_24px_70px_-30px_rgba(15,23,42,0.45)]">
           {query.length < 2 && recentSearches.length > 0 ? (
             <>
-              <div style={{ padding: '0.625rem 0.875rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${COLORS.contentBg}` }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: COLORS.textSecondary }}>Recent Searches</span>
+              <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+                <span className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                  Recent Searches
+                </span>
                 <button
                   type="button"
                   onClick={clearRecentSearches}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: COLORS.accentBlue, padding: 0 }}
+                  className="text-xs font-semibold text-primary transition-colors hover:text-primary/80"
                 >
                   Clear
                 </button>
@@ -297,126 +269,59 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
                   key={item}
                   type="button"
                   onClick={() => applyRecentSearch(item)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    width: '100%',
-                    padding: '0.625rem 0.875rem',
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    borderBottom: `1px solid ${COLORS.contentBg}`,
-                    fontSize: '0.8125rem',
-                    color: COLORS.textPrimary,
-                  }}
+                  className="flex w-full items-center px-4 py-3 text-left text-sm text-foreground transition-colors hover:bg-muted/60"
                 >
                   {item}
                 </button>
               ))}
             </>
           ) : null}
-          {results.map((r, index) => {
-            const tc = TYPE_COLORS[r._type] ?? { bg: COLORS.contentBg, text: COLORS.textSecondary };
+
+          {results.map((result, index) => {
+            const tone = TYPE_TONE[result._type] ?? 'bg-muted text-muted-foreground';
             return (
               <button
-                key={`${r._type}-${r.id}`}
-                onClick={() => navigate(r._href)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.625rem',
-                  width: '100%',
-                  padding: '0.625rem 0.875rem',
-                  background: activeIndex === index ? COLORS.hoverBg : 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  borderBottom: `1px solid ${COLORS.contentBg}`,
-                  transition: 'background 0.1s',
-                }}
+                key={`${result._type}-${result.id}`}
+                onClick={() => navigate(result._href)}
                 onMouseEnter={() => setActiveIndex(index)}
-              >
-                <span style={{
-                  background: tc.bg,
-                  color: tc.text,
-                  padding: '0.125rem 0.4rem',
-                  borderRadius: '4px',
-                  fontSize: '0.6875rem',
-                  fontWeight: 600,
-                  minWidth: '40px',
-                  textAlign: 'center',
-                }}>
-                  {TYPE_LABELS[r._type] ?? r._type}
-                </span>
-                <span style={{
-                  fontSize: '0.8125rem',
-                  color: COLORS.textPrimary,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}>
-                  {r._label}
-                </span>
-                {r.status && (
-                  <span style={{ marginLeft: 'auto', fontSize: '0.6875rem', color: COLORS.textMuted, flexShrink: 0 }}>{r.status}</span>
+                className={cn(
+                  'flex w-full items-center gap-3 border-b border-border/50 px-4 py-3 text-left transition-colors',
+                  activeIndex === index ? 'bg-muted/70' : 'hover:bg-muted/40',
                 )}
+              >
+                <span className={cn('rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em]', tone)}>
+                  {TYPE_LABELS[result._type] ?? result._type}
+                </span>
+                <span className="truncate text-sm text-foreground">{result._label}</span>
+                {result.status ? (
+                  <span className="ml-auto shrink-0 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                    {result.status}
+                  </span>
+                ) : null}
               </button>
             );
           })}
-          {query.length >= 2 && totalResults > 0 && (
-            <div style={{ padding: '0.625rem 0.875rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: COLORS.contentBg }}>
-              <span style={{ fontSize: '0.75rem', color: COLORS.textSecondary }}>
+
+          {query.length >= 2 && totalResults > 0 ? (
+            <div className="flex items-center justify-between bg-muted/50 px-4 py-3">
+              <span className="text-xs text-muted-foreground">
                 Showing {Math.min(results.length, 10)} of {totalResults} results
               </span>
               {totalResults > 10 ? (
                 <button
                   type="button"
                   onClick={() => navigate(`/search?q=${encodeURIComponent(query.trim())}`)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '0.75rem', color: COLORS.accentBlue, fontWeight: 600 }}
+                  className="text-xs font-semibold text-primary transition-colors hover:text-primary/80"
                 >
                   See all results
                 </button>
               ) : null}
             </div>
-          )}
+          ) : null}
         </div>
-      )}
+      ) : null}
     </div>
   );
-}
-
-/* ── Bell Icon ── */
-
-function BellIcon({ hasUnread }: { hasUnread: boolean }) {
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-      <path
-        d="M10 2a6 6 0 0 0-6 6v2.5l-1.5 2V14h15v-1.5L16 10.5V8a6 6 0 0 0-6-6z"
-        stroke={hasUnread ? COLORS.accentBlue : COLORS.textSecondary}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M8 14a2 2 0 0 0 4 0"
-        stroke={hasUnread ? COLORS.accentBlue : COLORS.textSecondary}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
 }
 
 function EntitySwitcher() {
@@ -433,16 +338,13 @@ function EntitySwitcher() {
   if (entities.length === 0) return null;
 
   return (
-    <label
-      title="Choose the active entity scope"
-      style={{ display: 'flex', alignItems: 'center', gap: compactEntitySwitcher ? 0 : '0.5rem', fontSize: '0.75rem', color: COLORS.textSecondary }}
-    >
-      {!compactEntitySwitcher ? <span style={{ whiteSpace: 'nowrap' }}>Entity</span> : null}
+    <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+      {!compactEntitySwitcher ? <span>Entity</span> : null}
       <select
         aria-label="Select active entity"
         value={selectedEntityId}
-        onChange={(e) => {
-          const nextValue = e.target.value;
+        onChange={(event) => {
+          const nextValue = event.target.value;
           setSelectedEntityId(nextValue);
           if (typeof window !== 'undefined') {
             if (nextValue) window.localStorage.setItem(ENTITY_STORAGE_KEY, nextValue);
@@ -450,15 +352,10 @@ function EntitySwitcher() {
             window.location.reload();
           }
         }}
-        style={{
-          minWidth: compactEntitySwitcher ? '120px' : '180px',
-          padding: '0.45rem 0.65rem',
-          border: `1px solid ${COLORS.border}`,
-          borderRadius: '8px',
-          fontSize: '0.8125rem',
-          background: COLORS.contentBg,
-          color: COLORS.textPrimary,
-        }}
+        className={cn(
+          'rounded-xl border border-border/70 bg-background/85 px-3 py-2 text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+          compactEntitySwitcher ? 'min-w-[9rem]' : 'min-w-[12rem]',
+        )}
       >
         <option value="">All entities</option>
         {entities.map((entity) => (
@@ -477,8 +374,6 @@ const ENTITY_ROUTES: Record<string, string> = {
   invoice: '/invoices',
 };
 
-/* ── Notification Bell ── */
-
 function NotificationBell() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -495,9 +390,7 @@ function NotificationBell() {
   });
 
   useEffect(() => {
-    api.notifications.getPreferences()
-      .then((stored) => setPreferences((prev) => ({ ...prev, ...stored })))
-      .catch(() => {});
+    api.notifications.getPreferences().then((stored) => setPreferences((prev) => ({ ...prev, ...stored }))).catch(() => {});
   }, []);
 
   async function updatePreferences(nextValue: Partial<NotificationPreferences>) {
@@ -508,39 +401,30 @@ function NotificationBell() {
   }
 
   const fetchCount = useCallback(() => {
-    Promise.all([
-      api.notifications.unreadCount(),
-      api.notifications.list({ limit: 1 }),
-    ])
+    Promise.all([api.notifications.unreadCount(), api.notifications.list({ limit: 1 })])
       .then(([countData, latestData]) => {
         setUnreadCount(countData.count);
-        const lastViewedAt = typeof window === 'undefined'
-          ? null
-          : window.localStorage.getItem(NOTIFICATION_LAST_VIEWED_KEY);
+        const lastViewedAt =
+          typeof window === 'undefined' ? null : window.localStorage.getItem(NOTIFICATION_LAST_VIEWED_KEY);
         const latest = latestData.items[0];
         setHasNewSinceLastView(
-          Boolean(
-            latest?.createdAt
-            && lastViewedAt
-            && new Date(latest.createdAt).getTime() > new Date(lastViewedAt).getTime(),
-          ),
+          Boolean(latest?.createdAt && lastViewedAt && new Date(latest.createdAt).getTime() > new Date(lastViewedAt).getTime()),
         );
       })
       .catch(() => {});
   }, []);
 
-  // Initial fetch + polling every 30s
   useEffect(() => {
     fetchCount();
     const interval = setInterval(fetchCount, 30000);
     return () => clearInterval(interval);
   }, [fetchCount]);
 
-  // Close on outside click
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setOpen(false);
+        setPreferencesOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -550,8 +434,8 @@ function NotificationBell() {
   useEffect(() => {
     function handleShortcutEscape() {
       setOpen(false);
+      setPreferencesOpen(false);
     }
-
     window.addEventListener('betterspend:escape', handleShortcutEscape as EventListener);
     return () => window.removeEventListener('betterspend:escape', handleShortcutEscape as EventListener);
   }, []);
@@ -563,17 +447,18 @@ function NotificationBell() {
         window.localStorage.setItem(NOTIFICATION_LAST_VIEWED_KEY, new Date().toISOString());
       }
       setHasNewSinceLastView(false);
-      api.notifications.list({ limit: 10 })
+      api.notifications
+        .list({ limit: 10 })
         .then((data) => setNotifications(data.items.filter((item) => preferences.enabledTypes.includes(item.type))))
         .catch(() => {})
         .finally(() => setLoading(false));
     }
-    setOpen((v) => !v);
+    setOpen((value) => !value);
   }
 
   async function handleMarkAllRead() {
     await api.notifications.markAllRead().catch(() => {});
-    setNotifications((prev) => prev.map((n) => ({ ...n, readAt: new Date().toISOString() })));
+    setNotifications((prev) => prev.map((notification) => ({ ...notification, readAt: new Date().toISOString() })));
     setUnreadCount(0);
   }
 
@@ -581,10 +466,11 @@ function NotificationBell() {
     if (!notification.readAt) {
       await api.notifications.markRead(notification.id).catch(() => {});
       setNotifications((prev) =>
-        prev.map((n) => n.id === notification.id ? { ...n, readAt: new Date().toISOString() } : n),
+        prev.map((record) => (record.id === notification.id ? { ...record, readAt: new Date().toISOString() } : record)),
       );
-      setUnreadCount((c) => Math.max(0, c - 1));
+      setUnreadCount((count) => Math.max(0, count - 1));
     }
+
     setOpen(false);
     if (notification.entityType && notification.entityId) {
       const base = ENTITY_ROUTES[notification.entityType];
@@ -593,104 +479,64 @@ function NotificationBell() {
   }
 
   return (
-    <div ref={dropdownRef} style={{ position: 'relative' }}>
+    <div ref={dropdownRef} className="relative">
       <button
         onClick={handleBellClick}
         aria-label="Notifications"
-        style={{
-          position: 'relative',
-          background: 'none',
-          border: 'none',
-          cursor: 'pointer',
-          padding: '0.375rem',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderRadius: '8px',
-          transition: 'background 0.15s',
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.background = COLORS.hoverBg)}
-        onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+        className="relative inline-flex size-11 items-center justify-center rounded-xl border border-border/70 bg-background/80 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
-        <BellIcon hasUnread={unreadCount > 0} />
-        {hasNewSinceLastView && unreadCount === 0 && (
-          <span
-            style={{
-              position: 'absolute',
-              top: '3px',
-              right: '3px',
-              width: '8px',
-              height: '8px',
-              borderRadius: '999px',
-              background: COLORS.badgeRed,
-              border: `2px solid ${COLORS.white}`,
-            }}
-          />
-        )}
-        {unreadCount > 0 && (
-          <span
-            style={{
-              position: 'absolute',
-              top: '2px',
-              right: '2px',
-              background: COLORS.badgeRed,
-              color: COLORS.white,
-              borderRadius: '999px',
-              fontSize: '0.625rem',
-              fontWeight: 700,
-              lineHeight: 1,
-              minWidth: '16px',
-              height: '16px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '0 3px',
-            }}
-          >
+        <Bell className={cn('size-4', unreadCount > 0 && 'text-primary')} />
+        {hasNewSinceLastView && unreadCount === 0 ? (
+          <span className="absolute right-2 top-2 size-2 rounded-full bg-destructive ring-2 ring-card" />
+        ) : null}
+        {unreadCount > 0 ? (
+          <span className="absolute right-1.5 top-1.5 inline-flex min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
-        )}
+        ) : null}
       </button>
 
-      {preferencesOpen && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 8px)',
-            right: 0,
-            width: '320px',
-            background: COLORS.white,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '12px',
-            boxShadow: SHADOWS.dropdown,
-            zIndex: 101,
-            overflow: 'hidden',
-          }}
-        >
-          <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.border}`, fontWeight: 600, fontSize: '0.875rem', color: COLORS.textPrimary }}>
-            Notification Preferences
-          </div>
-          <div style={{ padding: '0.875rem 1rem', display: 'grid', gap: '0.875rem' }}>
-            <label style={{ display: 'flex', gap: '0.625rem', alignItems: 'flex-start' }}>
-              <input type="checkbox" checked={preferences.emailEnabled} onChange={(event) => { void updatePreferences({ emailEnabled: event.target.checked }); }} />
+      {preferencesOpen ? (
+        <Card className="absolute right-0 top-[calc(100%+0.75rem)] z-[101] w-80 overflow-hidden">
+          <CardHeader className="border-b border-border/70 pb-4">
+            <CardTitle className="text-sm font-semibold">Notification Preferences</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5 pt-5">
+            <label className="flex gap-3 text-sm">
+              <input
+                type="checkbox"
+                checked={preferences.emailEnabled}
+                onChange={(event) => {
+                  void updatePreferences({ emailEnabled: event.target.checked });
+                }}
+                className="mt-1"
+              />
               <div>
-                <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: COLORS.textPrimary }}>Enable email notifications</div>
-                <div style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>Saved locally for now. Server-side delivery preferences are still pending.</div>
+                <div className="font-medium text-foreground">Enable email notifications</div>
+                <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                  Saved locally for now. Server-side delivery preferences are still pending.
+                </div>
               </div>
             </label>
-            <div>
-              <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, fontWeight: 600, textTransform: 'uppercase', marginBottom: '0.35rem' }}>Frequency</div>
-              <select value={preferences.frequency} onChange={(event) => { void updatePreferences({ frequency: event.target.value as NotificationPreferences['frequency'] }); }} style={{ width: '100%', padding: '0.5rem 0.65rem', borderRadius: '8px', border: `1px solid ${COLORS.border}`, fontSize: '0.8125rem' }}>
+            <div className="space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Frequency</div>
+              <select
+                value={preferences.frequency}
+                onChange={(event) => {
+                  void updatePreferences({ frequency: event.target.value as NotificationPreferences['frequency'] });
+                }}
+                className="h-10 w-full rounded-xl border border-border/70 bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+              >
                 <option value="instant">Instant</option>
                 <option value="daily">Daily digest</option>
                 <option value="weekly">Weekly digest</option>
               </select>
             </div>
-            <div>
-              <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, fontWeight: 600, textTransform: 'uppercase', marginBottom: '0.35rem' }}>Visible Types</div>
-              <div style={{ display: 'grid', gap: '0.4rem' }}>
+            <div className="space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Visible Types</div>
+              <div className="grid gap-2">
                 {['approval_request', 'po_issued', 'invoice_exception', 'invoice_approved', 'spend_guard', 'software_license'].map((type) => (
-                  <label key={type} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8125rem', color: COLORS.textPrimary }}>
+                  <label key={type} className="flex items-center gap-2 text-sm text-foreground">
                     <input
                       type="checkbox"
                       checked={preferences.enabledTypes.includes(type)}
@@ -707,174 +553,84 @@ function NotificationBell() {
                 ))}
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          </CardContent>
+        </Card>
+      ) : null}
 
-      {open && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 8px)',
-            right: 0,
-            width: '360px',
-            background: COLORS.white,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '12px',
-            boxShadow: SHADOWS.dropdown,
-            zIndex: 100,
-            overflow: 'hidden',
-          }}
-        >
-          {/* Header */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '0.75rem 1rem',
-              borderBottom: `1px solid ${COLORS.border}`,
-            }}
-          >
-            <span style={{ fontWeight: 600, fontSize: '0.875rem', color: COLORS.textPrimary }}>
-              Notifications
-            </span>
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+      {open ? (
+        <Card className="absolute right-0 top-[calc(100%+0.75rem)] z-[100] w-[22rem] overflow-hidden">
+          <CardHeader className="flex flex-row items-center justify-between border-b border-border/70 pb-4">
+            <CardTitle className="text-sm font-semibold">Notifications</CardTitle>
+            <div className="flex items-center gap-3">
               <button
+                type="button"
                 onClick={() => setPreferencesOpen((value) => !value)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: '0.75rem',
-                  color: COLORS.textSecondary,
-                  padding: 0,
-                  fontWeight: 500,
-                }}
+                className="text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
               >
                 Preferences
               </button>
-              {unreadCount > 0 && (
+              {unreadCount > 0 ? (
                 <button
+                  type="button"
                   onClick={handleMarkAllRead}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '0.75rem',
-                    color: COLORS.accentBlue,
-                    padding: 0,
-                    fontWeight: 500,
-                  }}
+                  className="text-xs font-semibold text-primary transition-colors hover:text-primary/80"
                 >
                   Mark all read
                 </button>
-              )}
+              ) : null}
             </div>
+          </CardHeader>
+          <div className="max-h-[26rem] overflow-y-auto">
+            {loading ? <div className="px-6 py-8 text-center text-sm text-muted-foreground">Loading...</div> : null}
+            {!loading && notifications.length === 0 ? (
+              <div className="px-6 py-8 text-center text-sm text-muted-foreground">No notifications</div>
+            ) : null}
+            {!loading
+              ? notifications.map((notification) => {
+                  const isUnread = !notification.readAt;
+                  return (
+                    <button
+                      key={notification.id}
+                      onClick={() => handleNotificationClick(notification)}
+                      className={cn(
+                        'flex w-full flex-col gap-1 border-b border-border/60 px-6 py-4 text-left transition-colors hover:bg-muted/45',
+                        isUnread && 'bg-primary/8',
+                      )}
+                    >
+                      <div className="flex items-start gap-2">
+                        {isUnread ? <span className="mt-1.5 size-2 shrink-0 rounded-full bg-primary" /> : null}
+                        <span className="flex-1 text-sm font-medium leading-6 text-foreground">{notification.title}</span>
+                        <span className="shrink-0 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                          {timeAgo(notification.createdAt)}
+                        </span>
+                      </div>
+                      {notification.body ? (
+                        <span className={cn('line-clamp-2 text-sm leading-6 text-muted-foreground', isUnread && 'pl-4')}>
+                          {notification.body}
+                        </span>
+                      ) : null}
+                      {notification.entityType && notification.entityId ? (
+                        <span className={cn('text-xs font-semibold uppercase tracking-[0.2em] text-primary', isUnread && 'pl-4')}>
+                          View {notification.entityType.replace('_', ' ')}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })
+              : null}
           </div>
-
-          {/* Body */}
-          <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
-            {loading && (
-              <div style={{ padding: '1.5rem', textAlign: 'center', color: COLORS.textMuted, fontSize: '0.8125rem' }}>
-                Loading...
-              </div>
-            )}
-            {!loading && notifications.length === 0 && (
-              <div style={{ padding: '1.5rem', textAlign: 'center', color: COLORS.textMuted, fontSize: '0.8125rem' }}>
-                No notifications
-              </div>
-            )}
-            {!loading && notifications.map((n) => {
-              const isUnread = !n.readAt;
-              return (
-                <button
-                  key={n.id}
-                  onClick={() => handleNotificationClick(n)}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '0.25rem',
-                    width: '100%',
-                    padding: '0.75rem 1rem',
-                    background: isUnread ? COLORS.accentBlueLight : 'none',
-                    border: 'none',
-                    borderBottom: `1px solid ${COLORS.border}`,
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    transition: 'background 0.1s',
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = isUnread ? '#e0edff' : COLORS.hoverBg)}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = isUnread ? COLORS.accentBlueLight : 'none')}
-                >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
-                    {isUnread && (
-                      <span
-                        style={{
-                          flexShrink: 0,
-                          marginTop: '5px',
-                          width: '7px',
-                          height: '7px',
-                          borderRadius: '50%',
-                          background: COLORS.accentBlue,
-                        }}
-                      />
-                    )}
-                    <span
-                      style={{
-                        fontSize: '0.8125rem',
-                        fontWeight: isUnread ? 600 : 500,
-                        color: COLORS.textPrimary,
-                        flex: 1,
-                        lineHeight: 1.4,
-                      }}
-                    >
-                      {n.title}
-                    </span>
-                    <span style={{ flexShrink: 0, fontSize: '0.6875rem', color: COLORS.textMuted, marginTop: '2px' }}>
-                      {timeAgo(n.createdAt)}
-                    </span>
-                  </div>
-                  {n.body && (
-                    <span
-                      style={{
-                        fontSize: '0.75rem',
-                        color: COLORS.textSecondary,
-                        lineHeight: 1.4,
-                        paddingLeft: isUnread ? '1.0625rem' : 0,
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical',
-                        overflow: 'hidden',
-                      }}
-                    >
-                      {n.body}
-                    </span>
-                  )}
-                  {n.entityType && n.entityId && (
-                    <span
-                      style={{
-                        paddingLeft: isUnread ? '1.0625rem' : 0,
-                        fontSize: '0.6875rem',
-                        color: COLORS.accentBlue,
-                        fontWeight: 500,
-                      }}
-                    >
-                      View {n.entityType.replace('_', ' ')} &rarr;
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ padding: '0.75rem 1rem', borderTop: `1px solid ${COLORS.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>Showing up to 10 notifications</span>
-            <Link href="/notifications" onClick={() => setOpen(false)} style={{ fontSize: '0.75rem', color: COLORS.accentBlue, textDecoration: 'none', fontWeight: 600 }}>
-              See all &rarr;
+          <div className="flex items-center justify-between border-t border-border/70 bg-muted/40 px-6 py-3">
+            <span className="text-xs text-muted-foreground">Showing up to 10 notifications</span>
+            <Link
+              href="/notifications"
+              onClick={() => setOpen(false)}
+              className="text-xs font-semibold text-primary transition-colors hover:text-primary/80"
+            >
+              See all
             </Link>
           </div>
-        </div>
-      )}
+        </Card>
+      ) : null}
     </div>
   );
 }
@@ -906,36 +662,14 @@ function ShortcutsModal({
   return (
     <div
       onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: SHADOWS.overlay,
-        zIndex: 120,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '1rem',
-      }}
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-[rgba(19,18,21,0.48)] px-4 py-6"
     >
-      <div
-        onClick={(event) => event.stopPropagation()}
-        style={{
-          width: '100%',
-          maxWidth: '520px',
-          background: COLORS.white,
-          borderRadius: '12px',
-          border: `1px solid ${COLORS.border}`,
-          boxShadow: SHADOWS.dropdown,
-          overflow: 'hidden',
-        }}
-      >
-        <div style={{ padding: '1rem 1.25rem', borderBottom: `1px solid ${COLORS.border}` }}>
-          <div style={{ fontSize: '1rem', fontWeight: 700, color: COLORS.textPrimary }}>Keyboard Shortcuts</div>
-          <div style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginTop: '0.25rem' }}>
-            Global navigation and form actions for faster workflows.
-          </div>
-        </div>
-        <div style={{ padding: '1rem 1.25rem', display: 'grid', gap: '0.75rem' }}>
+      <Card className="w-full max-w-xl overflow-hidden" onClick={(event) => event.stopPropagation()}>
+        <CardHeader className="border-b border-border/70 pb-4">
+          <CardTitle className="text-base font-semibold">Keyboard Shortcuts</CardTitle>
+          <p className="text-sm text-muted-foreground">Global navigation and form actions for faster workflows.</p>
+        </CardHeader>
+        <CardContent className="space-y-4 pt-5">
           {[
             ['/', 'Focus global search'],
             ['Ctrl/Cmd + K', 'Focus global search'],
@@ -944,52 +678,37 @@ function ShortcutsModal({
             ['Ctrl/Cmd + Enter', 'Submit the current form'],
             ['Ctrl/Cmd + S', 'Save the current form'],
           ].map(([shortcut, action]) => (
-            <div key={shortcut} style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '1rem', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: COLORS.textPrimary, fontFamily: 'monospace', background: COLORS.contentBg, padding: '0.25rem 0.5rem', borderRadius: '6px', border: `1px solid ${COLORS.border}` }}>
+            <div key={shortcut} className="grid grid-cols-[150px_1fr] items-center gap-4">
+              <span className="rounded-lg border border-border/70 bg-muted/60 px-3 py-2 font-mono text-xs font-bold text-foreground">
                 {shortcut}
               </span>
-              <span style={{ fontSize: '0.875rem', color: COLORS.textSecondary }}>{action}</span>
+              <span className="text-sm text-muted-foreground">{action}</span>
             </div>
           ))}
-          <label style={{ display: 'flex', gap: '0.625rem', alignItems: 'flex-start', marginTop: '0.5rem', cursor: 'pointer' }}>
+          <label className="flex gap-3 rounded-xl border border-border/70 bg-muted/35 p-4 text-sm">
             <input
               type="checkbox"
               checked={shortcutsDisabled}
               onChange={(event) => onToggleDisabled(event.target.checked)}
-              style={{ marginTop: '0.2rem' }}
+              className="mt-1"
             />
             <div>
-              <div style={{ fontSize: '0.875rem', fontWeight: 600, color: COLORS.textPrimary }}>Disable keyboard shortcuts</div>
-              <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.125rem' }}>
+              <div className="font-medium text-foreground">Disable keyboard shortcuts</div>
+              <div className="mt-1 text-xs leading-5 text-muted-foreground">
                 Stores your preference in this browser for accessibility or screen-reader compatibility.
               </div>
             </div>
           </label>
-        </div>
-        <div style={{ padding: '1rem 1.25rem', borderTop: `1px solid ${COLORS.border}`, display: 'flex', justifyContent: 'flex-end' }}>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              padding: '0.55rem 0.9rem',
-              borderRadius: '8px',
-              border: 'none',
-              background: COLORS.accentBlue,
-              color: COLORS.white,
-              fontSize: '0.8125rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            Close
-          </button>
-        </div>
-      </div>
+          <div className="flex justify-end">
+            <Button type="button" onClick={onClose}>
+              Close
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
-
-/* ── AppShell ── */
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -998,7 +717,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [shortcutsDisabled, setShortcutsDisabled] = useState(false);
-  const isAuthPage = AUTH_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'));
+  const isAuthPage = AUTH_PATHS.some((path) => pathname === path || pathname.startsWith(path + '/'));
   const branding = useBranding();
 
   useEffect(() => {
@@ -1007,7 +726,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     setSidebarCollapsed(window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true');
   }, []);
 
-  // Close sidebar on navigation (mobile)
   useEffect(() => {
     setSidebarOpen(false);
   }, [pathname]);
@@ -1039,9 +757,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      if (action === 'submit') {
-        form.requestSubmit();
-      }
+      if (action === 'submit') form.requestSubmit();
     }
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -1100,11 +816,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   }
 
-  if (isAuthPage) {
-    return <>{children}</>;
-  }
+  if (isAuthPage) return <>{children}</>;
 
-  const SIDEBAR_WIDTH = isMobile ? 280 : sidebarCollapsed ? 72 : 240;
+  const sidebarWidth = isMobile ? 280 : sidebarCollapsed ? 88 : 268;
 
   function handleToggleSidebarCollapsed() {
     const nextValue = !sidebarCollapsed;
@@ -1116,90 +830,54 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const sidebar = (
     <aside
-      style={{
-        width: `${SIDEBAR_WIDTH}px`,
-        flexShrink: 0,
-        background: COLORS.sidebarBg,
-        color: COLORS.sidebarTextActive,
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',
-        transition: 'width 0.2s ease',
-        ...(isMobile ? {
-          position: 'fixed' as const,
-          top: 0,
-          left: 0,
-          zIndex: 60,
-        } : {
-          position: 'sticky' as const,
-          top: 0,
-        }),
-      }}
+      className={cn(
+        'flex h-screen shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200',
+        isMobile ? 'fixed left-0 top-0 z-[60]' : 'sticky top-0',
+      )}
+      style={{ width: `${sidebarWidth}px` }}
     >
-      {/* Sidebar header */}
-      <div
-        style={{
-          padding: '1rem 1.25rem',
-          borderBottom: `1px solid ${COLORS.sidebarBorder}`,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          flexShrink: 0,
-        }}
-      >
+      <div className="flex items-center justify-between border-b border-sidebar-border px-4 py-4">
         {branding.app_logo_url ? (
-          <img src={branding.app_logo_url} alt={branding.app_name} style={{ maxHeight: '32px', objectFit: 'contain' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+          <img
+            src={branding.app_logo_url}
+            alt={branding.app_name}
+            className="max-h-8 object-contain"
+            onError={(event) => {
+              (event.target as HTMLImageElement).style.display = 'none';
+            }}
+          />
         ) : (
           <span
             title={sidebarCollapsed ? branding.app_name : undefined}
-            style={{
-              fontWeight: 700,
-              fontSize: sidebarCollapsed ? '0.875rem' : '1.0625rem',
-              color: COLORS.sidebarTextActive,
-              letterSpacing: '-0.02em',
-              overflow: 'hidden',
-              whiteSpace: 'nowrap',
-            }}
+            className="font-display text-lg font-semibold tracking-[-0.04em] text-sidebar-foreground"
           >
-            {sidebarCollapsed ? branding.app_name.slice(0, 2).toUpperCase() : branding.app_name}
+            {sidebarCollapsed && !isMobile ? branding.app_name.slice(0, 2).toUpperCase() : branding.app_name}
           </span>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-          {!isMobile && (
-            <button
+        <div className="flex items-center gap-1">
+          {!isMobile ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
               onClick={handleToggleSidebarCollapsed}
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                padding: '0.25rem',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: '6px',
-              }}
+              className="size-8 rounded-lg text-sidebar-muted hover:bg-white/8 hover:text-sidebar-foreground"
               title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             >
-              <CollapseIcon collapsed={sidebarCollapsed} />
-            </button>
-          )}
-          {isMobile && (
-            <button
+              <ChevronRight className={cn('size-4 transition-transform', !sidebarCollapsed && 'rotate-180')} />
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
               onClick={() => setSidebarOpen(false)}
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                padding: '0.25rem',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
+              className="size-8 rounded-lg text-sidebar-muted hover:bg-white/8 hover:text-sidebar-foreground"
               aria-label="Close sidebar"
             >
-              <CloseIcon />
-            </button>
+              <X className="size-4" />
+            </Button>
           )}
         </div>
       </div>
@@ -1208,80 +886,66 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: COLORS.contentBg }}>
+    <div className="flex min-h-screen bg-background">
       <ShortcutsModal
         open={showShortcutsModal}
         shortcutsDisabled={shortcutsDisabled}
         onClose={() => setShowShortcutsModal(false)}
         onToggleDisabled={handleToggleShortcutsDisabled}
       />
-      {/* Desktop sidebar */}
-      {!isMobile && sidebar}
 
-      {/* Mobile overlay */}
-      {isMobile && sidebarOpen && (
+      {!isMobile ? sidebar : null}
+
+      {isMobile && sidebarOpen ? (
         <>
-          <div
-            onClick={() => setSidebarOpen(false)}
-            style={{
-              position: 'fixed',
-              inset: 0,
-              background: SHADOWS.overlay,
-              zIndex: 50,
-            }}
-          />
+          <div className="fixed inset-0 z-50 bg-[rgba(19,18,21,0.48)]" onClick={() => setSidebarOpen(false)} />
           {sidebar}
         </>
-      )}
+      ) : null}
 
-      {/* Main content column */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        {/* Offline banner */}
+      <div className="flex min-w-0 flex-1 flex-col">
         <OfflineIndicator />
-        {/* Top bar */}
-        <div style={{
-          background: COLORS.topbarBg,
-          padding: isMobile ? '0.625rem 1rem' : '0.625rem 1.5rem',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.75rem',
-          borderBottom: `1px solid ${COLORS.topbarBorder}`,
-          flexShrink: 0,
-          position: 'sticky' as const,
-          top: 0,
-          zIndex: 40,
-        }}>
-          {isMobile && (
-            <button
-              onClick={() => setSidebarOpen(true)}
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                padding: '0.375rem',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: '6px',
-                transition: 'background 0.15s',
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = COLORS.hoverBg)}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
-              aria-label="Open sidebar"
-            >
-              <HamburgerIcon />
-            </button>
-          )}
-          <GlobalSearch isMobile={isMobile} />
-          <EntitySwitcher />
-          <div style={{ marginLeft: 'auto' }}>
-            <NotificationBell />
+        <header className="sticky top-0 z-40 border-b border-border/70 bg-background/88 backdrop-blur-xl">
+          <div className="flex items-center gap-3 px-4 py-3 md:px-6">
+            {isMobile ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setSidebarOpen(true)}
+                className="size-11 rounded-xl border border-border/70 bg-background/80"
+                aria-label="Open sidebar"
+              >
+                <Menu className="size-4" />
+              </Button>
+            ) : null}
+            <GlobalSearch isMobile={isMobile} />
+            <div className="hidden min-[520px]:block">
+              <EntitySwitcher />
+            </div>
+            <div className="ml-auto flex items-center gap-3">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowShortcutsModal(true)}
+                className="hidden size-11 rounded-xl border border-border/70 bg-background/80 text-muted-foreground hover:bg-muted md:inline-flex"
+                aria-label="Keyboard shortcuts"
+              >
+                <Settings2 className="size-4" />
+              </Button>
+              <NotificationBell />
+            </div>
           </div>
-        </div>
+          <div className="px-4 pb-3 min-[520px]:hidden md:px-6">
+            <EntitySwitcher />
+          </div>
+        </header>
 
-        {/* Page content */}
-        <main style={{ flex: 1, overflowX: 'auto' }}>
-          {children}
+        <main className="flex-1 overflow-x-auto">
+          <div className="mx-auto min-h-[calc(100vh-4.5rem)] w-full max-w-[1440px]">
+            {children}
+          </div>
         </main>
       </div>
     </div>

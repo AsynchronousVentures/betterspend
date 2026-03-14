@@ -32,6 +32,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Root PM2 runtime ownership was stabilized under a single daemon after clearing duplicate stale PM2 daemons.
 - Began the web design-system migration to Tailwind CSS v4, shadcn/ui-style primitives, Lucide icons, and a new tokenized warm enterprise visual language.
 - Reworked auth surfaces, toast, breadcrumbs, document upload UI, and sidebar navigation onto the new frontend foundation while bridging legacy pages through updated palette tokens.
+- Refactored the authenticated app shell, search surface, notifications panel, entity switcher, and shortcuts modal onto the new Tailwind-based chrome.
 
 ### Fixed
 
