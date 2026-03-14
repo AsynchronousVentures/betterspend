@@ -46,6 +46,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated GL mappings and its embedded export-job view onto the shared Tailwind/shadcn admin surface so the accounting integration area no longer relies on legacy inline theme styling.
 - Migrated the main settings workspace onto the new design system, covering branding, SMTP, approval policy, compliance, integrations, currency controls, and password updates while preserving dirty-state protection.
 - Migrated the analytics dashboard onto the new design system, including KPI tiles, chart containers, anomaly panels, department summaries, and the main budget and vendor performance tables.
+- Migrated approval delegations onto the new operational UI layer, including delegation setup plus inbound and outbound coverage tables.
 
 ### Fixed
 
