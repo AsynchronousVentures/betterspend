@@ -1,8 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { BookMarked, Cable, ExternalLink, Filter, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
+import { PageHeader } from '../../components/page-header';
+import { StatusBadge } from '../../components/status-badge';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 
 type TargetSystem = 'qbo' | 'xero';
 
@@ -30,45 +39,17 @@ interface GlExportJob {
   invoice?: { internalNumber: string; invoiceNumber: string };
 }
 
-const SYSTEM_LABELS: Record<string, string> = { qbo: 'QuickBooks Online', xero: 'Xero' };
-
-const JOB_STATUS_COLORS: Record<string, { background: string; color: string }> = {
-  pending:  { background: '#fef3c7', color: COLORS.accentAmberDark },
-  exported: { background: '#d1fae5', color: COLORS.accentGreenDark },
-  failed:   { background: '#fee2e2', color: COLORS.accentRedDark },
-  skipped:  { background: COLORS.contentBg, color: COLORS.textSecondary },
+const SYSTEM_LABELS: Record<string, string> = {
+  qbo: 'QuickBooks Online',
+  xero: 'Xero',
 };
 
-function StatusBadge({ status }: { status: string }) {
-  const style = JOB_STATUS_COLORS[status] ?? { background: COLORS.contentBg, color: COLORS.textSecondary };
-  return (
-    <span style={{ ...style, padding: '0.2rem 0.6rem', borderRadius: '9999px', fontSize: '0.75rem', fontWeight: 600, display: 'inline-block', whiteSpace: 'nowrap', textTransform: 'capitalize' }}>
-      {status}
-    </span>
-  );
-}
-
-function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
-  return (
-    <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', overflow: 'hidden', boxShadow: SHADOWS.card, ...style }}>
-      {children}
-    </div>
-  );
-}
-
-const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`,
-  borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box',
-};
-
-const btnPrimary: React.CSSProperties = {
-  background: COLORS.textPrimary, color: COLORS.white, border: 'none', padding: '0.5rem 1.25rem',
-  borderRadius: '6px', fontSize: '0.875rem', fontWeight: 500, cursor: 'pointer',
-};
-
-const btnDanger: React.CSSProperties = {
-  background: 'transparent', color: COLORS.accentRedDark, border: `1px solid ${COLORS.accentRedDark}`,
-  padding: '0.25rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer',
+const EMPTY_FORM = {
+  glAccount: '',
+  glAccountName: '',
+  targetSystem: 'qbo' as TargetSystem,
+  externalAccountCode: '',
+  externalAccountName: '',
 };
 
 export default function GlMappingsPage() {
@@ -80,10 +61,7 @@ export default function GlMappingsPage() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
-  const [form, setForm] = useState({
-    glAccount: '', glAccountName: '', targetSystem: 'qbo' as TargetSystem,
-    externalAccountCode: '', externalAccountName: '',
-  });
+  const [form, setForm] = useState(EMPTY_FORM);
 
   async function loadMappings() {
     const data = await api.glMappings.list(filterSystem || undefined).catch(() => []);
@@ -98,11 +76,14 @@ export default function GlMappingsPage() {
   useEffect(() => {
     setLoading(true);
     Promise.all([loadMappings(), loadJobs()]).finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterSystem]);
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
+  function setField(key: keyof typeof EMPTY_FORM, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function handleCreate(event: React.FormEvent) {
+    event.preventDefault();
     setSaving(true);
     try {
       await api.glMappings.create({
@@ -114,7 +95,7 @@ export default function GlMappingsPage() {
       });
       setShowForm(false);
       setFormError('');
-      setForm({ glAccount: '', glAccountName: '', targetSystem: 'qbo', externalAccountCode: '', externalAccountName: '' });
+      setForm(EMPTY_FORM);
       await loadMappings();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Failed to create mapping');
@@ -129,218 +110,214 @@ export default function GlMappingsPage() {
     await loadMappings();
   }
 
-  const tabStyle = (active: boolean): React.CSSProperties => ({
-    padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: active ? 600 : 400,
-    borderBottom: active ? `2px solid ${COLORS.textPrimary}` : '2px solid transparent',
-    color: active ? COLORS.textPrimary : COLORS.textSecondary, cursor: 'pointer', background: 'none', border: 'none',
-    borderBottomWidth: '2px', borderBottomStyle: 'solid',
-    borderBottomColor: active ? COLORS.textPrimary : 'transparent',
-  });
-
   return (
-    <div style={{ padding: '2rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-        <div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: COLORS.textPrimary }}>GL Integration</h1>
-          <p style={{ margin: '0.25rem 0 0', color: COLORS.textSecondary, fontSize: '0.875rem' }}>
-            Map internal GL accounts to QuickBooks Online or Xero account codes
-          </p>
-        </div>
-        {activeTab === 'mappings' && (
-          <button style={btnPrimary} onClick={() => setShowForm(!showForm)}>
-            {showForm ? 'Cancel' : '+ Add Mapping'}
-          </button>
-        )}
-      </div>
-
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: 0, borderBottom: `1px solid ${COLORS.border}`, marginBottom: '1.5rem' }}>
-        <button style={tabStyle(activeTab === 'mappings')} onClick={() => setActiveTab('mappings')}>
-          Account Mappings
-        </button>
-        <button style={tabStyle(activeTab === 'jobs')} onClick={() => setActiveTab('jobs')}>
-          Export Jobs
-        </button>
-      </div>
-
-      {/* Create form */}
-      {activeTab === 'mappings' && showForm && (
-        <Card style={{ marginBottom: '1.5rem', padding: '1.5rem' }}>
-          <h3 style={{ margin: '0 0 1rem', fontSize: '1rem', fontWeight: 600, color: COLORS.textPrimary }}>New GL Mapping</h3>
-          <form onSubmit={handleCreate}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-                  GL Account Code *
-                </label>
-                <input
-                  style={inputStyle} required value={form.glAccount}
-                  onChange={(e) => setForm({ ...form, glAccount: e.target.value })}
-                  placeholder="e.g. 6000"
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-                  GL Account Name
-                </label>
-                <input
-                  style={inputStyle} value={form.glAccountName}
-                  onChange={(e) => setForm({ ...form, glAccountName: e.target.value })}
-                  placeholder="e.g. Office Supplies"
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-                  Target System *
-                </label>
-                <select
-                  style={inputStyle} value={form.targetSystem}
-                  onChange={(e) => setForm({ ...form, targetSystem: e.target.value as TargetSystem })}
-                >
-                  <option value="qbo">QuickBooks Online</option>
-                  <option value="xero">Xero</option>
-                </select>
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-                  External Account Code *
-                </label>
-                <input
-                  style={inputStyle} required value={form.externalAccountCode}
-                  onChange={(e) => setForm({ ...form, externalAccountCode: e.target.value })}
-                  placeholder="e.g. 200 (QBO) or OFFSUPP (Xero)"
-                />
-              </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-                  External Account Name
-                </label>
-                <input
-                  style={inputStyle} value={form.externalAccountName}
-                  onChange={(e) => setForm({ ...form, externalAccountName: e.target.value })}
-                  placeholder="Name as it appears in the external system"
-                />
-              </div>
-            </div>
-            {formError && <div style={{ marginBottom: '0.75rem', background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.5rem 0.75rem', color: COLORS.accentRedDark, fontSize: '0.875rem' }}>{formError}</div>}
-            <button type="submit" style={btnPrimary} disabled={saving}>
-              {saving ? 'Saving…' : 'Save Mapping'}
-            </button>
-          </form>
-        </Card>
-      )}
-
-      {/* Mappings tab */}
-      {activeTab === 'mappings' && (
-        <>
-          <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', alignItems: 'center' }}>
-            <label style={{ fontSize: '0.875rem', color: COLORS.textSecondary, fontWeight: 500 }}>Filter by system:</label>
-            <select
-              style={{ ...inputStyle, width: 'auto' }}
-              value={filterSystem}
-              onChange={(e) => setFilterSystem(e.target.value as TargetSystem | '')}
-            >
-              <option value="">All systems</option>
-              <option value="qbo">QuickBooks Online</option>
-              <option value="xero">Xero</option>
-            </select>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="GL Integration"
+        description="Map internal GL accounts to QuickBooks Online and Xero, then monitor how approved invoices move into export jobs."
+        actions={
+          <div className="flex gap-2 rounded-full border border-border/70 bg-background/80 p-1">
+            <Button type="button" size="sm" variant={activeTab === 'mappings' ? 'default' : 'ghost'} onClick={() => setActiveTab('mappings')}>
+              Account Mappings
+            </Button>
+            <Button type="button" size="sm" variant={activeTab === 'jobs' ? 'default' : 'ghost'} onClick={() => setActiveTab('jobs')}>
+              Export Jobs
+            </Button>
           </div>
+        }
+      />
 
-          <Card>
+      {activeTab === 'mappings' ? (
+        <>
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.9fr)]">
+            <Card className="rounded-[24px]">
+              <CardHeader>
+                <CardTitle className="text-xl">Mapping details</CardTitle>
+                <CardDescription>Maintain the translation layer between internal chart-of-accounts values and the accounting system codes that exports require.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {showForm ? (
+                  <form onSubmit={handleCreate} className="space-y-5">
+                    <div className="grid gap-4">
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-foreground">GL account code</label>
+                        <Input required value={form.glAccount} onChange={(event) => setField('glAccount', event.target.value)} placeholder="6000" />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-foreground">GL account name</label>
+                        <Input value={form.glAccountName} onChange={(event) => setField('glAccountName', event.target.value)} placeholder="Office Supplies" />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-foreground">Target system</label>
+                        <Select value={form.targetSystem} onChange={(event) => setField('targetSystem', event.target.value)} className="w-full">
+                          <option value="qbo">QuickBooks Online</option>
+                          <option value="xero">Xero</option>
+                        </Select>
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-foreground">External account code</label>
+                        <Input required value={form.externalAccountCode} onChange={(event) => setField('externalAccountCode', event.target.value)} placeholder="200 or OFFSUPP" />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-foreground">External account name</label>
+                        <Input value={form.externalAccountName} onChange={(event) => setField('externalAccountName', event.target.value)} placeholder="Name from the destination accounting system" />
+                      </div>
+                    </div>
+                    {formError ? (
+                      <Alert variant="destructive">
+                        <AlertDescription>{formError}</AlertDescription>
+                      </Alert>
+                    ) : null}
+                    <div className="flex flex-wrap gap-3">
+                      <Button type="submit" disabled={saving}>
+                        <Plus className="h-4 w-4" />
+                        {saving ? 'Saving...' : 'Save Mapping'}
+                      </Button>
+                      <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
+                    <Cable className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
+                    <div className="text-sm font-medium text-foreground">Chart-of-accounts bridge ready</div>
+                    <p className="mt-2 text-sm text-muted-foreground">Create a mapping whenever a spend category needs to land in a new destination account.</p>
+                    <div className="mt-5">
+                      <Button type="button" onClick={() => setShowForm(true)}>
+                        <Plus className="h-4 w-4" />
+                        Add Mapping
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-[24px]">
+              <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+                <div>
+                  <CardTitle className="text-xl">Account mappings</CardTitle>
+                  <CardDescription>Filter by destination system and keep only active mappings that finance actually exports against.</CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Filter className="h-4 w-4 text-muted-foreground" />
+                  <Select value={filterSystem} onChange={(event) => setFilterSystem(event.target.value as TargetSystem | '')} className="min-w-[11rem]">
+                    <option value="">All systems</option>
+                    <option value="qbo">QuickBooks Online</option>
+                    <option value="xero">Xero</option>
+                  </Select>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0">
+                {loading ? (
+                  <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                    Loading mappings...
+                  </div>
+                ) : mappings.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                    No mappings configured. Add one to enable GL export on approved invoices.
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>GL Account</TableHead>
+                        <TableHead>GL Name</TableHead>
+                        <TableHead>System</TableHead>
+                        <TableHead>External Code</TableHead>
+                        <TableHead>External Name</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {mappings.map((mapping) => (
+                        <TableRow key={mapping.id}>
+                          <TableCell>
+                            <code className="rounded-md bg-muted px-2 py-1 text-xs font-semibold text-foreground">{mapping.glAccount}</code>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">{mapping.glAccountName ?? '—'}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="border-border/80 bg-muted/40 text-muted-foreground">
+                              {SYSTEM_LABELS[mapping.targetSystem] ?? mapping.targetSystem}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="inline-flex items-center gap-2 font-mono text-sm text-sky-700">
+                              <ExternalLink className="h-3.5 w-3.5" />
+                              {mapping.externalAccountCode}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">{mapping.externalAccountName ?? '—'}</TableCell>
+                          <TableCell>
+                            <StatusBadge value={mapping.isActive ? 'active' : 'inactive'} />
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button type="button" variant="outline" size="sm" onClick={() => handleDelete(mapping.id)}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Delete
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </>
+      ) : (
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">Embedded export job feed</CardTitle>
+            <CardDescription>This mirrors the live GL job history so finance can review mapping coverage and export outcomes without leaving the integration area.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-0">
             {loading ? (
-              <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>Loading…</div>
-            ) : mappings.length === 0 ? (
-              <div style={{ padding: '4rem 2rem', textAlign: 'center', color: COLORS.textMuted }}>
-                <p style={{ fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.5rem' }}>No mappings configured</p>
-                <p style={{ fontSize: '0.875rem' }}>Add a mapping to enable GL export when invoices are approved.</p>
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                Loading export jobs...
+              </div>
+            ) : jobs.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
+                <BookMarked className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
+                <div className="text-sm font-medium text-foreground">No export jobs yet</div>
+                <p className="mt-2 text-sm text-muted-foreground">Approved invoices will start appearing here automatically once they are exported.</p>
               </div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-                  <thead>
-                    <tr style={{ borderBottom: `1px solid ${COLORS.tableBorder}`, background: COLORS.tableHeaderBg }}>
-                      {['GL Account', 'GL Account Name', 'Target System', 'External Code', 'External Name', 'Active', ''].map((col) => (
-                        <th key={col} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 600, color: COLORS.textSecondary, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                          {col}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {mappings.map((m, idx) => (
-                      <tr key={m.id} style={{ borderBottom: idx < mappings.length - 1 ? `1px solid ${COLORS.contentBg}` : undefined }}>
-                        <td style={{ padding: '0.875rem 1rem', fontFamily: 'monospace', fontWeight: 600, color: COLORS.textPrimary }}>{m.glAccount}</td>
-                        <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{m.glAccountName ?? '—'}</td>
-                        <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{SYSTEM_LABELS[m.targetSystem] ?? m.targetSystem}</td>
-                        <td style={{ padding: '0.875rem 1rem', fontFamily: 'monospace', color: COLORS.accentBlueDark }}>{m.externalAccountCode}</td>
-                        <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{m.externalAccountName ?? '—'}</td>
-                        <td style={{ padding: '0.875rem 1rem' }}>
-                          <span style={{ color: m.isActive ? '#059669' : COLORS.textMuted, fontWeight: 600, fontSize: '0.8rem' }}>
-                            {m.isActive ? 'Yes' : 'No'}
-                          </span>
-                        </td>
-                        <td style={{ padding: '0.875rem 1rem' }}>
-                          <button style={btnDanger} onClick={() => handleDelete(m.id)}>Delete</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        </>
-      )}
-
-      {/* Export Jobs tab */}
-      {activeTab === 'jobs' && (
-        <Card>
-          {loading ? (
-            <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>Loading…</div>
-          ) : jobs.length === 0 ? (
-            <div style={{ padding: '4rem 2rem', textAlign: 'center', color: COLORS.textMuted }}>
-              <p style={{ fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.5rem' }}>No export jobs yet</p>
-              <p style={{ fontSize: '0.875rem' }}>Jobs are created automatically when invoices are approved.</p>
-            </div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: `1px solid ${COLORS.tableBorder}`, background: COLORS.tableHeaderBg }}>
-                    {['Invoice', 'Target System', 'Status', 'External ID', 'Exported At', 'Error'].map((col) => (
-                      <th key={col} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 600, color: COLORS.textSecondary, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                        {col}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {jobs.map((job, idx) => (
-                    <tr key={job.id} style={{ borderBottom: idx < jobs.length - 1 ? `1px solid ${COLORS.contentBg}` : undefined }}>
-                      <td style={{ padding: '0.875rem 1rem', fontWeight: 600, color: COLORS.textPrimary }}>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Invoice</TableHead>
+                    <TableHead>System</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>External ID</TableHead>
+                    <TableHead>Exported At</TableHead>
+                    <TableHead>Error</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {jobs.map((job) => (
+                    <TableRow key={job.id}>
+                      <TableCell className="font-medium text-foreground">
                         {job.invoice?.internalNumber ?? job.invoiceId.slice(0, 8)}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>
-                        {SYSTEM_LABELS[job.targetSystem] ?? job.targetSystem}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem' }}>
-                        <StatusBadge status={job.status} />
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', fontFamily: 'monospace', fontSize: '0.8rem', color: COLORS.textSecondary }}>
-                        {job.externalId ?? '—'}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{SYSTEM_LABELS[job.targetSystem] ?? job.targetSystem}</TableCell>
+                      <TableCell>
+                        <StatusBadge value={job.status} />
+                      </TableCell>
+                      <TableCell className="font-mono text-sm text-muted-foreground">{job.externalId ?? '—'}</TableCell>
+                      <TableCell className="text-muted-foreground">
                         {job.exportedAt ? new Date(job.exportedAt).toLocaleDateString() : '—'}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.accentRedDark, fontSize: '0.8rem', maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {job.errorMessage ?? '—'}
-                      </td>
-                    </tr>
+                      </TableCell>
+                      <TableCell className="max-w-[20rem] truncate text-sm text-rose-700">{job.errorMessage ?? '—'}</TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
         </Card>
       )}
     </div>
