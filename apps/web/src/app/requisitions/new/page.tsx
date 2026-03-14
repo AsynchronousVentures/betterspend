@@ -1,10 +1,32 @@
 'use client';
 
-import { useState, useRef, useEffect, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Bot, FileStack, Plus, Sparkles } from 'lucide-react';
 import { api } from '../../../lib/api';
-import { COLORS, SHADOWS } from '../../../lib/theme';
+import { PageHeader } from '../../../components/page-header';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
+import { Badge } from '../../../components/ui/badge';
+import { Button } from '../../../components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../../components/ui/card';
+import { Input } from '../../../components/ui/input';
+import { Select } from '../../../components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../../components/ui/table';
+import { Textarea } from '../../../components/ui/textarea';
 
 interface CatalogItem {
   id: string;
@@ -25,22 +47,23 @@ interface LineItem {
   catalogItemId: string;
 }
 
-const EMPTY_LINE: LineItem = { description: '', qty: '1', uom: 'each', unitPrice: '0', vendorId: '', catalogItemId: '' };
-
-const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`,
-  borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box', outline: 'none',
-  background: COLORS.white, color: COLORS.textPrimary,
-};
-const labelStyle: React.CSSProperties = {
-  display: 'block', fontSize: '0.8rem', fontWeight: 600, color: COLORS.textSecondary, marginBottom: '0.375rem',
+const EMPTY_LINE: LineItem = {
+  description: '',
+  qty: '1',
+  uom: 'each',
+  unitPrice: '0',
+  vendorId: '',
+  catalogItemId: '',
 };
 
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
 }
 
-function CatalogPicker({ onSelect, currentDescription }: {
+function CatalogPicker({
+  onSelect,
+  currentDescription,
+}: {
   currentDescription: string;
   onSelect: (item: CatalogItem) => void;
 }) {
@@ -52,27 +75,39 @@ function CatalogPicker({ onSelect, currentDescription }: {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    setQuery(currentDescription);
+  }, [currentDescription]);
+
+  useEffect(() => {
     if (!open) return;
-    function onClickOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    function onClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
     }
     document.addEventListener('mousedown', onClickOutside);
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, [open]);
 
-  function handleChange(val: string) {
-    setQuery(val);
+  function handleChange(value: string) {
+    setQuery(value);
     if (debounce.current) clearTimeout(debounce.current);
-    if (val.length < 2) { setResults([]); setOpen(false); return; }
+    if (value.length < 2) {
+      setResults([]);
+      setOpen(false);
+      return;
+    }
     debounce.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const items = await api.catalog.search(val);
+        const items = await api.catalog.search(value);
         setResults(items as CatalogItem[]);
         setOpen(true);
       } catch {
-        // ignore
-      } finally { setLoading(false); }
+        setResults([]);
+      } finally {
+        setLoading(false);
+      }
     }, 250);
   }
 
@@ -84,44 +119,44 @@ function CatalogPicker({ onSelect, currentDescription }: {
   }
 
   return (
-    <div ref={containerRef} style={{ position: 'relative' }}>
-      <input
-        type="text" value={query}
-        onChange={(e) => handleChange(e.target.value)}
+    <div ref={containerRef} className="relative">
+      <Input
+        type="text"
+        value={query}
+        onChange={(event) => handleChange(event.target.value)}
         onFocus={() => query.length >= 2 && results.length > 0 && setOpen(true)}
         placeholder="Search catalog or type description"
-        style={inputStyle}
       />
-      {loading && (
-        <span style={{ position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.7rem', color: COLORS.textMuted }}>…</span>
-      )}
-      {open && results.length > 0 && (
-        <div style={{
-          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
-          background: COLORS.white, border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px',
-          boxShadow: SHADOWS.dropdown, maxHeight: '240px', overflowY: 'auto', marginTop: '2px',
-        }}>
+      {loading ? (
+        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+          ...
+        </span>
+      ) : null}
+      {open && results.length > 0 ? (
+        <div className="absolute top-full z-50 mt-1 max-h-60 w-full overflow-y-auto rounded-xl border border-border/70 bg-background shadow-lg">
           {results.map((item) => (
             <button
               key={item.id}
               type="button"
               onMouseDown={() => pick(item)}
-              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.625rem 0.875rem', background: 'none', border: 'none', cursor: 'pointer', borderBottom: `1px solid ${COLORS.hoverBg}` }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = COLORS.hoverBg; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'none'; }}
+              className="block w-full border-b border-border/50 px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/40"
             >
-              <div style={{ fontWeight: 600, fontSize: '0.875rem', color: COLORS.textPrimary }}>{item.name}</div>
-              <div style={{ fontSize: '0.75rem', color: COLORS.textSecondary, marginTop: '2px' }}>
-                {item.sku && <span style={{ marginRight: '0.5rem' }}>SKU: {item.sku}</span>}
-                <span style={{ color: COLORS.accentBlueDark, fontWeight: 500 }}>
-                  {new Intl.NumberFormat('en-US', { style: 'currency', currency: item.currency }).format(parseFloat(item.unitPrice))} / {item.unitOfMeasure}
+              <div className="font-medium text-foreground">{item.name}</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {item.sku ? <span className="mr-2">SKU: {item.sku}</span> : null}
+                <span className="font-medium text-foreground">
+                  {new Intl.NumberFormat('en-US', {
+                    style: 'currency',
+                    currency: item.currency,
+                  }).format(parseFloat(item.unitPrice))}{' '}
+                  / {item.unitOfMeasure}
                 </span>
-                {item.vendor && <span style={{ marginLeft: '0.5rem', color: COLORS.textMuted }}>· {item.vendor.name}</span>}
+                {item.vendor ? <span className="ml-2">· {item.vendor.name}</span> : null}
               </div>
             </button>
           ))}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -135,8 +170,12 @@ function NewRequisitionContent() {
   const [currency, setCurrency] = useState('USD');
   const [neededBy, setNeededBy] = useState('');
   const [templateBanner, setTemplateBanner] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [aiText, setAiText] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiMsg, setAiMsg] = useState('');
 
-  // Pre-populate from catalog item if passed via query params
   const prefill = searchParams.get('catalogItemId')
     ? {
         catalogItemId: searchParams.get('catalogItemId') ?? '',
@@ -150,54 +189,73 @@ function NewRequisitionContent() {
   const [lines, setLines] = useState<LineItem[]>([
     prefill ? { ...EMPTY_LINE, ...prefill } : { ...EMPTY_LINE },
   ]);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
-  const [aiText, setAiText] = useState('');
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiMsg, setAiMsg] = useState('');
 
-  // Load template if templateId is in URL
   useEffect(() => {
     const templateId = searchParams.get('templateId');
     if (!templateId) return;
-    api.requisitionTemplates.apply(templateId).then((data: any) => {
-      if (data?.title) setTitle(data.title);
-      if (data?.description) setDescription(data.description);
-      if (data?.priority) setPriority(data.priority);
-      if (data?.currency) setCurrency(data.currency);
-      if (data?.lines?.length) {
-        setLines(data.lines.map((l: any) => ({
-          description: l.description || '',
-          qty: String(l.quantity || 1),
-          uom: l.unitOfMeasure || 'each',
-          unitPrice: String(l.unitPrice || 0),
-          vendorId: l.vendorId || '',
-          catalogItemId: l.catalogItemId || '',
-        })));
-      }
-      // Try to fetch template name for the banner
-      api.requisitionTemplates.get(templateId).then((t: any) => {
-        if (t?.name) setTemplateBanner(t.name);
-      }).catch(() => setTemplateBanner('template'));
-    }).catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    api.requisitionTemplates
+      .apply(templateId)
+      .then((data: any) => {
+        if (data?.title) setTitle(data.title);
+        if (data?.description) setDescription(data.description);
+        if (data?.priority) setPriority(data.priority);
+        if (data?.currency) setCurrency(data.currency);
+        if (data?.lines?.length) {
+          setLines(
+            data.lines.map((line: any) => ({
+              description: line.description || '',
+              qty: String(line.quantity || 1),
+              uom: line.unitOfMeasure || 'each',
+              unitPrice: String(line.unitPrice || 0),
+              vendorId: line.vendorId || '',
+              catalogItemId: line.catalogItemId || '',
+            })),
+          );
+        }
+        api.requisitionTemplates
+          .get(templateId)
+          .then((template: any) => {
+            if (template?.name) setTemplateBanner(template.name);
+          })
+          .catch(() => setTemplateBanner('template'));
+      })
+      .catch(() => {});
+  }, [searchParams]);
 
-  const total = lines.reduce((sum, l) => sum + (parseFloat(l.qty) || 0) * (parseFloat(l.unitPrice) || 0), 0);
+  const total = lines.reduce(
+    (sum, line) => sum + (parseFloat(line.qty) || 0) * (parseFloat(line.unitPrice) || 0),
+    0,
+  );
 
-  function addLine() { setLines((prev) => [...prev, { ...EMPTY_LINE }]); }
-  function removeLine(idx: number) { setLines((prev) => prev.filter((_, i) => i !== idx)); }
-  function updateLine(idx: number, field: keyof LineItem, value: string) {
-    setLines((prev) => prev.map((line, i) => (i === idx ? { ...line, [field]: value } : line)));
+  function addLine() {
+    setLines((prev) => [...prev, { ...EMPTY_LINE }]);
   }
-  function applyFromCatalog(idx: number, item: CatalogItem) {
-    setLines((prev) => prev.map((line, i) => i === idx ? {
-      ...line,
-      description: item.name,
-      unitPrice: item.unitPrice,
-      uom: item.unitOfMeasure,
-      vendorId: item.vendor?.id ?? line.vendorId,
-      catalogItemId: item.id,
-    } : line));
+
+  function removeLine(index: number) {
+    setLines((prev) => prev.filter((_, lineIndex) => lineIndex !== index));
+  }
+
+  function updateLine(index: number, field: keyof LineItem, value: string) {
+    setLines((prev) =>
+      prev.map((line, lineIndex) => (lineIndex === index ? { ...line, [field]: value } : line)),
+    );
+  }
+
+  function applyFromCatalog(index: number, item: CatalogItem) {
+    setLines((prev) =>
+      prev.map((line, lineIndex) =>
+        lineIndex === index
+          ? {
+              ...line,
+              description: item.name,
+              unitPrice: item.unitPrice,
+              uom: item.unitOfMeasure,
+              vendorId: item.vendor?.id ?? line.vendorId,
+              catalogItemId: item.id,
+            }
+          : line,
+      ),
+    );
   }
 
   async function handleAiParse() {
@@ -205,28 +263,36 @@ function NewRequisitionContent() {
     setAiLoading(true);
     setAiMsg('');
     try {
-      const res = await fetch('/api/v1/requisitions/ai-parse', {
+      const response = await fetch('/api/v1/requisitions/ai-parse', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-org-id': '00000000-0000-0000-0000-000000000001' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-org-id': '00000000-0000-0000-0000-000000000001',
+        },
         body: JSON.stringify({ text: aiText }),
       });
-      const parsed = await res.json();
-      if (parsed.error) { setAiMsg('Parse failed: ' + parsed.error); return; }
+      const parsed = await response.json();
+      if (parsed.error) {
+        setAiMsg(`Parse failed: ${parsed.error}`);
+        return;
+      }
       if (parsed.title) setTitle(parsed.title);
       if (parsed.description) setDescription(parsed.description);
       if (parsed.priority) setPriority(parsed.priority);
       if (parsed.neededBy) setNeededBy(parsed.neededBy.slice(0, 10));
       if (parsed.lines?.length) {
-        setLines(parsed.lines.map((l: any) => ({
-          description: l.description || '',
-          qty: String(l.quantity || 1),
-          uom: l.unitOfMeasure || 'each',
-          unitPrice: String(l.unitPrice || 0),
-          vendorId: '',
-          catalogItemId: '',
-        })));
+        setLines(
+          parsed.lines.map((line: any) => ({
+            description: line.description || '',
+            qty: String(line.quantity || 1),
+            uom: line.unitOfMeasure || 'each',
+            unitPrice: String(line.unitPrice || 0),
+            vendorId: '',
+            catalogItemId: '',
+          })),
+        );
       }
-      setAiMsg('✓ Fields populated from your description. Review and adjust as needed.');
+      setAiMsg('Fields populated from your description. Review and adjust as needed.');
       setAiText('');
     } catch {
       setAiMsg('AI parsing failed. Please fill in the form manually.');
@@ -235,24 +301,28 @@ function NewRequisitionContent() {
     }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
     setError('');
-    if (!title.trim()) { setError('Title is required.'); return; }
+    if (!title.trim()) {
+      setError('Title is required.');
+      return;
+    }
     setSubmitting(true);
     try {
       await api.requisitions.create({
         title: title.trim(),
         description: description.trim() || undefined,
-        priority, currency,
+        priority,
+        currency,
         neededBy: neededBy || undefined,
-        lines: lines.map((l) => ({
-          description: l.description,
-          quantity: parseFloat(l.qty) || 1,
-          unitOfMeasure: l.uom || 'each',
-          unitPrice: parseFloat(l.unitPrice) || 0,
-          vendorId: l.vendorId || undefined,
-          catalogItemId: l.catalogItemId || undefined,
+        lines: lines.map((line) => ({
+          description: line.description,
+          quantity: parseFloat(line.qty) || 1,
+          unitOfMeasure: line.uom || 'each',
+          unitPrice: parseFloat(line.unitPrice) || 0,
+          vendorId: line.vendorId || undefined,
+          catalogItemId: line.catalogItemId || undefined,
         })),
       });
       router.push('/requisitions');
@@ -264,157 +334,233 @@ function NewRequisitionContent() {
   }
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '960px' }}>
-      <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
-        <div>
-          <Link href="/requisitions" style={{ color: COLORS.textSecondary, fontSize: '0.875rem', textDecoration: 'none' }}>
-            &larr; Back to Requisitions
-          </Link>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: '0.5rem 0 0', color: COLORS.textPrimary }}>New Requisition</h1>
-        </div>
-        <Link
-          href="/requisitions/templates"
-          style={{ fontSize: '0.875rem', color: COLORS.accentBlueDark, textDecoration: 'none', border: `1px solid ${COLORS.accentBlueLight}`, padding: '0.4rem 0.875rem', borderRadius: '6px', background: COLORS.accentBlueLight, fontWeight: 500, marginTop: '0.25rem', display: 'inline-block' }}
-        >
-          Browse Templates
-        </Link>
-      </div>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="New Requisition"
+        description="Create a request manually, from a template, or from an AI-assisted plain-language description."
+        actions={
+          <div className="flex flex-wrap gap-3">
+            <Button asChild variant="outline">
+              <Link href="/requisitions">Back to Requisitions</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link href="/requisitions/templates">
+                <FileStack className="h-4 w-4" />
+                Browse Templates
+              </Link>
+            </Button>
+          </div>
+        }
+      />
 
-      {/* Template Banner */}
-      {templateBanner && (
-        <div style={{ background: COLORS.accentGreenLight, border: `1px solid ${COLORS.accentGreen}`, borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: COLORS.accentGreenDark }}>
-          <span>Pre-filled from template: <strong>{templateBanner}</strong></span>
-          <span style={{ marginLeft: 'auto', color: COLORS.textMuted, fontSize: '0.8rem' }}>Review and adjust the fields before creating.</span>
-          <a href="/requisitions/templates" style={{ color: COLORS.accentGreenDark, textDecoration: 'none', fontWeight: 600, marginLeft: '0.5rem' }}>View all templates →</a>
-        </div>
-      )}
+      {templateBanner ? (
+        <Alert variant="success">
+          <AlertDescription>
+            Pre-filled from template <strong>{templateBanner}</strong>. Review and adjust the fields before creating.
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
-      {/* AI Parse Panel */}
-      <div style={{ background: 'linear-gradient(135deg, #eff6ff 0%, #f5f3ff 100%)', border: `1px solid ${COLORS.accentBlueLight}`, borderRadius: '10px', padding: '1.25rem', marginBottom: '1.25rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-          <span style={{ fontSize: '1.25rem' }}>✨</span>
-          <span style={{ fontSize: '0.9rem', fontWeight: 700, color: COLORS.accentBlueDark }}>AI-Assisted Creation</span>
-          <span style={{ fontSize: '0.75rem', color: COLORS.textSecondary }}>— Describe what you need in plain language</span>
-        </div>
-        <textarea
-          value={aiText}
-          onChange={(e) => setAiText(e.target.value)}
-          placeholder="e.g. I need 50 boxes of A4 paper and 10 printer cartridges for the office. These are urgent — needed by next Friday. Preferred vendor is OfficeMax."
-          rows={3}
-          style={{ ...inputStyle, width: '100%', resize: 'vertical', marginBottom: '0.75rem', boxSizing: 'border-box' }}
-        />
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <button
-            type="button"
-            onClick={handleAiParse}
-            disabled={!aiText.trim() || aiLoading}
-            style={{ background: COLORS.accentBlue, color: '#fff', border: 'none', borderRadius: '7px', padding: '0.45rem 1rem', fontSize: '0.8rem', fontWeight: 600, cursor: aiText.trim() && !aiLoading ? 'pointer' : 'not-allowed', opacity: aiText.trim() && !aiLoading ? 1 : 0.6 }}
-          >
-            {aiLoading ? 'Parsing...' : '✨ Parse with AI'}
-          </button>
-          {aiMsg && <span style={{ fontSize: '0.8rem', color: aiMsg.startsWith('✓') ? COLORS.accentGreen : COLORS.accentRed }}>{aiMsg}</span>}
-        </div>
-      </div>
+      <Card className="rounded-[24px] border-sky-200/70 bg-gradient-to-br from-sky-50 to-indigo-50">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-xl">
+            <Sparkles className="h-5 w-5 text-sky-700" />
+            AI-Assisted Creation
+          </CardTitle>
+          <CardDescription>
+            Describe what you need in plain language and BetterSpend will pre-fill the requisition.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Textarea
+            value={aiText}
+            onChange={(event) => setAiText(event.target.value)}
+            placeholder="I need 50 boxes of A4 paper and 10 printer cartridges for the office. These are urgent and needed by next Friday."
+            rows={4}
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="button" onClick={handleAiParse} disabled={!aiText.trim() || aiLoading}>
+              <Bot className="h-4 w-4" />
+              {aiLoading ? 'Parsing...' : 'Parse with AI'}
+            </Button>
+            {aiMsg ? (
+              <Badge
+                variant="outline"
+                className={
+                  aiMsg.startsWith('Fields')
+                    ? 'border-emerald-200 bg-emerald-100 text-emerald-800'
+                    : 'border-rose-200 bg-rose-100 text-rose-800'
+                }
+              >
+                {aiMsg}
+              </Badge>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
 
-      <form onSubmit={handleSubmit}>
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.25rem', boxShadow: SHADOWS.card }}>
-          <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: '0 0 1.25rem', color: COLORS.textPrimary }}>Details</h2>
-          <div style={{ display: 'grid', gap: '1rem' }}>
-            <div>
-              <label style={labelStyle}>Title <span style={{ color: COLORS.accentRed }}>*</span></label>
-              <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Office supplies Q1" style={inputStyle} required />
-            </div>
-            <div>
-              <label style={labelStyle}>Description</label>
-              <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional notes or justification" rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
-              <div>
-                <label style={labelStyle}>Priority</label>
-                <select value={priority} onChange={(e) => setPriority(e.target.value)} style={inputStyle}>
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">Details</CardTitle>
+            <CardDescription>Set the header details and request urgency for this requisition.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Field label="Title">
+              <Input
+                type="text"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="Office supplies Q1"
+                required
+              />
+            </Field>
+            <Field label="Description">
+              <Textarea
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="Optional notes or justification"
+                rows={3}
+              />
+            </Field>
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field label="Priority">
+                <Select value={priority} onChange={(event) => setPriority(event.target.value)} className="w-full">
                   <option value="low">Low</option>
                   <option value="normal">Normal</option>
                   <option value="high">High</option>
                   <option value="urgent">Urgent</option>
-                </select>
-              </div>
-              <div>
-                <label style={labelStyle}>Currency</label>
-                <input type="text" value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} maxLength={3} style={inputStyle} />
-              </div>
-              <div>
-                <label style={labelStyle}>Needed By</label>
-                <input type="date" value={neededBy} onChange={(e) => setNeededBy(e.target.value)} style={inputStyle} />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.25rem', boxShadow: SHADOWS.card }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-            <div>
-              <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0, color: COLORS.textPrimary }}>Line Items</h2>
-              <p style={{ margin: '0.25rem 0 0', fontSize: '0.78rem', color: COLORS.textMuted }}>
-                Start typing to search the catalog — selecting an item auto-fills price, UOM &amp; vendor
-              </p>
-            </div>
-            <button type="button" onClick={addLine} style={{ background: 'transparent', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', padding: '0.375rem 0.875rem', fontSize: '0.8rem', cursor: 'pointer', color: COLORS.textSecondary, fontWeight: 500 }}>
-              + Add Line
-            </button>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '3fr 80px 80px 120px 100px 40px', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            {['Description / Catalog', 'Qty', 'UOM', 'Unit Price', 'Total', ''].map((h) => (
-              <div key={h} style={{ fontSize: '0.75rem', fontWeight: 600, color: COLORS.textSecondary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</div>
-            ))}
-          </div>
-
-          {lines.map((line, idx) => {
-            const lineTotal = (parseFloat(line.qty) || 0) * (parseFloat(line.unitPrice) || 0);
-            return (
-              <div key={idx} style={{ display: 'grid', gridTemplateColumns: '3fr 80px 80px 120px 100px 40px', gap: '0.5rem', marginBottom: '0.5rem', alignItems: 'start' }}>
-                <CatalogPicker
-                  currentDescription={line.description}
-                  onSelect={(item) => applyFromCatalog(idx, item)}
+                </Select>
+              </Field>
+              <Field label="Currency">
+                <Input
+                  type="text"
+                  value={currency}
+                  onChange={(event) => setCurrency(event.target.value.toUpperCase())}
+                  maxLength={3}
                 />
-                <input type="number" value={line.qty} min="0" step="any"
-                  onChange={(e) => updateLine(idx, 'qty', e.target.value)} style={inputStyle} />
-                <input type="text" value={line.uom}
-                  onChange={(e) => updateLine(idx, 'uom', e.target.value)} placeholder="each" style={inputStyle} />
-                <input type="number" value={line.unitPrice} min="0" step="any"
-                  onChange={(e) => updateLine(idx, 'unitPrice', e.target.value)} style={inputStyle} />
-                <div style={{ fontSize: '0.875rem', color: COLORS.textSecondary, fontVariantNumeric: 'tabular-nums', textAlign: 'right', paddingRight: '0.25rem', paddingTop: '0.5rem' }}>
-                  {formatCurrency(lineTotal)}
+              </Field>
+              <Field label="Needed By">
+                <Input
+                  type="date"
+                  value={neededBy}
+                  onChange={(event) => setNeededBy(event.target.value)}
+                />
+              </Field>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-[24px]">
+          <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-1.5">
+              <CardTitle className="text-xl">Line Items</CardTitle>
+              <CardDescription>
+                Search the catalog inline. Selecting an item auto-fills price, unit, and vendor context.
+              </CardDescription>
+            </div>
+            <Button type="button" variant="outline" onClick={addLine}>
+              <Plus className="h-4 w-4" />
+              Add Line
+            </Button>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Description / Catalog</TableHead>
+                  <TableHead>Qty</TableHead>
+                  <TableHead>UOM</TableHead>
+                  <TableHead>Unit Price</TableHead>
+                  <TableHead>Total</TableHead>
+                  <TableHead className="text-right">Remove</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {lines.map((line, index) => {
+                  const lineTotal = (parseFloat(line.qty) || 0) * (parseFloat(line.unitPrice) || 0);
+                  return (
+                    <TableRow key={index}>
+                      <TableCell className="min-w-[320px]">
+                        <CatalogPicker
+                          currentDescription={line.description}
+                          onSelect={(item) => applyFromCatalog(index, item)}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          value={line.qty}
+                          min="0"
+                          step="any"
+                          onChange={(event) => updateLine(index, 'qty', event.target.value)}
+                          className="w-24"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          type="text"
+                          value={line.uom}
+                          onChange={(event) => updateLine(index, 'uom', event.target.value)}
+                          placeholder="each"
+                          className="w-24"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          value={line.unitPrice}
+                          min="0"
+                          step="any"
+                          onChange={(event) => updateLine(index, 'unitPrice', event.target.value)}
+                          className="w-28"
+                        />
+                      </TableCell>
+                      <TableCell className="font-medium text-foreground">
+                        {formatCurrency(lineTotal)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => removeLine(index)}
+                          disabled={lines.length === 1}
+                        >
+                          Remove
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+
+            <div className="mt-4 flex justify-end">
+              <div className="rounded-2xl border border-border/70 bg-muted/20 px-5 py-3 text-right">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Total
                 </div>
-                <button type="button" onClick={() => removeLine(idx)} disabled={lines.length === 1}
-                  style={{ background: 'transparent', border: 'none', cursor: lines.length === 1 ? 'not-allowed' : 'pointer', color: lines.length === 1 ? COLORS.inputBorder : COLORS.accentRed, fontSize: '1rem', padding: '0.25rem', marginTop: '0.375rem' }}>
-                  &times;
-                </button>
+                <div className="mt-1 text-2xl font-semibold text-foreground">
+                  {formatCurrency(total)}
+                </div>
               </div>
-            );
-          })}
+            </div>
+          </CardContent>
+        </Card>
 
-          <div style={{ borderTop: `1px solid ${COLORS.tableBorder}`, marginTop: '0.75rem', paddingTop: '0.75rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.875rem', fontWeight: 600, color: COLORS.textSecondary }}>Total</span>
-            <span style={{ fontSize: '1rem', fontWeight: 700, color: COLORS.textPrimary, fontVariantNumeric: 'tabular-nums', minWidth: '120px', textAlign: 'right' }}>
-              {formatCurrency(total)}
-            </span>
-          </div>
-        </div>
-
-        {error && (
-          <div style={{ background: COLORS.accentRedLight, border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.75rem 1rem', color: COLORS.accentRedDark, fontSize: '0.875rem', marginBottom: '1rem' }}>
-            {error}
-          </div>
-        )}
-
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button type="submit" disabled={submitting} style={{ background: COLORS.textPrimary, color: COLORS.white, border: 'none', borderRadius: '6px', padding: '0.625rem 1.5rem', fontSize: '0.875rem', fontWeight: 600, cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.7 : 1 }}>
+        <div className="flex flex-wrap gap-3">
+          <Button type="submit" disabled={submitting}>
             {submitting ? 'Saving...' : 'Create Requisition'}
-          </button>
-          <Link href="/requisitions" style={{ background: COLORS.white, color: COLORS.textSecondary, border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', padding: '0.625rem 1.25rem', fontSize: '0.875rem', fontWeight: 500, textDecoration: 'none', display: 'inline-block' }}>
-            Cancel
-          </Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/requisitions">Cancel</Link>
+          </Button>
         </div>
       </form>
     </div>
@@ -423,8 +569,33 @@ function NewRequisitionContent() {
 
 export default function NewRequisitionPage() {
   return (
-    <Suspense fallback={<div style={{ padding: '2rem', color: COLORS.textMuted }}>Loading…</div>}>
+    <Suspense
+      fallback={
+        <div className="p-4 lg:p-8">
+          <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+            Loading...
+          </div>
+        </div>
+      }
+    >
       <NewRequisitionContent />
     </Suspense>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="space-y-2">
+      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </span>
+      {children}
+    </label>
   );
 }

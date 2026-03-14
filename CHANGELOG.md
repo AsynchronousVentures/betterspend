@@ -57,6 +57,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated the requisition templates workspace onto the new design system, covering template inventory, org-wide visibility, and direct use-template actions.
 - Migrated the invoice creation workspace onto the new design system, covering OCR upload, PO-linked defaults, and editable tax-aware line items.
 - Migrated the goods receipt creation workspace onto the new design system, covering PO selection, receiving notes, and per-line received/rejected quantity capture.
+- Migrated the requisition creation workspace onto the new design system, covering template prefill, AI-assisted parsing, and catalog-backed line editing.
 
 ### Fixed
 
