@@ -48,6 +48,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated the analytics dashboard onto the new design system, including KPI tiles, chart containers, anomaly panels, department summaries, and the main budget and vendor performance tables.
 - Migrated approval delegations onto the new operational UI layer, including delegation setup plus inbound and outbound coverage tables.
 - Migrated the supplier scorecard onto the new design system, including sortable scoring rows and inline vendor detail panels for PO and invoice history.
+- Migrated the AP aging view onto the new design system, including overdue summary cards, aging buckets, the unpaid invoice grid, and the mark-paid modal.
 
 ### Fixed
 

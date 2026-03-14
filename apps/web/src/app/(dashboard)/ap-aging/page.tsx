@@ -1,10 +1,28 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { AlertTriangle, CalendarClock, CircleDollarSign, Percent, Wallet } from 'lucide-react';
 import { api } from '../../../lib/api';
-import { COLORS, SHADOWS, FONT } from '../../../lib/theme';
-
-/* ── Types ── */
+import { PageHeader } from '../../../components/page-header';
+import { StatusBadge } from '../../../components/status-badge';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
+import { Button } from '../../../components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../../components/ui/card';
+import { Input } from '../../../components/ui/input';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../../components/ui/table';
 
 interface AgingBucket {
   count: number;
@@ -34,14 +52,12 @@ interface Invoice {
   vendor?: { name: string };
 }
 
-/* ── Helpers ── */
-
-function fmt(amount: string | number): string {
+function fmt(amount: string | number) {
   const n = typeof amount === 'string' ? parseFloat(amount) : amount;
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 }
 
-function daysOverdue(dueDateStr?: string): number {
+function daysOverdue(dueDateStr?: string) {
   if (!dueDateStr) return 0;
   const due = new Date(dueDateStr);
   due.setHours(0, 0, 0, 0);
@@ -50,35 +66,12 @@ function daysOverdue(dueDateStr?: string): number {
   return Math.floor((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-function agingColor(days: number): string {
-  if (days <= 0) return COLORS.accentGreen;
-  if (days <= 30) return COLORS.accentAmber;
-  if (days <= 60) return '#f97316';
-  return COLORS.accentRed;
+function agingTone(days: number) {
+  if (days <= 0) return '#16a34a';
+  if (days <= 30) return '#d97706';
+  if (days <= 60) return '#ea580c';
+  return '#dc2626';
 }
-
-function statusBadge(status: string): React.CSSProperties {
-  const map: Record<string, { bg: string; color: string }> = {
-    paid: { bg: COLORS.accentGreenLight, color: COLORS.accentGreenDark },
-    approved: { bg: COLORS.accentBlueLight, color: COLORS.accentBlueDark },
-    matched: { bg: COLORS.accentPurpleLight, color: COLORS.accentPurpleDark },
-    exception: { bg: COLORS.accentRedLight, color: COLORS.accentRedDark },
-    pending_match: { bg: COLORS.accentAmberLight, color: COLORS.accentAmberDark },
-    draft: { bg: '#f1f5f9', color: '#475569' },
-  };
-  const s = map[status] ?? map.draft;
-  return {
-    display: 'inline-block',
-    padding: '2px 8px',
-    borderRadius: '9999px',
-    fontSize: FONT.xs,
-    fontWeight: 600,
-    background: s.bg,
-    color: s.color,
-  };
-}
-
-/* ── Mark Paid Modal ── */
 
 function MarkPaidModal({
   invoice,
@@ -93,12 +86,14 @@ function MarkPaidModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
     setLoading(true);
     setError('');
     try {
-      await api.invoices.markPaid(invoice.id, { paymentReference: paymentReference || undefined });
+      await api.invoices.markPaid(invoice.id, {
+        paymentReference: paymentReference || undefined,
+      });
       onSuccess();
     } catch (err: any) {
       setError(err.message || 'Failed to mark as paid');
@@ -109,109 +104,49 @@ function MarkPaidModal({
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: SHADOWS.overlay,
-        zIndex: 50,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
       onClick={onClose}
     >
       <div
-        style={{
-          background: COLORS.cardBg,
-          borderRadius: '12px',
-          padding: '2rem',
-          width: '100%',
-          maxWidth: '420px',
-          boxShadow: SHADOWS.dropdown,
-        }}
-        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-[24px] border border-border/70 bg-card p-6 shadow-[0_30px_90px_-48px_rgba(15,23,42,0.55)]"
+        onClick={(event) => event.stopPropagation()}
       >
-        <h3 style={{ margin: '0 0 0.25rem', fontSize: FONT.lg, color: COLORS.textPrimary }}>
-          Mark Invoice as Paid
-        </h3>
-        <p style={{ margin: '0 0 1.5rem', fontSize: FONT.sm, color: COLORS.textSecondary }}>
-          {invoice.internalNumber} — {invoice.vendor?.name} — {fmt(invoice.totalAmount)}
+        <h3 className="text-xl font-semibold tracking-[-0.03em] text-foreground">Mark Invoice as Paid</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {invoice.internalNumber} · {invoice.vendor?.name} · {fmt(invoice.totalAmount)}
         </p>
-        {error && (
-          <div
-            style={{
-              background: COLORS.accentRedLight,
-              color: COLORS.accentRedDark,
-              padding: '0.75rem 1rem',
-              borderRadius: '6px',
-              fontSize: FONT.sm,
-              marginBottom: '1rem',
-            }}
-          >
-            {error}
+
+        {error ? (
+          <Alert variant="destructive" className="mt-4">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        <form onSubmit={handleSubmit} className="mt-5 space-y-5">
+          <div>
+            <label className="mb-2 block text-sm font-medium text-foreground">
+              Payment Reference
+            </label>
+            <Input
+              type="text"
+              value={paymentReference}
+              onChange={(event) => setPaymentReference(event.target.value)}
+              placeholder="CHK-12345 or wire reference"
+            />
           </div>
-        )}
-        <form onSubmit={handleSubmit}>
-          <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: FONT.sm, fontWeight: 500, color: COLORS.textPrimary }}>
-            Payment Reference (optional)
-          </label>
-          <input
-            type="text"
-            value={paymentReference}
-            onChange={(e) => setPaymentReference(e.target.value)}
-            placeholder="e.g. CHK-12345 or wire ref"
-            style={{
-              width: '100%',
-              padding: '0.625rem 0.75rem',
-              border: `1px solid ${COLORS.inputBorder}`,
-              borderRadius: '6px',
-              fontSize: FONT.sm,
-              color: COLORS.textPrimary,
-              outline: 'none',
-              boxSizing: 'border-box',
-              marginBottom: '1.5rem',
-            }}
-          />
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-            <button
-              type="button"
-              onClick={onClose}
-              style={{
-                padding: '0.5rem 1.25rem',
-                border: `1px solid ${COLORS.border}`,
-                borderRadius: '6px',
-                background: 'transparent',
-                fontSize: FONT.sm,
-                color: COLORS.textSecondary,
-                cursor: 'pointer',
-              }}
-            >
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="outline" onClick={onClose}>
               Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                padding: '0.5rem 1.25rem',
-                border: 'none',
-                borderRadius: '6px',
-                background: loading ? '#93c5fd' : COLORS.accentBlue,
-                color: '#fff',
-                fontSize: FONT.sm,
-                fontWeight: 600,
-                cursor: loading ? 'not-allowed' : 'pointer',
-              }}
-            >
+            </Button>
+            <Button type="submit" disabled={loading}>
               {loading ? 'Saving...' : 'Mark Paid'}
-            </button>
+            </Button>
           </div>
         </form>
       </div>
     </div>
   );
 }
-
-/* ── Main Page ── */
 
 export default function ApAgingPage() {
   const [aging, setAging] = useState<AgingReport | null>(null);
@@ -231,9 +166,8 @@ export default function ApAgingPage() {
         api.invoices.earlyPaymentOpportunities(),
       ]);
       setAging(agingData);
-      // Show unpaid invoices only (paidAt null and status != 'paid')
       setInvoices(
-        (allInvoices as Invoice[]).filter((inv) => !inv.paidAt && inv.status !== 'paid')
+        (allInvoices as Invoice[]).filter((invoice) => !invoice.paidAt && invoice.status !== 'paid'),
       );
       setEarlyPayCount((earlyPay as any[]).length);
     } catch (err: any) {
@@ -256,326 +190,221 @@ export default function ApAgingPage() {
       ).toFixed(2)
     : '0.00';
 
-  const dueIn7Days = invoices.filter((inv) => {
-    if (!inv.dueDate) return false;
-    const due = new Date(inv.dueDate);
+  const dueIn7Days = invoices.filter((invoice) => {
+    if (!invoice.dueDate) return false;
+    const due = new Date(invoice.dueDate);
     const today = new Date();
     const in7 = new Date();
     in7.setDate(today.getDate() + 7);
     return due >= today && due <= in7;
   });
 
-  const buckets = aging
+  const bucketCards = aging
     ? [
-        { label: 'Current', key: 'current' as const, color: COLORS.accentGreen, bg: COLORS.accentGreenLight },
-        { label: '1-30 Days', key: 'days_1_30' as const, color: COLORS.accentAmber, bg: COLORS.accentAmberLight },
-        { label: '31-60 Days', key: 'days_31_60' as const, color: '#f97316', bg: '#fff7ed' },
-        { label: '61-90 Days', key: 'days_61_90' as const, color: '#ef4444', bg: '#fff1f2' },
-        { label: '90+ Days', key: 'days_90_plus' as const, color: '#dc2626', bg: COLORS.accentRedLight },
+        {
+          label: 'Current',
+          value: fmt(aging.current.totalAmount),
+          count: aging.current.count,
+          className: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+        },
+        {
+          label: '1-30 Days',
+          value: fmt(aging.days_1_30.totalAmount),
+          count: aging.days_1_30.count,
+          className: 'border-amber-200 bg-amber-50 text-amber-800',
+        },
+        {
+          label: '31-60 Days',
+          value: fmt(aging.days_31_60.totalAmount),
+          count: aging.days_31_60.count,
+          className: 'border-orange-200 bg-orange-50 text-orange-800',
+        },
+        {
+          label: '61-90 Days',
+          value: fmt(aging.days_61_90.totalAmount),
+          count: aging.days_61_90.count,
+          className: 'border-rose-200 bg-rose-50 text-rose-700',
+        },
+        {
+          label: '90+ Days',
+          value: fmt(aging.days_90_plus.totalAmount),
+          count: aging.days_90_plus.count,
+          className: 'border-rose-300 bg-rose-100 text-rose-800',
+        },
       ]
     : [];
 
   if (loading) {
-    return (
-      <div style={{ padding: '2rem', color: COLORS.textSecondary, fontSize: FONT.sm }}>
-        Loading AP aging data...
-      </div>
-    );
+    return <div className="p-8 text-sm text-muted-foreground">Loading AP aging data...</div>;
   }
 
   if (error) {
-    return (
-      <div style={{ padding: '2rem', color: COLORS.accentRed, fontSize: FONT.sm }}>
-        {error}
-      </div>
-    );
+    return <div className="p-8 text-sm text-rose-700">{error}</div>;
   }
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto' }}>
-      {/* Header */}
-      <div style={{ marginBottom: '1.75rem' }}>
-        <h1 style={{ margin: 0, fontSize: FONT.xxl, fontWeight: 700, color: COLORS.textPrimary }}>
-          AP Aging
-        </h1>
-        <p style={{ margin: '0.25rem 0 0', fontSize: FONT.sm, color: COLORS.textSecondary }}>
-          Accounts payable aging report and payment management
-        </p>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="AP Aging"
+        description="Accounts payable aging report, unpaid invoice monitoring, and payment workflow follow-through."
+      />
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          icon={AlertTriangle}
+          label="Total Overdue"
+          value={fmt(totalOverdue)}
+          sub="Outstanding beyond due date"
+          tone="text-rose-700"
+        />
+        <StatCard
+          icon={Wallet}
+          label="Open Invoices"
+          value={String(invoices.length)}
+          sub="Unpaid invoice count"
+          tone="text-foreground"
+        />
+        <StatCard
+          icon={CalendarClock}
+          label="Due in 7 Days"
+          value={fmt(dueIn7Days.reduce((sum, invoice) => sum + parseFloat(invoice.totalAmount || '0'), 0))}
+          sub={`${dueIn7Days.length} invoice${dueIn7Days.length !== 1 ? 's' : ''}`}
+          tone="text-amber-700"
+        />
+        <StatCard
+          icon={Percent}
+          label="Early Payment Opportunities"
+          value={String(earlyPayCount)}
+          sub="Discounts expiring within 14 days"
+          tone="text-emerald-700"
+        />
       </div>
 
-      {/* Stat cards */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: '1rem',
-          marginBottom: '1.5rem',
-        }}
-      >
-        {[
-          {
-            label: 'Total Overdue',
-            value: fmt(totalOverdue),
-            color: COLORS.accentRed,
-            bg: COLORS.accentRedLight,
-          },
-          {
-            label: 'Due in 7 Days',
-            value: fmt(dueIn7Days.reduce((s, inv) => s + parseFloat(inv.totalAmount || '0'), 0)),
-            sub: `${dueIn7Days.length} invoice${dueIn7Days.length !== 1 ? 's' : ''}`,
-            color: COLORS.accentAmber,
-            bg: COLORS.accentAmberLight,
-          },
-          {
-            label: 'Early Payment Opportunities',
-            value: `${earlyPayCount}`,
-            sub: 'discounts expiring in 14 days',
-            color: COLORS.accentGreen,
-            bg: COLORS.accentGreenLight,
-          },
-        ].map((card) => (
-          <div
-            key={card.label}
-            style={{
-              background: COLORS.cardBg,
-              border: `1px solid ${COLORS.cardBorder}`,
-              borderRadius: '10px',
-              padding: '1.25rem 1.5rem',
-              boxShadow: SHADOWS.card,
-            }}
-          >
-            <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
-              {card.label}
-            </div>
-            <div style={{ fontSize: FONT.xl, fontWeight: 700, color: card.color }}>
-              {card.value}
-            </div>
-            {card.sub && (
-              <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, marginTop: '0.25rem' }}>
-                {card.sub}
+      {aging ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          {bucketCards.map((bucket) => (
+            <div
+              key={bucket.label}
+              className={`rounded-[24px] border px-5 py-5 ${bucket.className}`}
+            >
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] opacity-80">
+                {bucket.label}
               </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* Aging Bucket Cards */}
-      {aging && (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(5, 1fr)',
-            gap: '0.75rem',
-            marginBottom: '2rem',
-          }}
-        >
-          {buckets.map((b) => {
-            const bucket = aging[b.key];
-            return (
-              <div
-                key={b.key}
-                style={{
-                  background: b.bg,
-                  border: `1px solid ${b.color}30`,
-                  borderRadius: '10px',
-                  padding: '1rem 1.25rem',
-                  textAlign: 'center',
-                }}
-              >
-                <div style={{ fontSize: FONT.xs, fontWeight: 600, color: b.color, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
-                  {b.label}
-                </div>
-                <div style={{ fontSize: FONT.lg, fontWeight: 700, color: b.color }}>
-                  {fmt(bucket.totalAmount)}
-                </div>
-                <div style={{ fontSize: FONT.xs, color: b.color, opacity: 0.8, marginTop: '0.25rem' }}>
-                  {bucket.count} invoice{bucket.count !== 1 ? 's' : ''}
-                </div>
+              <div className="mt-3 text-2xl font-semibold tracking-[-0.03em]">{bucket.value}</div>
+              <div className="mt-2 text-xs opacity-80">
+                {bucket.count} invoice{bucket.count !== 1 ? 's' : ''}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
-      )}
+      ) : null}
 
-      {/* Invoice Table */}
-      <div
-        style={{
-          background: COLORS.cardBg,
-          border: `1px solid ${COLORS.cardBorder}`,
-          borderRadius: '10px',
-          boxShadow: SHADOWS.card,
-          overflow: 'hidden',
-        }}
-      >
-        <div style={{ padding: '1.25rem 1.5rem', borderBottom: `1px solid ${COLORS.border}` }}>
-          <h2 style={{ margin: 0, fontSize: FONT.md, fontWeight: 600, color: COLORS.textPrimary }}>
-            Unpaid Invoices
-          </h2>
-        </div>
+      <Card className="rounded-[24px]">
+        <CardHeader>
+          <CardTitle className="text-xl">Unpaid Invoices</CardTitle>
+          <CardDescription>Track due dates, overdue exposure, discount windows, and mark approved invoices as paid.</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {invoices.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+              No unpaid invoices found.
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Vendor</TableHead>
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>Invoice Date</TableHead>
+                  <TableHead>Due Date</TableHead>
+                  <TableHead>Amount</TableHead>
+                  <TableHead>Days Overdue</TableHead>
+                  <TableHead>Discount Available</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {invoices.map((invoice) => {
+                  const overdueDays = daysOverdue(invoice.dueDate);
+                  const isOverdue = overdueDays > 0;
+                  const hasDiscount =
+                    invoice.earlyPaymentDiscountPercent &&
+                    parseFloat(invoice.earlyPaymentDiscountPercent) > 0;
 
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: FONT.sm }}>
-            <thead>
-              <tr style={{ background: COLORS.tableHeaderBg }}>
-                {[
-                  'Vendor',
-                  'Invoice #',
-                  'Invoice Date',
-                  'Due Date',
-                  'Amount',
-                  'Days Overdue',
-                  'Discount Available',
-                  'Status',
-                  'Actions',
-                ].map((h) => (
-                  <th
-                    key={h}
-                    style={{
-                      padding: '0.75rem 1rem',
-                      textAlign: 'left',
-                      fontWeight: 600,
-                      color: COLORS.textSecondary,
-                      fontSize: FONT.xs,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                      borderBottom: `1px solid ${COLORS.tableBorder}`,
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {invoices.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={9}
-                    style={{
-                      padding: '3rem',
-                      textAlign: 'center',
-                      color: COLORS.textMuted,
-                      fontSize: FONT.sm,
-                    }}
-                  >
-                    No unpaid invoices found.
-                  </td>
-                </tr>
-              )}
-              {invoices.map((inv, i) => {
-                const overdueDays = daysOverdue(inv.dueDate);
-                const isOverdue = overdueDays > 0;
-                const hasDiscount =
-                  inv.earlyPaymentDiscountPercent && parseFloat(inv.earlyPaymentDiscountPercent) > 0;
-
-                return (
-                  <tr
-                    key={inv.id}
-                    style={{
-                      background: i % 2 === 0 ? COLORS.cardBg : COLORS.hoverBg,
-                      borderBottom: `1px solid ${COLORS.tableBorder}`,
-                    }}
-                  >
-                    <td style={{ padding: '0.75rem 1rem', color: COLORS.textPrimary, fontWeight: 500 }}>
-                      {inv.vendor?.name ?? '—'}
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary }}>
-                      <div style={{ fontWeight: 500, color: COLORS.textPrimary }}>{inv.internalNumber}</div>
-                      <div style={{ fontSize: FONT.xs, color: COLORS.textMuted }}>{inv.invoiceNumber}</div>
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary, whiteSpace: 'nowrap' }}>
-                      {inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : '—'}
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}>
-                      {inv.dueDate ? (
-                        <span style={{ color: isOverdue ? COLORS.accentRed : COLORS.textSecondary }}>
-                          {new Date(inv.dueDate).toLocaleDateString()}
-                        </span>
-                      ) : (
-                        <span style={{ color: COLORS.textMuted }}>No due date</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem', fontWeight: 600, color: COLORS.textPrimary, whiteSpace: 'nowrap' }}>
-                      {fmt(inv.totalAmount)}
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem' }}>
-                      {isOverdue ? (
-                        <span
-                          style={{
-                            fontWeight: 600,
-                            color: agingColor(overdueDays),
-                            fontSize: FONT.sm,
-                          }}
-                        >
-                          {overdueDays}d overdue
-                        </span>
-                      ) : inv.dueDate ? (
-                        <span style={{ color: COLORS.accentGreen, fontSize: FONT.sm }}>
-                          {Math.abs(overdueDays)}d remaining
-                        </span>
-                      ) : (
-                        <span style={{ color: COLORS.textMuted }}>—</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem' }}>
-                      {hasDiscount ? (
-                        <div>
-                          <span
-                            style={{
-                              background: COLORS.accentGreenLight,
-                              color: COLORS.accentGreenDark,
-                              padding: '2px 8px',
-                              borderRadius: '9999px',
-                              fontSize: FONT.xs,
-                              fontWeight: 600,
-                            }}
-                          >
-                            {inv.earlyPaymentDiscountPercent}% off
+                  return (
+                    <TableRow key={invoice.id}>
+                      <TableCell className="font-medium text-foreground">
+                        {invoice.vendor?.name ?? '—'}
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-medium text-foreground">{invoice.internalNumber}</div>
+                        <div className="text-xs text-muted-foreground">{invoice.invoiceNumber}</div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {invoice.invoiceDate ? new Date(invoice.invoiceDate).toLocaleDateString() : '—'}
+                      </TableCell>
+                      <TableCell>
+                        {invoice.dueDate ? (
+                          <span className={isOverdue ? 'text-rose-700' : 'text-muted-foreground'}>
+                            {new Date(invoice.dueDate).toLocaleDateString()}
                           </span>
-                          {inv.earlyPaymentDiscountBy && (
-                            <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, marginTop: '2px' }}>
-                              by {new Date(inv.earlyPaymentDiscountBy).toLocaleDateString()}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span style={{ color: COLORS.textMuted }}>—</span>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem' }}>
-                      <span style={statusBadge(inv.status)}>{inv.status.replace(/_/g, ' ')}</span>
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem' }}>
-                      {inv.status === 'approved' && (
-                        <button
-                          onClick={() => setMarkPaidInvoice(inv)}
-                          style={{
-                            padding: '0.375rem 0.875rem',
-                            background: COLORS.accentGreen,
-                            color: '#fff',
-                            border: 'none',
-                            borderRadius: '6px',
-                            fontSize: FONT.xs,
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          Mark Paid
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                        ) : (
+                          <span className="text-muted-foreground">No due date</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="font-semibold text-foreground">
+                        {fmt(invoice.totalAmount)}
+                      </TableCell>
+                      <TableCell>
+                        {isOverdue ? (
+                          <span className="font-semibold" style={{ color: agingTone(overdueDays) }}>
+                            {overdueDays}d overdue
+                          </span>
+                        ) : invoice.dueDate ? (
+                          <span className="text-sm text-emerald-700">
+                            {Math.abs(overdueDays)}d remaining
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {hasDiscount ? (
+                          <div>
+                            <span className="inline-flex rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">
+                              {invoice.earlyPaymentDiscountPercent}% off
+                            </span>
+                            {invoice.earlyPaymentDiscountBy ? (
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                by {new Date(invoice.earlyPaymentDiscountBy).toLocaleDateString()}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge value={invoice.status} />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {invoice.status === 'approved' ? (
+                          <Button type="button" size="sm" onClick={() => setMarkPaidInvoice(invoice)}>
+                            Mark Paid
+                          </Button>
+                        ) : null}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Mark Paid Modal */}
-      {markPaidInvoice && (
+      {markPaidInvoice ? (
         <MarkPaidModal
           invoice={markPaidInvoice}
           onClose={() => setMarkPaidInvoice(null)}
@@ -584,7 +413,38 @@ export default function ApAgingPage() {
             loadData();
           }}
         />
-      )}
+      ) : null}
     </div>
+  );
+}
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  sub: string;
+  tone: string;
+}) {
+  return (
+    <Card className="rounded-[24px]">
+      <CardContent className="p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            {label}
+          </div>
+          <div className="rounded-full border border-border/70 bg-muted/30 p-2">
+            <Icon className="h-4 w-4 text-foreground" />
+          </div>
+        </div>
+        <div className={`text-3xl font-semibold tracking-[-0.03em] ${tone}`}>{value}</div>
+        <div className="mt-2 text-xs text-muted-foreground">{sub}</div>
+      </CardContent>
+    </Card>
   );
 }
