@@ -67,6 +67,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated the purchase order creation workspace onto the new design system, covering vendor setup, tax-aware lines, contract compliance checks, and currency handling.
 - Migrated the RFQ workspace onto the new design system, covering RFQ creation, response comparison, award/reject actions, and sourcing detail review.
 - Migrated the recurring purchase order workspace onto the new design system, covering schedule inventory, pause/resume and skip-next controls, upcoming run previews, generated PO history, and recurring PO creation.
+- Migrated the vendor portal onto the new design system, covering secure token access, invoice submission, onboarding workflows, catalog pricing proposals, and supplier-side proposal history.
 
 ### Fixed
 

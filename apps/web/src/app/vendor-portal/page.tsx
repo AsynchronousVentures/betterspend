@@ -1,18 +1,81 @@
 'use client';
 
-import { useState, useEffect, Suspense, FormEvent } from 'react';
+import { Suspense, type ChangeEvent, type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import {
+  ClipboardCheck,
+  CreditCard,
+  FileSpreadsheet,
+  LoaderCircle,
+  ReceiptText,
+  Send,
+  ShieldCheck,
+  Upload,
+  X,
+} from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
+import { cn } from '../../lib/utils';
+import { StatusBadge } from '../../components/status-badge';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../components/ui/table';
+import { Textarea } from '../../components/ui/textarea';
+
+type PortalTab = 'overview' | 'pos' | 'invoices' | 'onboarding' | 'catalog';
+
+interface InvoiceLine {
+  lineNumber: number;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  poLineId?: string;
+}
+
+interface VendorPortalStats {
+  totalPOs: number;
+  totalInvoiced: number;
+  pendingPayment: number;
+}
+
+interface VendorPortalData {
+  vendor: any;
+  purchaseOrders: any[];
+  invoices: any[];
+  stats: VendorPortalStats;
+}
+
+const EMPTY_INVOICE_LINE: InvoiceLine = {
+  lineNumber: 1,
+  description: '',
+  quantity: 1,
+  unitPrice: 0,
+};
 
 function fmt(amount: number | string | null | undefined, currency = 'USD') {
   if (amount == null) return '—';
   return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(amount));
 }
 
-function fmtDate(d: string | null | undefined) {
-  if (!d) return '—';
-  return new Date(d).toLocaleDateString();
+function fmtDate(value: string | null | undefined) {
+  if (!value) return '—';
+  return new Date(value).toLocaleDateString();
 }
 
 function parseCsvLine(line: string): string[] {
@@ -20,12 +83,12 @@ function parseCsvLine(line: string): string[] {
   let current = '';
   let inQuotes = false;
 
-  for (let i = 0; i < line.length; i += 1) {
-    const char = line[i];
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
     if (char === '"') {
-      if (inQuotes && line[i + 1] === '"') {
+      if (inQuotes && line[index + 1] === '"') {
         current += '"';
-        i += 1;
+        index += 1;
       } else {
         inQuotes = !inQuotes;
       }
@@ -41,102 +104,171 @@ function parseCsvLine(line: string): string[] {
   return values;
 }
 
-const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
-  draft: { bg: '#f1f5f9', text: '#475569' },
-  issued: { bg: '#eff6ff', text: '#1d4ed8' },
-  partially_received: { bg: '#fffbeb', text: '#92400e' },
-  received: { bg: '#ecfdf5', text: '#065f46' },
-  cancelled: { bg: '#fef2f2', text: '#991b1b' },
-  pending_match: { bg: '#f1f5f9', text: '#475569' },
-  matched: { bg: '#ecfdf5', text: '#065f46' },
-  partial_match: { bg: '#fffbeb', text: '#92400e' },
-  exception: { bg: '#fef2f2', text: '#991b1b' },
-  approved: { bg: '#eff6ff', text: '#1d4ed8' },
-  paid: { bg: '#ecfdf5', text: '#065f46' },
-};
-
-function StatusBadge({ status }: { status: string }) {
-  const sc = STATUS_COLORS[status] ?? { bg: '#f1f5f9', text: '#475569' };
+function PortalShell({
+  children,
+  vendorName,
+  onSubmitInvoice,
+}: {
+  children: ReactNode;
+  vendorName?: string;
+  onSubmitInvoice?: () => void;
+}) {
   return (
-    <span style={{
-      padding: '0.15rem 0.5rem',
-      borderRadius: '999px',
-      fontSize: '0.7rem',
-      fontWeight: 600,
-      background: sc.bg,
-      color: sc.text,
-      textTransform: 'capitalize',
-      whiteSpace: 'nowrap',
-    }}>
-      {status.replace(/_/g, ' ')}
-    </span>
-  );
-}
-
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{
-      background: COLORS.cardBg,
-      border: `1px solid ${COLORS.tableBorder}`,
-      borderRadius: '10px',
-      padding: '1.25rem 1.5rem',
-      boxShadow: SHADOWS.card,
-      flex: 1,
-      minWidth: '160px',
-    }}>
-      <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginBottom: '0.35rem', fontWeight: 500 }}>{label}</div>
-      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary }}>{value}</div>
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.12),_transparent_32%),linear-gradient(180deg,#f8fafc_0%,#eef4ff_100%)]">
+      <div className="border-b border-slate-900/10 bg-slate-950 text-slate-50 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.75)]">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-6 md:flex-row md:items-center md:justify-between md:px-6">
+          <div className="space-y-1">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-200/80">
+              Vendor Portal
+            </div>
+            <div className="font-display text-3xl font-semibold tracking-[-0.04em]">
+              {vendorName ?? 'BetterSpend Supplier Access'}
+            </div>
+          </div>
+          {onSubmitInvoice ? (
+            <Button type="button" onClick={onSubmitInvoice} className="gap-2 bg-sky-500 text-white hover:bg-sky-400">
+              <ReceiptText className="h-4 w-4" />
+              Submit Invoice
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      <div className="mx-auto w-full max-w-7xl px-4 py-6 md:px-6 md:py-8">{children}</div>
     </div>
   );
 }
 
-interface InvoiceLine {
-  lineNumber: number;
+function EmptyPortalState({
+  icon,
+  title,
+  description,
+}: {
+  icon: ReactNode;
+  title: string;
   description: string;
-  quantity: number;
-  unitPrice: number;
-  poLineId?: string;
+}) {
+  return (
+    <PortalShell>
+      <div className="flex min-h-[70vh] items-center justify-center">
+        <Card className="w-full max-w-xl rounded-[32px] border-border/70 bg-card/95 shadow-[0_32px_100px_-56px_rgba(15,23,42,0.6)]">
+          <CardContent className="flex flex-col items-center gap-5 px-8 py-14 text-center">
+            <div className="flex h-20 w-20 items-center justify-center rounded-[28px] bg-sky-50 text-sky-700">
+              {icon}
+            </div>
+            <div className="space-y-2">
+              <h1 className="font-display text-3xl font-semibold tracking-[-0.04em] text-foreground">{title}</h1>
+              <p className="text-sm leading-6 text-muted-foreground">{description}</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </PortalShell>
+  );
 }
 
-interface SubmitInvoiceModalProps {
+function VendorStatCard({
+  icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  tone: string;
+}) {
+  return (
+    <Card className="rounded-[24px] border-border/70 bg-card/90">
+      <CardContent className="flex items-center gap-4 p-5">
+        <div className={cn('flex h-12 w-12 items-center justify-center rounded-2xl', tone)}>{icon}</div>
+        <div className="space-y-1">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+          <div className="text-xl font-semibold tracking-[-0.03em] text-foreground">{value}</div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function Field({
+  label,
+  children,
+  hint,
+}: {
+  label: string;
+  children: ReactNode;
+  hint?: string;
+}) {
+  return (
+    <label className="grid gap-2">
+      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</span>
+      {children}
+      {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
+    </label>
+  );
+}
+
+function SubmitInvoiceModal({
+  token,
+  purchaseOrders,
+  onClose,
+  onSuccess,
+}: {
   token: string;
   purchaseOrders: any[];
   onClose: () => void;
   onSuccess: () => void;
-}
-
-function SubmitInvoiceModal({ token, purchaseOrders, onClose, onSuccess }: SubmitInvoiceModalProps) {
+}) {
   const [selectedPoId, setSelectedPoId] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
   const [dueDate, setDueDate] = useState('');
-  const [lines, setLines] = useState<InvoiceLine[]>([
-    { lineNumber: 1, description: '', quantity: 1, unitPrice: 0 },
-  ]);
+  const [lines, setLines] = useState<InvoiceLine[]>([{ ...EMPTY_INVOICE_LINE }]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  const issuedPOs = purchaseOrders.filter((po: any) => po.status === 'issued' || po.status === 'partially_received' || po.status === 'received');
+  const issuedPOs = purchaseOrders.filter(
+    (po: any) => po.status === 'issued' || po.status === 'partially_received' || po.status === 'received',
+  );
 
   function addLine() {
-    setLines((prev) => [...prev, { lineNumber: prev.length + 1, description: '', quantity: 1, unitPrice: 0 }]);
+    setLines((current) => [
+      ...current,
+      { lineNumber: current.length + 1, description: '', quantity: 1, unitPrice: 0 },
+    ]);
   }
 
-  function removeLine(idx: number) {
-    setLines((prev) => prev.filter((_, i) => i !== idx).map((l, i) => ({ ...l, lineNumber: i + 1 })));
+  function removeLine(index: number) {
+    setLines((current) =>
+      current.filter((_, lineIndex) => lineIndex !== index).map((line, lineIndex) => ({
+        ...line,
+        lineNumber: lineIndex + 1,
+      })),
+    );
   }
 
-  function updateLine(idx: number, field: keyof InvoiceLine, value: string | number) {
-    setLines((prev) => prev.map((l, i) => i === idx ? { ...l, [field]: value } : l));
+  function updateLine(index: number, field: keyof InvoiceLine, value: string | number) {
+    setLines((current) =>
+      current.map((line, lineIndex) => (lineIndex === index ? { ...line, [field]: value } : line)),
+    );
   }
 
-  const total = lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
+  const total = lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!selectedPoId) { setError('Please select a purchase order.'); return; }
-    if (!invoiceNumber.trim()) { setError('Invoice number is required.'); return; }
-    if (lines.some((l) => !l.description.trim())) { setError('All line items need a description.'); return; }
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedPoId) {
+      setError('Please select a purchase order.');
+      return;
+    }
+    if (!invoiceNumber.trim()) {
+      setError('Invoice number is required.');
+      return;
+    }
+    if (lines.some((line) => !line.description.trim())) {
+      setError('All line items need a description.');
+      return;
+    }
 
     setSubmitting(true);
     setError('');
@@ -146,176 +278,160 @@ function SubmitInvoiceModal({ token, purchaseOrders, onClose, onSuccess }: Submi
         invoiceNumber: invoiceNumber.trim(),
         invoiceDate,
         dueDate: dueDate || undefined,
-        lines: lines.map((l) => ({
-          lineNumber: l.lineNumber,
-          description: l.description,
-          quantity: Number(l.quantity),
-          unitPrice: Number(l.unitPrice),
+        lines: lines.map((line) => ({
+          lineNumber: line.lineNumber,
+          description: line.description,
+          quantity: Number(line.quantity),
+          unitPrice: Number(line.unitPrice),
         })),
       });
       onSuccess();
-    } catch (e: any) {
-      setError(e.message || 'Failed to submit invoice.');
+    } catch (submissionError: any) {
+      setError(submissionError.message || 'Failed to submit invoice.');
     } finally {
       setSubmitting(false);
     }
   }
 
-  const inputStyle: React.CSSProperties = {
-    width: '100%',
-    padding: '0.5rem 0.75rem',
-    border: `1px solid ${COLORS.inputBorder}`,
-    borderRadius: '6px',
-    fontSize: '0.875rem',
-    boxSizing: 'border-box',
-  };
-
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 200,
-      background: 'rgba(0,0,0,0.45)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: '1rem',
-    }}>
-      <div style={{
-        background: COLORS.cardBg, borderRadius: '12px',
-        width: '100%', maxWidth: '640px',
-        maxHeight: '90vh', overflowY: 'auto',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
-        padding: '2rem',
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>Submit Invoice</h2>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.25rem', color: COLORS.textMuted }}>
-            &times;
-          </button>
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/55 px-4 py-10"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-5xl rounded-[32px] border border-border/70 bg-card p-6 shadow-[0_32px_100px_-56px_rgba(15,23,42,0.7)] md:p-8"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <h2 className="font-display text-2xl font-semibold tracking-[-0.03em] text-foreground">
+              Submit Invoice
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Invoice against an issued PO and send the line-level detail directly into matching.
+            </p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Close modal">
+            <X className="h-5 w-5" />
+          </Button>
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-                Purchase Order *
-              </label>
-              <select required value={selectedPoId} onChange={(e) => setSelectedPoId(e.target.value)} style={inputStyle}>
-                <option value="">Select a PO...</option>
-                {issuedPOs.map((po: any) => (
-                  <option key={po.id} value={po.id}>
-                    {po.internalNumber} — {fmt(po.totalAmount, po.currency)}
-                  </option>
-                ))}
-              </select>
-              {issuedPOs.length === 0 && (
-                <p style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.25rem' }}>
-                  No issued purchase orders available to invoice against.
-                </p>
-              )}
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-                Your Invoice Number *
-              </label>
-              <input required value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} style={inputStyle} placeholder="INV-001" />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-                Invoice Date *
-              </label>
-              <input required type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} style={inputStyle} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-                Due Date
-              </label>
-              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} style={inputStyle} />
-            </div>
-          </div>
+        <form onSubmit={handleSubmit} className="grid gap-6">
+          {error ? (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
 
-          <div style={{ marginBottom: '1rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-              <label style={{ fontSize: '0.8rem', fontWeight: 600, color: COLORS.textSecondary }}>Line Items *</label>
-              <button type="button" onClick={addLine} style={{
-                padding: '0.25rem 0.75rem', background: COLORS.accentBlueLight, color: COLORS.accentBlueDark,
-                border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 500,
-              }}>
-                + Add Line
-              </button>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {lines.map((line, idx) => (
-                <div key={idx} style={{
-                  display: 'grid', gridTemplateColumns: '1fr 80px 100px 28px',
-                  gap: '0.5rem', alignItems: 'center',
-                  padding: '0.5rem', background: COLORS.hoverBg, borderRadius: '6px',
-                }}>
-                  <input
-                    required
-                    placeholder={`Line ${line.lineNumber} description`}
-                    value={line.description}
-                    onChange={(e) => updateLine(idx, 'description', e.target.value)}
-                    style={{ ...inputStyle, background: COLORS.cardBg }}
-                  />
-                  <input
-                    required
-                    type="number"
-                    min="0.001"
-                    step="any"
-                    placeholder="Qty"
-                    value={line.quantity}
-                    onChange={(e) => updateLine(idx, 'quantity', parseFloat(e.target.value) || 0)}
-                    style={{ ...inputStyle, background: COLORS.cardBg }}
-                  />
-                  <input
-                    required
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    placeholder="Unit Price"
-                    value={line.unitPrice}
-                    onChange={(e) => updateLine(idx, 'unitPrice', parseFloat(e.target.value) || 0)}
-                    style={{ ...inputStyle, background: COLORS.cardBg }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeLine(idx)}
-                    disabled={lines.length === 1}
-                    style={{
-                      background: 'none', border: 'none', cursor: lines.length === 1 ? 'not-allowed' : 'pointer',
-                      color: COLORS.accentRedDark, fontSize: '1rem', padding: '0.25rem',
-                    }}
-                  >
-                    &times;
-                  </button>
+          <Card className="rounded-[24px]">
+            <CardHeader>
+              <CardTitle className="text-base">Invoice details</CardTitle>
+              <CardDescription>Choose the PO and provide your reference numbers and dates.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <Field
+                  label="Purchase Order"
+                  hint={issuedPOs.length === 0 ? 'No issued purchase orders are currently available to invoice against.' : undefined}
+                >
+                  <Select required value={selectedPoId} onChange={(event) => setSelectedPoId(event.target.value)}>
+                    <option value="">Select a PO...</option>
+                    {issuedPOs.map((po: any) => (
+                      <option key={po.id} value={po.id}>
+                        {po.internalNumber} - {fmt(po.totalAmount, po.currency)}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+              <Field label="Your Invoice Number">
+                <Input
+                  required
+                  value={invoiceNumber}
+                  onChange={(event) => setInvoiceNumber(event.target.value)}
+                  placeholder="INV-001"
+                />
+              </Field>
+              <Field label="Invoice Date">
+                <Input required type="date" value={invoiceDate} onChange={(event) => setInvoiceDate(event.target.value)} />
+              </Field>
+              <Field label="Due Date">
+                <Input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
+              </Field>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-[24px]">
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <CardTitle className="text-base">Line items</CardTitle>
+                <CardDescription>Line details will be used during match and exception handling.</CardDescription>
+              </div>
+              <Button type="button" variant="outline" onClick={addLine}>
+                Add Line
+              </Button>
+            </CardHeader>
+            <CardContent className="grid gap-3">
+              {lines.map((line, index) => (
+                <div
+                  key={index}
+                  className="grid gap-3 rounded-[22px] border border-border/70 bg-background/70 p-4 md:grid-cols-[2.4fr_0.8fr_1fr_auto]"
+                >
+                  <Field label={`Line ${line.lineNumber}`}>
+                    <Input
+                      required
+                      value={line.description}
+                      onChange={(event) => updateLine(index, 'description', event.target.value)}
+                      placeholder="Description"
+                    />
+                  </Field>
+                  <Field label="Qty">
+                    <Input
+                      required
+                      type="number"
+                      min="0.001"
+                      step="any"
+                      value={line.quantity}
+                      onChange={(event) => updateLine(index, 'quantity', parseFloat(event.target.value) || 0)}
+                    />
+                  </Field>
+                  <Field label="Unit Price">
+                    <Input
+                      required
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={line.unitPrice}
+                      onChange={(event) => updateLine(index, 'unitPrice', parseFloat(event.target.value) || 0)}
+                    />
+                  </Field>
+                  <div className="flex items-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="border-rose-200 text-rose-700 hover:bg-rose-50"
+                      disabled={lines.length === 1}
+                      onClick={() => removeLine(index)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               ))}
-            </div>
-            <div style={{ textAlign: 'right', marginTop: '0.5rem', fontSize: '0.9rem', fontWeight: 600, color: COLORS.textPrimary }}>
-              Total: {fmt(total)}
-            </div>
-          </div>
+              <div className="flex justify-end rounded-2xl bg-muted/30 px-4 py-3 text-sm font-semibold text-foreground">
+                Total: {fmt(total)}
+              </div>
+            </CardContent>
+          </Card>
 
-          {error && (
-            <div style={{
-              background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px',
-              padding: '0.75rem', color: '#991b1b', fontSize: '0.875rem', marginBottom: '1rem',
-            }}>
-              {error}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-            <button type="button" onClick={onClose} style={{
-              padding: '0.625rem 1.25rem', background: COLORS.tableBorder, color: COLORS.textSecondary,
-              border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 500,
-            }}>
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="outline" onClick={onClose}>
               Cancel
-            </button>
-            <button type="submit" disabled={submitting || issuedPOs.length === 0} style={{
-              padding: '0.625rem 1.25rem', background: COLORS.accentBlue, color: COLORS.white,
-              border: 'none', borderRadius: '6px', cursor: submitting ? 'not-allowed' : 'pointer', fontWeight: 600,
-            }}>
+            </Button>
+            <Button type="submit" disabled={submitting || issuedPOs.length === 0} className="gap-2">
+              {submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               {submitting ? 'Submitting...' : 'Submit Invoice'}
-            </button>
+            </Button>
           </div>
         </form>
       </div>
@@ -329,8 +445,8 @@ function VendorPortalContent() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [data, setData] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'pos' | 'invoices' | 'onboarding' | 'catalog'>('overview');
+  const [data, setData] = useState<VendorPortalData | null>(null);
+  const [activeTab, setActiveTab] = useState<PortalTab>('overview');
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [catalogData, setCatalogData] = useState<{ items: any[]; proposals: any[] } | null>(null);
@@ -357,90 +473,88 @@ function VendorPortalContent() {
     setLoading(true);
     api.vendorPortal
       .dashboard(token)
-      .then(setData)
-      .catch((e) => setError(e.message || 'Failed to load portal data.'))
+      .then((result) => setData(result as VendorPortalData))
+      .catch((dashboardError) => setError(dashboardError.message || 'Failed to load portal data.'))
       .finally(() => setLoading(false));
+
     api.vendorPortal.catalog(token).then(setCatalogData).catch(() => {});
-    api.vendorPortal.onboarding(token).then((result) => {
-      setOnboardingData(result);
-      if (result?.latestSubmission) {
-        setOnboardingForm({
-          companyInfo: result.latestSubmission.companyInfo ?? { legalName: '', taxId: '' },
-          responses: result.latestSubmission.responses ?? {},
-          documentLinks: result.latestSubmission.documentLinks ?? { w9: '', coi: '', banking: '' },
-          bankingDetails: result.latestSubmission.bankingDetails ?? { accountName: '', lastFour: '' },
-        });
-      }
-    }).catch(() => {});
+    api.vendorPortal
+      .onboarding(token)
+      .then((result) => {
+        setOnboardingData(result);
+        if (result?.latestSubmission) {
+          setOnboardingForm({
+            companyInfo: result.latestSubmission.companyInfo ?? { legalName: '', taxId: '' },
+            responses: result.latestSubmission.responses ?? {},
+            documentLinks: result.latestSubmission.documentLinks ?? { w9: '', coi: '', banking: '' },
+            bankingDetails: result.latestSubmission.bankingDetails ?? { accountName: '', lastFour: '' },
+          });
+        }
+      })
+      .catch(() => {});
   }, [token, submitSuccess]);
+
+  async function reloadDashboard() {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const result = await api.vendorPortal.dashboard(token);
+      setData(result as VendorPortalData);
+    } catch (dashboardError: any) {
+      setError(dashboardError.message || 'Failed to load portal data.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   if (!token) {
     return (
-      <div style={{
-        minHeight: '100vh', background: '#f8fafc',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem',
-      }}>
-        <div style={{
-          background: COLORS.cardBg, borderRadius: '12px', padding: '3rem 2.5rem',
-          boxShadow: SHADOWS.auth, textAlign: 'center', maxWidth: '480px', width: '100%',
-        }}>
-          <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>&#128274;</div>
-          <h1 style={{ fontSize: '1.375rem', fontWeight: 700, color: COLORS.textPrimary, margin: '0 0 0.75rem' }}>
-            Vendor Portal Access Required
-          </h1>
-          <p style={{ color: COLORS.textSecondary, fontSize: '0.9375rem', margin: 0, lineHeight: 1.6 }}>
-            To access the vendor portal, please use the access link sent to you by your buyer.
-            Contact your buyer to request a new access link if yours has expired.
-          </p>
-        </div>
-      </div>
+      <EmptyPortalState
+        icon={<ShieldCheck className="h-10 w-10" />}
+        title="Vendor Portal Access Required"
+        description="Use the secure access link sent by your buyer. If your link expired, contact the buyer and request a fresh portal token."
+      />
     );
   }
 
   if (loading) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: COLORS.textSecondary }}>
-        Loading vendor portal...
-      </div>
+      <PortalShell vendorName="Loading portal">
+        <div className="flex min-h-[60vh] items-center justify-center text-muted-foreground">
+          <div className="flex items-center gap-3 rounded-full border border-border/70 bg-card/80 px-5 py-3 text-sm">
+            <LoaderCircle className="h-4 w-4 animate-spin" />
+            Loading vendor portal...
+          </div>
+        </div>
+      </PortalShell>
     );
   }
 
   if (error) {
     return (
-      <div style={{
-        minHeight: '100vh', background: '#f8fafc',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem',
-      }}>
-        <div style={{
-          background: COLORS.cardBg, borderRadius: '12px', padding: '3rem 2.5rem',
-          boxShadow: SHADOWS.auth, textAlign: 'center', maxWidth: '480px', width: '100%',
-        }}>
-          <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>&#9888;&#65039;</div>
-          <h1 style={{ fontSize: '1.375rem', fontWeight: 700, color: COLORS.accentRedDark, margin: '0 0 0.75rem' }}>
-            Access Denied
-          </h1>
-          <p style={{ color: COLORS.textSecondary, fontSize: '0.9375rem', margin: 0, lineHeight: 1.6 }}>
-            {error}. Please contact your buyer for a new access link.
-          </p>
-        </div>
-      </div>
+      <EmptyPortalState
+        icon={<ShieldCheck className="h-10 w-10" />}
+        title="Access Denied"
+        description={`${error}. Please contact your buyer for a new access link.`}
+      />
     );
   }
 
   if (!data) return null;
 
   const { vendor, purchaseOrders, invoices: invoiceList, stats } = data;
+  const vendorContact = (vendor.contactInfo as Record<string, string | undefined> | null) ?? {};
 
-  const tabs = [
-    { key: 'overview' as const, label: 'Overview' },
-    { key: 'pos' as const, label: `Purchase Orders (${purchaseOrders.length})` },
-    { key: 'invoices' as const, label: `Invoices (${invoiceList.length})` },
-    { key: 'onboarding' as const, label: 'Onboarding' },
-    { key: 'catalog' as const, label: `Catalog & Pricing (${catalogData?.items.length ?? 0})` },
+  const tabs: Array<{ key: PortalTab; label: string }> = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'pos', label: `Purchase Orders (${purchaseOrders.length})` },
+    { key: 'invoices', label: `Invoices (${invoiceList.length})` },
+    { key: 'onboarding', label: 'Onboarding' },
+    { key: 'catalog', label: `Catalog & Pricing (${catalogData?.items.length ?? 0})` },
   ];
 
-  async function submitPriceProposal(e: FormEvent) {
-    e.preventDefault();
+  async function submitPriceProposal(event: FormEvent) {
+    event.preventDefault();
     setProposalSaving(true);
     setError('');
     setBulkUploadMessage('');
@@ -448,19 +562,21 @@ function VendorPortalContent() {
       await api.vendorPortal.submitPriceProposal(token, {
         itemId: proposalForm.itemId,
         proposedPrice: parseFloat(proposalForm.proposedPrice),
-        effectiveDate: proposalForm.effectiveDate ? new Date(proposalForm.effectiveDate).toISOString() : undefined,
+        effectiveDate: proposalForm.effectiveDate
+          ? new Date(proposalForm.effectiveDate).toISOString()
+          : undefined,
         note: proposalForm.note || undefined,
       });
       setProposalForm({ itemId: '', proposedPrice: '', effectiveDate: '', note: '' });
       setCatalogData(await api.vendorPortal.catalog(token));
-    } catch (e: any) {
-      setError(e.message || 'Failed to submit price proposal.');
+    } catch (proposalError: any) {
+      setError(proposalError.message || 'Failed to submit price proposal.');
     } finally {
       setProposalSaving(false);
     }
   }
 
-  async function handleBulkCsvUpload(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleBulkCsvUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -499,8 +615,8 @@ function VendorPortalContent() {
       const result = await api.vendorPortal.submitBulkPriceProposals(token, rows);
       setCatalogData(await api.vendorPortal.catalog(token));
       setBulkUploadMessage(`${result.createdCount} proposal(s) created, ${result.errorCount} error(s).`);
-    } catch (e: any) {
-      setError(e.message || 'Failed to import CSV proposals.');
+    } catch (uploadError: any) {
+      setError(uploadError.message || 'Failed to import CSV proposals.');
     } finally {
       event.target.value = '';
       setProposalSaving(false);
@@ -524,432 +640,570 @@ function VendorPortalContent() {
       const refreshed = await api.vendorPortal.onboarding(token);
       setOnboardingData(refreshed);
       setOnboardingMessage(submit ? 'Onboarding submitted for buyer review.' : 'Draft saved.');
-    } catch (e: any) {
-      setError(e.message || 'Failed to save onboarding.');
+    } catch (saveError: any) {
+      setError(saveError.message || 'Failed to save onboarding.');
     } finally {
       setOnboardingSaving(false);
     }
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
-      {/* Header */}
-      <div style={{
-        background: '#0f172a', color: '#f8fafc',
-        padding: '1rem 2rem',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      }}>
-        <div>
-          <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.2rem', fontWeight: 500 }}>VENDOR PORTAL</div>
-          <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700 }}>{vendor.name}</h1>
-        </div>
-        <button
-          onClick={() => setShowInvoiceModal(true)}
-          style={{
-            padding: '0.625rem 1.25rem',
-            background: '#3b82f6', color: '#fff',
-            border: 'none', borderRadius: '8px',
-            cursor: 'pointer', fontWeight: 600, fontSize: '0.875rem',
-          }}
-        >
-          Submit Invoice
-        </button>
-      </div>
+    <PortalShell vendorName={vendor.name} onSubmitInvoice={() => setShowInvoiceModal(true)}>
+      <div className="space-y-6">
+        {submitSuccess ? (
+          <Alert variant="success">
+            <AlertDescription>
+              Invoice submitted successfully. It will be matched against your purchase order.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {error ? (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
 
-      <div style={{ maxWidth: '1024px', margin: '0 auto', padding: '2rem 1.5rem' }}>
-        {submitSuccess && (
-          <div style={{
-            background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '8px',
-            padding: '0.875rem 1.25rem', color: '#065f46', marginBottom: '1.5rem', fontWeight: 500,
-          }}>
-            Invoice submitted successfully! It will be matched against your purchase order.
-          </div>
-        )}
-
-        {/* Tabs */}
-        <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '1.5rem', borderBottom: `1px solid ${COLORS.tableBorder}` }}>
+        <div className="flex flex-wrap gap-2 rounded-[26px] border border-border/70 bg-card/70 p-2 shadow-[0_18px_60px_-38px_rgba(15,23,42,0.35)]">
           {tabs.map((tab) => (
             <button
               key={tab.key}
+              type="button"
               onClick={() => setActiveTab(tab.key)}
-              style={{
-                padding: '0.625rem 1.25rem',
-                background: 'none',
-                border: 'none',
-                borderBottom: activeTab === tab.key ? `2px solid ${COLORS.accentBlue}` : '2px solid transparent',
-                cursor: 'pointer',
-                fontSize: '0.875rem',
-                fontWeight: activeTab === tab.key ? 600 : 400,
-                color: activeTab === tab.key ? COLORS.accentBlue : COLORS.textSecondary,
-                marginBottom: '-1px',
-              }}
+              className={cn(
+                'rounded-2xl px-4 py-2 text-sm font-medium transition-colors',
+                activeTab === tab.key
+                  ? 'bg-slate-950 text-slate-50 shadow-sm'
+                  : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+              )}
             >
               {tab.label}
             </button>
           ))}
         </div>
 
-        {/* Overview Tab */}
-        {activeTab === 'overview' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-              <StatCard label="Total Purchase Orders" value={String(stats.totalPOs)} />
-              <StatCard label="Total Invoiced" value={fmt(stats.totalInvoiced)} />
-              <StatCard label="Pending Payment" value={fmt(stats.pendingPayment)} />
+        {activeTab === 'overview' ? (
+          <div className="space-y-5">
+            <div className="grid gap-4 md:grid-cols-3">
+              <VendorStatCard
+                icon={<ClipboardCheck className="h-5 w-5" />}
+                label="Total Purchase Orders"
+                value={String(stats.totalPOs)}
+                tone="bg-sky-50 text-sky-700"
+              />
+              <VendorStatCard
+                icon={<ReceiptText className="h-5 w-5" />}
+                label="Total Invoiced"
+                value={fmt(stats.totalInvoiced)}
+                tone="bg-emerald-50 text-emerald-700"
+              />
+              <VendorStatCard
+                icon={<CreditCard className="h-5 w-5" />}
+                label="Pending Payment"
+                value={fmt(stats.pendingPayment)}
+                tone="bg-amber-50 text-amber-700"
+              />
             </div>
 
-            {/* Vendor info card */}
-            <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', padding: '1.5rem', boxShadow: SHADOWS.card }}>
-              <h2 style={{ fontSize: '0.9rem', fontWeight: 600, color: COLORS.textSecondary, margin: '0 0 1rem' }}>Your Account</h2>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                {vendor.taxId && (
-                  <div>
-                    <div style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>Tax ID</div>
-                    <div style={{ fontSize: '0.875rem', color: COLORS.textPrimary }}>{vendor.taxId}</div>
-                  </div>
-                )}
-                {vendor.paymentTerms && (
-                  <div>
-                    <div style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>Payment Terms</div>
-                    <div style={{ fontSize: '0.875rem', color: COLORS.textPrimary }}>{vendor.paymentTerms}</div>
-                  </div>
-                )}
-                {(vendor.contactInfo as any)?.email && (
-                  <div>
-                    <div style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>Contact Email</div>
-                    <div style={{ fontSize: '0.875rem', color: COLORS.textPrimary }}>{(vendor.contactInfo as any).email}</div>
-                  </div>
-                )}
-                {(vendor.contactInfo as any)?.phone && (
-                  <div>
-                    <div style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>Phone</div>
-                    <div style={{ fontSize: '0.875rem', color: COLORS.textPrimary }}>{(vendor.contactInfo as any).phone}</div>
-                  </div>
-                )}
-              </div>
-            </div>
+            <Card className="rounded-[28px]">
+              <CardHeader>
+                <CardTitle className="text-xl">Your account</CardTitle>
+                <CardDescription>Reference details your buyer is using for PO and invoice operations.</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                {vendor.taxId ? (
+                  <Field label="Tax ID">
+                    <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground">
+                      {vendor.taxId}
+                    </div>
+                  </Field>
+                ) : null}
+                {vendor.paymentTerms ? (
+                  <Field label="Payment Terms">
+                    <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground">
+                      {vendor.paymentTerms}
+                    </div>
+                  </Field>
+                ) : null}
+                {vendorContact.email ? (
+                  <Field label="Contact Email">
+                    <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground">
+                      {vendorContact.email}
+                    </div>
+                  </Field>
+                ) : null}
+                {vendorContact.phone ? (
+                  <Field label="Phone">
+                    <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground">
+                      {vendorContact.phone}
+                    </div>
+                  </Field>
+                ) : null}
+              </CardContent>
+            </Card>
           </div>
-        )}
+        ) : null}
 
-        {/* Purchase Orders Tab */}
-        {activeTab === 'pos' && (
-          <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, overflow: 'hidden' }}>
-            {purchaseOrders.length === 0 ? (
-              <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>No purchase orders found.</div>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                      {['PO Number', 'Status', 'Amount', 'Issued Date'].map((h) => (
-                        <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600, color: COLORS.textSecondary }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {purchaseOrders.map((po: any) => (
-                      <tr key={po.id} style={{ borderBottom: `1px solid ${COLORS.hoverBg}` }}>
-                        <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', fontWeight: 500, color: COLORS.textPrimary }}>
-                          {po.internalNumber}
-                        </td>
-                        <td style={{ padding: '0.75rem 1rem' }}>
-                          <StatusBadge status={po.status} />
-                        </td>
-                        <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: COLORS.textSecondary }}>
-                          {fmt(po.totalAmount, po.currency)}
-                        </td>
-                        <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: COLORS.textSecondary }}>
-                          {fmtDate(po.issuedAt)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Invoices Tab */}
-        {activeTab === 'invoices' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => setShowInvoiceModal(true)}
-                style={{
-                  padding: '0.5rem 1rem', background: COLORS.accentBlue, color: COLORS.white,
-                  border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 500, fontSize: '0.875rem',
-                }}
-              >
-                Submit New Invoice
-              </button>
-            </div>
-            <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, overflow: 'hidden' }}>
-              {invoiceList.length === 0 ? (
-                <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>No invoices submitted yet.</div>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                        {['Invoice #', 'Your Ref', 'Status', 'Match', 'Amount', 'Date'].map((h) => (
-                          <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600, color: COLORS.textSecondary }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {invoiceList.map((inv: any) => (
-                        <tr key={inv.id} style={{ borderBottom: `1px solid ${COLORS.hoverBg}` }}>
-                          <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', fontWeight: 500, color: COLORS.textPrimary }}>
-                            {inv.internalNumber}
-                          </td>
-                          <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: COLORS.textSecondary }}>
-                            {inv.invoiceNumber}
-                          </td>
-                          <td style={{ padding: '0.75rem 1rem' }}>
-                            <StatusBadge status={inv.status} />
-                          </td>
-                          <td style={{ padding: '0.75rem 1rem' }}>
-                            {inv.matchStatus ? <StatusBadge status={inv.matchStatus} /> : <span style={{ color: COLORS.textMuted }}>—</span>}
-                          </td>
-                          <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: COLORS.textSecondary }}>
-                            {fmt(inv.totalAmount, inv.currency)}
-                          </td>
-                          <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: COLORS.textSecondary }}>
-                            {fmtDate(inv.invoiceDate)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+        {activeTab === 'pos' ? (
+          <Card className="overflow-hidden rounded-[28px]">
+            <CardHeader>
+              <CardTitle className="text-xl">Purchase orders</CardTitle>
+              <CardDescription>Orders issued to your company, including received and partially received work.</CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {purchaseOrders.length === 0 ? (
+                <div className="px-6 py-14 text-center text-sm text-muted-foreground">
+                  No purchase orders found.
                 </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>PO Number</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Issued Date</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {purchaseOrders.map((po: any) => (
+                      <TableRow key={po.id}>
+                        <TableCell className="font-semibold text-foreground">{po.internalNumber}</TableCell>
+                        <TableCell>
+                          <StatusBadge value={po.status} />
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">{fmt(po.totalAmount, po.currency)}</TableCell>
+                        <TableCell className="text-muted-foreground">{fmtDate(po.issuedAt)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               )}
-            </div>
-          </div>
-        )}
+            </CardContent>
+          </Card>
+        ) : null}
 
-        {activeTab === 'onboarding' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 0.85fr', gap: '1rem' }}>
-            <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, padding: '1rem' }}>
-              <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary }}>Supplier Onboarding Questionnaire</h3>
-              <div style={{ display: 'grid', gap: '0.75rem' }}>
-                <input
-                  value={onboardingForm.companyInfo.legalName ?? ''}
-                  onChange={(e) => setOnboardingForm((current: any) => ({ ...current, companyInfo: { ...current.companyInfo, legalName: e.target.value } }))}
-                  placeholder="Legal company name"
-                  style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
-                />
-                <input
-                  value={onboardingForm.companyInfo.taxId ?? ''}
-                  onChange={(e) => setOnboardingForm((current: any) => ({ ...current, companyInfo: { ...current.companyInfo, taxId: e.target.value } }))}
-                  placeholder="Tax ID / registration number"
-                  style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
-                />
+        {activeTab === 'invoices' ? (
+          <div className="space-y-4">
+            <div className="flex justify-end">
+              <Button type="button" onClick={() => setShowInvoiceModal(true)} className="gap-2">
+                <ReceiptText className="h-4 w-4" />
+                Submit New Invoice
+              </Button>
+            </div>
+            <Card className="overflow-hidden rounded-[28px]">
+              <CardHeader>
+                <CardTitle className="text-xl">Invoice submissions</CardTitle>
+                <CardDescription>Track invoice intake, match status, and buyer-side processing.</CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                {invoiceList.length === 0 ? (
+                  <div className="px-6 py-14 text-center text-sm text-muted-foreground">
+                    No invoices submitted yet.
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead>Invoice #</TableHead>
+                        <TableHead>Your Ref</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Match</TableHead>
+                        <TableHead>Amount</TableHead>
+                        <TableHead>Date</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {invoiceList.map((invoice: any) => (
+                        <TableRow key={invoice.id}>
+                          <TableCell className="font-semibold text-foreground">{invoice.internalNumber}</TableCell>
+                          <TableCell className="text-muted-foreground">{invoice.invoiceNumber}</TableCell>
+                          <TableCell>
+                            <StatusBadge value={invoice.status} />
+                          </TableCell>
+                          <TableCell>
+                            {invoice.matchStatus ? (
+                              <StatusBadge value={invoice.matchStatus} />
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {fmt(invoice.totalAmount, invoice.currency)}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">{fmtDate(invoice.invoiceDate)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        ) : null}
+
+        {activeTab === 'onboarding' ? (
+          <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
+            <Card className="rounded-[28px]">
+              <CardHeader>
+                <CardTitle className="text-xl">Supplier onboarding questionnaire</CardTitle>
+                <CardDescription>
+                  Complete the current questionnaire and keep document links and banking support current.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                <Field label="Legal company name">
+                  <Input
+                    value={onboardingForm.companyInfo.legalName ?? ''}
+                    onChange={(event) =>
+                      setOnboardingForm((current: any) => ({
+                        ...current,
+                        companyInfo: { ...current.companyInfo, legalName: event.target.value },
+                      }))
+                    }
+                  />
+                </Field>
+                <Field label="Tax ID / registration number">
+                  <Input
+                    value={onboardingForm.companyInfo.taxId ?? ''}
+                    onChange={(event) =>
+                      setOnboardingForm((current: any) => ({
+                        ...current,
+                        companyInfo: { ...current.companyInfo, taxId: event.target.value },
+                      }))
+                    }
+                  />
+                </Field>
                 {(onboardingData?.questionnaire?.questions ?? []).map((question: any) => (
-                  <div key={question.id} style={{ display: 'grid', gap: '0.35rem' }}>
-                    <label style={{ fontSize: '0.82rem', fontWeight: 600, color: COLORS.textSecondary }}>
-                      {question.label} {question.required ? '*' : ''}
-                    </label>
+                  <Field key={question.id} label={`${question.label}${question.required ? ' *' : ''}`}>
                     {question.type === 'yes_no' ? (
-                      <select
+                      <Select
                         value={onboardingForm.responses?.[question.id] ?? ''}
-                        onChange={(e) => setOnboardingForm((current: any) => ({ ...current, responses: { ...current.responses, [question.id]: e.target.value } }))}
-                        style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px' }}
+                        onChange={(event) =>
+                          setOnboardingForm((current: any) => ({
+                            ...current,
+                            responses: { ...current.responses, [question.id]: event.target.value },
+                          }))
+                        }
                       >
-                        <option value="">Select…</option>
+                        <option value="">Select...</option>
                         <option value="yes">Yes</option>
                         <option value="no">No</option>
-                      </select>
+                      </Select>
                     ) : question.type === 'long_text' ? (
-                      <textarea
+                      <Textarea
                         rows={4}
                         value={onboardingForm.responses?.[question.id] ?? ''}
-                        onChange={(e) => setOnboardingForm((current: any) => ({ ...current, responses: { ...current.responses, [question.id]: e.target.value } }))}
-                        style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', resize: 'vertical', boxSizing: 'border-box' }}
+                        onChange={(event) =>
+                          setOnboardingForm((current: any) => ({
+                            ...current,
+                            responses: { ...current.responses, [question.id]: event.target.value },
+                          }))
+                        }
                       />
                     ) : (
-                      <input
+                      <Input
                         type={question.type === 'date' ? 'date' : 'text'}
                         value={onboardingForm.responses?.[question.id] ?? ''}
-                        onChange={(e) => setOnboardingForm((current: any) => ({ ...current, responses: { ...current.responses, [question.id]: e.target.value } }))}
-                        style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
+                        onChange={(event) =>
+                          setOnboardingForm((current: any) => ({
+                            ...current,
+                            responses: { ...current.responses, [question.id]: event.target.value },
+                          }))
+                        }
                       />
                     )}
-                  </div>
+                  </Field>
                 ))}
-                <input
-                  value={onboardingForm.documentLinks.w9 ?? ''}
-                  onChange={(e) => setOnboardingForm((current: any) => ({ ...current, documentLinks: { ...current.documentLinks, w9: e.target.value } }))}
-                  placeholder="W-9 link or upload reference"
-                  style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
-                />
-                <input
-                  value={onboardingForm.documentLinks.coi ?? ''}
-                  onChange={(e) => setOnboardingForm((current: any) => ({ ...current, documentLinks: { ...current.documentLinks, coi: e.target.value } }))}
-                  placeholder="Certificate of insurance link"
-                  style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
-                />
-                <input
-                  value={onboardingForm.documentLinks.banking ?? ''}
-                  onChange={(e) => setOnboardingForm((current: any) => ({ ...current, documentLinks: { ...current.documentLinks, banking: e.target.value } }))}
-                  placeholder="Banking support document link"
-                  style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
-                />
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                  <input
-                    value={onboardingForm.bankingDetails.accountName ?? ''}
-                    onChange={(e) => setOnboardingForm((current: any) => ({ ...current, bankingDetails: { ...current.bankingDetails, accountName: e.target.value } }))}
-                    placeholder="Bank account name"
-                    style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
+                <Field label="W-9 link or upload reference">
+                  <Input
+                    value={onboardingForm.documentLinks.w9 ?? ''}
+                    onChange={(event) =>
+                      setOnboardingForm((current: any) => ({
+                        ...current,
+                        documentLinks: { ...current.documentLinks, w9: event.target.value },
+                      }))
+                    }
                   />
-                  <input
-                    value={onboardingForm.bankingDetails.lastFour ?? ''}
-                    onChange={(e) => setOnboardingForm((current: any) => ({ ...current, bankingDetails: { ...current.bankingDetails, lastFour: e.target.value } }))}
-                    placeholder="Account last four"
-                    style={{ width: '100%', padding: '0.55rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }}
+                </Field>
+                <Field label="Certificate of insurance link">
+                  <Input
+                    value={onboardingForm.documentLinks.coi ?? ''}
+                    onChange={(event) =>
+                      setOnboardingForm((current: any) => ({
+                        ...current,
+                        documentLinks: { ...current.documentLinks, coi: event.target.value },
+                      }))
+                    }
                   />
+                </Field>
+                <Field label="Banking support document link">
+                  <Input
+                    value={onboardingForm.documentLinks.banking ?? ''}
+                    onChange={(event) =>
+                      setOnboardingForm((current: any) => ({
+                        ...current,
+                        documentLinks: { ...current.documentLinks, banking: event.target.value },
+                      }))
+                    }
+                  />
+                </Field>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="Bank account name">
+                    <Input
+                      value={onboardingForm.bankingDetails.accountName ?? ''}
+                      onChange={(event) =>
+                        setOnboardingForm((current: any) => ({
+                          ...current,
+                          bankingDetails: { ...current.bankingDetails, accountName: event.target.value },
+                        }))
+                      }
+                    />
+                  </Field>
+                  <Field label="Account last four">
+                    <Input
+                      value={onboardingForm.bankingDetails.lastFour ?? ''}
+                      onChange={(event) =>
+                        setOnboardingForm((current: any) => ({
+                          ...current,
+                          bankingDetails: { ...current.bankingDetails, lastFour: event.target.value },
+                        }))
+                      }
+                    />
+                  </Field>
                 </div>
-                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-                  <button type="button" onClick={() => saveOnboarding(false)} disabled={onboardingSaving} style={{ padding: '0.625rem 1rem', background: COLORS.tableBorder, color: COLORS.textPrimary, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>
+                <div className="flex justify-end gap-3">
+                  <Button type="button" variant="outline" onClick={() => saveOnboarding(false)} disabled={onboardingSaving}>
                     Save Draft
-                  </button>
-                  <button type="button" onClick={() => saveOnboarding(true)} disabled={onboardingSaving} style={{ padding: '0.625rem 1rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>
+                  </Button>
+                  <Button type="button" onClick={() => saveOnboarding(true)} disabled={onboardingSaving}>
                     {onboardingSaving ? 'Submitting...' : 'Submit for Review'}
-                  </button>
+                  </Button>
                 </div>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
 
-            <div style={{ display: 'grid', gap: '1rem' }}>
-              <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, padding: '1rem' }}>
-                <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary }}>Current Status</h3>
-                <div style={{ display: 'grid', gap: '0.5rem', fontSize: '0.85rem', color: COLORS.textSecondary }}>
-                  <div>Status: {String(vendor.onboardingStatus ?? 'not_started').replace(/_/g, ' ')}</div>
-                  <div>Risk score: {vendor.onboardingRiskScore ?? 0}</div>
-                  <div>Risk level: {vendor.onboardingRiskLevel ?? 'low'}</div>
-                  <div>Last submitted: {vendor.onboardingLastSubmittedAt ? new Date(vendor.onboardingLastSubmittedAt).toLocaleString() : '—'}</div>
-                </div>
-                {onboardingMessage && (
-                  <div style={{ marginTop: '0.75rem', fontSize: '0.8rem', color: '#065f46' }}>{onboardingMessage}</div>
-                )}
-                {onboardingData?.latestSubmission?.reviewNote && (
-                  <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#fffbeb', borderRadius: '8px', fontSize: '0.8rem', color: '#92400e' }}>
-                    Buyer note: {onboardingData.latestSubmission.reviewNote}
+            <div className="grid gap-5">
+              <Card className="rounded-[28px]">
+                <CardHeader>
+                  <CardTitle className="text-xl">Current status</CardTitle>
+                  <CardDescription>Buyer review, risk scoring, and the latest submission state.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-3 text-sm text-muted-foreground">
+                  <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
+                    <span>Status</span>
+                    <Badge variant="outline">{String(vendor.onboardingStatus ?? 'not_started').replace(/_/g, ' ')}</Badge>
                   </div>
-                )}
-              </div>
-              <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, padding: '1rem' }}>
-                <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary }}>What this review covers</h3>
-                <div style={{ fontSize: '0.82rem', color: COLORS.textSecondary, lineHeight: 1.6 }}>
-                  Buyers review your questionnaire answers, tax forms, insurance documents, and banking support before issuing new purchase orders.
-                </div>
-              </div>
+                  <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
+                    <span>Risk score</span>
+                    <span className="font-medium text-foreground">{vendor.onboardingRiskScore ?? 0}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
+                    <span>Risk level</span>
+                    <StatusBadge value={String(vendor.onboardingRiskLevel ?? 'low')} />
+                  </div>
+                  <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
+                    <span>Last submitted</span>
+                    <span className="text-foreground">
+                      {vendor.onboardingLastSubmittedAt
+                        ? new Date(vendor.onboardingLastSubmittedAt).toLocaleString()
+                        : '—'}
+                    </span>
+                  </div>
+                  {onboardingMessage ? (
+                    <Alert variant="success">
+                      <AlertDescription>{onboardingMessage}</AlertDescription>
+                    </Alert>
+                  ) : null}
+                  {onboardingData?.latestSubmission?.reviewNote ? (
+                    <Alert variant="warning">
+                      <AlertDescription>
+                        Buyer note: {onboardingData.latestSubmission.reviewNote}
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+                </CardContent>
+              </Card>
+
+              <Card className="rounded-[28px]">
+                <CardHeader>
+                  <CardTitle className="text-xl">Review coverage</CardTitle>
+                </CardHeader>
+                <CardContent className="text-sm leading-6 text-muted-foreground">
+                  Buyers review your questionnaire answers, tax forms, insurance documents, and banking
+                  support before issuing new purchase orders.
+                </CardContent>
+              </Card>
             </div>
           </div>
-        )}
+        ) : null}
 
-        {activeTab === 'catalog' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1rem' }}>
-            <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, overflow: 'hidden' }}>
-              <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.tableBorder}`, fontWeight: 600, color: COLORS.textPrimary }}>
-                Buyer Catalog
-              </div>
-              {!catalogData || catalogData.items.length === 0 ? (
-                <div style={{ padding: '2rem', color: COLORS.textMuted }}>No catalog items are assigned to your company yet.</div>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                        {['Item', 'SKU', 'Current Price', 'Category'].map((h) => (
-                          <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600, color: COLORS.textSecondary }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {catalogData.items.map((item) => (
-                        <tr key={item.id} style={{ borderBottom: `1px solid ${COLORS.hoverBg}` }}>
-                          <td style={{ padding: '0.75rem 1rem', fontWeight: 500, color: COLORS.textPrimary }}>{item.name}</td>
-                          <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary }}>{item.sku ?? '—'}</td>
-                          <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary }}>{fmt(item.unitPrice, item.currency)}</td>
-                          <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary }}>{item.category ?? '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <form onSubmit={submitPriceProposal} style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, padding: '1rem' }}>
-                <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary }}>Submit Price Update</h3>
-                <div style={{ display: 'grid', gap: '0.75rem' }}>
-                  <select value={proposalForm.itemId} onChange={(e) => setProposalForm((current) => ({ ...current, itemId: e.target.value }))} required style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }}>
-                    <option value="">Select catalog item</option>
-                    {(catalogData?.items ?? []).map((item) => (
-                      <option key={item.id} value={item.id}>{item.name}</option>
-                    ))}
-                  </select>
-                  <input value={proposalForm.proposedPrice} onChange={(e) => setProposalForm((current) => ({ ...current, proposedPrice: e.target.value }))} required type="number" min="0" step="0.01" placeholder="Proposed unit price" style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }} />
-                  <input value={proposalForm.effectiveDate} onChange={(e) => setProposalForm((current) => ({ ...current, effectiveDate: e.target.value }))} type="date" style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }} />
-                  <textarea value={proposalForm.note} onChange={(e) => setProposalForm((current) => ({ ...current, note: e.target.value }))} placeholder="Reason for the price update" rows={4} style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', resize: 'vertical', boxSizing: 'border-box' }} />
-                  <button type="submit" disabled={proposalSaving} style={{ padding: '0.625rem 1rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>
-                    {proposalSaving ? 'Submitting...' : 'Submit Proposal'}
-                  </button>
-                </div>
-              </form>
-
-              <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, padding: '1rem' }}>
-                <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary }}>Bulk CSV Upload</h3>
-                <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary, lineHeight: 1.5, marginBottom: '0.75rem' }}>
-                  Upload a CSV with `itemId` or `sku`, `proposedPrice`, and optional `effectiveDate` and `note` columns.
-                </div>
-                <input
-                  type="file"
-                  accept=".csv,text/csv"
-                  onChange={handleBulkCsvUpload}
-                  disabled={proposalSaving}
-                  style={{ fontSize: '0.875rem', color: COLORS.textPrimary }}
-                />
-                {bulkUploadMessage && (
-                  <div style={{ marginTop: '0.75rem', fontSize: '0.8rem', color: '#065f46' }}>
-                    {bulkUploadMessage}
+        {activeTab === 'catalog' ? (
+          <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
+            <Card className="overflow-hidden rounded-[28px]">
+              <CardHeader>
+                <CardTitle className="text-xl">Buyer catalog</CardTitle>
+                <CardDescription>Assigned catalog items and their current commercial terms.</CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                {!catalogData || catalogData.items.length === 0 ? (
+                  <div className="px-6 py-14 text-center text-sm text-muted-foreground">
+                    No catalog items are assigned to your company yet.
                   </div>
-                )}
-              </div>
-
-              <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '10px', boxShadow: SHADOWS.card, overflow: 'hidden' }}>
-                <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.tableBorder}`, fontWeight: 600, color: COLORS.textPrimary }}>
-                  Proposal History
-                </div>
-                {!catalogData || catalogData.proposals.length === 0 ? (
-                  <div style={{ padding: '1rem', color: COLORS.textMuted }}>No price proposals submitted yet.</div>
                 ) : (
-                  <div style={{ padding: '0.5rem 0' }}>
-                    {catalogData.proposals.map((proposal) => (
-                      <div key={proposal.id} style={{ padding: '0.75rem 1rem', borderBottom: `1px solid ${COLORS.hoverBg}` }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
-                          <div>
-                            <div style={{ fontWeight: 600, color: COLORS.textPrimary }}>{proposal.item?.name}</div>
-                            <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>
-                              {fmt(proposal.currentPrice, proposal.item?.currency ?? 'USD')} {'->'} {fmt(proposal.proposedPrice, proposal.item?.currency ?? 'USD')}
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead>Item</TableHead>
+                        <TableHead>SKU</TableHead>
+                        <TableHead>Current Price</TableHead>
+                        <TableHead>Category</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {catalogData.items.map((item) => (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-semibold text-foreground">{item.name}</TableCell>
+                          <TableCell className="text-muted-foreground">{item.sku ?? '—'}</TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {fmt(item.unitPrice, item.currency)}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">{item.category ?? '—'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+
+            <div className="grid gap-5">
+              <Card className="rounded-[28px]">
+                <CardHeader>
+                  <CardTitle className="text-xl">Submit price update</CardTitle>
+                  <CardDescription>Propose a price change for a specific catalog item.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={submitPriceProposal} className="grid gap-4">
+                    <Field label="Catalog item">
+                      <Select
+                        required
+                        value={proposalForm.itemId}
+                        onChange={(event) =>
+                          setProposalForm((current) => ({ ...current, itemId: event.target.value }))
+                        }
+                      >
+                        <option value="">Select catalog item</option>
+                        {(catalogData?.items ?? []).map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field label="Proposed unit price">
+                      <Input
+                        required
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={proposalForm.proposedPrice}
+                        onChange={(event) =>
+                          setProposalForm((current) => ({ ...current, proposedPrice: event.target.value }))
+                        }
+                      />
+                    </Field>
+                    <Field label="Effective date">
+                      <Input
+                        type="date"
+                        value={proposalForm.effectiveDate}
+                        onChange={(event) =>
+                          setProposalForm((current) => ({ ...current, effectiveDate: event.target.value }))
+                        }
+                      />
+                    </Field>
+                    <Field label="Reason for the price update">
+                      <Textarea
+                        rows={4}
+                        value={proposalForm.note}
+                        onChange={(event) =>
+                          setProposalForm((current) => ({ ...current, note: event.target.value }))
+                        }
+                      />
+                    </Field>
+                    <Button type="submit" disabled={proposalSaving}>
+                      {proposalSaving ? 'Submitting...' : 'Submit Proposal'}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+
+              <Card className="rounded-[28px]">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-xl">
+                    <FileSpreadsheet className="h-5 w-5 text-sky-700" />
+                    Bulk CSV Upload
+                  </CardTitle>
+                  <CardDescription>
+                    Upload a CSV with `itemId` or `sku`, `proposedPrice`, and optional `effectiveDate` and `note` columns.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-3">
+                  <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-border/80 bg-background/60 px-4 py-4 text-sm text-muted-foreground hover:bg-muted/20">
+                    <Upload className="h-4 w-4" />
+                    <span>Choose CSV file</span>
+                    <input
+                      type="file"
+                      accept=".csv,text/csv"
+                      onChange={handleBulkCsvUpload}
+                      disabled={proposalSaving}
+                      className="hidden"
+                    />
+                  </label>
+                  {bulkUploadMessage ? (
+                    <Alert variant="success">
+                      <AlertDescription>{bulkUploadMessage}</AlertDescription>
+                    </Alert>
+                  ) : null}
+                </CardContent>
+              </Card>
+
+              <Card className="rounded-[28px]">
+                <CardHeader>
+                  <CardTitle className="text-xl">Proposal history</CardTitle>
+                  <CardDescription>Recent supplier-submitted price proposals and buyer outcomes.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-3">
+                  {!catalogData || catalogData.proposals.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
+                      No price proposals submitted yet.
+                    </div>
+                  ) : (
+                    catalogData.proposals.map((proposal) => (
+                      <div key={proposal.id} className="rounded-[22px] border border-border/70 bg-background/70 p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="space-y-1">
+                            <div className="font-semibold text-foreground">{proposal.item?.name}</div>
+                            <div className="text-sm text-muted-foreground">
+                              {fmt(proposal.currentPrice, proposal.item?.currency ?? 'USD')} {'->'}{' '}
+                              {fmt(proposal.proposedPrice, proposal.item?.currency ?? 'USD')}
                             </div>
                           </div>
-                          <StatusBadge status={proposal.status} />
+                          <StatusBadge value={proposal.status} />
                         </div>
-                        {proposal.note && <div style={{ fontSize: '0.8rem', color: COLORS.textMuted, marginTop: '0.35rem' }}>{proposal.note}</div>}
+                        {proposal.note ? (
+                          <div className="mt-3 text-sm text-muted-foreground">{proposal.note}</div>
+                        ) : null}
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
             </div>
           </div>
-        )}
+        ) : null}
       </div>
 
-      {showInvoiceModal && (
+      {showInvoiceModal ? (
         <SubmitInvoiceModal
           token={token}
           purchaseOrders={purchaseOrders}
@@ -958,28 +1212,29 @@ function VendorPortalContent() {
             setShowInvoiceModal(false);
             setSubmitSuccess(true);
             setActiveTab('invoices');
-            // Trigger refresh
             setData(null);
-            setLoading(true);
-            api.vendorPortal
-              .dashboard(token)
-              .then(setData)
-              .catch((e) => setError(e.message))
-              .finally(() => setLoading(false));
+            void reloadDashboard();
           }}
         />
-      )}
-    </div>
+      ) : null}
+    </PortalShell>
   );
 }
 
 export default function VendorPortalPage() {
   return (
-    <Suspense fallback={
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569' }}>
-        Loading...
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <PortalShell vendorName="Loading portal">
+          <div className="flex min-h-[60vh] items-center justify-center text-muted-foreground">
+            <div className="flex items-center gap-3 rounded-full border border-border/70 bg-card/80 px-5 py-3 text-sm">
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+              Loading...
+            </div>
+          </div>
+        </PortalShell>
+      }
+    >
       <VendorPortalContent />
     </Suspense>
   );
