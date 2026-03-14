@@ -2,8 +2,29 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { ClipboardCheck, FileStack, ShieldAlert } from 'lucide-react';
 import { api } from '../../../lib/api';
-import { COLORS, SHADOWS } from '../../../lib/theme';
+import { PageHeader } from '../../../components/page-header';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
+import { Badge } from '../../../components/ui/badge';
+import { Button } from '../../../components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../../components/ui/card';
+import { Input } from '../../../components/ui/input';
+import { Select } from '../../../components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../../components/ui/table';
 
 type DraftQuestion = {
   id: string;
@@ -13,33 +34,47 @@ type DraftQuestion = {
   riskPointsIfNegative?: number;
 };
 
-const cardStyle: React.CSSProperties = {
-  background: COLORS.cardBg,
-  border: `1px solid ${COLORS.tableBorder}`,
-  borderRadius: '10px',
-  boxShadow: SHADOWS.card,
+const TYPE_LABELS: Record<DraftQuestion['type'], string> = {
+  short_text: 'Short text',
+  long_text: 'Long text',
+  yes_no: 'Yes / No',
+  date: 'Date',
 };
 
-function riskPill(level: string) {
-  if (level === 'high') return { bg: '#fef2f2', text: '#b91c1c' };
-  if (level === 'medium') return { bg: '#fffbeb', text: '#b45309' };
-  return { bg: '#ecfdf5', text: '#047857' };
-}
+const RISK_BADGE_STYLES: Record<string, string> = {
+  high: 'border-rose-200 bg-rose-100 text-rose-800',
+  medium: 'border-amber-200 bg-amber-100 text-amber-800',
+  low: 'border-emerald-200 bg-emerald-100 text-emerald-800',
+};
 
 export default function VendorOnboardingPage() {
   const [queue, setQueue] = useState<any[]>([]);
   const [questionnaires, setQuestionnaires] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const [questionnaireName, setQuestionnaireName] = useState('Default Supplier Onboarding');
   const [makeDefault, setMakeDefault] = useState(true);
   const [questions, setQuestions] = useState<DraftQuestion[]>([
-    { id: 'tax_registered', label: 'Are you tax registered in your operating jurisdiction?', type: 'yes_no', required: true, riskPointsIfNegative: 30 },
-    { id: 'sanctions_program', label: 'Do you maintain sanctions and denied-party screening controls?', type: 'yes_no', required: true, riskPointsIfNegative: 35 },
+    {
+      id: 'tax_registered',
+      label: 'Are you tax registered in your operating jurisdiction?',
+      type: 'yes_no',
+      required: true,
+      riskPointsIfNegative: 30,
+    },
+    {
+      id: 'sanctions_program',
+      label: 'Do you maintain sanctions and denied-party screening controls?',
+      type: 'yes_no',
+      required: true,
+      riskPointsIfNegative: 35,
+    },
   ]);
 
   async function load() {
     setLoading(true);
+    setError('');
     try {
       const [queueData, questionnaireData] = await Promise.all([
         api.vendors.onboardingQueue(),
@@ -47,6 +82,8 @@ export default function VendorOnboardingPage() {
       ]);
       setQueue(queueData);
       setQuestionnaires(questionnaireData);
+    } catch {
+      setError('Failed to load onboarding data.');
     } finally {
       setLoading(false);
     }
@@ -58,6 +95,7 @@ export default function VendorOnboardingPage() {
 
   async function handleCreateQuestionnaire() {
     setSaving(true);
+    setError('');
     try {
       await api.vendors.createOnboardingQuestionnaire({
         name: questionnaireName,
@@ -77,160 +115,356 @@ export default function VendorOnboardingPage() {
           })),
       });
       await load();
+    } catch {
+      setError('Failed to save questionnaire.');
     } finally {
       setSaving(false);
     }
   }
 
+  function updateQuestion(index: number, patch: Partial<DraftQuestion>) {
+    setQuestions((current) =>
+      current.map((question, questionIndex) =>
+        questionIndex === index ? { ...question, ...patch } : question,
+      ),
+    );
+  }
+
   return (
-    <div style={{ padding: '2rem', display: 'grid', gap: '1.25rem' }}>
-      <div>
-        <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary }}>Vendor Onboarding</h1>
-        <p style={{ margin: '0.35rem 0 0', fontSize: '0.875rem', color: COLORS.textSecondary }}>
-          Review onboarding submissions, risk levels, and the questionnaire template used in the vendor portal.
-        </p>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="Vendor Onboarding"
+        description="Review onboarding submissions, inspect risk levels, and maintain the default questionnaire vendors complete in the portal."
+        actions={
+          <div className="flex items-center gap-2 rounded-full border border-border/70 bg-background/80 px-4 py-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+            <ClipboardCheck className="h-4 w-4" />
+            Supplier intake
+          </div>
+        }
+      />
+
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <StatCard
+          icon={ClipboardCheck}
+          label="Pending Reviews"
+          value={String(queue.length)}
+          tone="text-sky-700"
+        />
+        <StatCard
+          icon={FileStack}
+          label="Saved Questionnaires"
+          value={String(questionnaires.length)}
+          tone="text-violet-700"
+        />
+        <StatCard
+          icon={ShieldAlert}
+          label="High-Risk Submissions"
+          value={String(queue.filter((submission) => submission.riskLevel === 'high').length)}
+          tone="text-rose-700"
+        />
       </div>
 
-      <div style={{ ...cardStyle, padding: '1rem' }}>
-        <div style={{ fontSize: '0.95rem', fontWeight: 700, color: COLORS.textPrimary, marginBottom: '0.85rem' }}>
-          Questionnaire Builder
-        </div>
-        <div style={{ display: 'grid', gap: '0.75rem' }}>
-          <input
-            value={questionnaireName}
-            onChange={(event) => setQuestionnaireName(event.target.value)}
-            placeholder="Questionnaire name"
-            style={{ width: '100%', padding: '0.65rem 0.8rem', borderRadius: '8px', border: `1px solid ${COLORS.inputBorder}`, boxSizing: 'border-box' }}
-          />
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: COLORS.textSecondary }}>
-            <input type="checkbox" checked={makeDefault} onChange={(event) => setMakeDefault(event.target.checked)} />
-            Make this the default supplier onboarding questionnaire
-          </label>
-          <div style={{ display: 'grid', gap: '0.75rem' }}>
+      <Card className="rounded-[24px]">
+        <CardHeader>
+          <CardTitle className="text-xl">Questionnaire Builder</CardTitle>
+          <CardDescription>
+            Create and version the supplier intake questionnaire used in the vendor portal.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+            <Field label="Questionnaire name">
+              <Input
+                value={questionnaireName}
+                onChange={(event) => setQuestionnaireName(event.target.value)}
+                placeholder="Default Supplier Onboarding"
+              />
+            </Field>
+            <label className="flex h-10 items-center gap-3 rounded-xl border border-border/70 bg-muted/20 px-4 text-sm text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={makeDefault}
+                onChange={(event) => setMakeDefault(event.target.checked)}
+                className="h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
+              />
+              Make default questionnaire
+            </label>
+          </div>
+
+          <div className="space-y-4">
             {questions.map((question, index) => (
-              <div key={question.id} style={{ border: `1px solid ${COLORS.border}`, borderRadius: '8px', padding: '0.75rem', display: 'grid', gap: '0.5rem' }}>
-                <input
-                  value={question.label}
-                  onChange={(event) => setQuestions((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item))}
-                  placeholder="Question label"
-                  style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: `1px solid ${COLORS.inputBorder}`, boxSizing: 'border-box' }}
-                />
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '0.5rem' }}>
-                  <select
-                    value={question.type}
-                    onChange={(event) => setQuestions((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, type: event.target.value as DraftQuestion['type'] } : item))}
-                    style={{ padding: '0.55rem 0.75rem', borderRadius: '8px', border: `1px solid ${COLORS.inputBorder}` }}
-                  >
-                    <option value="short_text">Short text</option>
-                    <option value="long_text">Long text</option>
-                    <option value="yes_no">Yes / No</option>
-                    <option value="date">Date</option>
-                  </select>
-                  <input
-                    type="number"
-                    min="0"
-                    value={question.riskPointsIfNegative ?? 0}
-                    onChange={(event) => setQuestions((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, riskPointsIfNegative: Number(event.target.value) } : item))}
-                    placeholder="Risk points"
-                    style={{ padding: '0.55rem 0.75rem', borderRadius: '8px', border: `1px solid ${COLORS.inputBorder}` }}
-                  />
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: COLORS.textSecondary }}>
-                    <input
-                      type="checkbox"
-                      checked={question.required}
-                      onChange={(event) => setQuestions((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, required: event.target.checked } : item))}
+              <div
+                key={question.id}
+                className="rounded-2xl border border-border/70 bg-background/70 p-4 shadow-sm"
+              >
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_200px_180px_auto] xl:items-end">
+                  <Field label={`Question ${index + 1}`}>
+                    <Input
+                      value={question.label}
+                      onChange={(event) => updateQuestion(index, { label: event.target.value })}
+                      placeholder="Enter question prompt"
                     />
-                    Required
-                  </label>
-                  <button
+                  </Field>
+                  <Field label="Response type">
+                    <Select
+                      value={question.type}
+                      onChange={(event) =>
+                        updateQuestion(index, { type: event.target.value as DraftQuestion['type'] })
+                      }
+                      className="w-full"
+                    >
+                      {Object.entries(TYPE_LABELS).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label="Risk points if negative">
+                    <Input
+                      type="number"
+                      min="0"
+                      value={question.riskPointsIfNegative ?? 0}
+                      onChange={(event) =>
+                        updateQuestion(index, {
+                          riskPointsIfNegative: Number(event.target.value || 0),
+                        })
+                      }
+                    />
+                  </Field>
+                  <Button
                     type="button"
-                    onClick={() => setQuestions((current) => current.filter((_, itemIndex) => itemIndex !== index))}
-                    style={{ border: 'none', borderRadius: '8px', background: '#fef2f2', color: '#b91c1c', padding: '0.55rem 0.75rem', cursor: 'pointer', fontWeight: 700 }}
+                    variant="destructive"
+                    onClick={() =>
+                      setQuestions((current) =>
+                        current.filter((_, questionIndex) => questionIndex !== index),
+                      )
+                    }
                   >
                     Remove
-                  </button>
+                  </Button>
                 </div>
+                <label className="mt-4 inline-flex items-center gap-3 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={question.required}
+                    onChange={(event) => updateQuestion(index, { required: event.target.checked })}
+                    className="h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
+                  />
+                  Required question
+                </label>
               </div>
             ))}
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <button
+
+          <div className="flex flex-wrap justify-between gap-3">
+            <Button
               type="button"
-              onClick={() => setQuestions((current) => [...current, { id: `q_${Date.now()}`, label: '', type: 'short_text', required: false, riskPointsIfNegative: 0 }])}
-              style={{ padding: '0.65rem 1rem', borderRadius: '8px', border: `1px solid ${COLORS.border}`, background: COLORS.hoverBg, color: COLORS.textPrimary, fontWeight: 700, cursor: 'pointer' }}
+              variant="outline"
+              onClick={() =>
+                setQuestions((current) => [
+                  ...current,
+                  {
+                    id: `q_${Date.now()}`,
+                    label: '',
+                    type: 'short_text',
+                    required: false,
+                    riskPointsIfNegative: 0,
+                  },
+                ])
+              }
             >
               Add Question
-            </button>
-            <button
-              type="button"
-              onClick={handleCreateQuestionnaire}
-              disabled={saving}
-              style={{ padding: '0.65rem 1rem', borderRadius: '8px', border: 'none', background: COLORS.accentBlue, color: '#fff', fontWeight: 700, cursor: saving ? 'not-allowed' : 'pointer' }}
-            >
+            </Button>
+            <Button type="button" onClick={handleCreateQuestionnaire} disabled={saving}>
               {saving ? 'Saving...' : 'Save Questionnaire'}
-            </button>
+            </Button>
           </div>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
-      <div style={cardStyle}>
-        <div style={{ padding: '0.9rem 1rem', borderBottom: `1px solid ${COLORS.border}`, fontWeight: 700, color: COLORS.textPrimary }}>
-          Pending Reviews
-        </div>
-        {loading ? (
-          <div style={{ padding: '2rem', color: COLORS.textMuted }}>Loading onboarding queue...</div>
-        ) : queue.length === 0 ? (
-          <div style={{ padding: '2rem', color: COLORS.textMuted }}>No vendor onboarding submissions are waiting for review.</div>
-        ) : (
-          <div style={{ display: 'grid' }}>
-            {queue.map((submission) => {
-              const risk = riskPill(submission.riskLevel);
-              return (
-                <div key={submission.id} style={{ padding: '1rem', borderBottom: `1px solid ${COLORS.contentBg}`, display: 'grid', gap: '0.45rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center' }}>
-                    <div>
-                      <Link href={`/vendors/${submission.vendorId}`} style={{ color: COLORS.accentBlueDark, textDecoration: 'none', fontWeight: 700 }}>
-                        {submission.vendor?.name ?? 'Unknown vendor'}
-                      </Link>
-                      <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>
-                        {submission.questionnaire?.name ?? 'Default questionnaire'} • Submitted {submission.submittedAt ? new Date(submission.submittedAt).toLocaleString() : 'draft'}
+      <Card className="rounded-[24px]">
+        <CardHeader>
+          <CardTitle className="text-xl">Pending Reviews</CardTitle>
+          <CardDescription>
+            Review vendor submissions, triage high-risk responses, and jump directly into the vendor record.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {loading ? (
+            <EmptyState message="Loading onboarding queue..." />
+          ) : queue.length === 0 ? (
+            <EmptyState message="No vendor onboarding submissions are waiting for review." />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Vendor</TableHead>
+                  <TableHead>Questionnaire</TableHead>
+                  <TableHead>Submitted</TableHead>
+                  <TableHead>Risk</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Open</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {queue.map((submission) => (
+                  <TableRow key={submission.id}>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <div className="font-medium text-foreground">
+                          {submission.vendor?.name ?? 'Unknown vendor'}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          Score {submission.riskScore ?? 0}
+                        </div>
                       </div>
-                    </div>
-                    <span style={{ background: risk.bg, color: risk.text, borderRadius: '999px', padding: '0.2rem 0.55rem', fontSize: '0.72rem', fontWeight: 700, textTransform: 'capitalize' }}>
-                      {submission.riskLevel} risk
-                    </span>
-                  </div>
-                  <div style={{ fontSize: '0.82rem', color: COLORS.textMuted }}>
-                    Risk score: {submission.riskScore} • Status: {String(submission.status).replace(/_/g, ' ')}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {submission.questionnaire?.name ?? 'Default questionnaire'}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {submission.submittedAt
+                        ? new Date(submission.submittedAt).toLocaleString()
+                        : 'Draft'}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={RISK_BADGE_STYLES[submission.riskLevel] ?? RISK_BADGE_STYLES.low}
+                      >
+                        {submission.riskLevel} risk
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary" className="capitalize">
+                        {String(submission.status).replace(/_/g, ' ')}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button asChild size="sm" variant="outline">
+                        <Link href={`/vendors/${submission.vendorId}`}>Open vendor</Link>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
-      <div style={cardStyle}>
-        <div style={{ padding: '0.9rem 1rem', borderBottom: `1px solid ${COLORS.border}`, fontWeight: 700, color: COLORS.textPrimary }}>
-          Saved Questionnaires
-        </div>
-        {questionnaires.length === 0 ? (
-          <div style={{ padding: '1rem', color: COLORS.textMuted }}>No saved questionnaires yet.</div>
-        ) : (
-          <div style={{ display: 'grid' }}>
-            {questionnaires.map((questionnaire) => (
-              <div key={questionnaire.id} style={{ padding: '1rem', borderBottom: `1px solid ${COLORS.contentBg}` }}>
-                <div style={{ fontWeight: 700, color: COLORS.textPrimary }}>
-                  {questionnaire.name} {questionnaire.isDefault ? '• Default' : ''}
-                </div>
-                <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary, marginTop: '0.25rem' }}>
-                  {(questionnaire.questions ?? []).length} questions • {(questionnaire.scoringRules ?? []).length} scoring rules
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <Card className="rounded-[24px]">
+        <CardHeader>
+          <CardTitle className="text-xl">Saved Questionnaires</CardTitle>
+          <CardDescription>
+            Track published questionnaires, question counts, and scoring coverage over time.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {questionnaires.length === 0 ? (
+            <EmptyState message="No saved questionnaires yet." compact />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Questions</TableHead>
+                  <TableHead>Scoring Rules</TableHead>
+                  <TableHead>Default</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {questionnaires.map((questionnaire) => (
+                  <TableRow key={questionnaire.id}>
+                    <TableCell className="font-medium text-foreground">{questionnaire.name}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {(questionnaire.questions ?? []).length}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {(questionnaire.scoringRules ?? []).length}
+                    </TableCell>
+                    <TableCell>
+                      {questionnaire.isDefault ? <Badge variant="success">Default</Badge> : '—'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="space-y-2">
+      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function EmptyState({
+  message,
+  compact = false,
+}: {
+  message: string;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-2xl border border-dashed border-border/70 bg-muted/20 text-center text-sm text-muted-foreground ${
+        compact ? 'px-6 py-8' : 'px-6 py-12'
+      }`}
+    >
+      {message}
+    </div>
+  );
+}
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  tone: string;
+}) {
+  return (
+    <Card className="rounded-[24px] border-border/70 bg-card/95">
+      <CardContent className="flex items-center gap-4 p-6">
+        <div className={`rounded-2xl border border-current/10 bg-current/10 p-3 ${tone}`}>
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="space-y-1">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            {label}
+          </div>
+          <div className="font-display text-3xl font-semibold tracking-[-0.04em] text-foreground">
+            {value}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
