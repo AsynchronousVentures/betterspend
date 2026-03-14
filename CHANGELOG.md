@@ -55,6 +55,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated the software license detail workspace onto the new design system, covering utilization metrics, renewal timeline, and renewal action workflows.
 - Migrated the OCR jobs workspace onto the new design system, covering extraction history, confidence indicators, and expanded extracted-data review.
 - Migrated the requisition templates workspace onto the new design system, covering template inventory, org-wide visibility, and direct use-template actions.
+- Migrated the invoice creation workspace onto the new design system, covering OCR upload, PO-linked defaults, and editable tax-aware line items.
 
 ### Fixed
 
