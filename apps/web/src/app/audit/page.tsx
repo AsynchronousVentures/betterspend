@@ -1,34 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
-
-const ENTITY_COLORS: Record<string, string> = {
-  requisition: COLORS.accentBlueLight,
-  purchase_order: COLORS.accentGreenLight,
-  invoice: '#fef9c3',
-  goods_receipt: COLORS.accentPurpleLight,
-  budget: '#fff7ed',
-  vendor: '#f0f9ff',
-  user: COLORS.accentRedLight,
-};
-
-const ACTION_COLORS: Record<string, { bg: string; text: string }> = {
-  created: { bg: '#dcfce7', text: '#15803d' },
-  updated: { bg: COLORS.accentBlueLight, text: '#1d4ed8' },
-  deleted: { bg: '#fee2e2', text: COLORS.accentRedDark },
-  approved: { bg: '#d1fae5', text: COLORS.accentGreenDark },
-  rejected: { bg: '#fee2e2', text: COLORS.accentRedDark },
-  issued: { bg: '#fef9c3', text: '#ca8a04' },
-  cancelled: { bg: '#fee2e2', text: COLORS.accentRedDark },
-};
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Select } from '../../components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 
 const ENTITY_TYPES = ['requisition', 'purchase_order', 'invoice', 'goods_receipt', 'budget', 'vendor', 'user'];
 
 async function downloadCsv(type: string) {
-  const { api } = await import('../../lib/api');
-  const res = await api.export.download(type);
+  const { api: exportApi } = await import('../../lib/api');
+  const res = await exportApi.export.download(type);
   if (!res.ok) return;
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -48,11 +31,6 @@ export default function AuditPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  async function handleExportCsv() {
-    setExporting(true);
-    try { await downloadCsv('audit-log'); } finally { setExporting(false); }
-  }
-
   useEffect(() => {
     load();
   }, [filterEntity]);
@@ -62,115 +40,105 @@ export default function AuditPage() {
     try {
       const data = await api.audit.list({ entityType: filterEntity || undefined, limit: 200 });
       setEntries(data);
-    } catch (e: any) {
-      console.error(e);
+    } catch {
+      setEntries([]);
     } finally {
       setLoading(false);
     }
   }
 
+  async function handleExportCsv() {
+    setExporting(true);
+    try {
+      await downloadCsv('audit-log');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
-    <div style={{ padding: '2rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+    <div className="space-y-6 p-4 lg:p-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary }}>Audit Log</h1>
-          <p style={{ color: COLORS.textSecondary, fontSize: '0.875rem', marginTop: '0.25rem' }}>Immutable record of all system actions</p>
+          <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">Audit Log</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Immutable record of all system actions.</p>
         </div>
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-          <button
-            onClick={handleExportCsv}
-            disabled={exporting}
-            style={{ padding: '0.5rem 1rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', background: COLORS.cardBg, cursor: exporting ? 'not-allowed' : 'pointer', fontSize: '0.875rem', color: COLORS.textSecondary, fontWeight: 500 }}
-          >
-            {exporting ? 'Exporting…' : 'Export CSV'}
-          </button>
-          <button onClick={load} style={{ padding: '0.5rem 1rem', border: `1px solid ${COLORS.border}`, borderRadius: '6px', background: COLORS.cardBg, cursor: 'pointer', fontSize: '0.875rem' }}>
+        <div className="flex gap-3">
+          <Button variant="outline" onClick={handleExportCsv} disabled={exporting}>
+            {exporting ? 'Exporting...' : 'Export CSV'}
+          </Button>
+          <Button variant="outline" onClick={load}>
             Refresh
-          </button>
+          </Button>
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', alignItems: 'center' }}>
-        <label style={{ fontSize: '0.875rem', fontWeight: 500, color: COLORS.textSecondary }}>Entity type:</label>
-        <select
-          value={filterEntity}
-          onChange={(e) => setFilterEntity(e.target.value)}
-          style={{ padding: '0.4rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }}
-        >
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-sm font-medium text-muted-foreground">Entity type:</span>
+        <Select value={filterEntity} onChange={(event) => setFilterEntity(event.target.value)} className="min-w-[180px]">
           <option value="">All</option>
-          {ENTITY_TYPES.map((t) => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
-        </select>
-        <span style={{ marginLeft: 'auto', fontSize: '0.875rem', color: COLORS.textSecondary }}>{entries.length} entries</span>
+          {ENTITY_TYPES.map((type) => (
+            <option key={type} value={type}>
+              {type.replace('_', ' ')}
+            </option>
+          ))}
+        </Select>
+        <span className="ml-auto text-sm text-muted-foreground">{entries.length} entries</span>
       </div>
 
-      <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: '8px', overflow: 'hidden', boxShadow: SHADOWS.card }}>
-        {loading ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>Loading...</div>
-        ) : entries.length === 0 ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>No audit entries found.</div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-              <thead>
-                <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                  {['Time', 'Entity', 'Action', 'Entity ID', 'User', ''].map((h) => (
-                    <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600, color: COLORS.textSecondary, textTransform: 'uppercase' }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map((entry, i) => {
-                  const ac = ACTION_COLORS[entry.action] || { bg: COLORS.contentBg, text: COLORS.textSecondary };
-                  const ec = ENTITY_COLORS[entry.entityType] || COLORS.hoverBg;
+      <Card className="overflow-hidden">
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="p-8 text-sm text-muted-foreground">Loading...</div>
+          ) : entries.length === 0 ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">No audit entries found.</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Time</TableHead>
+                  <TableHead>Entity</TableHead>
+                  <TableHead>Action</TableHead>
+                  <TableHead>Entity ID</TableHead>
+                  <TableHead>User</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {entries.map((entry) => {
                   const isExpanded = expanded === entry.id;
                   const hasChanges = entry.changes && Object.keys(entry.changes).length > 0;
                   return (
                     <>
-                      <tr
+                      <TableRow
                         key={entry.id}
-                        style={{ borderBottom: `1px solid ${COLORS.contentBg}`, cursor: hasChanges ? 'pointer' : 'default' }}
+                        className={hasChanges ? 'cursor-pointer' : undefined}
                         onClick={() => hasChanges && setExpanded(isExpanded ? null : entry.id)}
                       >
-                        <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary, fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
-                          {new Date(entry.createdAt).toLocaleString()}
-                        </td>
-                        <td style={{ padding: '0.75rem 1rem' }}>
-                          <span style={{ background: ec, padding: '0.15rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem', color: COLORS.textSecondary }}>
-                            {entry.entityType.replace('_', ' ')}
-                          </span>
-                        </td>
-                        <td style={{ padding: '0.75rem 1rem' }}>
-                          <span style={{ background: ac.bg, color: ac.text, padding: '0.15rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>
-                            {entry.action}
-                          </span>
-                        </td>
-                        <td style={{ padding: '0.75rem 1rem', fontFamily: 'monospace', fontSize: '0.75rem', color: COLORS.textMuted }}>
-                          {entry.entityId.slice(0, 8)}...
-                        </td>
-                        <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary, fontSize: '0.8rem' }}>
-                          {entry.userId ? entry.userId.slice(0, 8) + '...' : '—'}
-                        </td>
-                        <td style={{ padding: '0.75rem 1rem', color: COLORS.textMuted, fontSize: '0.8rem' }}>
-                          {hasChanges && <span>{isExpanded ? '▲' : '▼'}</span>}
-                        </td>
-                      </tr>
-                      {isExpanded && hasChanges && (
-                        <tr key={`${entry.id}-detail`} style={{ background: COLORS.hoverBg, borderBottom: `1px solid ${COLORS.contentBg}` }}>
-                          <td colSpan={6} style={{ padding: '0.75rem 1rem' }}>
-                            <pre style={{ fontSize: '0.8rem', color: COLORS.textSecondary, margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace', background: COLORS.contentBg, padding: '0.75rem', borderRadius: '6px' }}>
+                        <TableCell className="text-sm text-muted-foreground">{new Date(entry.createdAt).toLocaleString()}</TableCell>
+                        <TableCell className="capitalize text-muted-foreground">{entry.entityType.replace('_', ' ')}</TableCell>
+                        <TableCell className="capitalize text-foreground">{entry.action}</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">{entry.entityId.slice(0, 8)}...</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">{entry.userId ? `${entry.userId.slice(0, 8)}...` : '—'}</TableCell>
+                        <TableCell className="text-muted-foreground">{hasChanges ? (isExpanded ? '▲' : '▼') : ''}</TableCell>
+                      </TableRow>
+                      {isExpanded && hasChanges ? (
+                        <TableRow key={`${entry.id}-detail`}>
+                          <TableCell colSpan={6}>
+                            <pre className="overflow-x-auto rounded-xl border border-border/70 bg-muted/40 p-4 text-xs text-muted-foreground">
                               {JSON.stringify(entry.changes, null, 2)}
                             </pre>
-                          </td>
-                        </tr>
-                      )}
+                          </TableCell>
+                        </TableRow>
+                      ) : null}
                     </>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

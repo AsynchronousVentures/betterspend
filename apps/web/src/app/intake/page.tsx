@@ -1,21 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Inbox } from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
-
-const cardStyle: React.CSSProperties = {
-  background: COLORS.cardBg,
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: '10px',
-  boxShadow: SHADOWS.card,
-};
-
-function typeBadge(type: string) {
-  if (type === 'invoice') return { bg: '#dbeafe', text: '#1d4ed8' };
-  if (type === 'requisition') return { bg: '#dcfce7', text: '#15803d' };
-  return { bg: '#fef3c7', text: '#92400e' };
-}
+import { StatusBadge } from '../../components/status-badge';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Textarea } from '../../components/ui/textarea';
 
 export default function IntakePage() {
   const [items, setItems] = useState<any[]>([]);
@@ -36,8 +28,8 @@ export default function IntakePage() {
     void load();
   }, []);
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleCreate(event: React.FormEvent) {
+    event.preventDefault();
     setSaving(true);
     try {
       await api.emailIntake.create(form);
@@ -54,101 +46,97 @@ export default function IntakePage() {
   }
 
   return (
-    <div style={{ padding: '2rem', display: 'grid', gap: '1.25rem' }}>
+    <div className="space-y-6 p-4 lg:p-8">
       <div>
-        <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary }}>Intake Queue</h1>
-        <p style={{ margin: '0.35rem 0 0', fontSize: '0.875rem', color: COLORS.textSecondary }}>
+        <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">Intake Queue</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
           First-pass email intake review for forwarded quotes, invoice emails, and purchase requests.
         </p>
       </div>
 
-      <form onSubmit={handleCreate} style={{ ...cardStyle, padding: '1rem' }}>
-        <div style={{ fontSize: '0.95rem', fontWeight: 700, color: COLORS.textPrimary, marginBottom: '0.85rem' }}>
-          Add Intake Item
-        </div>
-        <div style={{ display: 'grid', gap: '0.75rem' }}>
-          <input
-            required
-            type="email"
-            value={form.sourceEmail}
-            onChange={(event) => setForm((current) => ({ ...current, sourceEmail: event.target.value }))}
-            placeholder="sender@vendor.com"
-            style={{ width: '100%', padding: '0.65rem 0.8rem', borderRadius: '8px', border: `1px solid ${COLORS.inputBorder}`, boxSizing: 'border-box' }}
-          />
-          <input
-            required
-            value={form.subject}
-            onChange={(event) => setForm((current) => ({ ...current, subject: event.target.value }))}
-            placeholder="Subject"
-            style={{ width: '100%', padding: '0.65rem 0.8rem', borderRadius: '8px', border: `1px solid ${COLORS.inputBorder}`, boxSizing: 'border-box' }}
-          />
-          <textarea
-            required
-            rows={6}
-            value={form.body}
-            onChange={(event) => setForm((current) => ({ ...current, body: event.target.value }))}
-            placeholder="Paste the forwarded email body or quote text here"
-            style={{ width: '100%', padding: '0.75rem 0.8rem', borderRadius: '8px', border: `1px solid ${COLORS.inputBorder}`, boxSizing: 'border-box', resize: 'vertical' }}
-          />
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button type="submit" disabled={saving} style={{ padding: '0.65rem 1rem', borderRadius: '8px', border: 'none', background: COLORS.accentBlue, color: '#fff', fontWeight: 700, cursor: saving ? 'not-allowed' : 'pointer' }}>
-              {saving ? 'Adding...' : 'Add to Intake Queue'}
-            </button>
-          </div>
-        </div>
-      </form>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Add Intake Item</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleCreate} className="grid gap-4">
+            <Input
+              required
+              type="email"
+              value={form.sourceEmail}
+              onChange={(event) => setForm((current) => ({ ...current, sourceEmail: event.target.value }))}
+              placeholder="sender@vendor.com"
+            />
+            <Input
+              required
+              value={form.subject}
+              onChange={(event) => setForm((current) => ({ ...current, subject: event.target.value }))}
+              placeholder="Subject"
+            />
+            <Textarea
+              required
+              rows={6}
+              value={form.body}
+              onChange={(event) => setForm((current) => ({ ...current, body: event.target.value }))}
+              placeholder="Paste the forwarded email body or quote text here"
+            />
+            <div className="flex justify-end">
+              <Button type="submit" disabled={saving}>
+                {saving ? 'Adding...' : 'Add to Intake Queue'}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
 
-      <div style={cardStyle}>
-        <div style={{ padding: '0.9rem 1rem', borderBottom: `1px solid ${COLORS.border}`, fontWeight: 700, color: COLORS.textPrimary }}>
-          Pending Review
-        </div>
-        {loading ? (
-          <div style={{ padding: '2rem', color: COLORS.textMuted }}>Loading intake items...</div>
-        ) : items.length === 0 ? (
-          <div style={{ padding: '2rem', color: COLORS.textMuted }}>No intake items yet.</div>
-        ) : (
-          <div style={{ display: 'grid' }}>
-            {items.map((item) => {
-              const badge = typeBadge(item.detectedType);
-              return (
-                <div key={item.id} style={{ padding: '1rem', borderBottom: `1px solid ${COLORS.contentBg}` }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start' }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, color: COLORS.textPrimary }}>{item.subject}</div>
-                      <div style={{ fontSize: '0.82rem', color: COLORS.textSecondary, marginTop: '0.2rem' }}>
-                        {item.sourceEmail}
-                      </div>
+      <Card className="overflow-hidden">
+        <CardHeader>
+          <CardTitle className="text-base">Pending Review</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="p-8 text-sm text-muted-foreground">Loading intake items...</div>
+          ) : items.length === 0 ? (
+            <div className="flex min-h-[260px] flex-col items-center justify-center gap-3 text-center">
+              <div className="rounded-full bg-muted p-4"><Inbox className="h-6 w-6 text-muted-foreground" /></div>
+              <div>
+                <p className="text-base font-semibold text-foreground">No intake items yet</p>
+                <p className="mt-1 text-sm text-muted-foreground">Add a forwarded item above to start triage.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="divide-y divide-border/70">
+              {items.map((item) => (
+                <div key={item.id} className="px-5 py-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-foreground">{item.subject}</div>
+                      <div className="mt-1 text-sm text-muted-foreground">{item.sourceEmail}</div>
                     </div>
-                    <span style={{ background: badge.bg, color: badge.text, borderRadius: '999px', padding: '0.2rem 0.55rem', fontSize: '0.72rem', fontWeight: 700, textTransform: 'capitalize' }}>
-                      {item.detectedType}
-                    </span>
+                    <StatusBadge value={item.detectedType === 'invoice' ? 'partial_match' : item.detectedType === 'requisition' ? 'approved' : 'pending'} label={item.detectedType} className="capitalize" />
                   </div>
-                  <div style={{ marginTop: '0.65rem', fontSize: '0.85rem', color: COLORS.textSecondary, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                  <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
                     {item.body.slice(0, 280)}
                     {item.body.length > 280 ? '...' : ''}
                   </div>
-                  <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '0.65rem', fontSize: '0.78rem', color: COLORS.textMuted }}>
+                  <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
                     <span>Status: {item.status.replace(/_/g, ' ')}</span>
                     <span>Vendor: {item.extractedVendorName ?? '—'}</span>
                     <span>Total: {item.extractedTotal ? `${item.extractedCurrency ?? 'USD'} ${item.extractedTotal}` : '—'}</span>
                   </div>
-                  {item.status === 'pending_review' && (
-                    <div style={{ marginTop: '0.75rem' }}>
-                      <button
-                        type="button"
-                        onClick={() => handleDiscard(item.id)}
-                        style={{ padding: '0.45rem 0.75rem', borderRadius: '8px', border: `1px solid ${COLORS.accentRedDark}`, background: 'transparent', color: COLORS.accentRedDark, fontWeight: 700, cursor: 'pointer' }}
-                      >
+                  {item.status === 'pending_review' ? (
+                    <div className="mt-4">
+                      <Button type="button" variant="outline" onClick={() => handleDiscard(item.id)}>
                         Discard
-                      </button>
+                      </Button>
                     </div>
-                  )}
+                  ) : null}
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

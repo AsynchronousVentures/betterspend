@@ -3,8 +3,9 @@
 import Link from 'next/link';
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { ArrowLeft, SearchIcon } from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 
 const TYPE_LABELS: Record<string, string> = {
   requisition: 'Requisitions',
@@ -68,65 +69,61 @@ function SearchContent() {
   const totalResults = sections.reduce((sum, section) => sum + section.items.length, 0);
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '960px' }}>
-      <div style={{ marginBottom: '1.5rem' }}>
-        <Link href="/" style={{ color: COLORS.textSecondary, textDecoration: 'none', fontSize: '0.875rem' }}>
-          &larr; Back to Dashboard
-        </Link>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary, margin: '0.75rem 0 0.25rem' }}>
-          Search Results
-        </h1>
-        <p style={{ color: COLORS.textSecondary, fontSize: '0.875rem', margin: 0 }}>
-          {query.length < 2 ? 'Enter at least two characters to search across BetterSpend.' : `Showing ${totalResults} result${totalResults === 1 ? '' : 's'} for "${query}"`}
+    <div className="space-y-6 p-4 lg:p-8">
+      <Link href="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
+        <ArrowLeft className="h-4 w-4" />
+        Dashboard
+      </Link>
+      <div>
+        <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">Search Results</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {query.length < 2
+            ? 'Enter at least two characters to search across BetterSpend.'
+            : `Showing ${totalResults} result${totalResults === 1 ? '' : 's'} for "${query}"`}
         </p>
       </div>
 
       {loading ? (
-        <div style={{ padding: '2rem', color: COLORS.textMuted }}>Searching...</div>
+        <Card><CardContent className="p-8 text-sm text-muted-foreground">Searching...</CardContent></Card>
       ) : query.length < 2 ? (
-        <div style={{ padding: '2rem', color: COLORS.textMuted }}>Search term too short.</div>
+        <Card><CardContent className="p-8 text-sm text-muted-foreground">Search term too short.</CardContent></Card>
       ) : totalResults === 0 ? (
-        <div style={{ padding: '2rem', color: COLORS.textMuted }}>No matching results.</div>
+        <Card>
+          <CardContent className="flex min-h-[240px] flex-col items-center justify-center gap-3 text-center">
+            <div className="rounded-full bg-muted p-4"><SearchIcon className="h-6 w-6 text-muted-foreground" /></div>
+            <div>
+              <p className="text-base font-semibold text-foreground">No matching results</p>
+              <p className="mt-1 text-sm text-muted-foreground">Try a broader term or a different identifier.</p>
+            </div>
+          </CardContent>
+        </Card>
       ) : (
-        <div style={{ display: 'grid', gap: '1rem' }}>
+        <div className="grid gap-4">
           {sections.map((section) =>
             section.items.length === 0 ? null : (
-              <div
-                key={section.key}
-                style={{
-                  background: COLORS.cardBg,
-                  border: `1px solid ${COLORS.border}`,
-                  borderRadius: '10px',
-                  boxShadow: SHADOWS.card,
-                  overflow: 'hidden',
-                }}
-              >
-                <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.border}`, fontWeight: 600, fontSize: '0.875rem', color: COLORS.textPrimary }}>
-                  {section.label} ({section.items.length})
-                </div>
-                <div>
-                  {section.items.map((item) => (
-                    <Link
-                      key={`${section.key}-${item.id}`}
-                      href={item._href}
-                      style={{
-                        display: 'block',
-                        padding: '0.875rem 1rem',
-                        borderBottom: `1px solid ${COLORS.contentBg}`,
-                        textDecoration: 'none',
-                        color: COLORS.textPrimary,
-                      }}
-                    >
-                      <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>{item._label}</div>
-                      {item.status ? (
-                        <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.2rem' }}>
-                          Status: {item.status}
-                        </div>
-                      ) : null}
-                    </Link>
-                  ))}
-                </div>
-              </div>
+              <Card key={section.key} className="overflow-hidden">
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    {section.label} ({section.items.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <div className="divide-y divide-border/70">
+                    {section.items.map((item) => (
+                      <Link
+                        key={`${section.key}-${item.id}`}
+                        href={item._href}
+                        className="block px-5 py-4 transition-colors hover:bg-muted/30"
+                      >
+                        <div className="text-sm font-medium text-foreground">{item._label}</div>
+                        {item.status ? (
+                          <div className="mt-1 text-xs text-muted-foreground">Status: {item.status}</div>
+                        ) : null}
+                      </Link>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
             ),
           )}
         </div>
@@ -137,7 +134,7 @@ function SearchContent() {
 
 export default function SearchPage() {
   return (
-    <Suspense fallback={<div style={{ padding: '2rem', color: COLORS.textMuted }}>Loading search...</div>}>
+    <Suspense fallback={<div className="p-8 text-sm text-muted-foreground">Loading search...</div>}>
       <SearchContent />
     </Suspense>
   );
