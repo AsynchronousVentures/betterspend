@@ -38,6 +38,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Refactored budgets, contracts, and inventory onto the same Tailwind-driven list and forecasting surface patterns, including warning banners, tab filters, and reusable progress treatments.
 - Reworked the new vendor, contract, budget, and inventory forms so create flows now use the same Tailwind/shadcn form primitives and card layout as the migrated operational pages.
 - Migrated the budget and inventory detail views, including edit states, stock adjustment modal, and budget period management, onto the new design system.
+- Migrated the contract detail page, including activation, termination, contract lines, amendments, and document management, onto the new Tailwind-based detail layout.
 
 ### Fixed
 

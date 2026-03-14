@@ -1,38 +1,35 @@
 'use client';
 
-import { useState, useEffect, FormEvent } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { ArrowLeft, FileSignature, Power, ShieldAlert } from 'lucide-react';
 import { api } from '../../../lib/api';
-import { COLORS, SHADOWS } from '../../../lib/theme';
-import { DocumentUploader } from '../../../components/document-uploader';
 import Breadcrumbs from '../../../components/breadcrumbs';
+import { DocumentUploader } from '../../../components/document-uploader';
+import { StatusBadge } from '../../../components/status-badge';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
+import { Button } from '../../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
+import { Textarea } from '../../../components/ui/textarea';
 
 const CONTRACT_TYPE_LABELS: Record<string, string> = {
-  msa:                'MSA',
-  sow:                'SOW',
-  nda:                'NDA',
-  sla:                'SLA',
+  msa: 'MSA',
+  sow: 'SOW',
+  nda: 'NDA',
+  sla: 'SLA',
   purchase_agreement: 'Purchase Agreement',
-  framework:          'Framework Agreement',
-  other:              'Other',
-};
-
-const STATUS_STYLES: Record<string, { background: string; color: string }> = {
-  draft:            { background: '#f1f5f9', color: COLORS.textSecondary },
-  pending_approval: { background: COLORS.accentAmberLight, color: COLORS.accentAmberDark },
-  active:           { background: COLORS.accentGreenLight, color: COLORS.accentGreenDark },
-  expiring_soon:    { background: '#fff7ed', color: '#9a3412' },
-  expired:          { background: COLORS.accentRedLight, color: COLORS.accentRedDark },
-  terminated:       { background: '#f8fafc', color: '#475569' },
+  framework: 'Framework Agreement',
+  other: 'Other',
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  draft:            'Draft',
+  draft: 'Draft',
   pending_approval: 'Pending Approval',
-  active:           'Active',
-  expiring_soon:    'Expiring Soon',
-  expired:          'Expired',
-  terminated:       'Terminated',
+  active: 'Active',
+  expiring_soon: 'Expiring Soon',
+  expired: 'Expired',
+  terminated: 'Terminated',
 };
 
 const fmt = (n: string | number | null | undefined, currency = 'USD') => {
@@ -45,17 +42,24 @@ const fmtDate = (d: string | null | undefined) => {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
-export default function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const [id, setId]                     = useState('');
-  const [contract, setContract]         = useState<any>(null);
-  const [loading, setLoading]           = useState(true);
-  const [error, setError]               = useState('');
-  const [actionLoading, setActionLoading] = useState(false);
+function OverviewField({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <div className="mt-1 text-sm text-foreground">{value}</div>
+    </div>
+  );
+}
 
-  // Terminate modal state
+export default function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const [id, setId] = useState('');
+  const [contract, setContract] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [actionLoading, setActionLoading] = useState(false);
   const [showTerminateModal, setShowTerminateModal] = useState(false);
-  const [terminateReason, setTerminateReason]       = useState('');
-  const [terminating, setTerminating]               = useState(false);
+  const [terminateReason, setTerminateReason] = useState('');
+  const [terminating, setTerminating] = useState(false);
 
   useEffect(() => {
     params.then(({ id: resolvedId }) => {
@@ -66,9 +70,10 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    api.contracts.get(id)
+    api.contracts
+      .get(id)
       .then(setContract)
-      .catch((e) => setError(e.message))
+      .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [id]);
 
@@ -78,15 +83,15 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     try {
       const updated = await api.contracts.activate(id);
       setContract(updated);
-    } catch (e: any) {
-      setError(e.message || 'Failed to activate contract');
+    } catch (err: any) {
+      setError(err.message || 'Failed to activate contract');
     } finally {
       setActionLoading(false);
     }
   }
 
-  async function handleTerminate(e: FormEvent) {
-    e.preventDefault();
+  async function handleTerminate(event: FormEvent) {
+    event.preventDefault();
     setTerminating(true);
     setError('');
     try {
@@ -94,266 +99,212 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
       setContract(updated);
       setShowTerminateModal(false);
       setTerminateReason('');
-    } catch (e: any) {
-      setError(e.message || 'Failed to terminate contract');
+    } catch (err: any) {
+      setError(err.message || 'Failed to terminate contract');
     } finally {
       setTerminating(false);
     }
   }
 
-  const cardStyle: React.CSSProperties = {
-    background: COLORS.cardBg,
-    border: `1px solid ${COLORS.tableBorder}`,
-    borderRadius: '8px',
-    padding: '1.25rem',
-    boxShadow: SHADOWS.card,
-    marginBottom: '1rem',
-  };
-
-  const thStyle: React.CSSProperties = {
-    padding: '0.5rem 0.75rem',
-    textAlign: 'left',
-    fontWeight: 600,
-    color: COLORS.textSecondary,
-    fontSize: '0.78rem',
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-  };
-
-  if (loading) return <div style={{ padding: '2rem', color: COLORS.textSecondary }}>Loading...</div>;
-  if (error && !contract) return (
-    <div style={{ padding: '2rem' }}>
-      <Link href="/contracts" style={{ color: COLORS.accentBlue, textDecoration: 'none', fontSize: '0.875rem' }}>← Contracts</Link>
-      <div style={{ marginTop: '1rem', color: COLORS.accentRedDark }}>{error}</div>
-    </div>
-  );
+  if (loading) return <div className="p-8 text-sm text-muted-foreground">Loading...</div>;
+  if (error && !contract) {
+    return (
+      <div className="p-8">
+        <Link href="/contracts" className="text-sm text-primary hover:underline">
+          Back to Contracts
+        </Link>
+        <div className="mt-4 text-sm text-rose-700">{error}</div>
+      </div>
+    );
+  }
   if (!contract) return null;
 
-  const sc = STATUS_STYLES[contract.status] ?? { background: '#f1f5f9', color: COLORS.textSecondary };
-  const canActivate  = ['draft', 'pending_approval'].includes(contract.status);
+  const canActivate = ['draft', 'pending_approval'].includes(contract.status);
   const canTerminate = ['active', 'expiring_soon'].includes(contract.status);
-
-  const lines      = contract.lines ?? contract.contractLines ?? [];
+  const lines = contract.lines ?? contract.contractLines ?? [];
   const amendments = contract.amendments ?? [];
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '900px' }}>
+    <div className="space-y-6 p-4 lg:p-8">
       <Breadcrumbs items={[{ label: 'Contracts', href: '/contracts' }, { label: contract.title }]} />
-      {/* Breadcrumb */}
-      <div style={{ marginBottom: '1rem' }}>
-        <Link href="/contracts" style={{ color: COLORS.accentBlue, textDecoration: 'none', fontSize: '0.875rem' }}>← Contracts</Link>
-      </div>
+      <Link href="/contracts" className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
+        <ArrowLeft className="h-4 w-4" />
+        Contracts
+      </Link>
 
-      {/* Error banner */}
-      {error && (
-        <div style={{ background: COLORS.accentRedLight, border: `1px solid #fecaca`, borderRadius: '6px', padding: '0.75rem 1rem', color: COLORS.accentRedDark, fontSize: '0.875rem', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>{error}</span>
-          <button onClick={() => setError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.accentRedDark, fontWeight: 700, fontSize: '1rem', lineHeight: 1, padding: 0 }}>×</button>
-        </div>
-      )}
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex items-center justify-between gap-4">
+            <span>{error}</span>
+            <button onClick={() => setError('')} className="text-sm font-semibold">
+              Dismiss
+            </button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem' }}>
-            <span style={{ fontFamily: 'monospace', fontSize: '0.875rem', color: COLORS.textSecondary, fontWeight: 500 }}>
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <span className="rounded-md bg-muted px-2 py-1 font-mono text-xs font-semibold text-muted-foreground">
               {contract.contractNumber || 'CTR-DRAFT'}
             </span>
-            <span style={{ ...sc, padding: '0.2rem 0.6rem', borderRadius: '9999px', fontSize: '0.75rem', fontWeight: 600 }}>
-              {STATUS_LABELS[contract.status] ?? contract.status}
-            </span>
+            <StatusBadge value={contract.status} label={STATUS_LABELS[contract.status]} />
           </div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: COLORS.textPrimary }}>{contract.title}</h1>
+          <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{contract.title}</h1>
         </div>
-
-        <div style={{ display: 'flex', gap: '0.75rem', flexShrink: 0 }}>
-          {canActivate && (
-            <button
-              onClick={handleActivate}
-              disabled={actionLoading}
-              style={{ padding: '0.5rem 1rem', background: COLORS.accentGreen, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: actionLoading ? 'not-allowed' : 'pointer', fontWeight: 500, fontSize: '0.875rem', opacity: actionLoading ? 0.7 : 1 }}
-            >
+        <div className="flex gap-3">
+          {canActivate ? (
+            <Button onClick={handleActivate} disabled={actionLoading}>
+              <Power className="h-4 w-4" />
               {actionLoading ? 'Activating...' : 'Activate'}
-            </button>
-          )}
-          {canTerminate && (
-            <button
-              onClick={() => setShowTerminateModal(true)}
-              disabled={actionLoading}
-              style={{ padding: '0.5rem 1rem', background: COLORS.accentRedLight, color: COLORS.accentRedDark, border: `1px solid #fecaca`, borderRadius: '6px', cursor: 'pointer', fontWeight: 500, fontSize: '0.875rem' }}
-            >
+            </Button>
+          ) : null}
+          {canTerminate ? (
+            <Button variant="outline" onClick={() => setShowTerminateModal(true)} disabled={actionLoading}>
+              <ShieldAlert className="h-4 w-4" />
               Terminate
-            </button>
-          )}
+            </Button>
+          ) : null}
         </div>
       </div>
 
-      {/* Overview card */}
-      <div style={cardStyle}>
-        <h2 style={{ fontWeight: 600, fontSize: '0.9rem', color: COLORS.textSecondary, margin: '0 0 1rem' }}>Overview</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
-          <Field label="Vendor"        value={contract.vendor?.name ?? '—'} />
-          <Field label="Type"          value={CONTRACT_TYPE_LABELS[contract.type] ?? contract.type ?? '—'} />
-          <Field label="Payment Terms" value={contract.paymentTerms ?? '—'} />
-          <Field label="Start Date"    value={fmtDate(contract.startDate)} />
-          <Field label="End Date"      value={fmtDate(contract.endDate)} />
-          <Field label="Total Value"   value={contract.totalValue != null ? fmt(contract.totalValue, contract.currency ?? 'USD') : '—'} />
-          <Field
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Overview</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-3">
+          <OverviewField label="Vendor" value={contract.vendor?.name ?? '—'} />
+          <OverviewField label="Type" value={CONTRACT_TYPE_LABELS[contract.type] ?? contract.type ?? '—'} />
+          <OverviewField label="Payment Terms" value={contract.paymentTerms ?? '—'} />
+          <OverviewField label="Start Date" value={fmtDate(contract.startDate)} />
+          <OverviewField label="End Date" value={fmtDate(contract.endDate)} />
+          <OverviewField label="Total Value" value={contract.totalValue != null ? fmt(contract.totalValue, contract.currency ?? 'USD') : '—'} />
+          <OverviewField
             label="Auto-Renew"
-            value={contract.autoRenew
-              ? `Yes${contract.renewalNoticeDays ? ` (${contract.renewalNoticeDays} days notice)` : ''}`
-              : 'No'}
+            value={contract.autoRenew ? `Yes${contract.renewalNoticeDays ? ` (${contract.renewalNoticeDays} days notice)` : ''}` : 'No'}
           />
-          <Field label="Currency"      value={contract.currency ?? 'USD'} />
-        </div>
-        {contract.terms && (
-          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: `1px solid ${COLORS.tableBorder}` }}>
-            <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginBottom: '0.375rem' }}>Terms & Conditions</div>
-            <div style={{ fontSize: '0.875rem', color: COLORS.textPrimary, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{contract.terms}</div>
-          </div>
-        )}
-        {contract.internalNotes && (
-          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: `1px solid ${COLORS.tableBorder}` }}>
-            <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginBottom: '0.375rem' }}>Internal Notes</div>
-            <div style={{ fontSize: '0.875rem', color: COLORS.textSecondary, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{contract.internalNotes}</div>
-          </div>
-        )}
-      </div>
+          <OverviewField label="Currency" value={contract.currency ?? 'USD'} />
+          <OverviewField label="Status" value={STATUS_LABELS[contract.status] ?? contract.status} />
 
-      {/* Contract Lines */}
-      <div style={cardStyle}>
-        <h2 style={{ fontWeight: 600, fontSize: '0.9rem', color: COLORS.textSecondary, margin: '0 0 1rem' }}>
-          Contract Lines {lines.length > 0 ? `(${lines.length})` : ''}
-        </h2>
-        {lines.length === 0 ? (
-          <p style={{ fontSize: '0.875rem', color: COLORS.textMuted, margin: 0 }}>No contract lines defined</p>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-              <thead>
-                <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                  <th style={thStyle}>Description</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Qty</th>
-                  <th style={thStyle}>UOM</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Unit Price</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((line: any, idx: number) => {
-                  const total = line.quantity != null && line.unitPrice != null
-                    ? Number(line.quantity) * Number(line.unitPrice)
-                    : null;
+          {contract.terms ? (
+            <div className="md:col-span-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Terms & Conditions</div>
+              <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground">{contract.terms}</div>
+            </div>
+          ) : null}
+
+          {contract.internalNotes ? (
+            <div className="md:col-span-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Internal Notes</div>
+              <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{contract.internalNotes}</div>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <CardHeader>
+          <CardTitle className="text-base">Contract Lines {lines.length > 0 ? `(${lines.length})` : ''}</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {lines.length === 0 ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">No contract lines defined.</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Description</TableHead>
+                  <TableHead className="text-right">Qty</TableHead>
+                  <TableHead>UOM</TableHead>
+                  <TableHead className="text-right">Unit Price</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {lines.map((line: any, index: number) => {
+                  const total = line.quantity != null && line.unitPrice != null ? Number(line.quantity) * Number(line.unitPrice) : null;
                   return (
-                    <tr key={line.id ?? idx} style={{ borderBottom: idx < lines.length - 1 ? `1px solid ${COLORS.contentBg}` : undefined }}>
-                      <td style={{ padding: '0.625rem 0.75rem', color: COLORS.textPrimary }}>{line.description ?? '—'}</td>
-                      <td style={{ padding: '0.625rem 0.75rem', color: COLORS.textSecondary, textAlign: 'right' }}>{line.quantity ?? '—'}</td>
-                      <td style={{ padding: '0.625rem 0.75rem', color: COLORS.textSecondary }}>{line.unitOfMeasure ?? line.uom ?? '—'}</td>
-                      <td style={{ padding: '0.625rem 0.75rem', color: COLORS.textSecondary, textAlign: 'right' }}>
+                    <TableRow key={line.id ?? index}>
+                      <TableCell className="text-foreground">{line.description ?? '—'}</TableCell>
+                      <TableCell className="text-right text-muted-foreground">{line.quantity ?? '—'}</TableCell>
+                      <TableCell className="text-muted-foreground">{line.unitOfMeasure ?? line.uom ?? '—'}</TableCell>
+                      <TableCell className="text-right text-muted-foreground">
                         {line.unitPrice != null ? fmt(line.unitPrice, contract.currency ?? 'USD') : '—'}
-                      </td>
-                      <td style={{ padding: '0.625rem 0.75rem', color: COLORS.textPrimary, fontWeight: 500, textAlign: 'right' }}>
+                      </TableCell>
+                      <TableCell className="text-right font-medium text-foreground">
                         {total != null ? fmt(total, contract.currency ?? 'USD') : '—'}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Amendments */}
-      <div style={cardStyle}>
-        <h2 style={{ fontWeight: 600, fontSize: '0.9rem', color: COLORS.textSecondary, margin: '0 0 1rem' }}>
-          Amendments {amendments.length > 0 ? `(${amendments.length})` : ''}
-        </h2>
-        {amendments.length === 0 ? (
-          <p style={{ fontSize: '0.875rem', color: COLORS.textMuted, margin: 0 }}>No amendments recorded</p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            {amendments.map((amendment: any, idx: number) => (
-              <div
-                key={amendment.id ?? idx}
-                style={{ padding: '0.875rem', background: COLORS.contentBg, borderRadius: '6px', borderLeft: `3px solid ${COLORS.accentAmber}` }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: COLORS.textSecondary }}>
-                    Amendment #{amendment.amendmentNumber ?? idx + 1}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Amendments {amendments.length > 0 ? `(${amendments.length})` : ''}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {amendments.length === 0 ? (
+            <div className="text-sm text-muted-foreground">No amendments recorded.</div>
+          ) : (
+            amendments.map((amendment: any, index: number) => (
+              <div key={amendment.id ?? index} className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
+                <div className="mb-2 flex items-center justify-between gap-4">
+                  <span className="text-sm font-semibold text-amber-900">
+                    Amendment #{amendment.amendmentNumber ?? index + 1}
                   </span>
-                  <span style={{ fontSize: '0.78rem', color: COLORS.textMuted }}>
-                    {fmtDate(amendment.effectiveDate ?? amendment.createdAt)}
-                  </span>
+                  <span className="text-xs text-amber-800/80">{fmtDate(amendment.effectiveDate ?? amendment.createdAt)}</span>
                 </div>
-                {amendment.description && (
-                  <p style={{ fontSize: '0.875rem', color: COLORS.textPrimary, margin: 0, lineHeight: 1.5 }}>{amendment.description}</p>
-                )}
+                {amendment.description ? <p className="text-sm leading-6 text-foreground">{amendment.description}</p> : null}
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Documents */}
-      {id && (
-        <DocumentUploader entityType="contract" entityId={id} label="Documents" />
-      )}
+      {id ? <DocumentUploader entityType="contract" entityId={id} label="Documents" /> : null}
 
-      {/* Terminate Modal */}
-      {showTerminateModal && (
+      {showTerminateModal ? (
         <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-          onClick={(e) => { if (e.target === e.currentTarget) setShowTerminateModal(false); }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setShowTerminateModal(false);
+              setTerminateReason('');
+            }
+          }}
         >
-          <div style={{ background: COLORS.cardBg, borderRadius: '10px', padding: '1.75rem', width: '440px', boxShadow: SHADOWS.dropdown }}>
-            <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.125rem', fontWeight: 700, color: COLORS.textPrimary }}>Terminate Contract</h2>
-            <p style={{ margin: '0 0 1.25rem', fontSize: '0.875rem', color: COLORS.textSecondary }}>
-              This action will mark the contract as terminated. Please provide a reason.
-            </p>
-            <form onSubmit={handleTerminate}>
-              <div style={{ marginBottom: '1.25rem' }}>
-                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-                  Reason *
-                </label>
-                <textarea
-                  required
-                  rows={4}
-                  value={terminateReason}
-                  onChange={(e) => setTerminateReason(e.target.value)}
-                  placeholder="Enter reason for termination..."
-                  style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box', resize: 'vertical', lineHeight: 1.5 }}
-                />
-              </div>
-              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-                <button
-                  type="button"
-                  onClick={() => { setShowTerminateModal(false); setTerminateReason(''); }}
-                  style={{ padding: '0.5rem 1rem', background: COLORS.tableBorder, color: COLORS.textSecondary, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 500 }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={terminating || !terminateReason.trim()}
-                  style={{ padding: '0.5rem 1.25rem', background: COLORS.accentRed, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: terminating || !terminateReason.trim() ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: terminating || !terminateReason.trim() ? 0.6 : 1 }}
-                >
-                  {terminating ? 'Terminating...' : 'Terminate Contract'}
-                </button>
-              </div>
-            </form>
-          </div>
+          <Card className="w-full max-w-lg">
+            <CardHeader>
+              <CardTitle className="text-lg">Terminate Contract</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="mb-4 text-sm text-muted-foreground">
+                This will mark the contract as terminated. Provide a reason for the audit trail.
+              </p>
+              <form onSubmit={handleTerminate} className="space-y-4">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Reason *</label>
+                  <Textarea rows={4} value={terminateReason} onChange={(event) => setTerminateReason(event.target.value)} placeholder="Enter reason for termination..." required />
+                </div>
+                <div className="flex justify-end gap-3">
+                  <Button type="button" variant="outline" onClick={() => { setShowTerminateModal(false); setTerminateReason(''); }}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={terminating || !terminateReason.trim()}>
+                    {terminating ? 'Terminating...' : 'Terminate Contract'}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
         </div>
-      )}
-    </div>
-  );
-}
-
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginBottom: '0.2rem' }}>{label}</div>
-      <div style={{ fontSize: '0.875rem', color: COLORS.textPrimary, fontWeight: 400 }}>{value}</div>
+      ) : null}
     </div>
   );
 }
