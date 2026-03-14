@@ -50,6 +50,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated the supplier scorecard onto the new design system, including sortable scoring rows and inline vendor detail panels for PO and invoice history.
 - Migrated the AP aging view onto the new design system, including overdue summary cards, aging buckets, the unpaid invoice grid, and the mark-paid modal.
 - Migrated supplier diversity and ESG tracking onto the new design system, including diversity summary cards, breakdown chips, and inline ESG editing within the vendor table.
+- Migrated the reports workspace onto the new design system, covering the custom report builder, saved reports, standard CSV exports, and the save-report modal.
 
 ### Fixed
 

@@ -1,10 +1,29 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { Download, FileSpreadsheet, FolderClock, Save } from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS, FONT } from '../../lib/theme';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
+import { PageHeader } from '../../components/page-header';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../components/ui/table';
 
 interface Report {
   id: string;
@@ -23,42 +42,46 @@ interface SavedReport {
   createdAt: string;
 }
 
-// ─── Static report list (preserved) ──────────────────────────────────────────
-
 const REPORTS: Report[] = [
   {
     id: 'pos',
     title: 'Purchase Orders',
     description: 'All purchase orders with vendor, status, and amounts.',
     endpoint: '/reports/purchase-orders/csv',
-    params: [{
-      label: 'Status', key: 'status',
-      options: [
-        { label: 'All', value: '' },
-        { label: 'Draft', value: 'draft' },
-        { label: 'Pending Approval', value: 'pending_approval' },
-        { label: 'Approved', value: 'approved' },
-        { label: 'Issued', value: 'issued' },
-        { label: 'Received', value: 'received' },
-        { label: 'Cancelled', value: 'cancelled' },
-      ],
-    }],
+    params: [
+      {
+        label: 'Status',
+        key: 'status',
+        options: [
+          { label: 'All', value: '' },
+          { label: 'Draft', value: 'draft' },
+          { label: 'Pending Approval', value: 'pending_approval' },
+          { label: 'Approved', value: 'approved' },
+          { label: 'Issued', value: 'issued' },
+          { label: 'Received', value: 'received' },
+          { label: 'Cancelled', value: 'cancelled' },
+        ],
+      },
+    ],
   },
   {
     id: 'invoices',
     title: 'Invoices',
     description: 'All invoices with match status, amounts, and approval info.',
     endpoint: '/reports/invoices/csv',
-    params: [{
-      label: 'Status', key: 'status',
-      options: [
-        { label: 'All', value: '' },
-        { label: 'Pending Match', value: 'pending_match' },
-        { label: 'Matched', value: 'matched' },
-        { label: 'Exception', value: 'exception' },
-        { label: 'Approved', value: 'approved' },
-      ],
-    }],
+    params: [
+      {
+        label: 'Status',
+        key: 'status',
+        options: [
+          { label: 'All', value: '' },
+          { label: 'Pending Match', value: 'pending_match' },
+          { label: 'Matched', value: 'matched' },
+          { label: 'Exception', value: 'exception' },
+          { label: 'Approved', value: 'approved' },
+        ],
+      },
+    ],
   },
   {
     id: 'requisitions',
@@ -87,7 +110,8 @@ const REPORTS: Report[] = [
   {
     id: 'ap-aging',
     title: 'AP Aging',
-    description: 'Overdue unpaid invoices grouped by aging bucket (0-30, 31-60, 61-90, 90+ days).',
+    description:
+      'Overdue unpaid invoices grouped by aging bucket (0-30, 31-60, 61-90, 90+ days).',
     endpoint: '/reports/ap-aging/csv',
   },
   {
@@ -97,8 +121,6 @@ const REPORTS: Report[] = [
     endpoint: '/reports/goods-receipts/csv',
   },
 ];
-
-// ─── Constants ────────────────────────────────────────────────────────────────
 
 const REPORT_TYPES = [
   { value: 'spend_by_vendor', label: 'Spend by Vendor' },
@@ -126,74 +148,24 @@ const GROUP_BY_OPTIONS = [
 
 function getDateRange(preset: string): { startDate?: string; endDate?: string } {
   const now = new Date();
-  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  const fmt = (date: Date) => date.toISOString().slice(0, 10);
   if (preset === 'last30') {
-    const s = new Date(now); s.setDate(s.getDate() - 30);
-    return { startDate: fmt(s), endDate: fmt(now) };
+    const start = new Date(now);
+    start.setDate(start.getDate() - 30);
+    return { startDate: fmt(start), endDate: fmt(now) };
   }
   if (preset === 'last90') {
-    const s = new Date(now); s.setDate(s.getDate() - 90);
-    return { startDate: fmt(s), endDate: fmt(now) };
+    const start = new Date(now);
+    start.setDate(start.getDate() - 90);
+    return { startDate: fmt(start), endDate: fmt(now) };
   }
   if (preset === 'last12months') {
-    const s = new Date(now); s.setFullYear(s.getFullYear() - 1);
-    return { startDate: fmt(s), endDate: fmt(now) };
+    const start = new Date(now);
+    start.setFullYear(start.getFullYear() - 1);
+    return { startDate: fmt(start), endDate: fmt(now) };
   }
   return {};
 }
-
-// ─── Input / Select helpers ───────────────────────────────────────────────────
-
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '0.5rem 0.75rem',
-  border: `1px solid ${COLORS.inputBorder}`,
-  borderRadius: '6px',
-  fontSize: FONT.base,
-  color: COLORS.textPrimary,
-  background: COLORS.white,
-  boxSizing: 'border-box',
-};
-
-const labelStyle: React.CSSProperties = {
-  display: 'block',
-  fontSize: FONT.sm,
-  fontWeight: 500,
-  color: COLORS.textSecondary,
-  marginBottom: '0.3rem',
-};
-
-const btnPrimary: React.CSSProperties = {
-  padding: '0.55rem 1.25rem',
-  background: COLORS.accentBlue,
-  color: COLORS.white,
-  border: 'none',
-  borderRadius: '6px',
-  cursor: 'pointer',
-  fontWeight: 600,
-  fontSize: FONT.base,
-  whiteSpace: 'nowrap',
-};
-
-const btnSecondary: React.CSSProperties = {
-  padding: '0.55rem 1.25rem',
-  background: COLORS.white,
-  color: COLORS.textPrimary,
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: '6px',
-  cursor: 'pointer',
-  fontWeight: 500,
-  fontSize: FONT.base,
-  whiteSpace: 'nowrap',
-};
-
-const btnDanger: React.CSSProperties = {
-  ...btnSecondary,
-  color: COLORS.accentRed,
-  borderColor: COLORS.accentRed,
-};
-
-// ─── Save Modal ───────────────────────────────────────────────────────────────
 
 function SaveModal({
   onSave,
@@ -203,109 +175,81 @@ function SaveModal({
   onClose: () => void;
 }) {
   const [name, setName] = useState('');
+
   return (
     <div
-      style={{
-        position: 'fixed', inset: 0, background: SHADOWS.overlay,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-      }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
       onClick={onClose}
     >
       <div
-        style={{ background: COLORS.white, borderRadius: '10px', padding: '1.75rem', width: '380px', boxShadow: SHADOWS.dropdown }}
-        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm rounded-[24px] border border-border/70 bg-card p-6 shadow-[0_30px_90px_-48px_rgba(15,23,42,0.55)]"
+        onClick={(event) => event.stopPropagation()}
       >
-        <div style={{ fontWeight: 700, fontSize: FONT.md, marginBottom: '1.25rem', color: COLORS.textPrimary }}>Save Report</div>
-        <label style={labelStyle}>Report name</label>
-        <input
-          style={{ ...inputStyle, marginBottom: '1.25rem' }}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Monthly Vendor Spend"
-          autoFocus
-        />
-        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-          <button style={btnSecondary} onClick={onClose}>Cancel</button>
-          <button
-            style={{ ...btnPrimary, opacity: name.trim() ? 1 : 0.5 }}
+        <div className="text-xl font-semibold tracking-[-0.03em] text-foreground">Save Report</div>
+        <div className="mt-5">
+          <label className="mb-2 block text-sm font-medium text-foreground">Report name</label>
+          <Input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Monthly Vendor Spend"
+            autoFocus
+          />
+        </div>
+        <div className="mt-6 flex justify-end gap-3">
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
             disabled={!name.trim()}
             onClick={() => onSave(name.trim())}
           >
             Save
-          </button>
+          </Button>
         </div>
       </div>
     </div>
   );
 }
 
-// ─── Result Table ─────────────────────────────────────────────────────────────
-
 function ResultTable({ rows }: { rows: Record<string, unknown>[] }) {
   if (!rows.length) {
     return (
-      <div style={{ padding: '2rem', textAlign: 'center', color: COLORS.textMuted, fontSize: FONT.base }}>
+      <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
         No data found for the selected criteria.
       </div>
     );
   }
+
   const headers = Object.keys(rows[0]);
   return (
-    <div style={{ overflowX: 'auto', borderRadius: '6px', border: `1px solid ${COLORS.tableBorder}` }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: FONT.sm }}>
-        <thead>
-          <tr style={{ background: COLORS.tableHeaderBg }}>
-            {headers.map((h) => (
-              <th
-                key={h}
-                style={{
-                  padding: '0.65rem 0.9rem',
-                  textAlign: 'left',
-                  fontWeight: 600,
-                  color: COLORS.textSecondary,
-                  borderBottom: `1px solid ${COLORS.tableBorder}`,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr
-              key={i}
-              style={{ background: i % 2 === 0 ? COLORS.white : COLORS.hoverBg }}
-            >
-              {headers.map((h) => (
-                <td
-                  key={h}
-                  style={{
-                    padding: '0.6rem 0.9rem',
-                    color: COLORS.textPrimary,
-                    borderBottom: `1px solid ${COLORS.tableBorder}`,
-                  }}
-                >
-                  {row[h] == null ? '—' : String(row[h])}
-                </td>
-              ))}
-            </tr>
+    <Table>
+      <TableHeader>
+        <TableRow>
+          {headers.map((header) => (
+            <TableHead key={header}>{header}</TableHead>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((row, index) => (
+          <TableRow key={index}>
+            {headers.map((header) => (
+              <TableCell key={header} className="text-muted-foreground">
+                {row[header] == null ? '—' : String(row[header])}
+              </TableCell>
+            ))}
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
-
 export default function ReportsPage() {
-  // Legacy download state
   const [downloading, setDownloading] = useState<string | null>(null);
   const [params, setParams] = useState<Record<string, Record<string, string>>>({});
 
-  // Custom report builder state
   const [reportType, setReportType] = useState('spend_by_vendor');
   const [dateRange, setDateRange] = useState('last30');
   const [customStart, setCustomStart] = useState('');
@@ -317,7 +261,6 @@ export default function ReportsPage() {
   const [error, setError] = useState<string | null>(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
 
-  // Saved reports state
   const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
   const [loadingSaved, setLoadingSaved] = useState(false);
 
@@ -333,42 +276,47 @@ export default function ReportsPage() {
     }
   }, []);
 
-  useEffect(() => { loadSavedReports(); }, [loadSavedReports]);
-
-  // ─── Legacy helpers ─────────────────────────────────────────────────────
+  useEffect(() => {
+    loadSavedReports();
+  }, [loadSavedReports]);
 
   function setParam(reportId: string, key: string, value: string) {
-    setParams((p) => ({ ...p, [reportId]: { ...(p[reportId] || {}), [key]: value } }));
+    setParams((current) => ({
+      ...current,
+      [reportId]: { ...(current[reportId] || {}), [key]: value },
+    }));
   }
 
   async function download(report: Report) {
     setDownloading(report.id);
     try {
-      const rp = params[report.id] || {};
+      const reportParams = params[report.id] || {};
       const filtered: Record<string, string> = {};
-      for (const [k, v] of Object.entries(rp)) { if (v) filtered[k] = v; }
+      for (const [key, value] of Object.entries(reportParams)) {
+        if (value) filtered[key] = value;
+      }
       const res = await api.reports.download(report.endpoint.replace('/reports/', ''), filtered);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
       const objUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objUrl;
-      a.download = `${report.id}-${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
+      const anchor = document.createElement('a');
+      anchor.href = objUrl;
+      anchor.download = `${report.id}-${new Date().toISOString().slice(0, 10)}.csv`;
+      anchor.click();
       URL.revokeObjectURL(objUrl);
-    } catch (e: any) {
-      alert('Download failed: ' + e.message);
+    } catch (err: any) {
+      alert(`Download failed: ${err.message}`);
     } finally {
       setDownloading(null);
     }
   }
 
-  // ─── Custom report helpers ──────────────────────────────────────────────
-
   function buildParams() {
-    const dates = dateRange === 'custom'
-      ? { startDate: customStart || undefined, endDate: customEnd || undefined }
-      : getDateRange(dateRange);
+    const dates =
+      dateRange === 'custom'
+        ? { startDate: customStart || undefined, endDate: customEnd || undefined }
+        : getDateRange(dateRange);
+
     return {
       reportType,
       ...dates,
@@ -383,8 +331,8 @@ export default function ReportsPage() {
     try {
       const rows = await api.reports.customReport(buildParams());
       setResults(rows);
-    } catch (e: any) {
-      setError(e.message || 'Failed to run report');
+    } catch (err: any) {
+      setError(err.message || 'Failed to run report');
     } finally {
       setRunning(false);
     }
@@ -397,22 +345,23 @@ export default function ReportsPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
       const objUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objUrl;
-      a.download = `${reportType}-${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
+      const anchor = document.createElement('a');
+      anchor.href = objUrl;
+      anchor.download = `${reportType}-${new Date().toISOString().slice(0, 10)}.csv`;
+      anchor.click();
       URL.revokeObjectURL(objUrl);
-    } catch (e: any) {
-      alert('Export failed: ' + e.message);
+    } catch (err: any) {
+      alert(`Export failed: ${err.message}`);
     } finally {
       setExporting(false);
     }
   }
 
   async function saveReport(name: string) {
-    const { startDate, endDate } = dateRange === 'custom'
-      ? { startDate: customStart || undefined, endDate: customEnd || undefined }
-      : getDateRange(dateRange);
+    const { startDate, endDate } =
+      dateRange === 'custom'
+        ? { startDate: customStart || undefined, endDate: customEnd || undefined }
+        : getDateRange(dateRange);
 
     await api.reports.savedReports.save({
       name,
@@ -428,31 +377,37 @@ export default function ReportsPage() {
     loadSavedReports();
   }
 
-  async function runSavedReport(sr: SavedReport) {
-    const filters = sr.filters as { dateRange?: string; startDate?: string; endDate?: string };
-    const dates = filters.dateRange && filters.dateRange !== 'custom'
-      ? getDateRange(filters.dateRange)
-      : { startDate: filters.startDate, endDate: filters.endDate };
+  async function runSavedReport(report: SavedReport) {
+    const filters = report.filters as {
+      dateRange?: string;
+      startDate?: string;
+      endDate?: string;
+    };
+    const dates =
+      filters.dateRange && filters.dateRange !== 'custom'
+        ? getDateRange(filters.dateRange)
+        : { startDate: filters.startDate, endDate: filters.endDate };
 
-    setReportType(sr.reportType);
-    setGroupBy(sr.groupBy ?? '');
+    setReportType(report.reportType);
+    setGroupBy(report.groupBy ?? '');
     setDateRange(filters.dateRange ?? 'last30');
     if (filters.dateRange === 'custom') {
       setCustomStart(filters.startDate ?? '');
       setCustomEnd(filters.endDate ?? '');
     }
+
     setRunning(true);
     setError(null);
     setResults(null);
     try {
       const rows = await api.reports.customReport({
-        reportType: sr.reportType,
+        reportType: report.reportType,
         ...dates,
-        groupBy: sr.groupBy || undefined,
+        groupBy: report.groupBy || undefined,
       });
       setResults(rows);
-    } catch (e: any) {
-      setError(e.message || 'Failed to run report');
+    } catch (err: any) {
+      setError(err.message || 'Failed to run report');
     } finally {
       setRunning(false);
     }
@@ -462,226 +417,228 @@ export default function ReportsPage() {
   async function deleteSavedReport(id: string) {
     try {
       await api.reports.savedReports.delete(id);
-      setSavedReports((prev) => prev.filter((r) => r.id !== id));
-    } catch (e: any) {
-      alert('Delete failed: ' + e.message);
+      setSavedReports((current) => current.filter((report) => report.id !== id));
+    } catch (err: any) {
+      alert(`Delete failed: ${err.message}`);
     }
   }
 
-  const reportTypeLabel = REPORT_TYPES.find((r) => r.value === reportType)?.label ?? reportType;
-
-  // ─── Render ─────────────────────────────────────────────────────────────
+  const reportTypeLabel =
+    REPORT_TYPES.find((report) => report.value === reportType)?.label ?? reportType;
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '1200px' }}>
-      {/* ── Page Header ── */}
-      <div style={{ marginBottom: '2rem' }}>
-        <h1 style={{ fontSize: FONT.xl, fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>Reports</h1>
-        <p style={{ color: COLORS.textSecondary, fontSize: FONT.base, marginTop: '0.25rem' }}>
-          Build custom reports, export data as CSV, and save your frequently used configurations.
-        </p>
-      </div>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="Reports"
+        description="Build custom reports, export raw operational data as CSV, and save repeat report configurations for one-click reruns."
+        actions={
+          <div className="flex items-center gap-2 rounded-full border border-border/70 bg-background/80 px-4 py-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+            <FileSpreadsheet className="h-4 w-4" />
+            Reporting workspace
+          </div>
+        }
+      />
 
-      {/* ─────────────────────────────────────────────────────────────────── */}
-      {/* Custom Report Builder */}
-      {/* ─────────────────────────────────────────────────────────────────── */}
-      <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: '10px', padding: '1.75rem', marginBottom: '2rem', boxShadow: SHADOWS.card }}>
-        <div style={{ fontWeight: 700, fontSize: FONT.md, color: COLORS.textPrimary, marginBottom: '1.25rem' }}>
-          Custom Report Builder
-        </div>
-
-        {/* Row 1: Report type + Date range + Group by */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-          <div>
-            <label style={labelStyle}>Report Type</label>
-            <select
-              value={reportType}
-              onChange={(e) => setReportType(e.target.value)}
-              style={inputStyle}
-            >
-              {REPORT_TYPES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-            </select>
+      <Card className="rounded-[24px]">
+        <CardHeader>
+          <CardTitle className="text-xl">Custom Report Builder</CardTitle>
+          <CardDescription>Choose a report type, date range, grouping, and run or export the result directly from the app.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Field label="Report Type">
+              <Select value={reportType} onChange={(event) => setReportType(event.target.value)} className="w-full">
+                {REPORT_TYPES.map((report) => (
+                  <option key={report.value} value={report.value}>
+                    {report.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Date Range">
+              <Select value={dateRange} onChange={(event) => setDateRange(event.target.value)} className="w-full">
+                {DATE_RANGES.map((range) => (
+                  <option key={range.value} value={range.value}>
+                    {range.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Group By">
+              <Select value={groupBy} onChange={(event) => setGroupBy(event.target.value)} className="w-full">
+                {GROUP_BY_OPTIONS.map((group) => (
+                  <option key={group.value} value={group.value}>
+                    {group.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
           </div>
 
-          <div>
-            <label style={labelStyle}>Date Range</label>
-            <select
-              value={dateRange}
-              onChange={(e) => setDateRange(e.target.value)}
-              style={inputStyle}
-            >
-              {DATE_RANGES.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
-            </select>
-          </div>
-
-          <div>
-            <label style={labelStyle}>Group By</label>
-            <select
-              value={groupBy}
-              onChange={(e) => setGroupBy(e.target.value)}
-              style={inputStyle}
-            >
-              {GROUP_BY_OPTIONS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
-            </select>
-          </div>
-        </div>
-
-        {/* Row 2: Custom dates (only when preset = custom) */}
-        {dateRange === 'custom' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-            <div>
-              <label style={labelStyle}>Start Date</label>
-              <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} style={inputStyle} />
+          {dateRange === 'custom' ? (
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Start Date">
+                <Input type="date" value={customStart} onChange={(event) => setCustomStart(event.target.value)} />
+              </Field>
+              <Field label="End Date">
+                <Input type="date" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} />
+              </Field>
             </div>
-            <div>
-              <label style={labelStyle}>End Date</label>
-              <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} style={inputStyle} />
-            </div>
+          ) : null}
+
+          <div className="flex flex-wrap gap-3">
+            <Button type="button" onClick={runReport} disabled={running}>
+              {running ? 'Running...' : 'Run Report'}
+            </Button>
+            <Button type="button" variant="outline" onClick={exportCsv} disabled={exporting}>
+              <Download className="h-4 w-4" />
+              {exporting ? 'Exporting...' : 'Export CSV'}
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setShowSaveModal(true)}>
+              <Save className="h-4 w-4" />
+              Save Report
+            </Button>
           </div>
-        )}
 
-        {/* Row 3: Actions */}
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-          <button
-            style={{ ...btnPrimary, opacity: running ? 0.6 : 1 }}
-            onClick={runReport}
-            disabled={running}
-          >
-            {running ? 'Running...' : 'Run Report'}
-          </button>
-          <button
-            style={{ ...btnSecondary, opacity: exporting ? 0.6 : 1 }}
-            onClick={exportCsv}
-            disabled={exporting}
-          >
-            {exporting ? 'Exporting...' : 'Export CSV'}
-          </button>
-          <button
-            style={btnSecondary}
-            onClick={() => setShowSaveModal(true)}
-          >
-            Save Report
-          </button>
-        </div>
+          {error ? (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
 
-        {/* Error */}
-        {error && (
-          <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: COLORS.accentRedLight, border: `1px solid ${COLORS.accentRed}`, borderRadius: '6px', color: COLORS.accentRedDark, fontSize: FONT.sm }}>
-            {error}
-          </div>
-        )}
-
-        {/* Results */}
-        {results !== null && (
-          <div style={{ marginTop: '1.5rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-              <div style={{ fontWeight: 600, color: COLORS.textPrimary, fontSize: FONT.base }}>
-                {reportTypeLabel} — {results.length} row{results.length !== 1 ? 's' : ''}
+          {results !== null ? (
+            <div className="space-y-3">
+              <div className="text-sm font-medium text-foreground">
+                {reportTypeLabel} · {results.length} row{results.length !== 1 ? 's' : ''}
               </div>
+              <ResultTable rows={results} />
             </div>
-            <ResultTable rows={results} />
-          </div>
-        )}
-      </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
-      {/* ─────────────────────────────────────────────────────────────────── */}
-      {/* Saved Reports */}
-      {/* ─────────────────────────────────────────────────────────────────── */}
-      <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: '10px', padding: '1.75rem', marginBottom: '2rem', boxShadow: SHADOWS.card }}>
-        <div style={{ fontWeight: 700, fontSize: FONT.md, color: COLORS.textPrimary, marginBottom: '1rem' }}>
-          Saved Reports
-        </div>
-
-        {loadingSaved ? (
-          <div style={{ color: COLORS.textMuted, fontSize: FONT.sm }}>Loading...</div>
-        ) : savedReports.length === 0 ? (
-          <div style={{ color: COLORS.textMuted, fontSize: FONT.sm }}>No saved reports yet. Run a report and click "Save Report" to store it for later.</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
-            {savedReports.map((sr) => {
-              const label = REPORT_TYPES.find((r) => r.value === sr.reportType)?.label ?? sr.reportType;
-              return (
-                <div
-                  key={sr.id}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '0.75rem 1rem',
-                    background: COLORS.hoverBg,
-                    border: `1px solid ${COLORS.border}`,
-                    borderRadius: '7px',
-                    gap: '1rem',
-                  }}
-                >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, color: COLORS.textPrimary, fontSize: FONT.base, marginBottom: '0.15rem' }}>{sr.name}</div>
-                    <div style={{ fontSize: FONT.sm, color: COLORS.textSecondary }}>
-                      {label}{sr.groupBy ? ` · grouped by ${sr.groupBy}` : ''} · saved {new Date(sr.createdAt).toLocaleDateString()}
+      <Card className="rounded-[24px]">
+        <CardHeader>
+          <CardTitle className="text-xl">Saved Reports</CardTitle>
+          <CardDescription>Store frequently used report definitions and rerun them with a single click.</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {loadingSaved ? (
+            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+              Loading saved reports...
+            </div>
+          ) : savedReports.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
+              <FolderClock className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
+              <div className="text-sm font-medium text-foreground">No saved reports yet</div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Run a report and save it to store that configuration for later.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {savedReports.map((report) => {
+                const label =
+                  REPORT_TYPES.find((type) => type.value === report.reportType)?.label ??
+                  report.reportType;
+                return (
+                  <div
+                    key={report.id}
+                    className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-muted/20 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-medium text-foreground">{report.name}</div>
+                      <div className="mt-1 text-sm text-muted-foreground">
+                        {label}
+                        {report.groupBy ? ` · grouped by ${report.groupBy}` : ''}
+                        {' · saved '}
+                        {new Date(report.createdAt).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button type="button" size="sm" variant="outline" onClick={() => runSavedReport(report)}>
+                        Run
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => deleteSavedReport(report.id)}>
+                        Delete
+                      </Button>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
-                    <button style={{ ...btnSecondary, padding: '0.4rem 0.9rem', fontSize: FONT.sm }} onClick={() => runSavedReport(sr)}>Run</button>
-                    <button style={{ ...btnDanger, padding: '0.4rem 0.9rem', fontSize: FONT.sm }} onClick={() => deleteSavedReport(sr.id)}>Delete</button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* ─────────────────────────────────────────────────────────────────── */}
-      {/* Standard CSV Exports (preserved) */}
-      {/* ─────────────────────────────────────────────────────────────────── */}
-      <div style={{ marginBottom: '1rem' }}>
-        <div style={{ fontWeight: 700, fontSize: FONT.md, color: COLORS.textPrimary, marginBottom: '0.25rem' }}>
-          Standard Exports
-        </div>
-        <p style={{ color: COLORS.textSecondary, fontSize: FONT.sm, margin: 0 }}>
-          Export raw data as CSV for analysis in Excel or other tools.
-        </p>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-        {REPORTS.map((report) => (
-          <div key={report.id} style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: '8px', padding: '1.5rem', boxShadow: SHADOWS.card }}>
-            <div style={{ fontWeight: 600, color: COLORS.textPrimary, marginBottom: '0.375rem' }}>{report.title}</div>
-            <div style={{ fontSize: FONT.sm, color: COLORS.textSecondary, marginBottom: '1rem' }}>{report.description}</div>
-
-            {report.params && report.params.map((p) => (
-              <div key={p.key} style={{ marginBottom: '0.75rem' }}>
-                <label style={{ ...labelStyle, marginBottom: '0.25rem' }}>{p.label}</label>
-                <select
-                  value={params[report.id]?.[p.key] || ''}
-                  onChange={(e) => setParam(report.id, p.key, e.target.value)}
-                  style={{ width: '100%', padding: '0.4rem 0.6rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.85rem' }}
-                >
-                  {p.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              </div>
-            ))}
-
-            <button
-              onClick={() => download(report)}
-              disabled={downloading === report.id}
-              style={{
-                width: '100%', padding: '0.6rem', background: downloading === report.id ? '#93c5fd' : COLORS.accentBlue,
-                color: COLORS.white, border: 'none', borderRadius: '6px', cursor: downloading === report.id ? 'not-allowed' : 'pointer',
-                fontWeight: 500, fontSize: FONT.base, marginTop: '0.25rem',
-              }}
+      <Card className="rounded-[24px]">
+        <CardHeader>
+          <CardTitle className="text-xl">Standard Exports</CardTitle>
+          <CardDescription>Download raw CSV extracts for downstream analysis in spreadsheets or BI tools.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-2">
+          {REPORTS.map((report) => (
+            <div
+              key={report.id}
+              className="rounded-2xl border border-border/70 bg-muted/20 p-4"
             >
-              {downloading === report.id ? 'Downloading...' : 'Download CSV'}
-            </button>
-          </div>
-        ))}
-      </div>
+              <div className="text-base font-semibold text-foreground">{report.title}</div>
+              <p className="mt-1 text-sm text-muted-foreground">{report.description}</p>
 
-      {/* Save Modal */}
-      {showSaveModal && (
-        <SaveModal
-          onSave={saveReport}
-          onClose={() => setShowSaveModal(false)}
-        />
-      )}
+              {report.params?.length ? (
+                <div className="mt-4 grid gap-3">
+                  {report.params.map((param) => (
+                    <Field key={`${report.id}-${param.key}`} label={param.label}>
+                      <Select
+                        value={params[report.id]?.[param.key] ?? ''}
+                        onChange={(event) => setParam(report.id, param.key, event.target.value)}
+                        className="w-full"
+                      >
+                        {param.options.map((option) => (
+                          <option key={option.label} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="mt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => download(report)}
+                  disabled={downloading === report.id}
+                >
+                  <Download className="h-4 w-4" />
+                  {downloading === report.id ? 'Downloading...' : 'Download CSV'}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      {showSaveModal ? (
+        <SaveModal onSave={saveReport} onClose={() => setShowSaveModal(false)} />
+      ) : null}
+    </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="mb-2 block text-sm font-medium text-foreground">{label}</label>
+      {children}
     </div>
   );
 }
