@@ -1,9 +1,44 @@
 'use client';
 
 import Link from 'next/link';
-import { Fragment, useState, useEffect } from 'react';
-import { COLORS, SHADOWS, FONT } from '../../lib/theme';
+import { Fragment, type ReactNode, useEffect, useMemo, useState } from 'react';
+import {
+  CalendarClock,
+  ChevronDown,
+  ChevronUp,
+  Clock3,
+  FileClock,
+  PauseCircle,
+  PlayCircle,
+  Plus,
+  Repeat2,
+  Rocket,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { api } from '../../lib/api';
+import { PageHeader } from '../../components/page-header';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../components/ui/table';
+import { Textarea } from '../../components/ui/textarea';
 
 interface RecurringPoLine {
   description: string;
@@ -54,6 +89,8 @@ const FREQ_LABELS: Record<string, string> = {
   annually: 'Annually',
 };
 
+const EMPTY_LINE: RecurringPoLine = { description: '', quantity: 1, unitPrice: 0, unitOfMeasure: 'each' };
+
 function fmtDate(iso?: string | null) {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -63,40 +100,98 @@ function fmtCurrency(amount: string | number, currency = 'USD') {
   return Number(amount).toLocaleString('en-US', { style: 'currency', currency });
 }
 
-const inp: React.CSSProperties = {
-  width: '100%',
-  border: `1px solid ${COLORS.inputBorder}`,
-  borderRadius: 6,
-  padding: '0.4rem 0.6rem',
-  fontSize: FONT.sm,
-  background: '#fff',
-  color: COLORS.textPrimary,
-  boxSizing: 'border-box',
-};
+function Field({
+  label,
+  children,
+  className = '',
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <label className={`grid gap-2 ${className}`}>
+      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  );
+}
 
-const EMPTY_LINE: RecurringPoLine = { description: '', quantity: 1, unitPrice: 0, unitOfMeasure: 'each' };
+function StatCard({
+  icon,
+  label,
+  value,
+  tone = 'default',
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  tone?: 'default' | 'success' | 'warning';
+}) {
+  const toneClass =
+    tone === 'success'
+      ? 'bg-emerald-50 text-emerald-700'
+      : tone === 'warning'
+        ? 'bg-amber-50 text-amber-700'
+        : 'bg-sky-50 text-sky-700';
+
+  return (
+    <Card className="rounded-[24px] border-border/70">
+      <CardContent className="flex items-center gap-4 p-5">
+        <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ${toneClass}`}>{icon}</div>
+        <div className="space-y-1">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+          <div className="text-lg font-semibold tracking-[-0.03em] text-foreground">{value}</div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function EmptyState({ onCreate }: { onCreate: () => void }) {
+  return (
+    <Card className="rounded-[28px] border-dashed border-border/80 bg-card/80">
+      <CardContent className="flex flex-col items-center gap-4 px-6 py-14 text-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-sky-50 text-sky-700">
+          <Repeat2 className="h-8 w-8" />
+        </div>
+        <div className="space-y-2">
+          <h2 className="font-display text-2xl font-semibold tracking-[-0.03em] text-foreground">
+            No recurring schedules yet
+          </h2>
+          <p className="max-w-xl text-sm text-muted-foreground">
+            Create a recurring purchase order schedule to automate repeat buys, preview upcoming runs,
+            and keep generated draft POs tied back to the original cadence.
+          </p>
+        </div>
+        <Button type="button" onClick={onCreate} className="gap-2">
+          <Plus className="h-4 w-4" />
+          New Recurring PO
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function RecurringPoPage() {
   const [schedules, setSchedules] = useState<RecurringPo[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [saving, setSaving] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [detailsById, setDetailsById] = useState<Record<string, RecurringPo>>({});
-  const [successMsg, setSuccessMsg] = useState('');
 
-  // Form state
   const [form, setForm] = useState({
     title: '',
     description: '',
     vendorId: '',
     frequency: 'monthly' as 'weekly' | 'monthly' | 'quarterly' | 'annually',
     dayOfMonth: 1,
-    totalAmount: 0,
     currency: 'USD',
     glAccount: '',
     notes: '',
@@ -106,8 +201,11 @@ export default function RecurringPoPage() {
   const [lines, setLines] = useState<RecurringPoLine[]>([{ ...EMPTY_LINE }]);
 
   useEffect(() => {
-    loadSchedules();
-    api.vendors.list().then((v: any[]) => setVendors(v)).catch(() => {});
+    void loadSchedules();
+    api.vendors
+      .list()
+      .then((list: any[]) => setVendors(list as Vendor[]))
+      .catch(() => {});
   }, []);
 
   async function loadSchedules() {
@@ -117,7 +215,7 @@ export default function RecurringPoPage() {
       const data = await api.recurringPo.list();
       setSchedules(data as RecurringPo[]);
     } catch {
-      setError('Failed to load recurring PO schedules');
+      setError('Failed to load recurring PO schedules.');
     } finally {
       setLoading(false);
     }
@@ -130,7 +228,6 @@ export default function RecurringPoPage() {
       vendorId: '',
       frequency: 'monthly',
       dayOfMonth: 1,
-      totalAmount: 0,
       currency: 'USD',
       glAccount: '',
       notes: '',
@@ -140,13 +237,26 @@ export default function RecurringPoPage() {
     setLines([{ ...EMPTY_LINE }]);
   }
 
+  function closeModal() {
+    setShowNew(false);
+    resetForm();
+    setError('');
+  }
+
   async function handleCreate() {
-    if (!form.title.trim()) { setError('Title is required'); return; }
-    if (lines.some((l) => !l.description.trim())) { setError('All line items need a description'); return; }
+    if (!form.title.trim()) {
+      setError('Title is required.');
+      return;
+    }
+    if (lines.some((line) => !line.description.trim())) {
+      setError('All line items need a description.');
+      return;
+    }
+
     setSaving(true);
     setError('');
     try {
-      const total = lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+      const total = lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
       await api.recurringPo.create({
         title: form.title,
         description: form.description || undefined,
@@ -155,23 +265,22 @@ export default function RecurringPoPage() {
         dayOfMonth: ['monthly', 'quarterly', 'annually'].includes(form.frequency) ? form.dayOfMonth : undefined,
         totalAmount: total,
         currency: form.currency,
-        lines: lines.map((l) => ({
-          description: l.description,
-          quantity: l.quantity,
-          unitPrice: l.unitPrice,
-          unitOfMeasure: l.unitOfMeasure,
+        lines: lines.map((line) => ({
+          description: line.description,
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+          unitOfMeasure: line.unitOfMeasure,
         })),
         glAccount: form.glAccount || undefined,
         notes: form.notes || undefined,
         maxRuns: form.maxRuns ? Number(form.maxRuns) : undefined,
         startDate: form.startDate || undefined,
       });
-      setShowNew(false);
-      resetForm();
-      loadSchedules();
-      showSuccess('Recurring PO schedule created');
+      closeModal();
+      await loadSchedules();
+      showSuccess('Recurring PO schedule created.');
     } catch (e: any) {
-      setError(e.message || 'Failed to create recurring PO');
+      setError(e.message || 'Failed to create recurring PO.');
     } finally {
       setSaving(false);
     }
@@ -180,9 +289,12 @@ export default function RecurringPoPage() {
   async function handleToggleActive(rpo: RecurringPo) {
     try {
       await api.recurringPo.update(rpo.id, { active: !rpo.active });
-      loadSchedules();
+      await loadSchedules();
+      if (expandedId === rpo.id) {
+        await loadDetails(rpo.id, true);
+      }
     } catch (e: any) {
-      setError(e.message || 'Failed to update schedule');
+      setError(e.message || 'Failed to update schedule.');
     }
   }
 
@@ -190,9 +302,13 @@ export default function RecurringPoPage() {
     if (!confirm('Delete this recurring PO schedule?')) return;
     try {
       await api.recurringPo.delete(id);
-      loadSchedules();
+      await loadSchedules();
+      if (expandedId === id) {
+        setExpandedId(null);
+      }
+      showSuccess('Recurring PO schedule deleted.');
     } catch (e: any) {
-      setError(e.message || 'Failed to delete schedule');
+      setError(e.message || 'Failed to delete schedule.');
     }
   }
 
@@ -202,10 +318,11 @@ export default function RecurringPoPage() {
     setError('');
     try {
       const result = await api.recurringPo.run(id);
-      loadSchedules();
+      await loadSchedules();
+      await loadDetails(id, true);
       showSuccess(`Draft PO created: ${result.purchaseOrderNumber}`);
     } catch (e: any) {
-      setError(e.message || 'Failed to trigger run');
+      setError(e.message || 'Failed to trigger run.');
     } finally {
       setRunningId(null);
     }
@@ -222,7 +339,7 @@ export default function RecurringPoPage() {
         await loadDetails(rpo.id, true);
       }
     } catch (e: any) {
-      setError(e.message || 'Failed to skip next run');
+      setError(e.message || 'Failed to skip next run.');
     }
   }
 
@@ -233,7 +350,7 @@ export default function RecurringPoPage() {
       const detail = await api.recurringPo.get(id);
       setDetailsById((current) => ({ ...current, [id]: detail as RecurringPo }));
     } catch (e: any) {
-      setError(e.message || 'Failed to load schedule details');
+      setError(e.message || 'Failed to load schedule details.');
     } finally {
       setDetailLoadingId(null);
     }
@@ -247,484 +364,555 @@ export default function RecurringPoPage() {
     }
   }
 
-  function showSuccess(msg: string) {
-    setSuccessMsg(msg);
+  function showSuccess(message: string) {
+    setSuccessMsg(message);
     setTimeout(() => setSuccessMsg(''), 4000);
   }
 
   function addLine() {
-    setLines([...lines, { ...EMPTY_LINE }]);
+    setLines((current) => [...current, { ...EMPTY_LINE }]);
   }
 
-  function removeLine(i: number) {
+  function removeLine(index: number) {
     if (lines.length <= 1) return;
-    setLines(lines.filter((_, idx) => idx !== i));
+    setLines((current) => current.filter((_, lineIndex) => lineIndex !== index));
   }
 
-  function updateLine(i: number, field: keyof RecurringPoLine, value: string | number) {
-    const next = [...lines];
-    next[i] = { ...next[i], [field]: value };
-    setLines(next);
+  function updateLine(index: number, field: keyof RecurringPoLine, value: string | number) {
+    setLines((current) => {
+      const next = [...current];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
   }
 
-  const computedTotal = lines.reduce((s, l) => s + (l.quantity || 0) * (l.unitPrice || 0), 0);
+  const computedTotal = useMemo(
+    () => lines.reduce((sum, line) => sum + (line.quantity || 0) * (line.unitPrice || 0), 0),
+    [lines],
+  );
+
+  const activeSchedules = schedules.filter((schedule) => schedule.active).length;
+  const pausedSchedules = schedules.length - activeSchedules;
+  const totalScheduledSpend = schedules.reduce((sum, schedule) => sum + Number(schedule.totalAmount || 0), 0);
 
   return (
-    <div style={{ padding: '1.5rem', background: COLORS.contentBg, minHeight: '100vh' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-        <div>
-          <h1 style={{ fontSize: FONT.xl, fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>
-            Recurring Purchase Orders
-          </h1>
-          <p style={{ fontSize: FONT.sm, color: COLORS.textSecondary, margin: '0.25rem 0 0' }}>
-            Automate repeat purchases on a regular schedule
-          </p>
-        </div>
-        <button
-          onClick={() => { setShowNew(true); setError(''); }}
-          style={{
-            background: COLORS.accentBlue, color: '#fff', border: 'none',
-            borderRadius: 8, padding: '0.5rem 1.25rem', fontSize: FONT.sm,
-            fontWeight: 600, cursor: 'pointer',
-          }}
-        >
-          + New Recurring PO
-        </button>
-      </div>
+    <div className="space-y-6 p-4 md:p-6">
+      <PageHeader
+        title="Recurring Purchase Orders"
+        description="Automate repeat purchases with schedule controls, upcoming run previews, and generated PO history."
+        actions={
+          <Button
+            type="button"
+            onClick={() => {
+              setShowNew(true);
+              setError('');
+            }}
+            className="gap-2"
+          >
+            <Plus className="h-4 w-4" />
+            New Recurring PO
+          </Button>
+        }
+      />
 
-      {/* Alerts */}
-      {error && (
-        <div style={{ background: COLORS.accentRedLight, color: COLORS.accentRedDark, padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem', fontSize: FONT.sm }}>
-          {error}
-        </div>
-      )}
-      {successMsg && (
-        <div style={{ background: COLORS.accentGreenLight, color: COLORS.accentGreenDark, padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem', fontSize: FONT.sm }}>
-          {successMsg}
-        </div>
-      )}
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      {successMsg ? (
+        <Alert>
+          <AlertDescription>{successMsg}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      {/* Table */}
+      <section className="grid gap-4 md:grid-cols-3">
+        <StatCard
+          icon={<Repeat2 className="h-5 w-5" />}
+          label="Active Schedules"
+          value={`${activeSchedules} active`}
+          tone="success"
+        />
+        <StatCard
+          icon={<PauseCircle className="h-5 w-5" />}
+          label="Paused Schedules"
+          value={`${pausedSchedules} paused`}
+          tone="warning"
+        />
+        <StatCard
+          icon={<CalendarClock className="h-5 w-5" />}
+          label="Scheduled Spend"
+          value={fmtCurrency(totalScheduledSpend)}
+        />
+      </section>
+
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '3rem', color: COLORS.textMuted }}>Loading...</div>
+        <Card className="rounded-[28px]">
+          <CardContent className="px-6 py-14 text-center text-sm text-muted-foreground">
+            Loading recurring schedules...
+          </CardContent>
+        </Card>
       ) : schedules.length === 0 ? (
-        <div style={{
-          background: COLORS.cardBg, border: `1px solid ${COLORS.cardBorder}`,
-          borderRadius: 12, padding: '3rem', textAlign: 'center',
-        }}>
-          <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>🔁</div>
-          <div style={{ fontSize: FONT.base, color: COLORS.textSecondary }}>
-            No recurring PO schedules yet. Create one to get started.
-          </div>
-        </div>
+        <EmptyState
+          onCreate={() => {
+            setShowNew(true);
+            setError('');
+          }}
+        />
       ) : (
-        <div style={{
-          background: COLORS.cardBg, border: `1px solid ${COLORS.cardBorder}`,
-          borderRadius: 12, boxShadow: SHADOWS.card, overflow: 'hidden',
-        }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                {['Title', 'Vendor', 'Frequency', 'Next Run', 'Last Run', 'Runs', 'Amount', 'Status', 'Actions'].map((h) => (
-                  <th key={h} style={{
-                    padding: '0.625rem 1rem', textAlign: 'left', fontSize: FONT.xs,
-                    fontWeight: 600, color: COLORS.textSecondary, whiteSpace: 'nowrap',
-                  }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {schedules.map((rpo) => {
-                const paused = !rpo.active;
-                const detail = detailsById[rpo.id];
-                const expanded = expandedId === rpo.id;
-                const rowStyle: React.CSSProperties = {
-                  borderBottom: `1px solid ${COLORS.tableBorder}`,
-                  opacity: paused ? 0.55 : 1,
-                };
-                const cellStyle: React.CSSProperties = {
-                  padding: '0.75rem 1rem',
-                  fontSize: FONT.sm,
-                  color: COLORS.textPrimary,
-                  verticalAlign: 'middle',
-                };
-                return (
-                  <Fragment key={rpo.id}>
-                    <tr key={rpo.id} style={rowStyle}>
-                      <td style={cellStyle}>
-                        <div style={{
-                          fontWeight: 600,
-                          textDecoration: paused ? 'line-through' : 'none',
-                          color: paused ? COLORS.textMuted : COLORS.textPrimary,
-                        }}>
-                          {rpo.title}
-                        </div>
-                        {rpo.description && (
-                          <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, marginTop: 2 }}>{rpo.description}</div>
-                        )}
-                        {!!rpo.historyCount && (
-                          <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, marginTop: 4 }}>
-                            {rpo.historyCount} generated PO{rpo.historyCount === 1 ? '' : 's'}
-                          </div>
-                        )}
-                      </td>
-                      <td style={cellStyle}>{rpo.vendor?.name ?? <span style={{ color: COLORS.textMuted }}>—</span>}</td>
-                      <td style={cellStyle}>
-                        <span style={{ fontSize: FONT.xs, fontWeight: 600, background: COLORS.accentBlueLight, color: COLORS.accentBlueDark, padding: '0.2rem 0.5rem', borderRadius: 20 }}>
-                          {FREQ_LABELS[rpo.frequency] ?? rpo.frequency}
-                        </span>
-                      </td>
-                      <td style={{ ...cellStyle, whiteSpace: 'nowrap' }}>
-                        {fmtDate(rpo.nextRunAt)}
-                        {rpo.upcomingRuns && rpo.upcomingRuns.length > 1 && (
-                          <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, marginTop: 4 }}>
-                            +{Math.max(rpo.upcomingRuns.length - 1, 0)} more scheduled
-                          </div>
-                        )}
-                      </td>
-                      <td style={{ ...cellStyle, color: COLORS.textSecondary }}>{fmtDate(rpo.lastRunAt)}</td>
-                      <td style={cellStyle}>
-                        {rpo.runCount}{rpo.maxRuns ? `/${rpo.maxRuns}` : ''}
-                      </td>
-                      <td style={{ ...cellStyle, fontWeight: 600 }}>{fmtCurrency(rpo.totalAmount, rpo.currency)}</td>
-                      <td style={cellStyle}>
-                        {paused ? (
-                          <span style={{ fontSize: FONT.xs, fontWeight: 600, background: COLORS.accentAmberLight, color: COLORS.accentAmberDark, padding: '0.2rem 0.5rem', borderRadius: 20 }}>
-                            PAUSED
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: FONT.xs, fontWeight: 600, background: COLORS.accentGreenLight, color: COLORS.accentGreenDark, padding: '0.2rem 0.5rem', borderRadius: 20 }}>
-                            ACTIVE
-                          </span>
-                        )}
-                      </td>
-                      <td style={{ ...cellStyle, whiteSpace: 'nowrap' }}>
-                        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                          <button
-                            disabled={!!runningId || paused}
-                            onClick={() => handleRunNow(rpo.id)}
-                            title="Run Now — creates a draft PO"
-                            style={{
-                              background: COLORS.accentBlue, color: '#fff', border: 'none',
-                              borderRadius: 5, padding: '0.25rem 0.6rem', fontSize: FONT.xs,
-                              fontWeight: 600, cursor: (runningId || paused) ? 'not-allowed' : 'pointer',
-                              opacity: (runningId || paused) ? 0.5 : 1,
-                            }}
-                          >
-                            {runningId === rpo.id ? '...' : 'Run'}
-                          </button>
-                          <button
-                            disabled={paused}
-                            onClick={() => handleSkipNext(rpo)}
-                            style={{
-                              background: COLORS.accentBlueLight,
-                              color: COLORS.accentBlueDark,
-                              border: 'none',
-                              borderRadius: 5,
-                              padding: '0.25rem 0.6rem',
-                              fontSize: FONT.xs,
-                              fontWeight: 600,
-                              cursor: paused ? 'not-allowed' : 'pointer',
-                              opacity: paused ? 0.5 : 1,
-                            }}
-                          >
-                            Skip Next
-                          </button>
-                          <button
-                            onClick={() => handleToggleActive(rpo)}
-                            style={{
-                              background: paused ? COLORS.accentGreenLight : COLORS.accentAmberLight,
-                              color: paused ? COLORS.accentGreenDark : COLORS.accentAmberDark,
-                              border: 'none', borderRadius: 5, padding: '0.25rem 0.6rem',
-                              fontSize: FONT.xs, fontWeight: 600, cursor: 'pointer',
-                            }}
-                          >
-                            {paused ? 'Resume' : 'Pause'}
-                          </button>
-                          <button
-                            onClick={() => void toggleExpanded(rpo.id)}
-                            style={{
-                              background: COLORS.cardBg,
-                              color: COLORS.textPrimary,
-                              border: `1px solid ${COLORS.border}`,
-                              borderRadius: 5,
-                              padding: '0.25rem 0.6rem',
-                              fontSize: FONT.xs,
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            {expanded ? 'Hide' : 'Details'}
-                          </button>
-                          <button
-                            onClick={() => handleDelete(rpo.id)}
-                            title="Delete schedule"
-                            style={{
-                              background: COLORS.accentRedLight, color: COLORS.accentRedDark,
-                              border: 'none', borderRadius: 5, padding: '0.25rem 0.5rem',
-                              fontSize: FONT.xs, fontWeight: 600, cursor: 'pointer',
-                            }}
-                          >
-                            Del
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                    {expanded && (
-                      <tr>
-                        <td colSpan={9} style={{ padding: '1rem', background: COLORS.contentBg }}>
-                          {detailLoadingId === rpo.id && !detail ? (
-                            <div style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>Loading schedule details...</div>
-                          ) : detail ? (
-                            <div style={{ display: 'grid', gap: '1rem' }}>
-                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
-                                <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '0.85rem' }}>
-                                  <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Next run</div>
-                                  <div style={{ fontSize: FONT.base, fontWeight: 700, color: COLORS.textPrimary }}>{fmtDate(detail.nextRunAt)}</div>
-                                </div>
-                                <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '0.85rem' }}>
-                                  <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Last run</div>
-                                  <div style={{ fontSize: FONT.base, fontWeight: 700, color: COLORS.textPrimary }}>{fmtDate(detail.lastRunAt)}</div>
-                                </div>
-                                <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '0.85rem' }}>
-                                  <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Generated POs</div>
-                                  <div style={{ fontSize: FONT.base, fontWeight: 700, color: COLORS.textPrimary }}>{detail.historyCount ?? 0}</div>
-                                </div>
-                              </div>
+        <Card className="overflow-hidden rounded-[28px] border-border/70 bg-card/95">
+          <CardHeader className="border-b border-border/70 pb-4">
+            <CardTitle className="font-display text-xl tracking-[-0.03em]">Schedule inventory</CardTitle>
+            <CardDescription>
+              Pause, run, or inspect any recurring PO schedule without leaving the queue.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Title</TableHead>
+                  <TableHead>Vendor</TableHead>
+                  <TableHead>Frequency</TableHead>
+                  <TableHead>Next Run</TableHead>
+                  <TableHead>Last Run</TableHead>
+                  <TableHead>Runs</TableHead>
+                  <TableHead>Amount</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {schedules.map((schedule) => {
+                  const paused = !schedule.active;
+                  const expanded = expandedId === schedule.id;
+                  const detail = detailsById[schedule.id];
 
-                              <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: '1rem' }}>
-                                <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '0.95rem' }}>
-                                  <div style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary, marginBottom: '0.75rem' }}>
-                                    Upcoming runs
-                                  </div>
-                                  <div style={{ display: 'grid', gap: '0.5rem' }}>
-                                    {(detail.upcomingRuns ?? []).length === 0 ? (
-                                      <div style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>No future runs scheduled.</div>
-                                    ) : (
-                                      (detail.upcomingRuns ?? []).map((runAt, index) => (
-                                        <div key={runAt} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '0.6rem 0.75rem' }}>
-                                          <span style={{ fontSize: FONT.sm, color: COLORS.textPrimary, fontWeight: 600 }}>{fmtDate(runAt)}</span>
-                                          <span style={{ fontSize: FONT.xs, color: COLORS.textMuted }}>
-                                            {index === 0 ? 'Next scheduled run' : `Run ${detail.runCount + index + 1}`}
-                                          </span>
-                                        </div>
-                                      ))
-                                    )}
-                                  </div>
-                                </div>
-
-                                <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '0.95rem' }}>
-                                  <div style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary, marginBottom: '0.75rem' }}>
-                                    Generated PO history
-                                  </div>
-                                  <div style={{ display: 'grid', gap: '0.5rem' }}>
-                                    {(detail.recentHistory ?? []).length === 0 ? (
-                                      <div style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>No purchase orders have been created from this schedule yet.</div>
-                                    ) : (
-                                      (detail.recentHistory ?? []).map((po) => (
-                                        <div key={po.id} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '0.65rem 0.75rem' }}>
-                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
-                                            <Link href={`/purchase-orders/${po.id}`} style={{ color: COLORS.accentBlueDark, textDecoration: 'none', fontWeight: 700, fontSize: FONT.sm }}>
-                                              {po.number}
-                                            </Link>
-                                            <span style={{ fontSize: FONT.xs, color: COLORS.textMuted }}>{fmtDate(po.createdAt)}</span>
-                                          </div>
-                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
-                                            <span style={{ fontSize: FONT.xs, color: COLORS.textSecondary, textTransform: 'capitalize' }}>{po.status}</span>
-                                            <span style={{ fontSize: FONT.sm, color: COLORS.textPrimary, fontWeight: 600 }}>
-                                              {fmtCurrency(po.totalAmount, po.currency)}
-                                            </span>
-                                          </div>
-                                        </div>
-                                      ))
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
+                  return (
+                    <Fragment key={schedule.id}>
+                      <TableRow className={paused ? 'opacity-65' : undefined}>
+                        <TableCell className="min-w-[240px]">
+                          <div className="space-y-1">
+                            <div className={`font-semibold ${paused ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
+                              {schedule.title}
                             </div>
-                          ) : null}
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                            {schedule.description ? (
+                              <div className="text-sm text-muted-foreground">{schedule.description}</div>
+                            ) : null}
+                            {schedule.historyCount ? (
+                              <div className="text-xs text-muted-foreground">
+                                {schedule.historyCount} generated PO{schedule.historyCount === 1 ? '' : 's'}
+                              </div>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {schedule.vendor?.name || '—'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">
+                            {FREQ_LABELS[schedule.frequency] ?? schedule.frequency}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <div className="font-medium text-foreground">{fmtDate(schedule.nextRunAt)}</div>
+                            {schedule.upcomingRuns && schedule.upcomingRuns.length > 1 ? (
+                              <div className="text-xs text-muted-foreground">
+                                +{Math.max(schedule.upcomingRuns.length - 1, 0)} more scheduled
+                              </div>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">{fmtDate(schedule.lastRunAt)}</TableCell>
+                        <TableCell className="font-medium text-foreground">
+                          {schedule.runCount}
+                          {schedule.maxRuns ? `/${schedule.maxRuns}` : ''}
+                        </TableCell>
+                        <TableCell className="font-semibold text-foreground">
+                          {fmtCurrency(schedule.totalAmount, schedule.currency)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={paused ? 'warning' : 'success'}>{paused ? 'Paused' : 'Active'}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="gap-1.5"
+                              disabled={!!runningId || paused}
+                              onClick={() => handleRunNow(schedule.id)}
+                            >
+                              <Rocket className="h-3.5 w-3.5" />
+                              {runningId === schedule.id ? 'Running...' : 'Run'}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={paused}
+                              onClick={() => handleSkipNext(schedule)}
+                            >
+                              Skip Next
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className={paused ? 'border-emerald-200 text-emerald-700 hover:bg-emerald-50' : 'border-amber-200 text-amber-700 hover:bg-amber-50'}
+                              onClick={() => handleToggleActive(schedule)}
+                            >
+                              {paused ? (
+                                <>
+                                  <PlayCircle className="mr-1.5 h-3.5 w-3.5" />
+                                  Resume
+                                </>
+                              ) : (
+                                <>
+                                  <PauseCircle className="mr-1.5 h-3.5 w-3.5" />
+                                  Pause
+                                </>
+                              )}
+                            </Button>
+                            <Button type="button" size="sm" variant="outline" onClick={() => void toggleExpanded(schedule.id)}>
+                              {expanded ? (
+                                <>
+                                  <ChevronUp className="mr-1.5 h-3.5 w-3.5" />
+                                  Hide
+                                </>
+                              ) : (
+                                <>
+                                  <ChevronDown className="mr-1.5 h-3.5 w-3.5" />
+                                  Details
+                                </>
+                              )}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="border-rose-200 text-rose-700 hover:bg-rose-50"
+                              onClick={() => handleDelete(schedule.id)}
+                            >
+                              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                              Delete
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                      {expanded ? (
+                        <TableRow className="bg-muted/20 hover:bg-muted/20">
+                          <TableCell colSpan={9} className="p-5">
+                            {detailLoadingId === schedule.id && !detail ? (
+                              <div className="text-sm text-muted-foreground">Loading schedule details...</div>
+                            ) : detail ? (
+                              <div className="grid gap-5">
+                                <div className="grid gap-4 xl:grid-cols-3">
+                                  <StatCard
+                                    icon={<Clock3 className="h-5 w-5" />}
+                                    label="Next Run"
+                                    value={fmtDate(detail.nextRunAt)}
+                                  />
+                                  <StatCard
+                                    icon={<FileClock className="h-5 w-5" />}
+                                    label="Last Run"
+                                    value={fmtDate(detail.lastRunAt)}
+                                  />
+                                  <StatCard
+                                    icon={<Repeat2 className="h-5 w-5" />}
+                                    label="Generated POs"
+                                    value={String(detail.historyCount ?? 0)}
+                                    tone="success"
+                                  />
+                                </div>
+
+                                <div className="grid gap-5 xl:grid-cols-[1.15fr_1fr]">
+                                  <Card className="rounded-[24px]">
+                                    <CardHeader>
+                                      <CardTitle className="text-base">Upcoming runs</CardTitle>
+                                      <CardDescription>Preview the next execution dates on this schedule.</CardDescription>
+                                    </CardHeader>
+                                    <CardContent className="grid gap-3">
+                                      {(detail.upcomingRuns ?? []).length === 0 ? (
+                                        <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
+                                          No future runs scheduled.
+                                        </div>
+                                      ) : (
+                                        (detail.upcomingRuns ?? []).map((runAt, index) => (
+                                          <div
+                                            key={runAt}
+                                            className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/80 px-4 py-3"
+                                          >
+                                            <div className="font-medium text-foreground">{fmtDate(runAt)}</div>
+                                            <div className="text-xs text-muted-foreground">
+                                              {index === 0 ? 'Next scheduled run' : `Run ${detail.runCount + index + 1}`}
+                                            </div>
+                                          </div>
+                                        ))
+                                      )}
+                                    </CardContent>
+                                  </Card>
+
+                                  <Card className="rounded-[24px]">
+                                    <CardHeader>
+                                      <CardTitle className="text-base">Generated PO history</CardTitle>
+                                      <CardDescription>Recent purchase orders created from this schedule.</CardDescription>
+                                    </CardHeader>
+                                    <CardContent className="grid gap-3">
+                                      {(detail.recentHistory ?? []).length === 0 ? (
+                                        <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
+                                          No purchase orders have been created from this schedule yet.
+                                        </div>
+                                      ) : (
+                                        (detail.recentHistory ?? []).map((po) => (
+                                          <div key={po.id} className="rounded-2xl border border-border/70 bg-background/80 px-4 py-3">
+                                            <div className="flex items-center justify-between gap-4">
+                                              <Link
+                                                href={`/purchase-orders/${po.id}`}
+                                                className="font-semibold text-sky-700 transition-colors hover:text-sky-800"
+                                              >
+                                                {po.number}
+                                              </Link>
+                                              <span className="text-xs text-muted-foreground">{fmtDate(po.createdAt)}</span>
+                                            </div>
+                                            <div className="mt-2 flex items-center justify-between gap-4">
+                                              <span className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                                                {po.status}
+                                              </span>
+                                              <span className="font-medium text-foreground">
+                                                {fmtCurrency(po.totalAmount, po.currency)}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        ))
+                                      )}
+                                    </CardContent>
+                                  </Card>
+                                </div>
+                              </div>
+                            ) : null}
+                          </TableCell>
+                        </TableRow>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
 
-      {/* New Recurring PO Modal */}
-      {showNew && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{
-            background: '#fff', borderRadius: 14, padding: '1.75rem',
-            width: '90%', maxWidth: 720, maxHeight: '92vh', overflowY: 'auto',
-            boxShadow: SHADOWS.dropdown,
-          }}>
-            {/* Modal header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-              <h2 style={{ margin: 0, fontSize: FONT.lg, fontWeight: 700, color: COLORS.textPrimary }}>New Recurring PO</h2>
-              <button onClick={() => { setShowNew(false); resetForm(); setError(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.textMuted, fontSize: 20 }}>
-                &#x2715;
-              </button>
+      {showNew ? (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/50 px-4 py-10"
+          onClick={closeModal}
+        >
+          <div
+            className="w-full max-w-5xl rounded-[30px] border border-border/70 bg-card p-6 shadow-[0_30px_90px_-48px_rgba(15,23,42,0.55)] md:p-8"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <h2 className="font-display text-2xl font-semibold tracking-[-0.03em] text-foreground">
+                  New Recurring PO
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Define the vendor, cadence, and line items that should generate draft purchase orders automatically.
+                </p>
+              </div>
+              <Button type="button" variant="ghost" size="icon" onClick={closeModal} aria-label="Close modal">
+                <X className="h-5 w-5" />
+              </Button>
             </div>
 
-            {error && (
-              <div style={{ background: COLORS.accentRedLight, color: COLORS.accentRedDark, padding: '0.5rem 0.75rem', borderRadius: 6, marginBottom: '1rem', fontSize: FONT.sm }}>
-                {error}
-              </div>
-            )}
+            {error ? (
+              <Alert variant="destructive" className="mb-6">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
-              {/* Title */}
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Title *</label>
-                <input style={inp} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Monthly Office Supplies" />
-              </div>
-
-              {/* Description */}
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Description</label>
-                <textarea style={{ ...inp, height: 60, resize: 'vertical' }} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Optional notes..." />
-              </div>
-
-              {/* Vendor */}
-              <div>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Vendor</label>
-                <select style={inp} value={form.vendorId} onChange={(e) => setForm({ ...form, vendorId: e.target.value })}>
-                  <option value="">— None —</option>
-                  {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-                </select>
-              </div>
-
-              {/* Currency */}
-              <div>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Currency</label>
-                <select style={inp} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
-                  <option>USD</option><option>EUR</option><option>GBP</option><option>CAD</option>
-                </select>
-              </div>
-
-              {/* Frequency */}
-              <div>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Frequency *</label>
-                <select style={inp} value={form.frequency} onChange={(e) => setForm({ ...form, frequency: e.target.value as any })}>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                  <option value="quarterly">Quarterly</option>
-                  <option value="annually">Annually</option>
-                </select>
-              </div>
-
-              {/* Day of month (only when applicable) */}
-              {['monthly', 'quarterly', 'annually'].includes(form.frequency) && (
-                <div>
-                  <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Day of Month (1–28)</label>
-                  <input type="number" style={inp} min={1} max={28} value={form.dayOfMonth} onChange={(e) => setForm({ ...form, dayOfMonth: Number(e.target.value) })} />
-                </div>
-              )}
-
-              {/* Start date */}
-              <div>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>First Run Date</label>
-                <input type="date" style={inp} value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} />
-              </div>
-
-              {/* Max runs */}
-              <div>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Max Runs (blank = unlimited)</label>
-                <input type="number" style={inp} min={1} value={form.maxRuns} onChange={(e) => setForm({ ...form, maxRuns: e.target.value })} placeholder="Unlimited" />
-              </div>
-
-              {/* GL Account */}
-              <div>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>GL Account</label>
-                <input style={inp} value={form.glAccount} onChange={(e) => setForm({ ...form, glAccount: e.target.value })} placeholder="e.g. 6200" />
-              </div>
-
-              {/* Notes */}
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Notes</label>
-                <textarea style={{ ...inp, height: 50, resize: 'vertical' }} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Internal notes..." />
-              </div>
-            </div>
-
-            {/* Line items */}
-            <div style={{ marginBottom: '1.25rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary }}>Line Items *</label>
-                <button onClick={addLine} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: FONT.xs, color: COLORS.accentBlue, fontWeight: 600 }}>
-                  + Add Line
-                </button>
-              </div>
-              <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: 6, overflow: 'hidden' }}>
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: '3fr 1fr 1fr 1fr 32px',
-                  gap: 0,
-                  background: COLORS.tableHeaderBg,
-                  padding: '0.4rem 0.75rem',
-                  borderBottom: `1px solid ${COLORS.border}`,
-                }}>
-                  {['Description', 'Qty', 'Unit Price', 'UOM', ''].map((h, i) => (
-                    <span key={i} style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary }}>{h}</span>
-                  ))}
-                </div>
-                {lines.map((line, i) => (
-                  <div key={i} style={{
-                    display: 'grid',
-                    gridTemplateColumns: '3fr 1fr 1fr 1fr 32px',
-                    gap: '0.4rem',
-                    padding: '0.4rem 0.75rem',
-                    borderBottom: i < lines.length - 1 ? `1px solid ${COLORS.border}` : 'none',
-                    alignItems: 'center',
-                  }}>
-                    <input style={inp} placeholder="Item description" value={line.description} onChange={(e) => updateLine(i, 'description', e.target.value)} />
-                    <input type="number" style={inp} min={0.01} step={0.01} value={line.quantity} onChange={(e) => updateLine(i, 'quantity', Number(e.target.value))} />
-                    <input type="number" style={inp} min={0} step={0.01} value={line.unitPrice} onChange={(e) => updateLine(i, 'unitPrice', Number(e.target.value))} />
-                    <input style={inp} placeholder="each" value={line.unitOfMeasure} onChange={(e) => updateLine(i, 'unitOfMeasure', e.target.value)} />
-                    <button
-                      onClick={() => removeLine(i)}
-                      disabled={lines.length === 1}
-                      style={{ background: 'none', border: 'none', cursor: lines.length > 1 ? 'pointer' : 'not-allowed', color: COLORS.accentRed, fontSize: 16, padding: 0, opacity: lines.length === 1 ? 0.3 : 1 }}
+            <div className="grid gap-6">
+              <Card className="rounded-[24px]">
+                <CardHeader>
+                  <CardTitle className="text-base">Schedule configuration</CardTitle>
+                  <CardDescription>Set the cadence, owner context, and schedule constraints.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-4 md:grid-cols-2">
+                  <Field label="Title" className="md:col-span-2">
+                    <Input
+                      value={form.title}
+                      onChange={(event) => setForm({ ...form, title: event.target.value })}
+                      placeholder="Monthly Office Supplies"
+                    />
+                  </Field>
+                  <Field label="Description" className="md:col-span-2">
+                    <Textarea
+                      value={form.description}
+                      onChange={(event) => setForm({ ...form, description: event.target.value })}
+                      placeholder="Optional notes for why this schedule exists."
+                      className="min-h-[96px]"
+                    />
+                  </Field>
+                  <Field label="Vendor">
+                    <Select value={form.vendorId} onChange={(event) => setForm({ ...form, vendorId: event.target.value })}>
+                      <option value="">None</option>
+                      {vendors.map((vendor) => (
+                        <option key={vendor.id} value={vendor.id}>
+                          {vendor.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label="Currency">
+                    <Select value={form.currency} onChange={(event) => setForm({ ...form, currency: event.target.value })}>
+                      <option value="USD">USD</option>
+                      <option value="EUR">EUR</option>
+                      <option value="GBP">GBP</option>
+                      <option value="CAD">CAD</option>
+                    </Select>
+                  </Field>
+                  <Field label="Frequency">
+                    <Select
+                      value={form.frequency}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          frequency: event.target.value as 'weekly' | 'monthly' | 'quarterly' | 'annually',
+                        })
+                      }
                     >
-                      &#x2715;
-                    </button>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="quarterly">Quarterly</option>
+                      <option value="annually">Annually</option>
+                    </Select>
+                  </Field>
+                  {['monthly', 'quarterly', 'annually'].includes(form.frequency) ? (
+                    <Field label="Day of Month">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={28}
+                        value={form.dayOfMonth}
+                        onChange={(event) => setForm({ ...form, dayOfMonth: Number(event.target.value) })}
+                      />
+                    </Field>
+                  ) : null}
+                  <Field label="First Run Date">
+                    <Input
+                      type="date"
+                      value={form.startDate}
+                      onChange={(event) => setForm({ ...form, startDate: event.target.value })}
+                    />
+                  </Field>
+                  <Field label="Max Runs">
+                    <Input
+                      type="number"
+                      min={1}
+                      value={form.maxRuns}
+                      onChange={(event) => setForm({ ...form, maxRuns: event.target.value })}
+                      placeholder="Unlimited"
+                    />
+                  </Field>
+                  <Field label="GL Account">
+                    <Input
+                      value={form.glAccount}
+                      onChange={(event) => setForm({ ...form, glAccount: event.target.value })}
+                      placeholder="6200"
+                    />
+                  </Field>
+                  <Field label="Notes" className="md:col-span-2">
+                    <Textarea
+                      value={form.notes}
+                      onChange={(event) => setForm({ ...form, notes: event.target.value })}
+                      placeholder="Internal notes for approvers or finance."
+                    />
+                  </Field>
+                </CardContent>
+              </Card>
+
+              <Card className="rounded-[24px]">
+                <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <CardTitle className="text-base">Line items</CardTitle>
+                    <CardDescription>These lines will be copied into each generated draft PO.</CardDescription>
                   </div>
-                ))}
-                <div style={{ padding: '0.4rem 0.75rem', background: COLORS.tableHeaderBg, borderTop: `1px solid ${COLORS.border}`, display: 'flex', justifyContent: 'flex-end' }}>
-                  <span style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary }}>
-                    Total: {fmtCurrency(computedTotal, form.currency)}
-                  </span>
-                </div>
-              </div>
+                  <Button type="button" variant="outline" onClick={addLine} className="gap-2">
+                    <Plus className="h-4 w-4" />
+                    Add Line
+                  </Button>
+                </CardHeader>
+                <CardContent className="grid gap-3">
+                  {lines.map((line, index) => (
+                    <div
+                      key={index}
+                      className="grid gap-3 rounded-[22px] border border-border/70 bg-background/70 p-4 md:grid-cols-[2.4fr_0.8fr_0.95fr_0.9fr_auto]"
+                    >
+                      <Field label="Description">
+                        <Input
+                          value={line.description}
+                          onChange={(event) => updateLine(index, 'description', event.target.value)}
+                          placeholder="Item description"
+                        />
+                      </Field>
+                      <Field label="Qty">
+                        <Input
+                          type="number"
+                          min={0.01}
+                          step={0.01}
+                          value={line.quantity}
+                          onChange={(event) => updateLine(index, 'quantity', Number(event.target.value))}
+                        />
+                      </Field>
+                      <Field label="Unit Price">
+                        <Input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          value={line.unitPrice}
+                          onChange={(event) => updateLine(index, 'unitPrice', Number(event.target.value))}
+                        />
+                      </Field>
+                      <Field label="UOM">
+                        <Input
+                          value={line.unitOfMeasure}
+                          onChange={(event) => updateLine(index, 'unitOfMeasure', event.target.value)}
+                          placeholder="each"
+                        />
+                      </Field>
+                      <div className="flex items-end">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="border-rose-200 text-rose-700 hover:bg-rose-50"
+                          disabled={lines.length === 1}
+                          onClick={() => removeLine(index)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-end rounded-2xl bg-muted/35 px-4 py-3 text-sm">
+                    <span className="font-semibold text-foreground">Total: {fmtCurrency(computedTotal, form.currency)}</span>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
 
-            {/* Actions */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-              <button
-                onClick={() => { setShowNew(false); resetForm(); setError(''); }}
-                style={{ background: 'none', border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '0.5rem 1.25rem', fontSize: FONT.sm, cursor: 'pointer', color: COLORS.textSecondary }}
-              >
+            <div className="mt-6 flex justify-end gap-3">
+              <Button type="button" variant="outline" onClick={closeModal}>
                 Cancel
-              </button>
-              <button
-                onClick={handleCreate}
-                disabled={saving}
-                style={{
-                  background: COLORS.accentBlue, color: '#fff', border: 'none',
-                  borderRadius: 8, padding: '0.5rem 1.25rem', fontSize: FONT.sm,
-                  fontWeight: 600, cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1,
-                }}
-              >
+              </Button>
+              <Button type="button" onClick={handleCreate} disabled={saving}>
                 {saving ? 'Creating...' : 'Create Schedule'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
