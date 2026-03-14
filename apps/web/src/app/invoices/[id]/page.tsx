@@ -1,11 +1,31 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
-import { COLORS, SHADOWS } from '../../../lib/theme';
-import { DocumentUploader } from '../../../components/document-uploader';
 import Breadcrumbs from '../../../components/breadcrumbs';
+import { DocumentUploader } from '../../../components/document-uploader';
+import { PageHeader } from '../../../components/page-header';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
+import { Badge } from '../../../components/ui/badge';
+import { Button } from '../../../components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../../components/ui/card';
+import { Input } from '../../../components/ui/input';
+import { Select } from '../../../components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../../components/ui/table';
 
 interface MatchResult {
   id: string;
@@ -45,39 +65,13 @@ interface Invoice {
   approvedAt: string | null;
 }
 
-const STATUS_COLORS: Record<string, { background: string; color: string }> = {
-  pending_match: { background: COLORS.accentAmberLight, color: COLORS.accentAmberDark },
-  matched: { background: COLORS.accentGreenLight, color: COLORS.accentGreenDark },
-  partial_match: { background: '#dbeafe', color: '#1e40af' },
-  exception: { background: COLORS.accentRedLight, color: COLORS.accentRedDark },
-  approved: { background: COLORS.accentPurpleLight, color: COLORS.accentPurpleDark },
-  paid: { background: COLORS.accentGreenLight, color: '#064e3b' },
-};
-
-const MATCH_COLORS: Record<string, { background: string; color: string }> = {
-  unmatched: { background: COLORS.hoverBg, color: COLORS.textSecondary },
-  full_match: { background: COLORS.accentGreenLight, color: COLORS.accentGreenDark },
-  partial_match: { background: '#dbeafe', color: '#1e40af' },
-  exception: { background: COLORS.accentRedLight, color: COLORS.accentRedDark },
-  match: { background: COLORS.accentGreenLight, color: COLORS.accentGreenDark },
-  within_tolerance: { background: '#dbeafe', color: '#1e40af' },
-};
-
-function Badge({ label, colors }: { label: string; colors: { background: string; color: string } }) {
-  return (
-    <span style={{ ...colors, padding: '0.25rem 0.75rem', borderRadius: '9999px', fontSize: '0.8rem', fontWeight: 600 }}>
-      {label.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
-    </span>
-  );
-}
-
-function Field({ label, value }: { label: string; value: string | null }) {
-  return (
-    <div>
-      <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>{label}</div>
-      <div style={{ fontSize: '0.9rem', color: COLORS.textPrimary }}>{value ?? '—'}</div>
-    </div>
-  );
+function statusVariant(status: string) {
+  if (status === 'matched' || status === 'paid') return 'success';
+  if (status === 'pending_match') return 'warning';
+  if (status === 'partial_match') return 'outline';
+  if (status === 'exception') return 'destructive';
+  if (status === 'approved') return 'secondary';
+  return 'outline';
 }
 
 function formatCurrency(amount: string | number | null, currency = 'USD') {
@@ -98,20 +92,25 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   useEffect(() => {
     params.then(({ id: pid }) => {
       setId(pid);
-      api.invoices.get(pid)
+      api.invoices
+        .get(pid)
         .then((data) => setInvoice(data))
         .catch(() => setInvoice(null))
         .finally(() => setLoading(false));
     });
   }, [params]);
 
+  async function refresh() {
+    const updated = await api.invoices.get(id);
+    setInvoice(updated);
+  }
+
   async function doApprove() {
     setError('');
     setActionLoading('approve');
     try {
       await api.invoices.approve(id);
-      const updated = await api.invoices.get(id);
-      setInvoice(updated);
+      await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Approve failed');
     } finally {
@@ -124,8 +123,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
     setActionLoading('paid');
     try {
       await api.invoices.markPaid(id);
-      const updated = await api.invoices.get(id);
-      setInvoice(updated);
+      await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Mark paid failed');
     } finally {
@@ -138,8 +136,11 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
     setActionLoading('gl');
     try {
       await api.glExportJobs.trigger(id, glSystem);
-      setError('');
-      setSuccessMsg(`GL export job queued for ${glSystem === 'qbo' ? 'QuickBooks Online' : 'Xero'}. Check GL Integration → Export Jobs for status.`);
+      setSuccessMsg(
+        `GL export job queued for ${
+          glSystem === 'qbo' ? 'QuickBooks Online' : 'Xero'
+        }. Check GL Integration -> Export Jobs for status.`,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'GL export failed');
     } finally {
@@ -152,8 +153,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
     setActionLoading('match');
     try {
       await api.invoices.rerunMatch(id);
-      const updated = await api.invoices.get(id);
-      setInvoice(updated);
+      await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Match failed');
     } finally {
@@ -167,8 +167,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
     setActionLoading('resolve');
     try {
       await api.invoices.resolveException(id, { reason: exceptionReason || undefined });
-      const updated = await api.invoices.get(id);
-      setInvoice(updated);
+      await refresh();
       setExceptionReason('');
       setSuccessMsg('Invoice exception marked as reviewed. It can now proceed through approval.');
     } catch (err) {
@@ -178,166 +177,264 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
     }
   }
 
-  if (loading) return <div style={{ padding: '2rem', color: COLORS.textMuted, fontSize: '0.875rem' }}>Loading…</div>;
-  if (!invoice) return (
-    <div style={{ padding: '2rem', color: COLORS.textSecondary }}>
-      Invoice not found. <Link href="/invoices" style={{ color: COLORS.accentBlueDark }}>Back to list</Link>
-    </div>
-  );
+  if (loading) {
+    return (
+      <div className="p-4 lg:p-8">
+        <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+          Loading invoice...
+        </div>
+      </div>
+    );
+  }
+
+  if (!invoice) {
+    return (
+      <div className="p-4 lg:p-8">
+        <Alert variant="destructive">
+          <AlertDescription>
+            Invoice not found.{' '}
+            <Link href="/invoices" className="underline underline-offset-4">
+              Back to list
+            </Link>
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   const hasExceptions = invoice.matchStatus === 'exception';
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '1000px' }}>
+    <div className="space-y-6 p-4 lg:p-8">
       <Breadcrumbs items={[{ label: 'Invoices', href: '/invoices' }, { label: invoice.internalNumber }]} />
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-        <div>
-          <div style={{ fontSize: '0.875rem', color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-            <Link href="/invoices" style={{ color: COLORS.textSecondary, textDecoration: 'none' }}>Invoices</Link> / {invoice.internalNumber}
-          </div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: COLORS.textPrimary }}>{invoice.internalNumber}</h1>
-          <div style={{ fontSize: '0.875rem', color: COLORS.textSecondary, marginTop: '0.25rem' }}>Vendor invoice: {invoice.invoiceNumber}</div>
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem', flexDirection: 'column', alignItems: 'flex-end' }}>
-          <Badge label={invoice.status} colors={STATUS_COLORS[invoice.status] ?? { background: COLORS.hoverBg, color: COLORS.textSecondary }} />
-          <Badge label={`Match: ${invoice.matchStatus}`} colors={MATCH_COLORS[invoice.matchStatus] ?? MATCH_COLORS.unmatched} />
-        </div>
-      </div>
 
-      {hasExceptions && (
-        <div style={{ background: COLORS.accentRedLight, border: '1px solid #fca5a5', borderRadius: '8px', padding: '1rem 1.5rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <span style={{ fontSize: '1.25rem' }}>⚠️</span>
-          <div>
-            <div style={{ fontWeight: 600, color: COLORS.accentRedDark, fontSize: '0.875rem' }}>3-Way Match Exceptions Detected</div>
-            <div style={{ fontSize: '0.8rem', color: '#b91c1c', marginTop: '0.25rem' }}>One or more lines have price or quantity variances outside tolerance. Finance review required before approval.</div>
+      <PageHeader
+        title={invoice.internalNumber}
+        description={`Vendor invoice ${invoice.invoiceNumber} from ${invoice.vendor?.name ?? 'Unknown vendor'}.`}
+        actions={
+          <div className="flex flex-wrap gap-3">
+            <Badge variant={statusVariant(invoice.status) as any} className="capitalize">
+              {invoice.status.replace(/_/g, ' ')}
+            </Badge>
+            <Badge variant={statusVariant(invoice.matchStatus) as any} className="capitalize">
+              Match: {invoice.matchStatus.replace(/_/g, ' ')}
+            </Badge>
+            <Button asChild variant="outline">
+              <Link href="/invoices">Back to Invoices</Link>
+            </Button>
           </div>
-        </div>
-      )}
+        }
+      />
 
-      {hasExceptions && (
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1rem 1.25rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-          <div style={{ fontWeight: 600, color: COLORS.textPrimary, fontSize: '0.9rem', marginBottom: '0.5rem' }}>Finance Exception Resolution</div>
-          <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary, marginBottom: '0.75rem' }}>
-            Accept the variance after review to move this invoice back into the payable workflow.
-          </div>
-          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-            <input
+      {hasExceptions ? (
+        <Alert variant="destructive">
+          <AlertDescription>
+            3-way match exceptions detected. One or more lines have price or quantity variances outside tolerance.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {successMsg ? (
+        <Alert variant="success">
+          <AlertDescription>{successMsg}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {hasExceptions ? (
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">Finance Exception Resolution</CardTitle>
+            <CardDescription>
+              Accept the variance after review to move this invoice back into the payable workflow.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 lg:flex-row">
+            <Input
               value={exceptionReason}
-              onChange={(e) => setExceptionReason(e.target.value)}
+              onChange={(event) => setExceptionReason(event.target.value)}
               placeholder="Reason for accepting this exception"
-              style={{ flex: '1 1 320px', minWidth: '260px', padding: '0.625rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }}
+              className="flex-1"
             />
-            <button
-              onClick={doResolveException}
-              disabled={actionLoading !== null}
-              style={{ background: COLORS.accentBlueDark, color: COLORS.white, border: 'none', padding: '0.625rem 1rem', borderRadius: '6px', fontSize: '0.875rem', fontWeight: 600, cursor: actionLoading ? 'not-allowed' : 'pointer' }}
-            >
-              {actionLoading === 'resolve' ? 'Resolving…' : 'Accept Exception'}
-            </button>
-          </div>
-        </div>
-      )}
+            <Button type="button" onClick={doResolveException} disabled={actionLoading !== null}>
+              {actionLoading === 'resolve' ? 'Resolving...' : 'Accept Exception'}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
 
-      <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-        <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', color: COLORS.textPrimary }}>Invoice Details</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem' }}>
-          <Field label="Vendor" value={invoice.vendor?.name ?? null} />
-          <Field label="Linked PO" value={invoice.purchaseOrder?.number ?? null} />
-          <Field label="Invoice Date" value={new Date(invoice.invoiceDate).toLocaleDateString()} />
-          <Field label="Due Date" value={invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : null} />
-          <Field label="Subtotal" value={formatCurrency(invoice.subtotal, invoice.currency)} />
-          <Field label="Total" value={formatCurrency(invoice.totalAmount, invoice.currency)} />
-          {invoice.approvedAt && <Field label="Approved At" value={new Date(invoice.approvedAt).toLocaleString()} />}
-        </div>
+      <div className="grid gap-4 md:grid-cols-3">
+        <StatCard label="Subtotal" value={formatCurrency(invoice.subtotal, invoice.currency)} />
+        <StatCard label="Tax" value={formatCurrency(invoice.taxAmount, invoice.currency)} />
+        <StatCard label="Total" value={formatCurrency(invoice.totalAmount, invoice.currency)} />
       </div>
 
-      <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', overflow: 'hidden', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-        <div style={{ padding: '1rem 1.5rem', borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-          <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0, color: COLORS.textPrimary }}>Line Items & 3-Way Match</h2>
-        </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-            <thead>
-              <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                {['#', 'Description', 'Qty', 'Unit Price', 'Total', 'Price ✓', 'Qty ✓', 'Variance %', 'Match Status'].map((h) => (
-                  <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 600, color: COLORS.textSecondary, fontSize: '0.8rem' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {invoice.lines.map((line, idx) => {
+      <Card className="rounded-[24px]">
+        <CardHeader>
+          <CardTitle className="text-xl">Invoice Details</CardTitle>
+          <CardDescription>Commercial details, linked PO, and lifecycle timestamps.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <DetailField label="Vendor" value={invoice.vendor?.name ?? '—'} />
+          <DetailField label="Linked PO" value={invoice.purchaseOrder?.number ?? '—'} />
+          <DetailField label="Invoice Date" value={new Date(invoice.invoiceDate).toLocaleDateString()} />
+          <DetailField label="Due Date" value={invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : '—'} />
+          <DetailField label="Currency" value={invoice.currency} />
+          <DetailField label="Approved At" value={invoice.approvedAt ? new Date(invoice.approvedAt).toLocaleString() : '—'} />
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-[24px]">
+        <CardHeader>
+          <CardTitle className="text-xl">Line Items & 3-Way Match</CardTitle>
+          <CardDescription>Review line-level quantities, PO linkage, and match variances.</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>#</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead>Qty</TableHead>
+                <TableHead>Unit Price</TableHead>
+                <TableHead>Total</TableHead>
+                <TableHead>Price</TableHead>
+                <TableHead>Qty</TableHead>
+                <TableHead>Variance</TableHead>
+                <TableHead>Match Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {invoice.lines.map((line) => {
                 const match = line.matchResults?.[0];
-                const rowBg = match?.status === 'exception' ? '#fff7f7' : match?.status === 'match' ? '#f7fef9' : 'transparent';
                 return (
-                  <tr key={line.id} style={{ borderBottom: idx < invoice.lines.length - 1 ? `1px solid ${COLORS.hoverBg}` : undefined, background: rowBg }}>
-                    <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{line.lineNumber}</td>
-                    <td style={{ padding: '0.875rem 1rem' }}>
-                      <div>{line.description}</div>
-                      {line.poLine && <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.125rem' }}>PO: {line.poLine.description} @ ${line.poLine.unitPrice}</div>}
-                    </td>
-                    <td style={{ padding: '0.875rem 1rem' }}>{line.quantity}</td>
-                    <td style={{ padding: '0.875rem 1rem' }}>{formatCurrency(line.unitPrice, invoice.currency)}</td>
-                    <td style={{ padding: '0.875rem 1rem', fontWeight: 500 }}>{formatCurrency(line.totalPrice, invoice.currency)}</td>
-                    <td style={{ padding: '0.875rem 1rem', textAlign: 'center' }}>{match ? (match.priceMatch ? <span style={{ color: COLORS.accentGreenDark, fontWeight: 700 }}>✓</span> : <span style={{ color: COLORS.accentRedDark, fontWeight: 700 }}>✗</span>) : '—'}</td>
-                    <td style={{ padding: '0.875rem 1rem', textAlign: 'center' }}>{match ? (match.quantityMatch ? <span style={{ color: COLORS.accentGreenDark, fontWeight: 700 }}>✓</span> : <span style={{ color: COLORS.accentRedDark, fontWeight: 700 }}>✗</span>) : '—'}</td>
-                    <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{match ? `${parseFloat(match.variancePct).toFixed(1)}%` : '—'}</td>
-                    <td style={{ padding: '0.875rem 1rem' }}>{match ? <Badge label={match.status} colors={MATCH_COLORS[match.status] ?? MATCH_COLORS.unmatched} /> : '—'}</td>
-                  </tr>
+                  <TableRow
+                    key={line.id}
+                    className={
+                      match?.status === 'exception'
+                        ? 'bg-rose-50/60'
+                        : match?.status === 'match'
+                          ? 'bg-emerald-50/50'
+                          : undefined
+                    }
+                  >
+                    <TableCell className="text-muted-foreground">{line.lineNumber}</TableCell>
+                    <TableCell>
+                      <div className="font-medium text-foreground">{line.description}</div>
+                      {line.poLine ? (
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          PO: {line.poLine.description} @ {formatCurrency(line.poLine.unitPrice, invoice.currency)}
+                        </div>
+                      ) : null}
+                    </TableCell>
+                    <TableCell>{line.quantity}</TableCell>
+                    <TableCell>{formatCurrency(line.unitPrice, invoice.currency)}</TableCell>
+                    <TableCell className="font-medium text-foreground">
+                      {formatCurrency(line.totalPrice, invoice.currency)}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {match ? (
+                        <span className={match.priceMatch ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
+                          {match.priceMatch ? 'OK' : 'X'}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {match ? (
+                        <span className={match.quantityMatch ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
+                          {match.quantityMatch ? 'OK' : 'X'}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {match ? `${parseFloat(match.variancePct).toFixed(1)}%` : '—'}
+                    </TableCell>
+                    <TableCell>
+                      {match ? (
+                        <Badge variant={statusVariant(match.status) as any} className="capitalize">
+                          {match.status.replace(/_/g, ' ')}
+                        </Badge>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
 
-      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-        {!['approved', 'paid'].includes(invoice.status) && (
+      <div className="flex flex-wrap gap-3">
+        {!['approved', 'paid'].includes(invoice.status) ? (
           <>
-            <button onClick={doApprove} disabled={hasExceptions || actionLoading !== null}
-              style={{ background: hasExceptions ? COLORS.inputBorder : COLORS.textPrimary, color: COLORS.white, border: 'none', padding: '0.625rem 1.5rem', borderRadius: '6px', fontSize: '0.875rem', fontWeight: 500, cursor: hasExceptions || actionLoading ? 'not-allowed' : 'pointer', opacity: hasExceptions ? 0.5 : 1 }}>
-              {actionLoading === 'approve' ? 'Approving…' : 'Approve for Payment'}
-            </button>
-            <button onClick={doRerunMatch} disabled={actionLoading !== null}
-              style={{ padding: '0.625rem 1.5rem', borderRadius: '6px', border: `1px solid ${COLORS.inputBorder}`, fontSize: '0.875rem', color: COLORS.textSecondary, background: COLORS.white, cursor: actionLoading ? 'not-allowed' : 'pointer' }}>
-              {actionLoading === 'match' ? 'Running…' : 'Re-run Match'}
-            </button>
+            <Button type="button" onClick={doApprove} disabled={hasExceptions || actionLoading !== null}>
+              {actionLoading === 'approve' ? 'Approving...' : 'Approve for Payment'}
+            </Button>
+            <Button type="button" variant="outline" onClick={doRerunMatch} disabled={actionLoading !== null}>
+              {actionLoading === 'match' ? 'Running...' : 'Re-run Match'}
+            </Button>
           </>
-        )}
-        {invoice.status === 'approved' && (
+        ) : null}
+
+        {invoice.status === 'approved' ? (
           <>
-            <button onClick={doMarkPaid} disabled={actionLoading !== null}
-              style={{ background: '#059669', color: COLORS.white, border: 'none', padding: '0.625rem 1.5rem', borderRadius: '6px', fontSize: '0.875rem', fontWeight: 600, cursor: actionLoading ? 'not-allowed' : 'pointer', opacity: actionLoading ? 0.7 : 1 }}>
-              {actionLoading === 'paid' ? 'Marking…' : 'Mark as Paid'}
-            </button>
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', background: COLORS.white, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '6px', padding: '0.375rem 0.75rem' }}>
-              <span style={{ fontSize: '0.8rem', color: COLORS.textSecondary, fontWeight: 500 }}>Export to GL:</span>
-              <select
+            <Button type="button" onClick={doMarkPaid} disabled={actionLoading !== null}>
+              {actionLoading === 'paid' ? 'Marking...' : 'Mark as Paid'}
+            </Button>
+            <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border/70 bg-background/80 px-4 py-3">
+              <span className="text-sm font-medium text-muted-foreground">Export to GL</span>
+              <Select
                 value={glSystem}
-                onChange={(e) => setGlSystem(e.target.value as 'qbo' | 'xero')}
-                style={{ padding: '0.25rem 0.5rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '4px', fontSize: '0.8rem' }}
+                onChange={(event) => setGlSystem(event.target.value as 'qbo' | 'xero')}
+                className="w-48"
               >
                 <option value="qbo">QuickBooks Online</option>
                 <option value="xero">Xero</option>
-              </select>
-              <button
-                onClick={doGlExport}
-                disabled={actionLoading !== null}
-                style={{ background: COLORS.accentBlueDark, color: COLORS.white, border: 'none', padding: '0.375rem 0.875rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 500, cursor: actionLoading ? 'not-allowed' : 'pointer' }}
-              >
-                {actionLoading === 'gl' ? 'Exporting…' : 'Export'}
-              </button>
+              </Select>
+              <Button type="button" variant="outline" onClick={doGlExport} disabled={actionLoading !== null}>
+                {actionLoading === 'gl' ? 'Exporting...' : 'Export'}
+              </Button>
             </div>
           </>
-        )}
+        ) : null}
       </div>
-      {successMsg && <div style={{ marginTop: '0.75rem', background: COLORS.accentGreenLight, border: '1px solid #a7f3d0', borderRadius: '6px', padding: '0.625rem 1rem', color: COLORS.accentGreenDark, fontSize: '0.875rem', display: 'flex', justifyContent: 'space-between' }}>{successMsg}<button onClick={() => setSuccessMsg('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.accentGreenDark, fontWeight: 700 }}>×</button></div>}
-      {error && <div style={{ marginTop: '0.75rem', background: COLORS.accentRedLight, border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.625rem 1rem', color: COLORS.accentRedDark, fontSize: '0.875rem' }}>{error}</div>}
 
-      {id && (
-        <div style={{ marginTop: '2rem' }}>
+      {id ? (
+        <div className="pt-2">
           <DocumentUploader entityType="invoice" entityId={id} label="Documents" />
         </div>
-      )}
+      ) : null}
     </div>
+  );
+}
+
+function DetailField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <div className="mt-2 text-sm text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <Card className="rounded-[24px] border-border/70 bg-card/95">
+      <CardContent className="p-6">
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+        <div className="mt-2 font-display text-3xl font-semibold tracking-[-0.04em] text-foreground">{value}</div>
+      </CardContent>
+    </Card>
   );
 }
