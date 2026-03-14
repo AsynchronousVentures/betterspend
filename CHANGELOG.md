@@ -65,6 +65,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated the catalog item detail workspace onto the new design system, covering inline editing, activation toggles, vendor context, and price proposal history.
 - Migrated the purchase order detail workspace onto the new design system, covering blanket-release management, compliance review, receiving progress, and change-order actions.
 - Migrated the purchase order creation workspace onto the new design system, covering vendor setup, tax-aware lines, contract compliance checks, and currency handling.
+- Migrated the RFQ workspace onto the new design system, covering RFQ creation, response comparison, award/reject actions, and sourcing detail review.
 
 ### Fixed
 

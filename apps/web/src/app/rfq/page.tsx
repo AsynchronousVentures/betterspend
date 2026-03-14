@@ -2,8 +2,21 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { COLORS, SHADOWS, FONT } from '../../lib/theme';
 import { api } from '../../lib/api';
+import { PageHeader } from '../../components/page-header';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
+import { Textarea } from '../../components/ui/textarea';
 
 interface RfqSummary {
   id: string;
@@ -24,13 +37,13 @@ interface Vendor {
   name: string;
 }
 
-const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
-  draft: { bg: COLORS.accentAmberLight, text: COLORS.accentAmberDark },
-  open: { bg: COLORS.accentBlueLight, text: COLORS.accentBlueDark },
-  closed: { bg: '#f1f5f9', text: COLORS.textSecondary },
-  awarded: { bg: COLORS.accentGreenLight, text: COLORS.accentGreenDark },
-  cancelled: { bg: COLORS.accentRedLight, text: COLORS.accentRedDark },
-};
+function statusVariant(status: string) {
+  if (status === 'awarded') return 'success';
+  if (status === 'open') return 'outline';
+  if (status === 'draft') return 'warning';
+  if (status === 'cancelled') return 'destructive';
+  return 'secondary';
+}
 
 function formatMoney(amount: string | number, currency = 'USD') {
   return Number(amount).toLocaleString('en-US', { style: 'currency', currency });
@@ -49,7 +62,6 @@ export default function RfqPage() {
   const [rejectDrafts, setRejectDrafts] = useState<Record<string, string>>({});
   const [awardingId, setAwardingId] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
-
   const [form, setForm] = useState({
     title: '',
     description: '',
@@ -57,14 +69,16 @@ export default function RfqPage() {
     notes: '',
     currency: 'USD',
   });
-  const [lines, setLines] = useState([{ description: '', quantity: 1, unitOfMeasure: 'each', targetPrice: '' }]);
+  const [lines, setLines] = useState([
+    { description: '', quantity: 1, unitOfMeasure: 'each', targetPrice: '' },
+  ]);
   const [selectedVendors, setSelectedVendors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
   useEffect(() => {
-    loadRfqs();
+    void loadRfqs();
     api.vendors.list().then((v: any[]) => setVendors(v)).catch(() => {});
   }, []);
 
@@ -121,7 +135,7 @@ export default function RfqPage() {
       setForm({ title: '', description: '', dueDate: '', notes: '', currency: 'USD' });
       setLines([{ description: '', quantity: 1, unitOfMeasure: 'each', targetPrice: '' }]);
       setSelectedVendors([]);
-      loadRfqs();
+      await loadRfqs();
       showSuccess('RFQ created');
     } catch {
       setError('Failed to create RFQ');
@@ -133,8 +147,8 @@ export default function RfqPage() {
   async function handleOpen(id: string) {
     try {
       await (api as any).rfq.open(id);
-      loadRfqs();
-      if (selected === id) loadDetail(id);
+      await loadRfqs();
+      if (selected === id) await loadDetail(id);
     } catch {
       setError('Failed to open RFQ');
     }
@@ -143,8 +157,8 @@ export default function RfqPage() {
   async function handleClose(id: string) {
     try {
       await (api as any).rfq.close(id);
-      loadRfqs();
-      if (selected === id) loadDetail(id);
+      await loadRfqs();
+      if (selected === id) await loadDetail(id);
     } catch {
       setError('Failed to close RFQ');
     }
@@ -152,13 +166,13 @@ export default function RfqPage() {
 
   async function handleAward(responseId: string) {
     if (!detail) return;
-    if (!confirm('Award this response and create a draft purchase order from it?')) return;
+    if (!window.confirm('Award this response and create a draft purchase order from it?')) return;
     setAwardingId(responseId);
     setError('');
     try {
       const result = await (api as any).rfq.award(detail.id, responseId);
       setDetail(result.rfq);
-      loadRfqs();
+      await loadRfqs();
       showSuccess(`Awarded response and created draft PO ${result.purchaseOrderNumber}.`);
     } catch (e: any) {
       setError(e.message || 'Failed to award response');
@@ -179,7 +193,7 @@ export default function RfqPage() {
     try {
       const result = await (api as any).rfq.reject(detail.id, responseId, reason);
       setDetail(result);
-      loadRfqs();
+      await loadRfqs();
       setRejectDrafts((current) => ({ ...current, [responseId]: '' }));
       showSuccess('Response rejected');
     } catch (e: any) {
@@ -193,23 +207,16 @@ export default function RfqPage() {
     setLines([...lines, { description: '', quantity: 1, unitOfMeasure: 'each', targetPrice: '' }]);
   const removeLine = (index: number) => setLines(lines.filter((_, idx) => idx !== index));
 
-  const inp: React.CSSProperties = {
-    width: '100%',
-    border: `1px solid ${COLORS.inputBorder}`,
-    borderRadius: 6,
-    padding: '0.4rem 0.6rem',
-    fontSize: FONT.sm,
-    background: '#fff',
-    color: COLORS.textPrimary,
-    boxSizing: 'border-box',
-  };
-
   const sortedResponses = detail?.responses
     ? [...detail.responses].sort((a: any, b: any) => {
         if (responseSort === 'supplier') return (a.vendor?.name ?? '').localeCompare(b.vendor?.name ?? '');
         if (responseSort === 'delivery') {
-          const aLead = Math.min(...(a.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER));
-          const bLead = Math.min(...(b.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER));
+          const aLead = Math.min(
+            ...(a.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER),
+          );
+          const bLead = Math.min(
+            ...(b.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER),
+          );
           return aLead - bLead;
         }
         return Number(a.totalAmount) - Number(b.totalAmount);
@@ -217,435 +224,509 @@ export default function RfqPage() {
     : [];
 
   return (
-    <div style={{ padding: '1.5rem', background: COLORS.contentBg, minHeight: '100vh' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="RFQ / e-Sourcing"
+        description="Invite vendors to compete, compare responses, and convert awarded quotes into draft purchase orders."
+        actions={
+          <Button type="button" onClick={() => setShowNew(true)}>
+            New RFQ
+          </Button>
+        }
+      />
+
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      {successMsg ? (
+        <Alert variant="success">
+          <AlertDescription>{successMsg}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_460px]">
         <div>
-          <h1 style={{ fontSize: FONT.xl, fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>RFQ / e-Sourcing</h1>
-          <p style={{ fontSize: FONT.sm, color: COLORS.textSecondary, margin: '0.25rem 0 0' }}>
-            Request for Quotation — invite vendors to bid competitively
-          </p>
-        </div>
-        <button
-          onClick={() => setShowNew(true)}
-          style={{
-            background: COLORS.accentBlue, color: '#fff', border: 'none',
-            borderRadius: 8, padding: '0.5rem 1.25rem', fontSize: FONT.sm,
-            fontWeight: 600, cursor: 'pointer',
-          }}
-        >
-          + New RFQ
-        </button>
-      </div>
-
-      {error && (
-        <div style={{ background: COLORS.accentRedLight, color: COLORS.accentRedDark, padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem', fontSize: FONT.sm }}>
-          {error}
-        </div>
-      )}
-      {successMsg && (
-        <div style={{ background: COLORS.accentGreenLight, color: COLORS.accentGreenDark, padding: '0.75rem 1rem', borderRadius: 8, marginBottom: '1rem', fontSize: FONT.sm }}>
-          {successMsg}
-        </div>
-      )}
-
-      <div style={{ display: 'flex', gap: '1.5rem' }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
           {loading ? (
-            <div style={{ textAlign: 'center', padding: '3rem', color: COLORS.textMuted }}>Loading...</div>
+            <Card className="rounded-[24px]">
+              <CardContent className="px-6 py-12 text-center text-sm text-muted-foreground">
+                Loading...
+              </CardContent>
+            </Card>
           ) : rfqs.length === 0 ? (
-            <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 12, padding: '3rem', textAlign: 'center' }}>
-              <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>📋</div>
-              <div style={{ fontSize: FONT.base, color: COLORS.textSecondary }}>No RFQs yet. Create one to start sourcing.</div>
-            </div>
+            <Card className="rounded-[24px]">
+              <CardContent className="px-6 py-12 text-center">
+                <div className="text-base font-medium text-foreground">No RFQs yet</div>
+                <div className="mt-2 text-sm text-muted-foreground">
+                  Create one to start sourcing competitively.
+                </div>
+              </CardContent>
+            </Card>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {rfqs.map((rfq) => {
-                const sc = STATUS_COLORS[rfq.status] ?? STATUS_COLORS.draft;
-                const isSelected = selected === rfq.id;
-                return (
-                  <div
-                    key={rfq.id}
-                    onClick={() => loadDetail(rfq.id)}
-                    style={{
-                      background: COLORS.cardBg,
-                      border: `1px solid ${isSelected ? COLORS.accentBlue : COLORS.cardBorder}`,
-                      borderRadius: 10,
-                      padding: '1rem 1.25rem',
-                      cursor: 'pointer',
-                      boxShadow: isSelected ? `0 0 0 2px ${COLORS.accentBlueLight}` : SHADOWS.card,
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-                      <span style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textMuted, fontFamily: 'monospace' }}>
-                        {rfq.number}
-                      </span>
-                      <span style={{ fontSize: FONT.xs, fontWeight: 600, background: sc.bg, color: sc.text, padding: '0.15rem 0.5rem', borderRadius: 20 }}>
-                        {rfq.status.toUpperCase()}
-                      </span>
-                      {rfq.dueDate && (
-                        <span style={{ fontSize: FONT.xs, color: COLORS.textMuted, marginLeft: 'auto' }}>
+            <div className="space-y-3">
+              {rfqs.map((rfq) => (
+                <Card
+                  key={rfq.id}
+                  className={`cursor-pointer rounded-[24px] transition-colors ${
+                    selected === rfq.id ? 'border-primary shadow-lg' : ''
+                  }`}
+                  onClick={() => void loadDetail(rfq.id)}
+                >
+                  <CardContent className="space-y-3 p-5">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="font-mono text-xs text-muted-foreground">{rfq.number}</span>
+                      <Badge variant={statusVariant(rfq.status) as any}>{rfq.status.toUpperCase()}</Badge>
+                      {rfq.dueDate ? (
+                        <span className="ml-auto text-xs text-muted-foreground">
                           Due: {new Date(rfq.dueDate).toLocaleDateString()}
                         </span>
-                      )}
+                      ) : null}
                     </div>
-                    <div style={{ fontSize: FONT.base, fontWeight: 600, color: COLORS.textPrimary, marginBottom: '0.25rem' }}>
-                      {rfq.title}
-                    </div>
-                    <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: FONT.xs, color: COLORS.textSecondary }}>
-                        {rfq.invitationCount} vendors invited
-                      </span>
-                      <span style={{ fontSize: FONT.xs, color: COLORS.textSecondary }}>
-                        {rfq.responseCount} responses
-                      </span>
-                      {rfq.awardedVendor && (
-                        <span style={{ fontSize: FONT.xs, color: COLORS.accentGreen, fontWeight: 600 }}>
+                    <div className="text-base font-semibold text-foreground">{rfq.title}</div>
+                    <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                      <span>{rfq.invitationCount} vendors invited</span>
+                      <span>{rfq.responseCount} responses</span>
+                      {rfq.awardedVendor ? (
+                        <span className="font-semibold text-emerald-700">
                           Awarded: {rfq.awardedVendor.name}
                         </span>
-                      )}
+                      ) : null}
                     </div>
-                  </div>
-                );
-              })}
+                  </CardContent>
+                </Card>
+              ))}
             </div>
           )}
         </div>
 
-        {selected && (
-          <div style={{
-            width: 460,
-            flexShrink: 0,
-            background: COLORS.cardBg,
-            border: `1px solid ${COLORS.cardBorder}`,
-            borderRadius: 12,
-            padding: '1.25rem',
-            boxShadow: SHADOWS.card,
-            maxHeight: '80vh',
-            overflowY: 'auto',
-          }}>
-            {detailLoading ? (
-              <div style={{ textAlign: 'center', padding: '2rem', color: COLORS.textMuted }}>Loading...</div>
-            ) : detail ? (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-                  <div>
-                    <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, fontFamily: 'monospace', marginBottom: '0.25rem' }}>{detail.number}</div>
-                    <div style={{ fontSize: FONT.lg, fontWeight: 700, color: COLORS.textPrimary }}>{detail.title}</div>
+        {selected ? (
+          <Card className="rounded-[24px]">
+            <CardContent className="max-h-[80vh] space-y-4 overflow-y-auto p-5">
+              {detailLoading ? (
+                <div className="py-10 text-center text-sm text-muted-foreground">Loading...</div>
+              ) : detail ? (
+                <>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-mono text-xs text-muted-foreground">{detail.number}</div>
+                      <div className="mt-1 text-xl font-semibold text-foreground">{detail.title}</div>
+                    </div>
+                    <Button type="button" variant="ghost" onClick={() => { setSelected(null); setDetail(null); }}>
+                      Close
+                    </Button>
                   </div>
-                  <button onClick={() => { setSelected(null); setDetail(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.textMuted, fontSize: 18 }}>✕</button>
-                </div>
 
-                {detail.description && (
-                  <p style={{ fontSize: FONT.sm, color: COLORS.textSecondary, marginBottom: '1rem' }}>{detail.description}</p>
-                )}
+                  {detail.description ? (
+                    <p className="text-sm text-muted-foreground">{detail.description}</p>
+                  ) : null}
 
-                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-                  {detail.status === 'draft' && (
-                    <button onClick={() => handleOpen(detail.id)} style={{ background: COLORS.accentBlue, color: '#fff', border: 'none', borderRadius: 6, padding: '0.35rem 0.75rem', fontSize: FONT.xs, fontWeight: 600, cursor: 'pointer' }}>
-                      Open for Bids
-                    </button>
-                  )}
-                  {detail.status === 'open' && (
-                    <button onClick={() => handleClose(detail.id)} style={{ background: COLORS.accentAmberLight, color: COLORS.accentAmberDark, border: 'none', borderRadius: 6, padding: '0.35rem 0.75rem', fontSize: FONT.xs, fontWeight: 600, cursor: 'pointer' }}>
-                      Close RFQ
-                    </button>
-                  )}
-                </div>
+                  <div className="flex flex-wrap gap-3">
+                    {detail.status === 'draft' ? (
+                      <Button type="button" onClick={() => void handleOpen(detail.id)}>
+                        Open for Bids
+                      </Button>
+                    ) : null}
+                    {detail.status === 'open' ? (
+                      <Button type="button" variant="outline" onClick={() => void handleClose(detail.id)}>
+                        Close RFQ
+                      </Button>
+                    ) : null}
+                  </div>
 
-                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-                  {[
-                    { key: 'overview', label: 'Overview' },
-                    { key: 'responses', label: `Responses (${detail.responses?.length ?? 0})` },
-                  ].map((tab) => {
-                    const active = detailTab === tab.key;
-                    return (
-                      <button
+                  <div className="flex gap-2">
+                    {[
+                      { key: 'overview', label: 'Overview' },
+                      { key: 'responses', label: `Responses (${detail.responses?.length ?? 0})` },
+                    ].map((tab) => (
+                      <Button
                         key={tab.key}
+                        type="button"
+                        size="sm"
+                        variant={detailTab === tab.key ? 'default' : 'outline'}
                         onClick={() => setDetailTab(tab.key as 'overview' | 'responses')}
-                        style={{
-                          background: active ? COLORS.accentBlue : COLORS.contentBg,
-                          color: active ? '#fff' : COLORS.textSecondary,
-                          border: `1px solid ${active ? COLORS.accentBlue : COLORS.border}`,
-                          borderRadius: 20,
-                          padding: '0.35rem 0.75rem',
-                          fontSize: FONT.xs,
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                        }}
                       >
                         {tab.label}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {detailTab === 'overview' && (
-                  <>
-                    <div style={{ marginBottom: '1.25rem' }}>
-                      <div style={{ fontSize: FONT.xs, fontWeight: 700, color: COLORS.textMuted, textTransform: 'uppercase', marginBottom: '0.5rem' }}>
-                        Line Items ({detail.lines?.length ?? 0})
-                      </div>
-                      {detail.lines?.map((line: any, index: number) => (
-                        <div key={line.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0', borderBottom: `1px solid ${COLORS.border}`, fontSize: FONT.sm }}>
-                          <span style={{ color: COLORS.textPrimary }}>{index + 1}. {line.description}</span>
-                          <span style={{ color: COLORS.textSecondary }}>{line.quantity} {line.unitOfMeasure}</span>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div style={{ marginBottom: '1.25rem' }}>
-                      <div style={{ fontSize: FONT.xs, fontWeight: 700, color: COLORS.textMuted, textTransform: 'uppercase', marginBottom: '0.5rem' }}>
-                        Invited Vendors ({detail.invitations?.length ?? 0})
-                      </div>
-                      {detail.invitations?.map((invitation: any) => (
-                        <div key={invitation.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.35rem 0', fontSize: FONT.sm }}>
-                          <span style={{ color: COLORS.textPrimary }}>{invitation.vendor?.name ?? '—'}</span>
-                          <span style={{ color: invitation.respondedAt ? COLORS.accentGreen : COLORS.textMuted, fontSize: FONT.xs }}>
-                            {invitation.respondedAt ? 'Responded' : 'Pending'}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {detailTab === 'responses' && (
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                      <div style={{ fontSize: FONT.xs, fontWeight: 700, color: COLORS.textMuted, textTransform: 'uppercase' }}>
-                        Evaluate Responses ({sortedResponses.length})
-                      </div>
-                      <select
-                        value={responseSort}
-                        onChange={(event) => setResponseSort(event.target.value as 'price' | 'supplier' | 'delivery')}
-                        style={{ ...inp, width: 150, padding: '0.3rem 0.5rem', fontSize: FONT.xs }}
-                      >
-                        <option value="price">Sort by price</option>
-                        <option value="supplier">Sort by supplier</option>
-                        <option value="delivery">Sort by delivery</option>
-                      </select>
-                    </div>
-
-                    {sortedResponses.length === 0 ? (
-                      <div style={{ fontSize: FONT.sm, color: COLORS.textMuted }}>No responses received yet.</div>
-                    ) : (
-                      sortedResponses.map((response: any, index: number) => {
-                        const bestPrice = Math.min(...sortedResponses.map((item: any) => Number(item.totalAmount)));
-                        const responseLead = Math.min(...(response.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER));
-                        const bestLead = Math.min(...sortedResponses.map((item: any) => Math.min(...(item.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER))));
-                        const priceScore = bestPrice > 0 ? Math.max(0, 100 - (((Number(response.totalAmount) - bestPrice) / bestPrice) * 100)) : 100;
-                        const deliveryScore = Number.isFinite(responseLead) && Number.isFinite(bestLead) ? Math.max(0, 100 - Math.max(responseLead - bestLead, 0) * 5) : 60;
-                        const rejectValue = rejectDrafts[response.id] ?? '';
-
-                        return (
-                          <div key={response.id} style={{
-                            background: response.awarded ? COLORS.accentGreenLight : COLORS.contentBg,
-                            border: `1px solid ${response.awarded ? COLORS.accentGreen : COLORS.border}`,
-                            borderRadius: 8,
-                            padding: '0.85rem',
-                            marginBottom: '0.75rem',
-                          }}>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 0.9fr 0.9fr', gap: '0.75rem', marginBottom: '0.5rem' }}>
-                              <div>
-                                <div style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary }}>{response.vendor?.name}</div>
-                                <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, marginTop: 2 }}>
-                                  Rank #{index + 1} by {responseSort}
-                                </div>
-                              </div>
-                              <div>
-                                <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700 }}>Quoted price</div>
-                                <div style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary }}>
-                                  {formatMoney(response.totalAmount, detail.currency ?? 'USD')}
-                                </div>
-                              </div>
-                              <div>
-                                <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700 }}>Lead time</div>
-                                <div style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary }}>
-                                  {Number.isFinite(responseLead) ? `${responseLead} days` : 'Not provided'}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                              <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '0.55rem 0.65rem' }}>
-                                <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700 }}>Price score</div>
-                                <div style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary }}>{Math.round(priceScore)}</div>
-                              </div>
-                              <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '0.55rem 0.65rem' }}>
-                                <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700 }}>Delivery score</div>
-                                <div style={{ fontSize: FONT.sm, fontWeight: 700, color: COLORS.textPrimary }}>{Math.round(deliveryScore)}</div>
-                              </div>
-                              <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '0.55rem 0.65rem' }}>
-                                <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, textTransform: 'uppercase', fontWeight: 700 }}>Status</div>
-                                <div style={{ fontSize: FONT.sm, fontWeight: 700, color: response.awarded ? COLORS.accentGreenDark : COLORS.textPrimary }}>
-                                  {response.awarded ? 'Awarded' : response.status}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div style={{ display: 'grid', gap: '0.4rem', marginBottom: '0.75rem' }}>
-                              {(response.lines ?? []).map((line: any) => (
-                                <div key={line.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', fontSize: FONT.xs, borderBottom: `1px solid ${COLORS.border}`, paddingBottom: '0.35rem' }}>
-                                  <span style={{ color: COLORS.textPrimary }}>
-                                    {line.rfqLine?.description} ({line.rfqLine?.quantity} {line.rfqLine?.unitOfMeasure})
-                                  </span>
-                                  <span style={{ color: COLORS.textSecondary }}>
-                                    {formatMoney(line.unitPrice, detail.currency ?? 'USD')} / {line.rfqLine?.unitOfMeasure ?? 'ea'}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-
-                            <div style={{ display: 'grid', gap: '0.5rem' }}>
-                              <input
-                                value={rejectValue}
-                                onChange={(event) => setRejectDrafts((current) => ({ ...current, [response.id]: event.target.value }))}
-                                placeholder="Reject reason"
-                                style={{ ...inp, fontSize: FONT.xs }}
-                              />
-                              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                {!response.awarded && detail.status !== 'awarded' && (
-                                  <button
-                                    onClick={() => handleAward(response.id)}
-                                    disabled={!!awardingId || response.status === 'rejected'}
-                                    style={{ background: COLORS.accentBlue, color: '#fff', border: 'none', borderRadius: 5, padding: '0.3rem 0.7rem', fontSize: FONT.xs, fontWeight: 600, cursor: awardingId ? 'not-allowed' : 'pointer', opacity: awardingId ? 0.6 : 1 }}
-                                  >
-                                    {awardingId === response.id ? 'Awarding...' : 'Award'}
-                                  </button>
-                                )}
-                                {!response.awarded && response.status !== 'rejected' && detail.status !== 'awarded' && (
-                                  <button
-                                    onClick={() => handleReject(response.id)}
-                                    disabled={rejectingId === response.id}
-                                    style={{ background: COLORS.accentRedLight, color: COLORS.accentRedDark, border: 'none', borderRadius: 5, padding: '0.3rem 0.7rem', fontSize: FONT.xs, fontWeight: 600, cursor: 'pointer', opacity: rejectingId === response.id ? 0.6 : 1 }}
-                                  >
-                                    {rejectingId === response.id ? 'Rejecting...' : 'Reject'}
-                                  </button>
-                                )}
-                                {response.awarded && (
-                                  <Link href="/purchase-orders" style={{ fontSize: FONT.xs, color: COLORS.accentBlueDark, fontWeight: 600, textDecoration: 'none', paddingTop: '0.35rem' }}>
-                                    Review purchase orders
-                                  </Link>
-                                )}
-                              </div>
-                            </div>
-
-                            {response.notes && (
-                              <div style={{ marginTop: '0.5rem', fontSize: FONT.xs, color: COLORS.textMuted }}>
-                                {response.notes}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })
-                    )}
+                      </Button>
+                    ))}
                   </div>
-                )}
-              </>
-            ) : null}
-          </div>
-        )}
+
+                  {detailTab === 'overview' ? (
+                    <div className="space-y-5">
+                      <div>
+                        <div className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                          Line Items ({detail.lines?.length ?? 0})
+                        </div>
+                        <div className="space-y-2">
+                          {detail.lines?.map((line: any, index: number) => (
+                            <div key={line.id} className="flex justify-between rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm">
+                              <span className="text-foreground">
+                                {index + 1}. {line.description}
+                              </span>
+                              <span className="text-muted-foreground">
+                                {line.quantity} {line.unitOfMeasure}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                          Invited Vendors ({detail.invitations?.length ?? 0})
+                        </div>
+                        <div className="space-y-2">
+                          {detail.invitations?.map((invitation: any) => (
+                            <div key={invitation.id} className="flex items-center justify-between rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm">
+                              <span className="text-foreground">{invitation.vendor?.name ?? '—'}</span>
+                              <span className={invitation.respondedAt ? 'text-emerald-700' : 'text-muted-foreground'}>
+                                {invitation.respondedAt ? 'Responded' : 'Pending'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                          Evaluate Responses ({sortedResponses.length})
+                        </div>
+                        <Select
+                          value={responseSort}
+                          onChange={(event) =>
+                            setResponseSort(event.target.value as 'price' | 'supplier' | 'delivery')
+                          }
+                          className="w-40"
+                        >
+                          <option value="price">Sort by price</option>
+                          <option value="supplier">Sort by supplier</option>
+                          <option value="delivery">Sort by delivery</option>
+                        </Select>
+                      </div>
+
+                      {sortedResponses.length === 0 ? (
+                        <div className="text-sm text-muted-foreground">No responses received yet.</div>
+                      ) : (
+                        sortedResponses.map((response: any, index: number) => {
+                          const bestPrice = Math.min(...sortedResponses.map((item: any) => Number(item.totalAmount)));
+                          const responseLead = Math.min(
+                            ...(response.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER),
+                          );
+                          const bestLead = Math.min(
+                            ...sortedResponses.map((item: any) =>
+                              Math.min(...(item.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER)),
+                            ),
+                          );
+                          const priceScore =
+                            bestPrice > 0
+                              ? Math.max(0, 100 - (((Number(response.totalAmount) - bestPrice) / bestPrice) * 100))
+                              : 100;
+                          const deliveryScore =
+                            Number.isFinite(responseLead) && Number.isFinite(bestLead)
+                              ? Math.max(0, 100 - Math.max(responseLead - bestLead, 0) * 5)
+                              : 60;
+                          const rejectValue = rejectDrafts[response.id] ?? '';
+
+                          return (
+                            <div
+                              key={response.id}
+                              className={`rounded-2xl border p-4 ${
+                                response.awarded ? 'border-emerald-300 bg-emerald-50/60' : 'border-border/70 bg-background/70'
+                              }`}
+                            >
+                              <div className="grid gap-3 md:grid-cols-3">
+                                <div>
+                                  <div className="text-sm font-semibold text-foreground">{response.vendor?.name}</div>
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    Rank #{index + 1} by {responseSort}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                    Quoted Price
+                                  </div>
+                                  <div className="mt-1 text-sm font-semibold text-foreground">
+                                    {formatMoney(response.totalAmount, detail.currency ?? 'USD')}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                                    Lead Time
+                                  </div>
+                                  <div className="mt-1 text-sm font-semibold text-foreground">
+                                    {Number.isFinite(responseLead) ? `${responseLead} days` : 'Not provided'}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                                <MetricCard label="Price Score" value={String(Math.round(priceScore))} />
+                                <MetricCard label="Delivery Score" value={String(Math.round(deliveryScore))} />
+                                <MetricCard label="Status" value={response.awarded ? 'Awarded' : response.status} />
+                              </div>
+
+                              <div className="mt-4 space-y-2">
+                                {(response.lines ?? []).map((line: any) => (
+                                  <div key={line.id} className="flex justify-between gap-3 border-b border-border/70 pb-2 text-xs last:border-b-0 last:pb-0">
+                                    <span className="text-foreground">
+                                      {line.rfqLine?.description} ({line.rfqLine?.quantity} {line.rfqLine?.unitOfMeasure})
+                                    </span>
+                                    <span className="text-muted-foreground">
+                                      {formatMoney(line.unitPrice, detail.currency ?? 'USD')} / {line.rfqLine?.unitOfMeasure ?? 'ea'}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+
+                              <div className="mt-4 space-y-3">
+                                <Input
+                                  value={rejectValue}
+                                  onChange={(event) =>
+                                    setRejectDrafts((current) => ({ ...current, [response.id]: event.target.value }))
+                                  }
+                                  placeholder="Reject reason"
+                                />
+                                <div className="flex flex-wrap gap-2">
+                                  {!response.awarded && detail.status !== 'awarded' ? (
+                                    <Button
+                                      type="button"
+                                      onClick={() => handleAward(response.id)}
+                                      disabled={!!awardingId || response.status === 'rejected'}
+                                    >
+                                      {awardingId === response.id ? 'Awarding...' : 'Award'}
+                                    </Button>
+                                  ) : null}
+                                  {!response.awarded &&
+                                  response.status !== 'rejected' &&
+                                  detail.status !== 'awarded' ? (
+                                    <Button
+                                      type="button"
+                                      variant="destructive"
+                                      onClick={() => handleReject(response.id)}
+                                      disabled={rejectingId === response.id}
+                                    >
+                                      {rejectingId === response.id ? 'Rejecting...' : 'Reject'}
+                                    </Button>
+                                  ) : null}
+                                  {response.awarded ? (
+                                    <Button asChild variant="outline">
+                                      <Link href="/purchase-orders">Review purchase orders</Link>
+                                    </Button>
+                                  ) : null}
+                                </div>
+                              </div>
+
+                              {response.notes ? (
+                                <div className="mt-3 text-xs text-muted-foreground">{response.notes}</div>
+                              ) : null}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : null}
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
 
-      {showNew && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{
-            background: '#fff',
-            borderRadius: 14,
-            padding: '1.75rem',
-            width: '90%',
-            maxWidth: 680,
-            maxHeight: '90vh',
-            overflowY: 'auto',
-            boxShadow: SHADOWS.dropdown,
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-              <h2 style={{ margin: 0, fontSize: FONT.lg, fontWeight: 700, color: COLORS.textPrimary }}>New RFQ</h2>
-              <button onClick={() => setShowNew(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.textMuted, fontSize: 20 }}>✕</button>
+      {showNew ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-[24px] border border-border/70 bg-background p-6 shadow-[0_30px_100px_-40px_rgba(15,23,42,0.6)]">
+            <div className="mb-6 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold text-foreground">New RFQ</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Define scope, invite vendors, and collect competitive quotes.
+                </p>
+              </div>
+              <Button type="button" variant="ghost" onClick={() => setShowNew(false)}>
+                Close
+              </Button>
             </div>
 
-            {error && <div style={{ background: COLORS.accentRedLight, color: COLORS.accentRedDark, padding: '0.5rem 0.75rem', borderRadius: 6, marginBottom: '1rem', fontSize: FONT.sm }}>{error}</div>}
+            {error ? (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Title *</label>
-                <input style={inp} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="e.g. Q2 Office Supplies" />
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <Field label="Title">
+                  <Input
+                    value={form.title}
+                    onChange={(event) => setForm({ ...form, title: event.target.value })}
+                    placeholder="Q2 Office Supplies"
+                  />
+                </Field>
               </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Description</label>
-                <textarea style={{ ...inp, height: 70, resize: 'vertical' }} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Scope and requirements..." />
+              <div className="md:col-span-2">
+                <Field label="Description">
+                  <Textarea
+                    value={form.description}
+                    onChange={(event) => setForm({ ...form, description: event.target.value })}
+                    rows={3}
+                    placeholder="Scope and requirements..."
+                  />
+                </Field>
               </div>
-              <div>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Response Due Date</label>
-                <input type="date" style={inp} value={form.dueDate} onChange={(event) => setForm({ ...form, dueDate: event.target.value })} />
-              </div>
-              <div>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 4 }}>Currency</label>
-                <select style={inp} value={form.currency} onChange={(event) => setForm({ ...form, currency: event.target.value })}>
-                  <option>USD</option><option>EUR</option><option>GBP</option><option>CAD</option>
-                </select>
-              </div>
+              <Field label="Response Due Date">
+                <Input
+                  type="date"
+                  value={form.dueDate}
+                  onChange={(event) => setForm({ ...form, dueDate: event.target.value })}
+                />
+              </Field>
+              <Field label="Currency">
+                <Select
+                  value={form.currency}
+                  onChange={(event) => setForm({ ...form, currency: event.target.value })}
+                  className="w-full"
+                >
+                  <option>USD</option>
+                  <option>EUR</option>
+                  <option>GBP</option>
+                  <option>CAD</option>
+                </Select>
+              </Field>
             </div>
 
-            <div style={{ marginBottom: '1rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary }}>Line Items *</label>
-                <button onClick={addLine} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: FONT.xs, color: COLORS.accentBlue, fontWeight: 600 }}>+ Add Line</button>
-              </div>
-              {lines.map((line, index) => (
-                <div key={index} style={{ display: 'grid', gridTemplateColumns: '3fr 1fr 1fr 1fr auto', gap: '0.4rem', marginBottom: '0.4rem', alignItems: 'center' }}>
-                  <input style={inp} placeholder="Description" value={line.description} onChange={(event) => { const next = [...lines]; next[index] = { ...next[index], description: event.target.value }; setLines(next); }} />
-                  <input type="number" style={inp} placeholder="Qty" value={line.quantity} min={0.01} step={0.01} onChange={(event) => { const next = [...lines]; next[index] = { ...next[index], quantity: Number(event.target.value) }; setLines(next); }} />
-                  <input style={inp} placeholder="UOM" value={line.unitOfMeasure} onChange={(event) => { const next = [...lines]; next[index] = { ...next[index], unitOfMeasure: event.target.value }; setLines(next); }} />
-                  <input type="number" style={inp} placeholder="Target $" value={line.targetPrice} onChange={(event) => { const next = [...lines]; next[index] = { ...next[index], targetPrice: event.target.value }; setLines(next); }} />
-                  <button onClick={() => removeLine(index)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.accentRed, fontSize: 16, padding: '0 4px' }} disabled={lines.length === 1}>✕</button>
+            <div className="mt-6">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Line Items
                 </div>
-              ))}
+                <Button type="button" variant="outline" size="sm" onClick={addLine}>
+                  Add Line
+                </Button>
+              </div>
+              <div className="space-y-3">
+                {lines.map((line, index) => (
+                  <div key={index} className="grid gap-3 rounded-2xl border border-border/70 bg-background/70 p-4 md:grid-cols-[3fr_1fr_1fr_1fr_auto]">
+                    <Input
+                      placeholder="Description"
+                      value={line.description}
+                      onChange={(event) => {
+                        const next = [...lines];
+                        next[index] = { ...next[index], description: event.target.value };
+                        setLines(next);
+                      }}
+                    />
+                    <Input
+                      type="number"
+                      placeholder="Qty"
+                      value={String(line.quantity)}
+                      min={0.01}
+                      step={0.01}
+                      onChange={(event) => {
+                        const next = [...lines];
+                        next[index] = { ...next[index], quantity: Number(event.target.value) };
+                        setLines(next);
+                      }}
+                    />
+                    <Input
+                      placeholder="UOM"
+                      value={line.unitOfMeasure}
+                      onChange={(event) => {
+                        const next = [...lines];
+                        next[index] = { ...next[index], unitOfMeasure: event.target.value };
+                        setLines(next);
+                      }}
+                    />
+                    <Input
+                      type="number"
+                      placeholder="Target $"
+                      value={line.targetPrice}
+                      onChange={(event) => {
+                        const next = [...lines];
+                        next[index] = { ...next[index], targetPrice: event.target.value };
+                        setLines(next);
+                      }}
+                    />
+                    <Button type="button" variant="ghost" onClick={() => removeLine(index)} disabled={lines.length === 1}>
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+              </div>
             </div>
 
-            {vendors.length > 0 && (
-              <div style={{ marginBottom: '1.25rem' }}>
-                <label style={{ fontSize: FONT.xs, fontWeight: 600, color: COLORS.textSecondary, display: 'block', marginBottom: 6 }}>Invite Vendors</label>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', maxHeight: 120, overflowY: 'auto', padding: '0.5rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: 6 }}>
+            {vendors.length > 0 ? (
+              <div className="mt-6">
+                <div className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Invite Vendors
+                </div>
+                <div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto rounded-2xl border border-border/70 p-3">
                   {vendors.map((vendor) => {
                     const isSelected = selectedVendors.includes(vendor.id);
                     return (
                       <button
                         key={vendor.id}
-                        onClick={() => setSelectedVendors(isSelected ? selectedVendors.filter((id) => id !== vendor.id) : [...selectedVendors, vendor.id])}
-                        style={{
-                          background: isSelected ? COLORS.accentBlue : COLORS.contentBg,
-                          color: isSelected ? '#fff' : COLORS.textSecondary,
-                          border: `1px solid ${isSelected ? COLORS.accentBlue : COLORS.border}`,
-                          borderRadius: 20,
-                          padding: '0.2rem 0.65rem',
-                          fontSize: FONT.xs,
-                          cursor: 'pointer',
-                          fontWeight: isSelected ? 600 : 400,
-                        }}
+                        type="button"
+                        onClick={() =>
+                          setSelectedVendors(
+                            isSelected
+                              ? selectedVendors.filter((id) => id !== vendor.id)
+                              : [...selectedVendors, vendor.id],
+                          )
+                        }
+                        className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                          isSelected
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border bg-muted/20 text-muted-foreground'
+                        }`}
                       >
                         {vendor.name}
                       </button>
                     );
                   })}
                 </div>
-                <div style={{ fontSize: FONT.xs, color: COLORS.textMuted, marginTop: 4 }}>{selectedVendors.length} selected</div>
+                <div className="mt-2 text-xs text-muted-foreground">{selectedVendors.length} selected</div>
               </div>
-            )}
+            ) : null}
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-              <button onClick={() => setShowNew(false)} style={{ background: 'none', border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '0.5rem 1.25rem', fontSize: FONT.sm, cursor: 'pointer', color: COLORS.textSecondary }}>Cancel</button>
-              <button
-                onClick={handleCreate}
-                disabled={saving}
-                style={{ background: COLORS.accentBlue, color: '#fff', border: 'none', borderRadius: 8, padding: '0.5rem 1.25rem', fontSize: FONT.sm, fontWeight: 600, cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1 }}
-              >
+            <div className="mt-6 flex justify-end gap-3">
+              <Button type="button" variant="outline" onClick={() => setShowNew(false)}>
+                Cancel
+              </Button>
+              <Button type="button" onClick={handleCreate} disabled={saving}>
                 {saving ? 'Creating...' : 'Create RFQ'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
-      )}
+      ) : null}
+    </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="space-y-2">
+      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-foreground">{value}</div>
     </div>
   );
 }
