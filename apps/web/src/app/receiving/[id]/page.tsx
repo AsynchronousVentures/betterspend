@@ -1,10 +1,29 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { ClipboardCheck, PackageCheck, XCircle } from 'lucide-react';
 import { api } from '../../../lib/api';
-import { COLORS, SHADOWS } from '../../../lib/theme';
 import Breadcrumbs from '../../../components/breadcrumbs';
+import { PageHeader } from '../../../components/page-header';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
+import { Badge } from '../../../components/ui/badge';
+import { Button } from '../../../components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../../components/ui/card';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../../components/ui/table';
 
 interface GRNLine {
   id: string;
@@ -27,13 +46,10 @@ interface GRN {
   createdAt: string;
 }
 
-function Field({ label, value }: { label: string; value: string | null }) {
-  return (
-    <div>
-      <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>{label}</div>
-      <div style={{ fontSize: '0.9rem', color: COLORS.textPrimary }}>{value ?? '—'}</div>
-    </div>
-  );
+function statusVariant(status: string) {
+  if (status === 'confirmed') return 'success';
+  if (status === 'cancelled') return 'destructive';
+  return 'secondary';
 }
 
 export default function GRNDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -46,7 +62,8 @@ export default function GRNDetailPage({ params }: { params: Promise<{ id: string
   useEffect(() => {
     params.then(({ id: pid }) => {
       setId(pid);
-      api.receiving.get(pid)
+      api.receiving
+        .get(pid)
         .then((data) => setGrn(data))
         .catch(() => setGrn(null))
         .finally(() => setLoading(false));
@@ -67,113 +84,179 @@ export default function GRNDetailPage({ params }: { params: Promise<{ id: string
     }
   }
 
-  if (loading) return <div style={{ padding: '2rem', color: COLORS.textMuted, fontSize: '0.875rem' }}>Loading…</div>;
-  if (!grn) return (
-    <div style={{ padding: '2rem', color: COLORS.textSecondary }}>
-      GRN not found. <Link href="/receiving" style={{ color: COLORS.accentBlueDark }}>Back to list</Link>
-    </div>
-  );
+  async function cancelGRN() {
+    if (!window.confirm('Cancel this GRN?')) return;
+    setError('');
+    setConfirming(true);
+    try {
+      await api.receiving.cancel(id);
+      const updated = await api.receiving.get(id);
+      setGrn(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Cancel failed');
+    } finally {
+      setConfirming(false);
+    }
+  }
 
-  const totalReceived = grn.lines.reduce((s, l) => s + parseFloat(l.quantityReceived), 0);
-  const totalRejected = grn.lines.reduce((s, l) => s + parseFloat(l.quantityRejected), 0);
-  const statusColors: Record<string, { background: string; color: string }> = {
-    confirmed: { background: COLORS.accentGreenLight, color: COLORS.accentGreenDark },
-    draft: { background: COLORS.hoverBg, color: COLORS.textSecondary },
-    cancelled: { background: COLORS.accentRedLight, color: COLORS.accentRedDark },
-  };
-  const statusStyle = statusColors[grn.status] ?? { background: COLORS.hoverBg, color: COLORS.textSecondary };
+  if (loading) {
+    return (
+      <div className="p-4 lg:p-8">
+        <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+          Loading receipt...
+        </div>
+      </div>
+    );
+  }
+
+  if (!grn) {
+    return (
+      <div className="p-4 lg:p-8">
+        <Alert variant="destructive">
+          <AlertDescription>
+            GRN not found. <Link href="/receiving" className="underline underline-offset-4">Back to list</Link>
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  const totalReceived = grn.lines.reduce((sum, line) => sum + parseFloat(line.quantityReceived), 0);
+  const totalRejected = grn.lines.reduce((sum, line) => sum + parseFloat(line.quantityRejected), 0);
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '900px' }}>
+    <div className="space-y-6 p-4 lg:p-8">
       <Breadcrumbs items={[{ label: 'Receiving', href: '/receiving' }, { label: grn.number }]} />
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-        <div>
-          <div style={{ fontSize: '0.875rem', color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-            <Link href="/receiving" style={{ color: COLORS.textSecondary, textDecoration: 'none' }}>Goods Receipts</Link> / {grn.number}
+
+      <PageHeader
+        title={grn.number}
+        description={`Goods receipt for PO ${grn.purchaseOrder?.number ?? '—'} from ${grn.purchaseOrder?.vendor?.name ?? 'Unknown vendor'}.`}
+        actions={
+          <div className="flex flex-wrap gap-3">
+            <Badge variant={statusVariant(grn.status) as any} className="capitalize">
+              {grn.status.replace(/_/g, ' ')}
+            </Badge>
+            <Button asChild variant="outline">
+              <Link href="/receiving">Back to Receiving</Link>
+            </Button>
           </div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: COLORS.textPrimary }}>{grn.number}</h1>
-        </div>
-        <span style={{ ...statusStyle, padding: '0.25rem 0.75rem', borderRadius: '9999px', fontSize: '0.8rem', fontWeight: 600 }}>
-          {grn.status.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
-        </span>
+        }
+      />
+
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <StatCard icon={PackageCheck} label="Total Received" value={String(totalReceived)} tone="text-emerald-700" />
+        <StatCard icon={XCircle} label="Total Rejected" value={String(totalRejected)} tone="text-rose-700" />
+        <StatCard icon={ClipboardCheck} label="Received Date" value={new Date(grn.receivedDate).toLocaleDateString()} tone="text-sky-700" />
       </div>
 
-      <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-        <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', color: COLORS.textPrimary }}>Receipt Information</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
-          <Field label="GRN Number" value={grn.number} />
-          <Field label="Purchase Order" value={grn.purchaseOrder?.number ?? null} />
-          <Field label="Vendor" value={grn.purchaseOrder?.vendor?.name ?? null} />
-          <Field label="Received Date" value={new Date(grn.receivedDate).toLocaleDateString()} />
-          <Field label="Total Received" value={String(totalReceived)} />
-          <Field label="Total Rejected" value={String(totalRejected)} />
-        </div>
-        {grn.notes && (
-          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: `1px solid ${COLORS.hoverBg}` }}>
-            <Field label="Notes" value={grn.notes} />
-          </div>
-        )}
-      </div>
+      <Card className="rounded-[24px]">
+        <CardHeader>
+          <CardTitle className="text-xl">Receipt Information</CardTitle>
+          <CardDescription>Core receipt context, supplier reference, and receiving notes.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <DetailField label="GRN Number" value={grn.number} />
+          <DetailField label="Purchase Order" value={grn.purchaseOrder?.number ?? '—'} />
+          <DetailField label="Vendor" value={grn.purchaseOrder?.vendor?.name ?? '—'} />
+          <DetailField label="Created" value={new Date(grn.createdAt).toLocaleString()} />
+          <DetailField label="Status" value={grn.status.replace(/_/g, ' ')} />
+          <DetailField label="Received Date" value={new Date(grn.receivedDate).toLocaleDateString()} />
+          {grn.notes ? (
+            <div className="sm:col-span-2 lg:col-span-3">
+              <DetailField label="Notes" value={grn.notes} />
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
-      <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', overflow: 'hidden', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-        <div style={{ padding: '1rem 1.5rem', borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-          <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0, color: COLORS.textPrimary }}>Received Lines</h2>
-        </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-            <thead>
-              <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                {['Line', 'Description', 'PO Qty', 'Received', 'Rejected', 'Rejection Reason'].map((h) => (
-                  <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 600, color: COLORS.textSecondary, fontSize: '0.8rem' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {grn.lines.map((line, idx) => (
-                <tr key={line.id} style={{ borderBottom: idx < grn.lines.length - 1 ? `1px solid ${COLORS.hoverBg}` : undefined }}>
-                  <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{line.poLine?.lineNumber ?? '—'}</td>
-                  <td style={{ padding: '0.875rem 1rem' }}>{line.poLine?.description ?? '—'}</td>
-                  <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{line.poLine?.quantity ?? '—'}</td>
-                  <td style={{ padding: '0.875rem 1rem', color: COLORS.accentGreenDark, fontWeight: 600 }}>{line.quantityReceived}</td>
-                  <td style={{ padding: '0.875rem 1rem', color: parseFloat(line.quantityRejected) > 0 ? COLORS.accentRedDark : COLORS.textSecondary }}>{line.quantityRejected}</td>
-                  <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{line.rejectionReason ?? '—'}</td>
-                </tr>
+      <Card className="rounded-[24px]">
+        <CardHeader>
+          <CardTitle className="text-xl">Received Lines</CardTitle>
+          <CardDescription>Receipt quantities and rejection details by purchase order line.</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Line</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead>PO Qty</TableHead>
+                <TableHead>Received</TableHead>
+                <TableHead>Rejected</TableHead>
+                <TableHead>Rejection Reason</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {grn.lines.map((line) => (
+                <TableRow key={line.id}>
+                  <TableCell className="text-muted-foreground">{line.poLine?.lineNumber ?? '—'}</TableCell>
+                  <TableCell className="font-medium text-foreground">{line.poLine?.description ?? '—'}</TableCell>
+                  <TableCell className="text-muted-foreground">{line.poLine?.quantity ?? '—'}</TableCell>
+                  <TableCell className="font-medium text-emerald-700">{line.quantityReceived}</TableCell>
+                  <TableCell className={parseFloat(line.quantityRejected) > 0 ? 'font-medium text-rose-700' : 'text-muted-foreground'}>
+                    {line.quantityRejected}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{line.rejectionReason ?? '—'}</TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
 
-      {(grn.status === 'draft' || grn.status === 'confirmed') && (
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          {grn.status === 'draft' && (
-            <button onClick={confirmGRN} disabled={confirming}
-              style={{ background: '#059669', color: COLORS.white, border: 'none', borderRadius: '6px', padding: '0.625rem 1.25rem', fontSize: '0.875rem', fontWeight: 600, cursor: confirming ? 'not-allowed' : 'pointer', opacity: confirming ? 0.7 : 1 }}>
-              {confirming ? 'Confirming…' : 'Confirm Receipt'}
-            </button>
-          )}
-          <button
-            onClick={async () => {
-              if (!confirm('Cancel this GRN?')) return;
-              setConfirming(true);
-              try {
-                await api.receiving.cancel(id);
-                const updated = await api.receiving.get(id);
-                setGrn(updated);
-              } catch (err) {
-                setError(err instanceof Error ? err.message : 'Cancel failed');
-              } finally {
-                setConfirming(false);
-              }
-            }}
-            disabled={confirming}
-            style={{ background: COLORS.white, color: COLORS.accentRedDark, border: `1px solid ${COLORS.accentRedDark}`, borderRadius: '6px', padding: '0.625rem 1.25rem', fontSize: '0.875rem', fontWeight: 500, cursor: confirming ? 'not-allowed' : 'pointer' }}
-          >
+      {grn.status === 'draft' || grn.status === 'confirmed' ? (
+        <div className="flex flex-wrap gap-3">
+          {grn.status === 'draft' ? (
+            <Button type="button" onClick={confirmGRN} disabled={confirming}>
+              {confirming ? 'Confirming...' : 'Confirm Receipt'}
+            </Button>
+          ) : null}
+          <Button type="button" variant="destructive" onClick={cancelGRN} disabled={confirming}>
             Cancel GRN
-          </button>
-          {error && <div style={{ width: '100%', marginTop: '0.75rem', background: COLORS.accentRedLight, border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.625rem 1rem', color: COLORS.accentRedDark, fontSize: '0.875rem' }}>{error}</div>}
+          </Button>
         </div>
-      )}
+      ) : null}
     </div>
+  );
+}
+
+function DetailField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <div className="mt-2 text-sm text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  tone: string;
+}) {
+  return (
+    <Card className="rounded-[24px] border-border/70 bg-card/95">
+      <CardContent className="flex items-center gap-4 p-6">
+        <div className={`rounded-2xl border border-current/10 bg-current/10 p-3 ${tone}`}>
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="space-y-1">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+          <div className="font-display text-2xl font-semibold tracking-[-0.04em] text-foreground">{value}</div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
