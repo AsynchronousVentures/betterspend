@@ -1,27 +1,42 @@
 'use client';
 
-import { useState, FormEvent } from 'react';
+import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { ArrowLeft, Plus } from 'lucide-react';
 import { api } from '../../../lib/api';
-import { COLORS, SHADOWS } from '../../../lib/theme';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
+import { Button } from '../../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Input } from '../../../components/ui/input';
+import { Select } from '../../../components/ui/select';
 
 export default function NewVendorPage() {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({
-    name: '', code: '', taxId: '', paymentTerms: 'Net 30', status: 'active',
-    contactName: '', email: '', phone: '',
-    street: '', city: '', state: '', postalCode: '', country: '',
+    name: '',
+    code: '',
+    taxId: '',
+    paymentTerms: 'Net 30',
+    status: 'active',
+    contactName: '',
+    email: '',
+    phone: '',
+    street: '',
+    city: '',
+    state: '',
+    postalCode: '',
+    country: '',
   });
 
   function set(key: string, value: string) {
-    setForm((f) => ({ ...f, [key]: value }));
+    setForm((current) => ({ ...current, [key]: value }));
   }
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
     setError('');
     setSaving(true);
     try {
@@ -45,110 +60,123 @@ export default function NewVendorPage() {
         },
       });
       router.push(`/vendors/${vendor.id}`);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setSaving(false);
     }
   }
 
-  const inputStyle = { width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box' as const };
-  const labelStyle = { display: 'block', fontSize: '0.875rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' };
-
   return (
-    <div style={{ padding: '2rem', maxWidth: '800px' }}>
-      <div style={{ marginBottom: '1.5rem' }}>
-        <Link href="/vendors" style={{ color: COLORS.accentBlue, textDecoration: 'none', fontSize: '0.875rem' }}>← Vendors</Link>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary, marginTop: '0.5rem' }}>New Vendor</h1>
-      </div>
+    <div className="space-y-6 p-4 lg:p-8">
+      <Link href="/vendors" className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
+        <ArrowLeft className="h-4 w-4" />
+        Vendors
+      </Link>
 
-      <form onSubmit={handleSubmit}>
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-          <h2 style={{ fontWeight: 600, marginBottom: '1rem', fontSize: '1rem' }}>Basic Info</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <label style={labelStyle}>Name *</label>
-              <input required value={form.name} onChange={(e) => set('name', e.target.value)} style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>Code</label>
-              <input value={form.code} onChange={(e) => set('code', e.target.value.toUpperCase())} placeholder="ACME" style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>Tax ID</label>
-              <input value={form.taxId} onChange={(e) => set('taxId', e.target.value)} placeholder="12-3456789" style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>Payment Terms</label>
-              <select value={form.paymentTerms} onChange={(e) => set('paymentTerms', e.target.value)} style={inputStyle}>
-                {['Net 15', 'Net 30', 'Net 45', 'Net 60', 'Due on Receipt', '2/10 Net 30'].map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label style={labelStyle}>Status</label>
-              <select value={form.status} onChange={(e) => set('status', e.target.value)} style={inputStyle}>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-                <option value="blocked">Blocked</option>
-              </select>
-            </div>
-          </div>
-        </div>
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
 
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-          <h2 style={{ fontWeight: 600, marginBottom: '1rem', fontSize: '1rem' }}>Contact</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div>
-              <label style={labelStyle}>Contact Name</label>
-              <input value={form.contactName} onChange={(e) => set('contactName', e.target.value)} style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>Email</label>
-              <input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>Phone</label>
-              <input value={form.phone} onChange={(e) => set('phone', e.target.value)} style={inputStyle} />
-            </div>
-          </div>
-        </div>
+      <form onSubmit={handleSubmit} className="mx-auto max-w-4xl space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-xl">New Vendor</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-6">
+            <section className="space-y-4">
+              <div className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Basic Info</div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="md:col-span-2">
+                  <label className="mb-2 block text-sm font-medium text-foreground">Name *</label>
+                  <Input required value={form.name} onChange={(event) => set('name', event.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Code</label>
+                  <Input value={form.code} onChange={(event) => set('code', event.target.value.toUpperCase())} placeholder="ACME" />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Tax ID</label>
+                  <Input value={form.taxId} onChange={(event) => set('taxId', event.target.value)} placeholder="12-3456789" />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Payment Terms</label>
+                  <Select value={form.paymentTerms} onChange={(event) => set('paymentTerms', event.target.value)} className="w-full">
+                    {['Net 15', 'Net 30', 'Net 45', 'Net 60', 'Due on Receipt', '2/10 Net 30'].map((term) => (
+                      <option key={term} value={term}>
+                        {term}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Status</label>
+                  <Select value={form.status} onChange={(event) => set('status', event.target.value)} className="w-full">
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                    <option value="blocked">Blocked</option>
+                  </Select>
+                </div>
+              </div>
+            </section>
 
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-          <h2 style={{ fontWeight: 600, marginBottom: '1rem', fontSize: '1rem' }}>Address</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <label style={labelStyle}>Street</label>
-              <input value={form.street} onChange={(e) => set('street', e.target.value)} style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>City</label>
-              <input value={form.city} onChange={(e) => set('city', e.target.value)} style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>State / Province</label>
-              <input value={form.state} onChange={(e) => set('state', e.target.value)} style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>Postal Code</label>
-              <input value={form.postalCode} onChange={(e) => set('postalCode', e.target.value)} style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>Country</label>
-              <input value={form.country} onChange={(e) => set('country', e.target.value)} placeholder="US" style={inputStyle} />
-            </div>
-          </div>
-        </div>
+            <section className="space-y-4">
+              <div className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Contact</div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Contact Name</label>
+                  <Input value={form.contactName} onChange={(event) => set('contactName', event.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Email</label>
+                  <Input type="email" value={form.email} onChange={(event) => set('email', event.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Phone</label>
+                  <Input value={form.phone} onChange={(event) => set('phone', event.target.value)} />
+                </div>
+              </div>
+            </section>
 
-        {error && <div style={{ background: COLORS.accentRedLight, border: '1px solid #fecaca', borderRadius: '6px', padding: '0.75rem', color: COLORS.accentRedDark, fontSize: '0.875rem', marginBottom: '1rem' }}>{error}</div>}
+            <section className="space-y-4">
+              <div className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Address</div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="md:col-span-2">
+                  <label className="mb-2 block text-sm font-medium text-foreground">Street</label>
+                  <Input value={form.street} onChange={(event) => set('street', event.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">City</label>
+                  <Input value={form.city} onChange={(event) => set('city', event.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">State / Province</label>
+                  <Input value={form.state} onChange={(event) => set('state', event.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Postal Code</label>
+                  <Input value={form.postalCode} onChange={(event) => set('postalCode', event.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Country</label>
+                  <Input value={form.country} onChange={(event) => set('country', event.target.value)} placeholder="US" />
+                </div>
+              </div>
+            </section>
 
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button type="submit" disabled={saving} style={{ padding: '0.625rem 1.25rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>
-            {saving ? 'Creating...' : 'Create Vendor'}
-          </button>
-          <Link href="/vendors" style={{ padding: '0.625rem 1.25rem', background: COLORS.tableBorder, color: COLORS.textSecondary, borderRadius: '6px', textDecoration: 'none', fontWeight: 500 }}>Cancel</Link>
-        </div>
+            <div className="flex flex-wrap gap-3">
+              <Button type="submit" disabled={saving}>
+                <Plus className="h-4 w-4" />
+                {saving ? 'Creating...' : 'Create Vendor'}
+              </Button>
+              <Button asChild variant="outline">
+                <Link href="/vendors">Cancel</Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </form>
     </div>
   );
