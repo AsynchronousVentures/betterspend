@@ -1,16 +1,44 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { ClipboardCheck, PackageCheck } from 'lucide-react';
 import { api } from '../../../lib/api';
-import { COLORS, SHADOWS } from '../../../lib/theme';
+import { PageHeader } from '../../../components/page-header';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
+import { Button } from '../../../components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../../components/ui/card';
+import { Input } from '../../../components/ui/input';
+import { Select } from '../../../components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../../components/ui/table';
+import { Textarea } from '../../../components/ui/textarea';
 
 interface PO {
   id: string;
   number: string;
   status: string;
   vendor: { name: string } | null;
-  lines: Array<{ id: string; lineNumber: string; description: string; quantity: string; quantityReceived: string }>;
+  lines: Array<{
+    id: string;
+    lineNumber: string;
+    description: string;
+    quantity: string;
+    quantityReceived: string;
+  }>;
 }
 
 function NewGRNForm() {
@@ -27,40 +55,47 @@ function NewGRNForm() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.purchaseOrders.list()
+    api.purchaseOrders
+      .list()
       .then((data) => {
         const eligible = (Array.isArray(data) ? data : (data as any).data ?? []).filter((po: PO) =>
           ['approved', 'issued', 'partially_received'].includes(po.status),
         );
         setPOs(eligible);
         if (preSelectedPoId) {
-          handlePOChange(preSelectedPoId);
+          void handlePOChange(preSelectedPoId);
         }
       })
       .catch(() => {});
-  }, []);
+  }, [preSelectedPoId]);
 
-  const handlePOChange = async (poId: string) => {
-    if (!poId) { setSelectedPO(null); setLineQtys({}); return; }
-    const po = await api.purchaseOrders.get(poId) as PO;
+  async function handlePOChange(poId: string) {
+    if (!poId) {
+      setSelectedPO(null);
+      setLineQtys({});
+      return;
+    }
+    const po = (await api.purchaseOrders.get(poId)) as PO;
     setSelectedPO(po);
     const qtys: Record<string, { received: string; rejected: string }> = {};
-    (po.lines ?? []).forEach((l) => { qtys[l.id] = { received: l.quantity, rejected: '0' }; });
+    (po.lines ?? []).forEach((line) => {
+      qtys[line.id] = { received: line.quantity, rejected: '0' };
+    });
     setLineQtys(qtys);
-  };
+  }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
     if (!selectedPO) return;
     setLoading(true);
     setError('');
 
     const lines = (selectedPO.lines ?? [])
-      .filter((l) => parseFloat(lineQtys[l.id]?.received ?? '0') > 0)
-      .map((l) => ({
-        poLineId: l.id,
-        quantityReceived: parseFloat(lineQtys[l.id]?.received ?? '0'),
-        quantityRejected: parseFloat(lineQtys[l.id]?.rejected ?? '0'),
+      .filter((line) => parseFloat(lineQtys[line.id]?.received ?? '0') > 0)
+      .map((line) => ({
+        poLineId: line.id,
+        quantityReceived: parseFloat(lineQtys[line.id]?.received ?? '0'),
+        quantityRejected: parseFloat(lineQtys[line.id]?.rejected ?? '0'),
       }));
 
     try {
@@ -75,137 +110,152 @@ function NewGRNForm() {
       setError(err.message ?? 'Failed to create GRN');
       setLoading(false);
     }
-  };
+  }
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '800px' }}>
-      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '1.5rem', color: COLORS.textPrimary }}>
-        Create Goods Receipt (GRN)
-      </h1>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="Create Goods Receipt"
+        description="Capture received and rejected quantities against an approved or issued purchase order."
+        actions={
+          <Button asChild variant="outline">
+            <Link href="/receiving">Cancel</Link>
+          </Button>
+        }
+      />
 
-      <form onSubmit={handleSubmit}>
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-          <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', color: COLORS.textPrimary }}>Receipt Details</h2>
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
 
-          <div style={{ display: 'grid', gap: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-                Purchase Order *
-              </label>
-              <select
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">Receipt Details</CardTitle>
+            <CardDescription>
+              Select the purchase order being received and capture any receiving notes.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <Field label="Purchase Order">
+              <Select
                 value={selectedPO?.id ?? ''}
-                onChange={(e) => handlePOChange(e.target.value)}
+                onChange={(event) => void handlePOChange(event.target.value)}
                 required
-                style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }}
+                className="w-full"
               >
                 <option value="">Select a PO...</option>
                 {pos.map((po) => (
                   <option key={po.id} value={po.id}>
-                    {po.number} — {po.vendor?.name ?? 'Unknown vendor'}
+                    {po.number} - {po.vendor?.name ?? 'Unknown vendor'}
                   </option>
                 ))}
-              </select>
-              {pos.length === 0 && (
-                <p style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.25rem' }}>
-                  No eligible POs. POs must be in approved/issued/partially_received status.
-                </p>
-              )}
+              </Select>
+              {pos.length === 0 ? (
+                <div className="mt-2 text-sm text-muted-foreground">
+                  No eligible POs. Purchase orders must be approved, issued, or partially received.
+                </div>
+              ) : null}
+            </Field>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Received Date">
+                <Input
+                  type="date"
+                  value={receivedDate}
+                  onChange={(event) => setReceivedDate(event.target.value)}
+                  required
+                />
+              </Field>
+
+              <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
+                Only lines with a positive received quantity will be added to the GRN.
+              </div>
             </div>
 
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-                Received Date *
-              </label>
-              <input
-                type="date"
-                value={receivedDate}
-                onChange={(e) => setReceivedDate(e.target.value)}
-                required
-                style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box' }}
-              />
-            </div>
+            <Field label="Notes">
+              <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} />
+            </Field>
+          </CardContent>
+        </Card>
 
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-                Notes
-              </label>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={2}
-                style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', resize: 'vertical', boxSizing: 'border-box' }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {selectedPO && (selectedPO.lines ?? []).length > 0 && (
-          <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-            <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', color: COLORS.textPrimary }}>Line Items</h2>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: `1px solid ${COLORS.tableBorder}`, background: COLORS.tableHeaderBg }}>
-                    {['#', 'Description', 'PO Qty', 'Received Qty', 'Rejected Qty'].map((h) => (
-                      <th key={h} style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: 600, color: COLORS.textSecondary, fontSize: '0.8rem' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(selectedPO.lines ?? []).map((line, idx) => (
-                    <tr key={line.id} style={{ borderBottom: idx < (selectedPO.lines?.length ?? 0) - 1 ? `1px solid ${COLORS.hoverBg}` : undefined }}>
-                      <td style={{ padding: '0.5rem 0.75rem', color: COLORS.textSecondary }}>{line.lineNumber}</td>
-                      <td style={{ padding: '0.5rem 0.75rem' }}>{line.description}</td>
-                      <td style={{ padding: '0.5rem 0.75rem', color: COLORS.textSecondary }}>{line.quantity}</td>
-                      <td style={{ padding: '0.5rem 0.75rem' }}>
-                        <input
+        {selectedPO && (selectedPO.lines ?? []).length > 0 ? (
+          <Card className="rounded-[24px]">
+            <CardHeader>
+              <CardTitle className="text-xl">Line Items</CardTitle>
+              <CardDescription>
+                Confirm received quantities and capture rejected quantities separately.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>#</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>PO Qty</TableHead>
+                    <TableHead>Received Qty</TableHead>
+                    <TableHead>Rejected Qty</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(selectedPO.lines ?? []).map((line) => (
+                    <TableRow key={line.id}>
+                      <TableCell className="text-muted-foreground">{line.lineNumber}</TableCell>
+                      <TableCell className="font-medium text-foreground">{line.description}</TableCell>
+                      <TableCell className="text-muted-foreground">{line.quantity}</TableCell>
+                      <TableCell>
+                        <Input
                           type="number"
                           min="0"
                           step="0.01"
                           max={line.quantity}
                           value={lineQtys[line.id]?.received ?? ''}
-                          onChange={(e) => setLineQtys((prev) => ({ ...prev, [line.id]: { ...prev[line.id], received: e.target.value } }))}
-                          style={{ width: '80px', padding: '0.25rem 0.5rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '4px', fontSize: '0.875rem' }}
+                          onChange={(event) =>
+                            setLineQtys((prev) => ({
+                              ...prev,
+                              [line.id]: { ...prev[line.id], received: event.target.value },
+                            }))
+                          }
+                          className="w-28"
                         />
-                      </td>
-                      <td style={{ padding: '0.5rem 0.75rem' }}>
-                        <input
+                      </TableCell>
+                      <TableCell>
+                        <Input
                           type="number"
                           min="0"
                           step="0.01"
                           value={lineQtys[line.id]?.rejected ?? '0'}
-                          onChange={(e) => setLineQtys((prev) => ({ ...prev, [line.id]: { ...prev[line.id], rejected: e.target.value } }))}
-                          style={{ width: '80px', padding: '0.25rem 0.5rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '4px', fontSize: '0.875rem' }}
+                          onChange={(event) =>
+                            setLineQtys((prev) => ({
+                              ...prev,
+                              [line.id]: { ...prev[line.id], rejected: event.target.value },
+                            }))
+                          }
+                          className="w-28"
                         />
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        ) : null}
 
-        {error && (
-          <div style={{ background: COLORS.accentRedLight, border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.75rem 1rem', marginBottom: '1rem', color: COLORS.accentRedDark, fontSize: '0.875rem' }}>
-            {error}
-          </div>
-        )}
-
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button
-            type="submit"
-            disabled={loading || !selectedPO}
-            style={{
-              background: loading ? COLORS.textMuted : COLORS.textPrimary, color: COLORS.white, padding: '0.625rem 1.5rem',
-              borderRadius: '6px', border: 'none', fontSize: '0.875rem', fontWeight: 500, cursor: loading ? 'not-allowed' : 'pointer',
-            }}
-          >
+        <div className="flex flex-wrap gap-3">
+          <Button type="submit" disabled={loading || !selectedPO}>
+            <PackageCheck className="h-4 w-4" />
             {loading ? 'Creating...' : 'Create GRN'}
-          </button>
-          <a href="/receiving" style={{ padding: '0.625rem 1.5rem', borderRadius: '6px', border: `1px solid ${COLORS.inputBorder}`, fontSize: '0.875rem', color: COLORS.textSecondary, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
-            Cancel
-          </a>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/receiving">
+              <ClipboardCheck className="h-4 w-4" />
+              Back to Receiving
+            </Link>
+          </Button>
         </div>
       </form>
     </div>
@@ -214,8 +264,33 @@ function NewGRNForm() {
 
 export default function NewGRNPage() {
   return (
-    <Suspense fallback={<div style={{ padding: '2rem', color: COLORS.textSecondary }}>Loading…</div>}>
+    <Suspense
+      fallback={
+        <div className="p-4 lg:p-8">
+          <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+            Loading...
+          </div>
+        </div>
+      }
+    >
       <NewGRNForm />
     </Suspense>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="space-y-2">
+      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </span>
+      {children}
+    </label>
   );
 }
