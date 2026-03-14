@@ -1,12 +1,39 @@
 'use client';
 
-import { useState, useEffect, FormEvent } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { ArrowLeft, Globe, Mail, Pencil, PlugZap, ShieldCheck } from 'lucide-react';
 import { api } from '../../../lib/api';
-import { COLORS, SHADOWS } from '../../../lib/theme';
 import { useToast } from '../../../components/toast';
 import Breadcrumbs from '../../../components/breadcrumbs';
+import { StatusBadge } from '../../../components/status-badge';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
+import { Button } from '../../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Input } from '../../../components/ui/input';
+import { Select } from '../../../components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
+
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <div className="mt-1 text-sm text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-4 md:grid-cols-2">{children}</CardContent>
+    </Card>
+  );
+}
 
 export default function VendorDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -20,64 +47,83 @@ export default function VendorDetailPage() {
   const [txns, setTxns] = useState<{ invoices: any[]; purchaseOrders: any[] } | null>(null);
   const [onboarding, setOnboarding] = useState<any>(null);
   const [reviewSaving, setReviewSaving] = useState(false);
+  const [punchoutSaving, setPunchoutSaving] = useState(false);
+  const [portalSending, setPortalSending] = useState(false);
+  const [portalMsg, setPortalMsg] = useState('');
 
   useEffect(() => {
-    api.vendors.get(id).then((v) => {
-      setVendor(v);
-      setForm({
-        name: v.name || '', code: v.code || '', taxId: v.taxId || '',
-        paymentTerms: v.paymentTerms || '', status: v.status || 'active',
-        contactName: v.contactInfo?.contactName || '',
-        email: v.contactInfo?.email || '',
-        phone: v.contactInfo?.phone || '',
-        street: v.address?.street || '', city: v.address?.city || '',
-        state: v.address?.state || '', postalCode: v.address?.postalCode || '',
-        country: v.address?.country || '',
-      });
-    }).catch((e) => setError(e.message)).finally(() => setLoading(false));
+    api.vendors
+      .get(id)
+      .then((vendorRecord) => {
+        setVendor(vendorRecord);
+        setForm({
+          name: vendorRecord.name || '',
+          code: vendorRecord.code || '',
+          taxId: vendorRecord.taxId || '',
+          paymentTerms: vendorRecord.paymentTerms || '',
+          status: vendorRecord.status || 'active',
+          contactName: vendorRecord.contactInfo?.contactName || '',
+          email: vendorRecord.contactInfo?.email || '',
+          phone: vendorRecord.contactInfo?.phone || '',
+          street: vendorRecord.address?.street || '',
+          city: vendorRecord.address?.city || '',
+          state: vendorRecord.address?.state || '',
+          postalCode: vendorRecord.address?.postalCode || '',
+          country: vendorRecord.address?.country || '',
+        });
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+
     api.vendors.transactions(id).then(setTxns).catch(() => {});
     api.vendors.onboardingDetail(id).then(setOnboarding).catch(() => {});
   }, [id]);
 
-  async function handleSave(e: FormEvent) {
-    e.preventDefault();
+  function set(key: string, value: string) {
+    setForm((current: any) => ({ ...current, [key]: value }));
+  }
+
+  async function handleSave(event: FormEvent) {
+    event.preventDefault();
     setSaving(true);
     setError('');
     try {
       const updated = await api.vendors.update(id, {
-        name: form.name, code: form.code || undefined, taxId: form.taxId || undefined,
-        paymentTerms: form.paymentTerms || undefined, status: form.status,
-        contactInfo: { contactName: form.contactName || undefined, email: form.email || undefined, phone: form.phone || undefined },
-        address: { street: form.street || undefined, city: form.city || undefined, state: form.state || undefined, postalCode: form.postalCode || undefined, country: form.country || undefined },
+        name: form.name,
+        code: form.code || undefined,
+        taxId: form.taxId || undefined,
+        paymentTerms: form.paymentTerms || undefined,
+        status: form.status,
+        contactInfo: {
+          contactName: form.contactName || undefined,
+          email: form.email || undefined,
+          phone: form.phone || undefined,
+        },
+        address: {
+          street: form.street || undefined,
+          city: form.city || undefined,
+          state: form.state || undefined,
+          postalCode: form.postalCode || undefined,
+          country: form.country || undefined,
+        },
       });
       setVendor(updated);
       setEditing(false);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setSaving(false);
     }
   }
-
-  function set(key: string, value: string) {
-    setForm((f: any) => ({ ...f, [key]: value }));
-  }
-
-  const inputStyle = { width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box' as const };
-  const labelStyle = { display: 'block', fontSize: '0.875rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' };
-
-  const [punchoutSaving, setPunchoutSaving] = useState(false);
-  const [portalSending, setPortalSending] = useState(false);
-  const [portalMsg, setPortalMsg] = useState('');
 
   async function handleSendPortalAccess() {
     setPortalSending(true);
     setPortalMsg('');
     try {
       await api.vendorPortal.sendAccess(id);
-      setPortalMsg('Access link sent to vendor\'s contact email.');
-    } catch (e: any) {
-      setPortalMsg('Error: ' + (e.message || 'Failed to send access link'));
+      setPortalMsg("Access link sent to vendor's contact email.");
+    } catch (err: any) {
+      setPortalMsg(`Error: ${err.message || 'Failed to send access link'}`);
     } finally {
       setPortalSending(false);
     }
@@ -90,151 +136,130 @@ export default function VendorDetailPage() {
       setVendor((current: any) => ({ ...current, ...updated }));
       setOnboarding(await api.vendors.onboardingDetail(id));
       toast(decision === 'approved' ? 'Onboarding approved' : 'Changes requested', 'success');
-    } catch (e: any) {
-      setPortalMsg('Error: ' + (e.message || 'Failed to review onboarding'));
+    } catch (err: any) {
+      setPortalMsg(`Error: ${err.message || 'Failed to review onboarding'}`);
     } finally {
       setReviewSaving(false);
     }
   }
-
-  const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
-    active: { bg: '#dcfce7', text: '#15803d' },
-    inactive: { bg: COLORS.hoverBg, text: COLORS.textSecondary },
-    blocked: { bg: COLORS.accentRedLight, text: COLORS.accentRedDark },
-  };
-  const ONBOARDING_COLORS: Record<string, { bg: string; text: string }> = {
-    approved: { bg: '#dcfce7', text: '#15803d' },
-    pending_review: { bg: '#fffbeb', text: '#b45309' },
-    changes_requested: { bg: '#fef2f2', text: '#b91c1c' },
-    not_started: { bg: COLORS.hoverBg, text: COLORS.textSecondary },
-  };
 
   async function togglePunchout() {
     setPunchoutSaving(true);
     try {
       const updated = await api.vendors.update(id, { punchoutEnabled: !vendor.punchoutEnabled });
       setVendor(updated);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setPunchoutSaving(false);
     }
   }
 
-  if (loading) return <div style={{ padding: '2rem', color: COLORS.textSecondary }}>Loading...</div>;
-  if (error && !vendor) return <div style={{ padding: '2rem', color: COLORS.accentRedDark }}>{error}</div>;
+  if (loading) return <div className="p-8 text-sm text-muted-foreground">Loading...</div>;
+  if (error && !vendor) return <div className="p-8 text-sm text-rose-700">{error}</div>;
   if (!vendor) return null;
 
-  const sc = STATUS_COLORS[vendor.status] || { bg: COLORS.hoverBg, text: COLORS.textSecondary };
-  const onboardingColor = ONBOARDING_COLORS[vendor.onboardingStatus] || ONBOARDING_COLORS.not_started;
   const latestSubmission = onboarding?.submissions?.[0] ?? null;
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '800px' }}>
+    <div className="space-y-6 p-4 lg:p-8">
       <Breadcrumbs items={[{ label: 'Vendors', href: '/vendors' }, { label: vendor.name }]} />
-      <div style={{ marginBottom: '1.5rem' }}>
-        <Link href="/vendors" style={{ color: COLORS.accentBlue, textDecoration: 'none', fontSize: '0.875rem' }}>← Vendors</Link>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary }}>{vendor.name}</h1>
-            <span style={{ padding: '0.2rem 0.6rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 600, background: sc.bg, color: sc.text }}>
-              {vendor.status}
-            </span>
+      <Link href="/vendors" className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
+        <ArrowLeft className="h-4 w-4" />
+        Vendors
+      </Link>
+
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex items-center justify-between gap-4">
+            <span>{error}</span>
+            <button onClick={() => setError('')} className="text-sm font-semibold">
+              Dismiss
+            </button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{vendor.name}</h1>
+            <StatusBadge value={vendor.status || 'inactive'} />
           </div>
-          {!editing && (
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button
-                onClick={handleSendPortalAccess}
-                disabled={portalSending}
-                style={{
-                  padding: '0.5rem 1rem',
-                  background: '#f0fdf4',
-                  color: '#15803d',
-                  border: '1px solid #bbf7d0',
-                  borderRadius: '6px',
-                  cursor: portalSending ? 'not-allowed' : 'pointer',
-                  fontWeight: 500,
-                  fontSize: '0.875rem',
-                }}
-              >
-                {portalSending ? 'Sending...' : 'Send Portal Access Link'}
-              </button>
-              <button onClick={() => setEditing(true)} style={{ padding: '0.5rem 1rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 500 }}>
-                Edit
-              </button>
-            </div>
-          )}
+          <div className="text-sm text-muted-foreground">
+            {vendor.code ? `${vendor.code} · ` : ''}{vendor.paymentTerms || 'No payment terms set'}
+          </div>
         </div>
+        {!editing ? (
+          <div className="flex flex-wrap gap-3">
+            <Button variant="outline" onClick={handleSendPortalAccess} disabled={portalSending}>
+              <Mail className="h-4 w-4" />
+              {portalSending ? 'Sending...' : 'Send Portal Access Link'}
+            </Button>
+            <Button onClick={() => setEditing(true)}>
+              <Pencil className="h-4 w-4" />
+              Edit
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       {!editing ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div className="space-y-6">
           <Section title="Basic Info">
             <Field label="Code" value={vendor.code || '—'} />
             <Field label="Tax ID" value={vendor.taxId || '—'} />
             <Field label="Payment Terms" value={vendor.paymentTerms || '—'} />
+            <Field label="Status" value={vendor.status || '—'} />
           </Section>
-          <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.25rem', boxShadow: SHADOWS.card }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center', marginBottom: '0.75rem' }}>
-              <div>
-                <h2 style={{ fontWeight: 600, fontSize: '0.9rem', color: COLORS.textSecondary, margin: 0 }}>Onboarding</h2>
-                <p style={{ fontSize: '0.8rem', color: COLORS.textMuted, margin: '0.35rem 0 0' }}>
-                  Questionnaire completion, risk score, and buyer review status.
-                </p>
+
+          <Card>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardTitle className="text-base">Onboarding</CardTitle>
+              <StatusBadge value={vendor.onboardingStatus || 'not_started'} />
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                <Field label="Risk Score" value={String(vendor.onboardingRiskScore ?? 0)} />
+                <Field label="Risk Level" value={String(vendor.onboardingRiskLevel ?? 'low')} />
+                <Field label="Submitted" value={vendor.onboardingLastSubmittedAt ? new Date(vendor.onboardingLastSubmittedAt).toLocaleString() : '—'} />
               </div>
-              <span style={{ padding: '0.2rem 0.6rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 600, background: onboardingColor.bg, color: onboardingColor.text }}>
-                {String(vendor.onboardingStatus || 'not_started').replace(/_/g, ' ')}
-              </span>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
-              <Field label="Risk Score" value={String(vendor.onboardingRiskScore ?? 0)} />
-              <Field label="Risk Level" value={String(vendor.onboardingRiskLevel ?? 'low')} />
-              <Field label="Submitted" value={vendor.onboardingLastSubmittedAt ? new Date(vendor.onboardingLastSubmittedAt).toLocaleString() : '—'} />
-            </div>
-            {latestSubmission && (
-              <div style={{ padding: '0.75rem', background: COLORS.hoverBg, borderRadius: '8px', fontSize: '0.82rem', color: COLORS.textSecondary }}>
-                Latest questionnaire: {latestSubmission.questionnaire?.name ?? 'Default questionnaire'}
-                <br />
-                Documents: W-9 {latestSubmission.documentLinks?.w9 ? 'attached' : 'missing'} • COI {latestSubmission.documentLinks?.coi ? 'attached' : 'missing'} • Banking {latestSubmission.documentLinks?.banking ? 'attached' : 'missing'}
-                {latestSubmission.reviewNote ? (
+
+              {latestSubmission ? (
+                <div className="rounded-2xl border border-border/70 bg-muted/40 p-4 text-sm text-muted-foreground">
+                  <div>Latest questionnaire: {latestSubmission.questionnaire?.name ?? 'Default questionnaire'}</div>
+                  <div className="mt-2">
+                    Documents: W-9 {latestSubmission.documentLinks?.w9 ? 'attached' : 'missing'} · COI {latestSubmission.documentLinks?.coi ? 'attached' : 'missing'} · Banking {latestSubmission.documentLinks?.banking ? 'attached' : 'missing'}
+                  </div>
+                  {latestSubmission.reviewNote ? <div className="mt-2">Review note: {latestSubmission.reviewNote}</div> : null}
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap gap-3">
+                <Button asChild variant="outline">
+                  <Link href="/vendors/onboarding">Open Onboarding Queue</Link>
+                </Button>
+                {vendor.onboardingStatus === 'pending_review' ? (
                   <>
-                    <br />
-                    Review note: {latestSubmission.reviewNote}
+                    <Button onClick={() => reviewOnboarding('approved')} disabled={reviewSaving}>
+                      <ShieldCheck className="h-4 w-4" />
+                      Approve Onboarding
+                    </Button>
+                    <Button variant="outline" onClick={() => reviewOnboarding('changes_requested')} disabled={reviewSaving}>
+                      Request Changes
+                    </Button>
                   </>
                 ) : null}
               </div>
-            )}
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
-              <Link href="/vendors/onboarding" style={{ padding: '0.45rem 0.8rem', borderRadius: '6px', textDecoration: 'none', background: COLORS.accentBlueLight, color: COLORS.accentBlueDark, fontWeight: 600, fontSize: '0.82rem' }}>
-                Open Onboarding Queue
-              </Link>
-              {vendor.onboardingStatus === 'pending_review' && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => reviewOnboarding('approved')}
-                    disabled={reviewSaving}
-                    style={{ padding: '0.45rem 0.8rem', borderRadius: '6px', border: 'none', background: '#dcfce7', color: '#166534', fontWeight: 600, fontSize: '0.82rem', cursor: reviewSaving ? 'not-allowed' : 'pointer' }}
-                  >
-                    Approve Onboarding
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => reviewOnboarding('changes_requested')}
-                    disabled={reviewSaving}
-                    style={{ padding: '0.45rem 0.8rem', borderRadius: '6px', border: 'none', background: '#fef2f2', color: '#b91c1c', fontWeight: 600, fontSize: '0.82rem', cursor: reviewSaving ? 'not-allowed' : 'pointer' }}
-                  >
-                    Request Changes
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
+            </CardContent>
+          </Card>
+
           <Section title="Contact">
             <Field label="Contact Name" value={vendor.contactInfo?.contactName || '—'} />
             <Field label="Email" value={vendor.contactInfo?.email || '—'} />
             <Field label="Phone" value={vendor.contactInfo?.phone || '—'} />
           </Section>
+
           <Section title="Address">
             <Field label="Street" value={vendor.address?.street || '—'} />
             <Field label="City" value={vendor.address?.city || '—'} />
@@ -242,208 +267,246 @@ export default function VendorDetailPage() {
             <Field label="Postal Code" value={vendor.address?.postalCode || '—'} />
             <Field label="Country" value={vendor.address?.country || '—'} />
           </Section>
-          {/* Purchase Orders */}
-          <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.25rem', boxShadow: SHADOWS.card }}>
-            <h2 style={{ fontWeight: 600, fontSize: '0.9rem', color: COLORS.textSecondary, marginBottom: '0.75rem' }}>
-              Purchase Orders {txns ? `(${txns.purchaseOrders.length})` : ''}
-            </h2>
-            {!txns || txns.purchaseOrders.length === 0 ? (
-              <p style={{ fontSize: '0.875rem', color: COLORS.textMuted, margin: 0 }}>No purchase orders</p>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                  <thead>
-                    <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                      {['PO Number', 'Status', 'Amount', 'Issued'].map((h) => (
-                        <th key={h} style={{ padding: '0.4rem 0.6rem', textAlign: 'left', fontWeight: 600, color: COLORS.textSecondary }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
+
+          <Card className="overflow-hidden">
+            <CardHeader>
+              <CardTitle className="text-base">
+                Purchase Orders {txns ? `(${txns.purchaseOrders.length})` : ''}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {!txns || txns.purchaseOrders.length === 0 ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">No purchase orders.</div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>PO Number</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Issued</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {txns.purchaseOrders.map((po: any) => (
-                      <tr key={po.id} style={{ borderBottom: `1px solid ${COLORS.hoverBg}` }}>
-                        <td style={{ padding: '0.4rem 0.6rem' }}>
-                          <Link href={`/purchase-orders/${po.id}`} style={{ color: COLORS.accentBlueDark, textDecoration: 'none' }}>{po.number}</Link>
-                        </td>
-                        <td style={{ padding: '0.4rem 0.6rem', textTransform: 'capitalize', color: COLORS.textSecondary }}>{po.status}</td>
-                        <td style={{ padding: '0.4rem 0.6rem', color: COLORS.textSecondary }}>
-                          {po.amount != null ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(po.amount) : '—'}
-                        </td>
-                        <td style={{ padding: '0.4rem 0.6rem', color: COLORS.textSecondary }}>{po.issuedAt ? new Date(po.issuedAt).toLocaleDateString() : '—'}</td>
-                      </tr>
+                      <TableRow key={po.id}>
+                        <TableCell className="font-medium">
+                          <Link href={`/purchase-orders/${po.id}`} className="text-primary hover:underline">
+                            {po.number}
+                          </Link>
+                        </TableCell>
+                        <TableCell className="capitalize text-muted-foreground">{po.status}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {po.amount != null
+                            ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(po.amount)
+                            : '—'}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {po.issuedAt ? new Date(po.issuedAt).toLocaleDateString() : '—'}
+                        </TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
 
-          {/* Invoices */}
-          <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.25rem', boxShadow: SHADOWS.card }}>
-            <h2 style={{ fontWeight: 600, fontSize: '0.9rem', color: COLORS.textSecondary, marginBottom: '0.75rem' }}>
-              Invoices {txns ? `(${txns.invoices.length})` : ''}
-            </h2>
-            {!txns || txns.invoices.length === 0 ? (
-              <p style={{ fontSize: '0.875rem', color: COLORS.textMuted, margin: 0 }}>No invoices</p>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                  <thead>
-                    <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                      {['Invoice #', 'Vendor #', 'Status', 'Match', 'Amount', 'Date'].map((h) => (
-                        <th key={h} style={{ padding: '0.4rem 0.6rem', textAlign: 'left', fontWeight: 600, color: COLORS.textSecondary }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {txns.invoices.map((inv: any) => (
-                      <tr key={inv.id} style={{ borderBottom: `1px solid ${COLORS.hoverBg}` }}>
-                        <td style={{ padding: '0.4rem 0.6rem' }}>
-                          <Link href={`/invoices/${inv.id}`} style={{ color: COLORS.accentBlueDark, textDecoration: 'none' }}>{inv.number}</Link>
-                        </td>
-                        <td style={{ padding: '0.4rem 0.6rem', color: COLORS.textSecondary }}>{inv.vendorInvoiceNumber ?? '—'}</td>
-                        <td style={{ padding: '0.4rem 0.6rem', textTransform: 'capitalize', color: COLORS.textSecondary }}>{inv.status}</td>
-                        <td style={{ padding: '0.4rem 0.6rem', color: inv.matchStatus === 'exception' ? COLORS.accentRedDark : COLORS.textSecondary }}>{inv.matchStatus ?? '—'}</td>
-                        <td style={{ padding: '0.4rem 0.6rem', color: COLORS.textSecondary }}>
-                          {inv.amount != null ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(inv.amount) : '—'}
-                        </td>
-                        <td style={{ padding: '0.4rem 0.6rem', color: COLORS.textSecondary }}>{inv.date ? new Date(inv.date).toLocaleDateString() : '—'}</td>
-                      </tr>
+          <Card className="overflow-hidden">
+            <CardHeader>
+              <CardTitle className="text-base">Invoices {txns ? `(${txns.invoices.length})` : ''}</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {!txns || txns.invoices.length === 0 ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">No invoices.</div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>Invoice #</TableHead>
+                      <TableHead>Vendor #</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Match</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Date</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {txns.invoices.map((invoice: any) => (
+                      <TableRow key={invoice.id}>
+                        <TableCell className="font-medium">
+                          <Link href={`/invoices/${invoice.id}`} className="text-primary hover:underline">
+                            {invoice.number}
+                          </Link>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">{invoice.vendorInvoiceNumber ?? '—'}</TableCell>
+                        <TableCell className="capitalize text-muted-foreground">{invoice.status}</TableCell>
+                        <TableCell className={invoice.matchStatus === 'exception' ? 'text-rose-700' : 'text-muted-foreground'}>
+                          {invoice.matchStatus ?? '—'}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {invoice.amount != null
+                            ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(invoice.amount)
+                            : '—'}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {invoice.date ? new Date(invoice.date).toLocaleDateString() : '—'}
+                        </TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
 
-          {/* Vendor Portal */}
-          <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.25rem', boxShadow: SHADOWS.card }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <h2 style={{ fontWeight: 600, fontSize: '0.9rem', color: COLORS.textSecondary, margin: '0 0 0.25rem' }}>Vendor Portal</h2>
-                <p style={{ fontSize: '0.8rem', color: COLORS.textSecondary, margin: 0 }}>
-                  Send a secure, tokenized portal link to the vendor so they can view POs and submit invoices directly.
-                </p>
-              </div>
-              <button
-                onClick={handleSendPortalAccess}
-                disabled={portalSending}
-                style={{ padding: '0.4rem 1rem', border: 'none', borderRadius: '6px', cursor: portalSending ? 'not-allowed' : 'pointer', background: COLORS.accentBlueLight, color: COLORS.accentBlueDark, fontWeight: 500, fontSize: '0.875rem', whiteSpace: 'nowrap', marginLeft: '1rem' }}
-              >
-                {portalSending ? 'Sending…' : 'Send Access Link'}
-              </button>
-            </div>
-            {portalMsg && (
-              <div style={{ marginTop: '0.75rem', padding: '0.625rem 0.875rem', background: portalMsg.startsWith('Error') ? COLORS.accentRedLight : '#f0fdf4', borderRadius: '6px', fontSize: '0.8rem', color: portalMsg.startsWith('Error') ? COLORS.accentRedDark : '#15803d', border: `1px solid ${portalMsg.startsWith('Error') ? '#fecaca' : '#bbf7d0'}` }}>
-                {portalMsg}
-              </div>
-            )}
-          </div>
+          <Card>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Globe className="h-4 w-4" />
+                Vendor Portal
+              </CardTitle>
+              <Button variant="outline" onClick={handleSendPortalAccess} disabled={portalSending}>
+                {portalSending ? 'Sending...' : 'Send Access Link'}
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                Send a secure, tokenized portal link so the vendor can view purchase orders and submit invoices directly.
+              </p>
+              {portalMsg ? (
+                <div className={`mt-4 rounded-xl border px-4 py-3 text-sm ${portalMsg.startsWith('Error') ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+                  {portalMsg}
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
 
-          {/* Punchout */}
-          <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.25rem', boxShadow: SHADOWS.card }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <h2 style={{ fontWeight: 600, fontSize: '0.9rem', color: COLORS.textSecondary, margin: '0 0 0.25rem' }}>Punchout (cXML)</h2>
-                <p style={{ fontSize: '0.8rem', color: COLORS.textSecondary, margin: 0 }}>
-                  Allow this vendor&apos;s catalog to be browsed via cXML PunchOut.{' '}
-                  {vendor.punchoutEnabled ? (
-                    <span style={{ color: '#059669', fontWeight: 600 }}>Enabled</span>
-                  ) : (
-                    <span style={{ color: COLORS.textMuted }}>Disabled</span>
-                  )}
-                </p>
-              </div>
-              <button
-                onClick={togglePunchout}
-                disabled={punchoutSaving}
-                style={{
-                  padding: '0.4rem 1rem', border: 'none', borderRadius: '6px', cursor: punchoutSaving ? 'not-allowed' : 'pointer',
-                  background: vendor.punchoutEnabled ? COLORS.accentRedLight : '#d1fae5',
-                  color: vendor.punchoutEnabled ? COLORS.accentRedDark : '#059669',
-                  fontWeight: 500, fontSize: '0.875rem',
-                }}
-              >
-                {punchoutSaving ? '…' : vendor.punchoutEnabled ? 'Disable' : 'Enable'}
-              </button>
-            </div>
-            {vendor.punchoutEnabled && (
-              <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#f0f9ff', borderRadius: '6px', fontSize: '0.8rem', color: '#0369a1' }}>
-                Setup endpoint: <code style={{ fontFamily: 'monospace' }}>POST /api/v1/punchout/vendors/{vendor.id}/setup</code>
-              </div>
-            )}
-          </div>
+          <Card>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <PlugZap className="h-4 w-4" />
+                Punchout (cXML)
+              </CardTitle>
+              <Button variant="outline" onClick={togglePunchout} disabled={punchoutSaving}>
+                {punchoutSaving ? 'Saving...' : vendor.punchoutEnabled ? 'Disable' : 'Enable'}
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                Allow this vendor&apos;s catalog to be browsed via cXML PunchOut.{' '}
+                {vendor.punchoutEnabled ? (
+                  <span className="font-semibold text-emerald-700">Enabled</span>
+                ) : (
+                  <span className="text-muted-foreground">Disabled</span>
+                )}
+              </p>
+              {vendor.punchoutEnabled ? (
+                <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700">
+                  Setup endpoint: <code className="font-mono">POST /api/v1/punchout/vendors/{vendor.id}/setup</code>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
         </div>
       ) : (
-        <form onSubmit={handleSave}>
-          <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1rem', boxShadow: SHADOWS.card }}>
-            <h2 style={{ fontWeight: 600, marginBottom: '1rem', fontSize: '1rem' }}>Basic Info</h2>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label style={labelStyle}>Name *</label>
-                <input required value={form.name} onChange={(e) => set('name', e.target.value)} style={inputStyle} />
-              </div>
-              <div><label style={labelStyle}>Code</label><input value={form.code} onChange={(e) => set('code', e.target.value)} style={inputStyle} /></div>
-              <div><label style={labelStyle}>Tax ID</label><input value={form.taxId} onChange={(e) => set('taxId', e.target.value)} style={inputStyle} /></div>
-              <div>
-                <label style={labelStyle}>Payment Terms</label>
-                <select value={form.paymentTerms} onChange={(e) => set('paymentTerms', e.target.value)} style={inputStyle}>
-                  {['Net 15', 'Net 30', 'Net 45', 'Net 60', 'Due on Receipt', '2/10 Net 30'].map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
+        <form onSubmit={handleSave} className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Basic Info</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <label className="mb-2 block text-sm font-medium text-foreground">Name *</label>
+                <Input required value={form.name} onChange={(event) => set('name', event.target.value)} />
               </div>
               <div>
-                <label style={labelStyle}>Status</label>
-                <select value={form.status} onChange={(e) => set('status', e.target.value)} style={inputStyle}>
-                  <option value="active">Active</option><option value="inactive">Inactive</option><option value="blocked">Blocked</option>
-                </select>
+                <label className="mb-2 block text-sm font-medium text-foreground">Code</label>
+                <Input value={form.code} onChange={(event) => set('code', event.target.value)} />
               </div>
-            </div>
-          </div>
-          <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1rem', boxShadow: SHADOWS.card }}>
-            <h2 style={{ fontWeight: 600, marginBottom: '1rem', fontSize: '1rem' }}>Contact</h2>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div><label style={labelStyle}>Contact Name</label><input value={form.contactName} onChange={(e) => set('contactName', e.target.value)} style={inputStyle} /></div>
-              <div><label style={labelStyle}>Email</label><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} style={inputStyle} /></div>
-              <div><label style={labelStyle}>Phone</label><input value={form.phone} onChange={(e) => set('phone', e.target.value)} style={inputStyle} /></div>
-            </div>
-          </div>
-          <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1rem', boxShadow: SHADOWS.card }}>
-            <h2 style={{ fontWeight: 600, marginBottom: '1rem', fontSize: '1rem' }}>Address</h2>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Street</label><input value={form.street} onChange={(e) => set('street', e.target.value)} style={inputStyle} /></div>
-              <div><label style={labelStyle}>City</label><input value={form.city} onChange={(e) => set('city', e.target.value)} style={inputStyle} /></div>
-              <div><label style={labelStyle}>State</label><input value={form.state} onChange={(e) => set('state', e.target.value)} style={inputStyle} /></div>
-              <div><label style={labelStyle}>Postal Code</label><input value={form.postalCode} onChange={(e) => set('postalCode', e.target.value)} style={inputStyle} /></div>
-              <div><label style={labelStyle}>Country</label><input value={form.country} onChange={(e) => set('country', e.target.value)} style={inputStyle} /></div>
-            </div>
-          </div>
-          {error && <div style={{ background: COLORS.accentRedLight, border: '1px solid #fecaca', borderRadius: '6px', padding: '0.75rem', color: COLORS.accentRedDark, fontSize: '0.875rem', marginBottom: '1rem' }}>{error}</div>}
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
-            <button type="submit" disabled={saving} style={{ padding: '0.625rem 1.25rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground">Tax ID</label>
+                <Input value={form.taxId} onChange={(event) => set('taxId', event.target.value)} />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground">Payment Terms</label>
+                <Select value={form.paymentTerms} onChange={(event) => set('paymentTerms', event.target.value)} className="w-full">
+                  {['Net 15', 'Net 30', 'Net 45', 'Net 60', 'Due on Receipt', '2/10 Net 30'].map((term) => (
+                    <option key={term} value={term}>
+                      {term}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground">Status</label>
+                <Select value={form.status} onChange={(event) => set('status', event.target.value)} className="w-full">
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="blocked">Blocked</option>
+                </Select>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Contact</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground">Contact Name</label>
+                <Input value={form.contactName} onChange={(event) => set('contactName', event.target.value)} />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground">Email</label>
+                <Input type="email" value={form.email} onChange={(event) => set('email', event.target.value)} />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground">Phone</label>
+                <Input value={form.phone} onChange={(event) => set('phone', event.target.value)} />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Address</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <label className="mb-2 block text-sm font-medium text-foreground">Street</label>
+                <Input value={form.street} onChange={(event) => set('street', event.target.value)} />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground">City</label>
+                <Input value={form.city} onChange={(event) => set('city', event.target.value)} />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground">State</label>
+                <Input value={form.state} onChange={(event) => set('state', event.target.value)} />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground">Postal Code</label>
+                <Input value={form.postalCode} onChange={(event) => set('postalCode', event.target.value)} />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground">Country</label>
+                <Input value={form.country} onChange={(event) => set('country', event.target.value)} />
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="flex gap-3">
+            <Button type="submit" disabled={saving}>
               {saving ? 'Saving...' : 'Save Changes'}
-            </button>
-            <button type="button" onClick={() => setEditing(false)} style={{ padding: '0.625rem 1.25rem', background: COLORS.tableBorder, color: COLORS.textSecondary, border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Cancel</button>
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
           </div>
         </form>
       )}
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.25rem', boxShadow: SHADOWS.card }}>
-      <h2 style={{ fontWeight: 600, fontSize: '0.9rem', color: COLORS.textSecondary, marginBottom: '0.75rem' }}>{title}</h2>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>{children}</div>
-    </div>
-  );
-}
-
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginBottom: '0.15rem' }}>{label}</div>
-      <div style={{ fontSize: '0.875rem', color: COLORS.textPrimary }}>{value}</div>
     </div>
   );
 }
