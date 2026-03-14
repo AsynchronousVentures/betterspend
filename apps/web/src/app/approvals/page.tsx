@@ -1,9 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { CheckCircle2, ChevronRight } from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
+import { PageHeader } from '../../components/page-header';
+import { StatusBadge } from '../../components/status-badge';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent } from '../../components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 
 interface ApprovalRequest {
   id: string;
@@ -15,20 +20,13 @@ interface ApprovalRequest {
   rule?: { name: string };
 }
 
-const STATUS_COLORS: Record<string, { background: string; color: string }> = {
-  pending:   { background: COLORS.accentAmberLight, color: COLORS.accentAmberDark },
-  approved:  { background: COLORS.accentGreenLight, color: COLORS.accentGreenDark },
-  rejected:  { background: COLORS.accentRedLight, color: COLORS.accentRedDark },
-  cancelled: { background: COLORS.contentBg, color: COLORS.textSecondary },
-};
-
-function StatusBadge({ status }: { status: string }) {
-  const style = STATUS_COLORS[status] ?? { background: COLORS.contentBg, color: COLORS.textSecondary };
-  return (
-    <span style={{ ...style, padding: '0.2rem 0.6rem', borderRadius: '9999px', fontSize: '0.75rem', fontWeight: 600, display: 'inline-block', whiteSpace: 'nowrap' }}>
-      {status.charAt(0).toUpperCase() + status.slice(1)}
-    </span>
-  );
+function formatAmount(value: number | null | undefined) {
+  if (value == null) return '—';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
 export default function ApprovalsPage() {
@@ -36,79 +34,101 @@ export default function ApprovalsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.approvals.list()
+    api.approvals
+      .list()
       .then((data) => setApprovals(Array.isArray(data) ? data : (data as any).data ?? []))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
   return (
-    <div style={{ padding: '2rem' }}>
-      <div style={{ marginBottom: '1.5rem' }}>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: COLORS.textPrimary }}>Approvals Queue</h1>
-        <p style={{ margin: '0.25rem 0 0', color: COLORS.textSecondary, fontSize: '0.875rem' }}>Review and act on pending approval requests</p>
-      </div>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="Approvals Queue"
+        description="Review and act on approval requests that are actively waiting on a decision."
+      />
 
-      <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', overflow: 'hidden', boxShadow: SHADOWS.card }}>
-        {loading ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted, fontSize: '0.875rem' }}>Loading…</div>
-        ) : approvals.length === 0 ? (
-          <div style={{ padding: '4rem 2rem', textAlign: 'center', color: COLORS.textMuted }}>
-            <p style={{ fontSize: '1rem', marginBottom: '0.5rem', color: COLORS.textSecondary, fontWeight: 500 }}>No pending approvals</p>
-            <p style={{ fontSize: '0.875rem', margin: 0 }}>All caught up! There are no items awaiting your review.</p>
-          </div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${COLORS.tableBorder}`, background: COLORS.tableHeaderBg }}>
-                  {['Entity', 'Amount', 'Rule Name', 'Current Step', 'Status', 'Created', 'Actions'].map((col) => (
-                    <th key={col} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 600, color: COLORS.textSecondary, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{col}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {approvals.map((approval, idx) => {
+      <Card className="overflow-hidden">
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="flex min-h-[260px] items-center justify-center text-sm text-muted-foreground">
+              Loading approvals...
+            </div>
+          ) : approvals.length === 0 ? (
+            <div className="flex min-h-[300px] flex-col items-center justify-center gap-3 px-6 text-center">
+              <div className="rounded-full bg-emerald-100 p-4">
+                <CheckCircle2 className="h-6 w-6 text-emerald-700" />
+              </div>
+              <div>
+                <p className="text-base font-semibold text-foreground">No pending approvals</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  All caught up. Nothing currently requires review.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Entity</TableHead>
+                  <TableHead>Amount</TableHead>
+                  <TableHead>Rule Name</TableHead>
+                  <TableHead>Current Step</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {approvals.map((approval) => {
                   const entity = (approval as any).entitySummary;
-                  const entityHref = approval.approvableType === 'requisition'
-                    ? `/requisitions/${approval.approvableId}`
-                    : `/purchase-orders/${approval.approvableId}`;
+                  const entityHref =
+                    approval.approvableType === 'requisition'
+                      ? `/requisitions/${approval.approvableId}`
+                      : `/purchase-orders/${approval.approvableId}`;
+
                   return (
-                    <tr key={approval.id} style={{ borderBottom: idx < approvals.length - 1 ? `1px solid ${COLORS.contentBg}` : undefined }}>
-                      <td style={{ padding: '0.875rem 1rem' }}>
-                        <div style={{ fontWeight: 600, color: COLORS.textPrimary, textTransform: 'capitalize', fontSize: '0.8rem' }}>
-                          {approval.approvableType.replace(/_/g, ' ')}
+                    <TableRow key={approval.id}>
+                      <TableCell>
+                        <div className="space-y-1">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                            {approval.approvableType.replace(/_/g, ' ')}
+                          </div>
+                          {entity ? (
+                            <Link href={entityHref} className="font-medium text-primary hover:underline">
+                              {entity.number}
+                              {entity.title ? ` — ${entity.title}` : entity.vendorName ? ` — ${entity.vendorName}` : ''}
+                            </Link>
+                          ) : (
+                            <div className="font-mono text-xs text-muted-foreground">…{approval.approvableId.slice(-8)}</div>
+                          )}
                         </div>
-                        {entity ? (
-                          <Link href={entityHref} style={{ color: COLORS.accentBlueDark, fontSize: '0.8rem', textDecoration: 'none' }}>
-                            {entity.number}{entity.title ? ` — ${entity.title}` : entity.vendorName ? ` — ${entity.vendorName}` : ''}
+                      </TableCell>
+                      <TableCell className="font-medium text-foreground">{formatAmount(entity?.amount)}</TableCell>
+                      <TableCell className="text-muted-foreground">{approval.rule?.name ?? '—'}</TableCell>
+                      <TableCell className="text-muted-foreground">Step {approval.currentStep}</TableCell>
+                      <TableCell>
+                        <StatusBadge value={approval.status} />
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {new Date(approval.createdAt).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button asChild size="sm">
+                          <Link href={`/approvals/${approval.id}`}>
+                            Review
+                            <ChevronRight className="h-4 w-4" />
                           </Link>
-                        ) : (
-                          <div style={{ color: COLORS.textMuted, fontSize: '0.75rem', fontFamily: 'monospace' }}>…{approval.approvableId.slice(-8)}</div>
-                        )}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary, fontWeight: 500 }}>
-                        {entity?.amount != null
-                          ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(entity.amount)
-                          : '—'}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{approval.rule?.name ?? '—'}</td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>Step {approval.currentStep}</td>
-                      <td style={{ padding: '0.875rem 1rem' }}><StatusBadge status={approval.status} /></td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{new Date(approval.createdAt).toLocaleDateString()}</td>
-                      <td style={{ padding: '0.875rem 1rem' }}>
-                        <Link href={`/approvals/${approval.id}`} style={{ background: COLORS.textPrimary, color: COLORS.white, padding: '0.375rem 0.875rem', borderRadius: '6px', textDecoration: 'none', fontSize: '0.8rem', fontWeight: 500, display: 'inline-block' }}>
-                          Review
-                        </Link>
-                      </td>
-                    </tr>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -2,9 +2,23 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import {
+  AlertTriangle,
+  ArrowRight,
+  BadgeCheck,
+  Boxes,
+  Building2,
+  ClipboardList,
+  FileSpreadsheet,
+  PackageSearch,
+  Receipt,
+  ShieldAlert,
+} from 'lucide-react';
 import { api } from '../lib/api';
-import { COLORS, SHADOWS } from '../lib/theme';
-import { useIsMobile } from '../lib/use-media-query';
+import { PageHeader } from '../components/page-header';
+import { StatusBadge } from '../components/status-badge';
+import { Button } from '../components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 
 function fmt(n: string | number | null | undefined) {
   if (n == null) return '—';
@@ -17,7 +31,6 @@ function fmt(n: string | number | null | undefined) {
 
 function formatRelativeTime(value: string | Date | null | undefined, now = Date.now()) {
   if (!value) return '';
-
   const date = value instanceof Date ? value : new Date(value);
   const timestamp = date.getTime();
   if (Number.isNaN(timestamp)) return '';
@@ -41,28 +54,8 @@ function formatRelativeTime(value: string | Date | null | undefined, now = Date.
     const days = Math.max(1, Math.floor(diffMs / day));
     return `${days} days ago`;
   }
-
   return date.toLocaleDateString();
 }
-
-const ACCENT_MAP: Record<string, { border: string; light: string; text: string }> = {
-  blue: { border: COLORS.accentBlue, light: COLORS.accentBlueLight, text: COLORS.accentBlueDark },
-  green: {
-    border: COLORS.accentGreen,
-    light: COLORS.accentGreenLight,
-    text: COLORS.accentGreenDark,
-  },
-  amber: {
-    border: COLORS.accentAmber,
-    light: COLORS.accentAmberLight,
-    text: COLORS.accentAmberDark,
-  },
-  purple: {
-    border: COLORS.accentPurple,
-    light: COLORS.accentPurpleLight,
-    text: COLORS.accentPurpleDark,
-  },
-};
 
 const ACTIVITY_ENTITY_ROUTES: Record<string, string> = {
   requisition: '/requisitions',
@@ -78,77 +71,53 @@ const ACTIVITY_ENTITY_ROUTES: Record<string, string> = {
   budget: '/budgets',
 };
 
+const MODULES = [
+  { title: 'Vendors', href: '/vendors', desc: 'Supplier master records and contract ownership', icon: Building2 },
+  { title: 'Catalog', href: '/catalog', desc: 'Pre-approved items for faster ordering', icon: Boxes },
+  { title: 'Requisitions', href: '/requisitions', desc: 'Submit and track purchase requests', icon: ClipboardList },
+  { title: 'Purchase Orders', href: '/purchase-orders', desc: 'Issue and manage PO lifecycle', icon: FileSpreadsheet },
+  { title: 'Approvals', href: '/approvals', desc: 'Pending items requiring your action', icon: BadgeCheck },
+  { title: 'Receiving', href: '/receiving', desc: 'Log goods receipts and exceptions', icon: PackageSearch },
+  { title: 'Inventory', href: '/inventory', desc: 'Track stock levels and reorder signals', icon: Boxes },
+  { title: 'Invoices', href: '/invoices', desc: 'AP workflows and three-way matching', icon: Receipt },
+  { title: 'Budgets', href: '/budgets', desc: 'Department and project budget controls', icon: ShieldAlert },
+  { title: 'GL Integration', href: '/gl-mappings', desc: 'QuickBooks and Xero mappings', icon: Building2 },
+  { title: 'Contracts', href: '/contracts', desc: 'Renewals, obligations, and commercial terms', icon: FileSpreadsheet },
+  { title: 'Analytics', href: '/analytics', desc: 'Spend intelligence and KPI reporting', icon: BadgeCheck },
+  { title: 'Approval Rules', href: '/approval-rules', desc: 'Configure routing logic and simulation', icon: ShieldAlert },
+  { title: 'Webhooks', href: '/webhooks', desc: 'Outbound event integrations', icon: ArrowRight },
+];
+
 function KpiCard({
   label,
   value,
   sub,
   href,
-  accent = 'blue',
+  accentClass,
 }: {
   label: string;
   value: string;
   sub?: string;
   href?: string;
-  accent?: string;
+  accentClass: string;
 }) {
-  const a = ACCENT_MAP[accent] ?? ACCENT_MAP.blue;
-  const inner = (
-    <div
-      style={{
-        background: COLORS.cardBg,
-        border: `1px solid ${COLORS.cardBorder}`,
-        borderLeft: `3px solid ${a.border}`,
-        borderRadius: '8px',
-        padding: '1.25rem',
-        textDecoration: 'none',
-        color: 'inherit',
-        display: 'block',
-        transition: 'box-shadow 0.2s',
-        boxShadow: SHADOWS.card,
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.boxShadow = SHADOWS.cardHover)}
-      onMouseLeave={(e) => (e.currentTarget.style.boxShadow = SHADOWS.card)}
-    >
-      <div
-        style={{
-          fontSize: '0.6875rem',
-          fontWeight: 600,
-          color: COLORS.textMuted,
-          textTransform: 'uppercase',
-          letterSpacing: '0.05em',
-          marginBottom: '0.5rem',
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          fontSize: '1.625rem',
-          fontWeight: 700,
-          color: COLORS.textPrimary,
-          lineHeight: 1.1,
-        }}
-      >
-        {value}
-      </div>
-      {sub && (
-        <div style={{ fontSize: '0.8rem', color: COLORS.textMuted, marginTop: '0.375rem' }}>
-          {sub}
-        </div>
-      )}
-      {href && (
-        <div style={{ marginTop: '0.75rem', fontSize: '0.8rem', color: a.border, fontWeight: 500 }}>
-          View &rarr;
-        </div>
-      )}
-    </div>
+  const content = (
+    <Card className={`h-full border-border/70 bg-card/95 transition-transform duration-150 hover:-translate-y-0.5 ${accentClass}`}>
+      <CardContent className="space-y-3 p-5">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+        <div className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{value}</div>
+        {sub ? <div className="text-sm text-muted-foreground">{sub}</div> : null}
+        {href ? <div className="text-sm font-semibold text-primary">View details</div> : null}
+      </CardContent>
+    </Card>
   );
+
   return href ? (
-    <Link href={href} style={{ textDecoration: 'none' }}>
-      {inner}
+    <Link href={href} className="block h-full">
+      {content}
     </Link>
   ) : (
-    inner
+    content
   );
 }
 
@@ -165,34 +134,12 @@ function ActionItem({
 }) {
   if (count === 0) return null;
   return (
-    <Link href={href} style={{ textDecoration: 'none' }}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0.75rem 1rem',
-          borderBottom: `1px solid ${COLORS.contentBg}`,
-          cursor: 'pointer',
-          transition: 'background 0.1s',
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.background = COLORS.hoverBg)}
-        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-      >
-        <span style={{ fontSize: '0.8125rem', color: COLORS.textSecondary }}>{label}</span>
-        <span
-          style={{
-            background: urgent ? COLORS.accentRedLight : COLORS.accentAmberLight,
-            color: urgent ? COLORS.accentRedDark : COLORS.accentAmberDark,
-            padding: '0.15rem 0.6rem',
-            borderRadius: '9999px',
-            fontSize: '0.6875rem',
-            fontWeight: 600,
-          }}
-        >
-          {count}
-        </span>
-      </div>
+    <Link
+      href={href}
+      className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/80 px-4 py-3 transition-colors hover:bg-muted/40"
+    >
+      <span className="text-sm text-foreground">{label}</span>
+      <StatusBadge value={urgent ? 'exception' : 'pending'} label={String(count)} className="min-w-9 justify-center" />
     </Link>
   );
 }
@@ -204,16 +151,12 @@ export default function HomePage() {
   const [activity, setActivity] = useState<any[]>([]);
   const [expiringContracts, setExpiringContracts] = useState<any[]>([]);
   const [lowStockItems, setLowStockItems] = useState<any[]>([]);
-  const [autoApprovedSummary, setAutoApprovedSummary] = useState<{
-    count: number;
-    totalAmount: number;
-  } | null>(null);
+  const [autoApprovedSummary, setAutoApprovedSummary] = useState<{ count: number; totalAmount: number } | null>(null);
   const [autoApproveThreshold, setAutoApproveThreshold] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [relativeNow, setRelativeNow] = useState(() => Date.now());
   const [exportingCsv, setExportingCsv] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
-  const isMobile = useIsMobile();
 
   useEffect(() => {
     Promise.all([
@@ -225,15 +168,16 @@ export default function HomePage() {
       api.approvals.autoApprovedSummary().catch(() => null),
       api.settings.getAll().catch(() => ({})),
     ])
-      .then(([k, p, a, ec, ls, aas, settings]) => {
-        setKpis(k);
-        setPending(p);
-        setActivity(Array.isArray(a) ? a : []);
-        setExpiringContracts(Array.isArray(ec) ? ec : []);
-        setLowStockItems(Array.isArray(ls) ? ls : []);
-        if (aas) setAutoApprovedSummary(aas);
+      .then(([kpiData, pendingItems, recentActivity, contracts, lowStock, autoApproved, settings]) => {
+        setKpis(kpiData);
+        setPending(pendingItems);
+        setActivity(Array.isArray(recentActivity) ? recentActivity : []);
+        setExpiringContracts(Array.isArray(contracts) ? contracts : []);
+        setLowStockItems(Array.isArray(lowStock) ? lowStock : []);
+        if (autoApproved) setAutoApprovedSummary(autoApproved);
+
         const settingsMap = settings as Record<string, string>;
-        if (settingsMap && settingsMap.auto_approve_threshold) {
+        if (settingsMap.auto_approve_threshold) {
           setAutoApproveThreshold(parseFloat(settingsMap.auto_approve_threshold) || 0);
         }
       })
@@ -290,7 +234,6 @@ export default function HomePage() {
 
   async function handleExportPdf() {
     if (!dashboardRef.current) return;
-
     setExportingPdf(true);
     try {
       const exportedAt = new Date();
@@ -327,820 +270,295 @@ export default function HomePage() {
   }
 
   return (
-    <div style={{ padding: isMobile ? '1.25rem 1rem' : '2rem' }}>
-      <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
-        <div>
-          <h1 style={{ fontSize: '1.375rem', fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>
-            Dashboard
-          </h1>
-          <p style={{ color: COLORS.textMuted, fontSize: '0.8125rem', marginTop: '0.25rem' }}>
-            Welcome to BetterSpend — your P2P control center
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            onClick={handleExportCsv}
-            disabled={loading || exportingCsv}
-            style={{
-              padding: '0.55rem 0.9rem',
-              borderRadius: '8px',
-              border: `1px solid ${COLORS.border}`,
-              background: COLORS.cardBg,
-              color: COLORS.textPrimary,
-              fontSize: '0.8125rem',
-              fontWeight: 600,
-              cursor: loading || exportingCsv ? 'not-allowed' : 'pointer',
-            }}
-          >
-            {exportingCsv ? 'Exporting CSV...' : 'Export CSV'}
-          </button>
-          <button
-            type="button"
-            onClick={handleExportPdf}
-            disabled={loading || exportingPdf}
-            style={{
-              padding: '0.55rem 0.9rem',
-              borderRadius: '8px',
-              border: 'none',
-              background: COLORS.accentBlue,
-              color: COLORS.white,
-              fontSize: '0.8125rem',
-              fontWeight: 600,
-              cursor: loading || exportingPdf ? 'not-allowed' : 'pointer',
-              opacity: loading || exportingPdf ? 0.7 : 1,
-            }}
-          >
-            {exportingPdf ? 'Preparing PDF...' : 'Export PDF'}
-          </button>
-        </div>
-      </div>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="Dashboard"
+        description="A procurement command center for approvals, operational risk, and the current spend pulse."
+        actions={
+          <>
+            <Button variant="outline" onClick={handleExportCsv} disabled={loading || exportingCsv}>
+              {exportingCsv ? 'Exporting CSV...' : 'Export CSV'}
+            </Button>
+            <Button onClick={handleExportPdf} disabled={loading || exportingPdf}>
+              {exportingPdf ? 'Preparing PDF...' : 'Export PDF'}
+            </Button>
+          </>
+        }
+      />
 
-      <div ref={dashboardRef}>
-      {/* KPI grid */}
-      {loading ? (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)',
-            gap: '0.75rem',
-            marginBottom: '1.5rem',
-          }}
-        >
-          {[...Array(4)].map((_, i) => (
-            <div
-              key={i}
-              style={{
-                background: COLORS.hoverBg,
-                border: `1px solid ${COLORS.cardBorder}`,
-                borderRadius: '8px',
-                padding: '1.25rem',
-                height: '100px',
-              }}
-            />
-          ))}
-        </div>
-      ) : (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)',
-            gap: '0.75rem',
-            marginBottom: '1.5rem',
-          }}
-        >
-          <KpiCard
-            label="Active POs"
-            value={String(po?.active ?? 0)}
-            sub={`${po?.total ?? 0} total · ${fmt(po?.totalValue)} committed`}
-            href="/purchase-orders"
-            accent="blue"
-          />
-          <KpiCard
-            label="Open Requisitions"
-            value={String(req?.total ?? 0)}
-            sub="pending approval or in progress"
-            href="/requisitions"
-            accent="green"
-          />
-          <KpiCard
-            label="Invoices Paid"
-            value={fmt(inv?.paid)}
-            sub={`${fmt(inv?.pending)} still pending`}
-            href="/invoices"
-            accent="amber"
-          />
-          <KpiCard
-            label="Annual Budget"
-            value={fmt(bud?.totalBudget)}
-            sub="all active budgets combined"
-            href="/budgets"
-            accent="purple"
-          />
-        </div>
-      )}
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
-          gap: '1rem',
-          marginBottom: '1.5rem',
-        }}
-      >
-        {/* Action items */}
-        <div
-          style={{
-            background: COLORS.cardBg,
-            border: `1px solid ${COLORS.cardBorder}`,
-            borderRadius: '8px',
-            overflow: 'hidden',
-            boxShadow: SHADOWS.card,
-          }}
-        >
-          <div
-            style={{
-              padding: '0.875rem 1rem',
-              borderBottom: `1px solid ${COLORS.cardBorder}`,
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-            }}
-          >
-            <h2
-              style={{
-                margin: 0,
-                fontSize: '0.8125rem',
-                fontWeight: 600,
-                color: COLORS.textPrimary,
-              }}
-            >
-              Action Required
-            </h2>
-            {totalActions > 0 && (
-              <span
-                style={{
-                  background: COLORS.badgeRed,
-                  color: '#fff',
-                  padding: '0.125rem 0.5rem',
-                  borderRadius: '9999px',
-                  fontSize: '0.6875rem',
-                  fontWeight: 600,
-                }}
-              >
-                {totalActions}
-              </span>
-            )}
-          </div>
-          {!pending || totalActions === 0 ? (
-            <div
-              style={{
-                padding: '2rem',
-                textAlign: 'center',
-                color: COLORS.textMuted,
-                fontSize: '0.8125rem',
-              }}
-            >
-              {loading ? 'Loading...' : 'All caught up!'}
-            </div>
+      <div ref={dashboardRef} className="space-y-6">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {loading ? (
+            [...Array(4)].map((_, index) => (
+              <div key={index} className="h-36 animate-pulse rounded-[24px] border border-border/70 bg-muted/60" />
+            ))
           ) : (
-            <div>
-              <ActionItem
-                label="Pending Approvals"
-                count={pending.pendingApprovals ?? 0}
-                href="/approvals"
+            <>
+              <KpiCard
+                label="Active POs"
+                value={String(po?.active ?? 0)}
+                sub={`${po?.total ?? 0} total · ${fmt(po?.totalValue)} committed`}
+                href="/purchase-orders"
+                accentClass="border-l-[3px] border-l-primary"
               />
-              <ActionItem
-                label="Invoice Exceptions"
-                count={pending.invoiceExceptions ?? 0}
-                href="/invoices"
-                urgent
-              />
-              <ActionItem
-                label="Spend Guard Alerts"
-                count={pending.spendGuardAlerts ?? 0}
-                href="/spend-guard"
-                urgent
-              />
-              <ActionItem
-                label="Software Renewals Due"
-                count={pending.upcomingSoftwareRenewals ?? 0}
-                href="/software-licenses"
-              />
-              <ActionItem
-                label="Requisitions Awaiting Approval"
-                count={pending.requisitionsPendingApproval ?? 0}
+              <KpiCard
+                label="Open Requisitions"
+                value={String(req?.total ?? 0)}
+                sub="Pending approval or in progress"
                 href="/requisitions"
+                accentClass="border-l-[3px] border-l-emerald-500"
               />
-              <ActionItem
-                label="POs Awaiting First Receipt"
-                count={pending.posAwaitingReceipt ?? 0}
-                href="/receiving"
-              />
-              <ActionItem
-                label="Overdue Invoices"
-                count={pending.overdueInvoices ?? 0}
+              <KpiCard
+                label="Invoices Paid"
+                value={fmt(inv?.paid)}
+                sub={`${fmt(inv?.pending)} still pending`}
                 href="/invoices"
-                urgent
+                accentClass="border-l-[3px] border-l-amber-500"
               />
-            </div>
+              <KpiCard
+                label="Annual Budget"
+                value={fmt(bud?.totalBudget)}
+                sub="All active budgets combined"
+                href="/budgets"
+                accentClass="border-l-[3px] border-l-sky-500"
+              />
+            </>
           )}
         </div>
 
-        {/* Recent activity */}
-        <div
-          style={{
-            background: COLORS.cardBg,
-            border: `1px solid ${COLORS.cardBorder}`,
-            borderRadius: '8px',
-            overflow: 'hidden',
-            boxShadow: SHADOWS.card,
-          }}
-        >
-          <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.cardBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
-            <h2
-              style={{
-                margin: 0,
-                fontSize: '0.8125rem',
-                fontWeight: 600,
-                color: COLORS.textPrimary,
-              }}
-            >
-              Recent Activity
-            </h2>
-            <Link
-              href="/audit"
-              style={{
-                fontSize: '0.75rem',
-                color: COLORS.accentBlue,
-                fontWeight: 500,
-                textDecoration: 'none',
-              }}
-            >
-              View audit log &rarr;
-            </Link>
-          </div>
-          {loading ? (
-            <div
-              style={{
-                padding: '2rem',
-                textAlign: 'center',
-                color: COLORS.textMuted,
-                fontSize: '0.8125rem',
-              }}
-            >
-              Loading...
-            </div>
-          ) : activity.length === 0 ? (
-            <div
-              style={{
-                padding: '2rem',
-                textAlign: 'center',
-                color: COLORS.textMuted,
-                fontSize: '0.8125rem',
-              }}
-            >
-              No recent activity
-            </div>
-          ) : (
-            <div style={{ overflowY: 'auto', maxHeight: '280px' }}>
-              {activity.slice(0, 12).map((item, i) => {
-                const baseRoute = ACTIVITY_ENTITY_ROUTES[String(item.entityType ?? '')];
-                const detailHref = baseRoute && item.entityId ? `${baseRoute}/${item.entityId}` : null;
-                const content = (
-                  <div
-                    style={{
-                      padding: '0.5rem 1rem',
-                      borderBottom: `1px solid ${COLORS.contentBg}`,
-                      display: 'flex',
-                      gap: '0.625rem',
-                      alignItems: 'flex-start',
-                      cursor: detailHref ? 'pointer' : 'default',
-                      transition: 'background 0.1s',
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: 5,
-                        height: 5,
-                        borderRadius: '50%',
-                        background: COLORS.accentBlue,
-                        marginTop: '0.4rem',
-                        flexShrink: 0,
-                      }}
-                    />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>
-                        <span style={{ fontWeight: 600, color: COLORS.textPrimary }}>
-                          {item.userName ?? 'System'}
-                        </span>{' '}
-                        <span>{item.action}</span>{' '}
-                        <span style={{ color: COLORS.textMuted, textTransform: 'capitalize' }}>
-                          {String(item.entityType ?? '').replace(/_/g, ' ')}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '0.6875rem',
-                          color: COLORS.textMuted,
-                          marginTop: '0.125rem',
-                        }}
-                        title={item.createdAt ? new Date(item.createdAt).toISOString() : undefined}
-                      >
-                        {formatRelativeTime(item.createdAt, relativeNow)}
-                      </div>
-                      {detailHref ? (
-                        <div style={{ fontSize: '0.6875rem', color: COLORS.accentBlue, marginTop: '0.2rem', fontWeight: 500 }}>
-                          Open record &rarr;
+        <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+          <Card>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle className="text-base">Action Required</CardTitle>
+                <CardDescription>Queues that need attention across approvals, invoices, and controls.</CardDescription>
+              </div>
+              {totalActions > 0 ? (
+                <div className="rounded-full bg-rose-600 px-2.5 py-1 text-xs font-semibold text-white">{totalActions}</div>
+              ) : null}
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {!pending || totalActions === 0 ? (
+                <div className="rounded-2xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+                  {loading ? 'Loading...' : 'All caught up.'}
+                </div>
+              ) : (
+                <>
+                  <ActionItem label="Pending Approvals" count={pending.pendingApprovals ?? 0} href="/approvals" />
+                  <ActionItem label="Invoice Exceptions" count={pending.invoiceExceptions ?? 0} href="/invoices" urgent />
+                  <ActionItem label="Spend Guard Alerts" count={pending.spendGuardAlerts ?? 0} href="/spend-guard" urgent />
+                  <ActionItem label="Software Renewals Due" count={pending.upcomingSoftwareRenewals ?? 0} href="/software-licenses" />
+                  <ActionItem label="Requisitions Awaiting Approval" count={pending.requisitionsPendingApproval ?? 0} href="/requisitions" />
+                  <ActionItem label="POs Awaiting First Receipt" count={pending.posAwaitingReceipt ?? 0} href="/receiving" />
+                  <ActionItem label="Overdue Invoices" count={pending.overdueInvoices ?? 0} href="/invoices" urgent />
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle className="text-base">Recent Activity</CardTitle>
+                <CardDescription>Latest system and user actions across the P2P workflow.</CardDescription>
+              </div>
+              <Link href="/audit" className="text-sm font-semibold text-primary hover:underline">
+                View audit log
+              </Link>
+            </CardHeader>
+            <CardContent className="max-h-[420px] space-y-3 overflow-y-auto">
+              {loading ? (
+                <div className="rounded-2xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+                  Loading...
+                </div>
+              ) : activity.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+                  No recent activity
+                </div>
+              ) : (
+                activity.slice(0, 12).map((item, index) => {
+                  const baseRoute = ACTIVITY_ENTITY_ROUTES[String(item.entityType ?? '')];
+                  const detailHref = baseRoute && item.entityId ? `${baseRoute}/${item.entityId}` : null;
+                  const activityCard = (
+                    <div className="flex gap-3 rounded-2xl border border-border/70 bg-background/80 p-4 transition-colors hover:bg-muted/40">
+                      <div className="mt-1 h-2.5 w-2.5 rounded-full bg-primary" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm text-muted-foreground">
+                          <span className="font-semibold text-foreground">{item.userName ?? 'System'}</span> {item.action}{' '}
+                          <span className="capitalize">{String(item.entityType ?? '').replace(/_/g, ' ')}</span>
                         </div>
-                      ) : null}
+                        <div className="mt-1 text-xs text-muted-foreground">{formatRelativeTime(item.createdAt, relativeNow)}</div>
+                        {detailHref ? <div className="mt-2 text-xs font-semibold text-primary">Open record</div> : null}
+                      </div>
                     </div>
-                  </div>
-                );
+                  );
 
-                if (!detailHref) {
-                  return <div key={item.id ?? i}>{content}</div>;
-                }
+                  return detailHref ? (
+                    <Link key={item.id ?? index} href={detailHref}>
+                      {activityCard}
+                    </Link>
+                  ) : (
+                    <div key={item.id ?? index}>{activityCard}</div>
+                  );
+                })
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
+        {!loading && expiringContracts.length > 0 ? (
+          <Card className="border-amber-200 bg-amber-50/80">
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base text-amber-950">
+                  <AlertTriangle className="h-4 w-4" />
+                  Contracts Expiring Within 30 Days
+                </CardTitle>
+                <CardDescription className="text-amber-900/80">Renewal risk that should be reviewed before lapse.</CardDescription>
+              </div>
+              <Link href="/contracts?filter=expiring_soon" className="text-sm font-semibold text-amber-900 hover:underline">
+                View all contracts
+              </Link>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {expiringContracts.slice(0, 5).map((contract: any) => {
+                const daysLeft = contract.endDate ? Math.ceil((new Date(contract.endDate).getTime() - Date.now()) / 86400000) : null;
                 return (
                   <Link
-                    key={item.id ?? i}
-                    href={detailHref}
-                    style={{ textDecoration: 'none' }}
-                    onMouseEnter={(e) => {
-                      const row = e.currentTarget.firstElementChild as HTMLElement | null;
-                      if (row) row.style.background = COLORS.hoverBg;
-                    }}
-                    onMouseLeave={(e) => {
-                      const row = e.currentTarget.firstElementChild as HTMLElement | null;
-                      if (row) row.style.background = 'transparent';
-                    }}
+                    key={contract.id}
+                    href={`/contracts/${contract.id}`}
+                    className="flex items-center justify-between gap-4 rounded-2xl border border-amber-200/80 bg-white/70 px-4 py-3 transition-colors hover:bg-white"
                   >
-                    {content}
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Expiring Contracts */}
-      {!loading && expiringContracts.length > 0 && (
-        <div style={{ marginBottom: '1.5rem' }}>
-          <div
-            style={{
-              background: COLORS.accentAmberLight,
-              border: `1px solid ${COLORS.accentAmber}`,
-              borderRadius: '8px',
-              overflow: 'hidden',
-            }}
-          >
-            <div
-              style={{
-                padding: '0.875rem 1rem',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                borderBottom: `1px solid ${COLORS.accentAmber}`,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: '0.875rem' }}>⚠️</span>
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize: '0.8125rem',
-                    fontWeight: 600,
-                    color: COLORS.accentAmberDark,
-                  }}
-                >
-                  Contracts Expiring Within 30 Days
-                </h2>
-              </div>
-              <Link
-                href="/contracts?filter=expiring_soon"
-                style={{
-                  fontSize: '0.75rem',
-                  color: COLORS.accentAmberDark,
-                  fontWeight: 500,
-                  textDecoration: 'none',
-                }}
-              >
-                View all contracts &rarr;
-              </Link>
-            </div>
-            <div>
-              {expiringContracts.slice(0, 5).map((c: any) => {
-                const daysLeft = c.endDate
-                  ? Math.ceil((new Date(c.endDate).getTime() - Date.now()) / 86400000)
-                  : null;
-                return (
-                  <Link key={c.id} href={`/contracts/${c.id}`} style={{ textDecoration: 'none' }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '0.625rem 1rem',
-                        borderBottom: `1px solid rgba(217,119,6,0.15)`,
-                        cursor: 'pointer',
-                        transition: 'background 0.1s',
-                      }}
-                      onMouseEnter={(e) =>
-                        (e.currentTarget.style.background = 'rgba(217,119,6,0.08)')
-                      }
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      <div>
-                        <div
-                          style={{
-                            fontSize: '0.8125rem',
-                            fontWeight: 500,
-                            color: COLORS.textPrimary,
-                          }}
-                        >
-                          {c.contractNumber} — {c.title}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: '0.75rem',
-                            color: COLORS.textMuted,
-                            marginTop: '0.125rem',
-                          }}
-                        >
-                          {c.vendor?.name ?? 'Unknown vendor'}
-                        </div>
+                    <div>
+                      <div className="font-medium text-amber-950">
+                        {contract.contractNumber} — {contract.title}
                       </div>
-                      <span
-                        style={{
-                          background:
-                            (daysLeft ?? 99) <= 7 ? COLORS.accentRedLight : COLORS.accentAmberLight,
-                          color:
-                            (daysLeft ?? 99) <= 7 ? COLORS.accentRedDark : COLORS.accentAmberDark,
-                          border: `1px solid ${(daysLeft ?? 99) <= 7 ? COLORS.accentRed : COLORS.accentAmber}`,
-                          padding: '0.15rem 0.5rem',
-                          borderRadius: '9999px',
-                          fontSize: '0.6875rem',
-                          fontWeight: 600,
-                          flexShrink: 0,
-                        }}
-                      >
-                        {daysLeft != null
-                          ? daysLeft <= 0
-                            ? 'Expired'
-                            : `${daysLeft}d left`
-                          : 'Check date'}
-                      </span>
+                      <div className="mt-1 text-sm text-amber-900/80">{contract.vendor?.name ?? 'Unknown vendor'}</div>
                     </div>
+                    <StatusBadge
+                      value={(daysLeft ?? 99) <= 7 ? 'exception' : 'pending'}
+                      label={daysLeft != null ? (daysLeft <= 0 ? 'Expired' : `${daysLeft}d left`) : 'Check date'}
+                    />
                   </Link>
                 );
               })}
-            </div>
-          </div>
-        </div>
-      )}
+            </CardContent>
+          </Card>
+        ) : null}
 
-      {/* Low Stock Alert */}
-      {!loading && lowStockItems.length > 0 && (
-        <div style={{ marginBottom: '1.5rem' }}>
-          <div
-            style={{
-              background: COLORS.accentAmberLight,
-              border: `1px solid ${COLORS.accentAmber}`,
-              borderRadius: '8px',
-              overflow: 'hidden',
-            }}
-          >
-            <div
-              style={{
-                padding: '0.875rem 1rem',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                borderBottom: `1px solid ${COLORS.accentAmber}`,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize: '0.8125rem',
-                    fontWeight: 600,
-                    color: COLORS.accentAmberDark,
-                  }}
-                >
-                  Low Stock Alert — {lowStockItems.length} item
-                  {lowStockItems.length !== 1 ? 's' : ''} below reorder point
-                </h2>
+        {!loading && lowStockItems.length > 0 ? (
+          <Card className="border-amber-200 bg-orange-50/70">
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle className="text-base text-orange-950">
+                  Low Stock Alert — {lowStockItems.length} item{lowStockItems.length !== 1 ? 's' : ''} below reorder point
+                </CardTitle>
+                <CardDescription className="text-orange-900/80">Inventory positions that are at risk of delaying fulfillment.</CardDescription>
               </div>
-              <Link
-                href="/inventory?lowStockOnly=true"
-                style={{
-                  fontSize: '0.75rem',
-                  color: COLORS.accentAmberDark,
-                  fontWeight: 500,
-                  textDecoration: 'none',
-                }}
-              >
-                Go to inventory &rarr;
+              <Link href="/inventory?lowStockOnly=true" className="text-sm font-semibold text-orange-900 hover:underline">
+                Go to inventory
               </Link>
-            </div>
-            <div>
+            </CardHeader>
+            <CardContent className="space-y-3">
               {lowStockItems.slice(0, 5).map((item: any) => (
                 <Link
                   key={item.id}
                   href={`/inventory/${item.id}`}
-                  style={{ textDecoration: 'none' }}
+                  className="flex items-center justify-between gap-4 rounded-2xl border border-orange-200/80 bg-white/70 px-4 py-3 transition-colors hover:bg-white"
                 >
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '0.625rem 1rem',
-                      borderBottom: `1px solid rgba(217,119,6,0.15)`,
-                      cursor: 'pointer',
-                      transition: 'background 0.1s',
-                    }}
-                    onMouseEnter={(e) =>
-                      (e.currentTarget.style.background = 'rgba(217,119,6,0.08)')
-                    }
-                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                  >
-                    <div>
-                      <div
-                        style={{
-                          fontSize: '0.8125rem',
-                          fontWeight: 500,
-                          color: COLORS.textPrimary,
-                        }}
-                      >
-                        {item.name}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '0.75rem',
-                          color: COLORS.textMuted,
-                          marginTop: '0.125rem',
-                        }}
-                      >
-                        SKU: {item.sku}
-                        {item.location ? ` · ${item.location}` : ''}
-                      </div>
+                  <div>
+                    <div className="font-medium text-orange-950">{item.name}</div>
+                    <div className="mt-1 text-sm text-orange-900/80">
+                      SKU: {item.sku}
+                      {item.location ? ` · ${item.location}` : ''}
                     </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: '1rem' }}>
-                      <span
-                        style={{
-                          background:
-                            item.stockStatus === 'out_of_stock'
-                              ? COLORS.accentRedLight
-                              : COLORS.accentAmberLight,
-                          color:
-                            item.stockStatus === 'out_of_stock'
-                              ? COLORS.accentRedDark
-                              : COLORS.accentAmberDark,
-                          border: `1px solid ${item.stockStatus === 'out_of_stock' ? COLORS.accentRed : COLORS.accentAmber}`,
-                          padding: '0.15rem 0.5rem',
-                          borderRadius: '9999px',
-                          fontSize: '0.6875rem',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {item.stockStatus === 'out_of_stock' ? 'Out of Stock' : 'Low Stock'}
-                      </span>
-                      <div
-                        style={{
-                          fontSize: '0.75rem',
-                          color: COLORS.textMuted,
-                          marginTop: '0.25rem',
-                        }}
-                      >
-                        {item.quantityOnHand} {item.unit} on hand
-                      </div>
+                  </div>
+                  <div className="text-right">
+                    <StatusBadge value={item.stockStatus === 'out_of_stock' ? 'exception' : 'pending'} label={item.stockStatus === 'out_of_stock' ? 'Out of Stock' : 'Low Stock'} />
+                    <div className="mt-2 text-xs text-orange-900/80">
+                      {item.quantityOnHand} {item.unit} on hand
                     </div>
                   </div>
                 </Link>
               ))}
-            </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {!loading && autoApproveThreshold > 0 && autoApprovedSummary !== null ? (
+          <Card className="border-emerald-200 bg-emerald-50/70">
+            <CardContent className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="space-y-2">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">Auto-approved this month</div>
+                <div className="flex flex-wrap items-baseline gap-3">
+                  <span className="text-3xl font-semibold tracking-[-0.04em] text-emerald-950">{autoApprovedSummary.count}</span>
+                  <span className="text-sm text-emerald-900/80">
+                    requisition{autoApprovedSummary.count !== 1 ? 's' : ''} ·{' '}
+                    {new Intl.NumberFormat('en-US', {
+                      style: 'currency',
+                      currency: 'USD',
+                      maximumFractionDigits: 0,
+                    }).format(autoApprovedSummary.totalAmount)}{' '}
+                    total
+                  </span>
+                </div>
+                <div className="text-sm text-emerald-900/80">
+                  Fast lane threshold: $
+                  {autoApproveThreshold.toLocaleString('en-US', {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 2,
+                  })}
+                </div>
+              </div>
+              <StatusBadge value="approved" label="Fast Lane Active" />
+            </CardContent>
+          </Card>
+        ) : null}
+
+        <section className="space-y-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Quick Actions</div>
+          <div className="flex flex-wrap gap-3">
+            {[
+              { label: 'New Requisition', href: '/requisitions/new' },
+              { label: 'New PO', href: '/purchase-orders/new' },
+              { label: 'Receive Goods', href: '/receiving/new' },
+              { label: 'New Invoice', href: '/invoices/new' },
+              { label: 'New Vendor', href: '/vendors/new' },
+              { label: 'New Budget', href: '/budgets/new' },
+            ].map((action) => (
+              <Button key={action.href} asChild variant="outline">
+                <Link href={action.href}>{action.label}</Link>
+              </Button>
+            ))}
           </div>
-        </div>
-      )}
+        </section>
 
-      {/* Auto-approved this month widget */}
-      {!loading && autoApproveThreshold > 0 && autoApprovedSummary !== null && (
-        <div style={{ marginBottom: '1.5rem' }}>
-          <div
-            style={{
-              background: COLORS.cardBg,
-              border: `1px solid ${COLORS.cardBorder}`,
-              borderLeft: `3px solid ${COLORS.accentGreen}`,
-              borderRadius: '8px',
-              padding: '1rem 1.25rem',
-              boxShadow: SHADOWS.card,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '1rem',
-            }}
-          >
-            <div>
-              <div
-                style={{
-                  fontSize: '0.6875rem',
-                  fontWeight: 600,
-                  color: COLORS.textMuted,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  marginBottom: '0.25rem',
-                }}
-              >
-                Auto-approved this month
-              </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
-                <span style={{ fontSize: '1.375rem', fontWeight: 700, color: COLORS.textPrimary }}>
-                  {autoApprovedSummary.count}
-                </span>
-                <span style={{ fontSize: '0.8125rem', color: COLORS.textSecondary }}>
-                  requisition{autoApprovedSummary.count !== 1 ? 's' : ''} &middot;{' '}
-                  {new Intl.NumberFormat('en-US', {
-                    style: 'currency',
-                    currency: 'USD',
-                    maximumFractionDigits: 0,
-                  }).format(autoApprovedSummary.totalAmount)}{' '}
-                  total
-                </span>
-              </div>
-              <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.25rem' }}>
-                Fast lane threshold: $
-                {autoApproveThreshold.toLocaleString('en-US', {
-                  minimumFractionDigits: 0,
-                  maximumFractionDigits: 2,
-                })}
-              </div>
-            </div>
-            <div
-              style={{
-                background: COLORS.accentGreenLight,
-                color: COLORS.accentGreenDark,
-                padding: '0.375rem 0.875rem',
-                borderRadius: '6px',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                flexShrink: 0,
-              }}
-            >
-              Fast Lane Active
-            </div>
+        <section className="space-y-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Modules</div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {MODULES.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Link key={item.href} href={item.href}>
+                  <Card className="h-full border-border/70 bg-card/95 transition-all hover:-translate-y-0.5 hover:border-primary/40">
+                    <CardContent className="space-y-3 p-5">
+                      <div className="flex items-center justify-between">
+                        <div className="rounded-2xl bg-muted p-3">
+                          <Icon className="h-5 w-5 text-foreground" />
+                        </div>
+                        <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <div className="font-semibold text-foreground">{item.title}</div>
+                        <div className="mt-1 text-sm text-muted-foreground">{item.desc}</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              );
+            })}
           </div>
-        </div>
-      )}
-
-      {/* Quick actions — softer style */}
-      <div style={{ marginBottom: '1.5rem' }}>
-        <h2
-          style={{
-            fontSize: '0.8125rem',
-            fontWeight: 600,
-            color: COLORS.textSecondary,
-            marginBottom: '0.75rem',
-            textTransform: 'uppercase',
-            letterSpacing: '0.04em',
-          }}
-        >
-          Quick Actions
-        </h2>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          {[
-            { label: 'New Requisition', href: '/requisitions/new', accent: 'blue' },
-            { label: 'New PO', href: '/purchase-orders/new', accent: 'green' },
-            { label: 'Receive Goods', href: '/receiving/new', accent: 'amber' },
-            { label: 'New Invoice', href: '/invoices/new', accent: 'purple' },
-            { label: 'New Vendor', href: '/vendors/new', accent: 'neutral' },
-            { label: 'New Budget', href: '/budgets/new', accent: 'neutral' },
-          ].map((a) => {
-            const ac =
-              a.accent === 'neutral'
-                ? { bg: COLORS.contentBg, text: COLORS.textSecondary, border: COLORS.border }
-                : {
-                    bg: (ACCENT_MAP[a.accent] ?? ACCENT_MAP.blue).light,
-                    text: (ACCENT_MAP[a.accent] ?? ACCENT_MAP.blue).text,
-                    border: 'transparent',
-                  };
-            return (
-              <Link
-                key={a.href}
-                href={a.href}
-                style={{
-                  padding: '0.4375rem 0.875rem',
-                  background: ac.bg,
-                  color: ac.text,
-                  border: `1px solid ${ac.border}`,
-                  borderRadius: '6px',
-                  textDecoration: 'none',
-                  fontSize: '0.8125rem',
-                  fontWeight: 500,
-                  transition: 'opacity 0.15s',
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.8')}
-                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-              >
-                + {a.label}
-              </Link>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Module overview */}
-      <div>
-        <h2
-          style={{
-            fontSize: '0.8125rem',
-            fontWeight: 600,
-            color: COLORS.textSecondary,
-            marginBottom: '0.75rem',
-            textTransform: 'uppercase',
-            letterSpacing: '0.04em',
-          }}
-        >
-          Modules
-        </h2>
-        <div
-          style={{
-            display: 'grid',
-            gap: '0.625rem',
-            gridTemplateColumns: isMobile
-              ? 'repeat(auto-fill, minmax(150px, 1fr))'
-              : 'repeat(auto-fill, minmax(200px, 1fr))',
-          }}
-        >
-          {[
-            { title: 'Vendors', href: '/vendors', desc: 'Supplier master records & contracts' },
-            { title: 'Catalog', href: '/catalog', desc: 'Pre-approved items for requisitions' },
-            {
-              title: 'Requisitions',
-              href: '/requisitions',
-              desc: 'Submit and track purchase requests',
-            },
-            {
-              title: 'Purchase Orders',
-              href: '/purchase-orders',
-              desc: 'Issue and manage PO lifecycle',
-            },
-            { title: 'Approvals', href: '/approvals', desc: 'Pending items requiring your action' },
-            { title: 'Receiving', href: '/receiving', desc: 'Log goods receipts (GRN)' },
-            { title: 'Inventory', href: '/inventory', desc: 'Track stock levels and movements' },
-            { title: 'Invoices', href: '/invoices', desc: 'AP and 3-way invoice matching' },
-            { title: 'Budgets', href: '/budgets', desc: 'Department & project budgets' },
-            { title: 'GL Integration', href: '/gl-mappings', desc: 'QuickBooks / Xero mapping' },
-            { title: 'Contracts', href: '/contracts', desc: 'Manage vendor contracts & renewals' },
-            { title: 'Analytics', href: '/analytics', desc: 'Spend intelligence & KPIs' },
-            {
-              title: 'Approval Rules',
-              href: '/approval-rules',
-              desc: 'Configure auto-routing rules',
-            },
-            { title: 'Webhooks', href: '/webhooks', desc: 'Outbound event integrations' },
-          ].map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              style={{
-                display: 'block',
-                padding: '0.875rem',
-                background: COLORS.cardBg,
-                borderRadius: '8px',
-                border: `1px solid ${COLORS.cardBorder}`,
-                textDecoration: 'none',
-                color: 'inherit',
-                transition: 'border-color 0.15s, box-shadow 0.15s',
-                boxShadow: SHADOWS.card,
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = COLORS.accentBlue;
-                e.currentTarget.style.boxShadow = SHADOWS.cardHover;
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = COLORS.cardBorder;
-                e.currentTarget.style.boxShadow = SHADOWS.card;
-              }}
-            >
-              <div
-                style={{
-                  fontWeight: 600,
-                  color: COLORS.textPrimary,
-                  fontSize: '0.8125rem',
-                  marginBottom: '0.25rem',
-                }}
-              >
-                {item.title}
-              </div>
-              <div style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>{item.desc}</div>
-            </Link>
-          ))}
-        </div>
-      </div>
+        </section>
       </div>
     </div>
   );
