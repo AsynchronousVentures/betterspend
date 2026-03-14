@@ -1,8 +1,29 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { COLORS, SHADOWS, FONT } from '../../lib/theme';
+import { useEffect, useState } from 'react';
+import { Leaf, ShieldCheck, Sprout, Users2 } from 'lucide-react';
 import { api } from '../../lib/api';
+import { PageHeader } from '../../components/page-header';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../components/ui/table';
 
 const DIVERSITY_LABELS: Record<string, string> = {
   minority_owned: 'Minority-Owned',
@@ -15,13 +36,13 @@ const DIVERSITY_LABELS: Record<string, string> = {
   indigenous_owned: 'Indigenous-Owned',
 };
 
-const ESG_COLORS: Record<string, { bg: string; text: string }> = {
-  'A+': { bg: '#dcfce7', text: '#065f46' },
-  A: { bg: '#d1fae5', text: '#065f46' },
-  'B+': { bg: '#d0f0fd', text: '#0c4a6e' },
-  B: { bg: '#e0f2fe', text: '#0c4a6e' },
-  C: { bg: COLORS.accentAmberLight, text: COLORS.accentAmberDark },
-  D: { bg: COLORS.accentRedLight, text: COLORS.accentRedDark },
+const ESG_COLORS: Record<string, string> = {
+  'A+': 'border-emerald-200 bg-emerald-100 text-emerald-800',
+  A: 'border-emerald-200 bg-emerald-100 text-emerald-800',
+  'B+': 'border-sky-200 bg-sky-100 text-sky-800',
+  B: 'border-sky-200 bg-sky-100 text-sky-800',
+  C: 'border-amber-200 bg-amber-100 text-amber-800',
+  D: 'border-rose-200 bg-rose-100 text-rose-800',
 };
 
 const CERT_LABELS: Record<string, string> = {
@@ -40,7 +61,7 @@ export default function SupplierDiversityPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState('');
+  const [message, setMessage] = useState('');
 
   useEffect(() => {
     load();
@@ -49,14 +70,16 @@ export default function SupplierDiversityPage() {
   async function load() {
     setLoading(true);
     try {
-      const [sum, vlist] = await Promise.all([
-        fetch('/api/v1/vendors/diversity/summary', { headers: { 'x-org-id': '00000000-0000-0000-0000-000000000001' } }).then((r) => r.json()),
+      const [sum, vendorList] = await Promise.all([
+        fetch('/api/v1/vendors/diversity/summary', {
+          headers: { 'x-org-id': '00000000-0000-0000-0000-000000000001' },
+        }).then((response) => response.json()),
         api.vendors.list(),
       ]);
       setSummary(sum);
-      setVendors(vlist as any[]);
+      setVendors(vendorList as any[]);
     } catch {
-      setMsg('Failed to load data');
+      setMessage('Failed to load supplier diversity data.');
     } finally {
       setLoading(false);
     }
@@ -89,183 +112,297 @@ export default function SupplierDiversityPage() {
         }),
       });
       setEditingId(null);
-      setMsg('ESG data saved');
+      setMessage('ESG data saved.');
       load();
     } catch {
-      setMsg('Save failed');
+      setMessage('Save failed.');
     } finally {
       setSaving(false);
     }
   }
 
-  function toggleCategory(cat: string) {
-    const cats: string[] = editForm.diversityCategories ?? [];
+  function toggleCategory(category: string) {
+    const categories: string[] = editForm.diversityCategories ?? [];
     setEditForm({
       ...editForm,
-      diversityCategories: cats.includes(cat) ? cats.filter((c: string) => c !== cat) : [...cats, cat],
+      diversityCategories: categories.includes(category)
+        ? categories.filter((current: string) => current !== category)
+        : [...categories, category],
     });
   }
 
-  function toggleCert(cert: string) {
+  function toggleCertification(certification: string) {
     const certs: string[] = editForm.sustainabilityCertifications ?? [];
     setEditForm({
       ...editForm,
-      sustainabilityCertifications: certs.includes(cert) ? certs.filter((c: string) => c !== cert) : [...certs, cert],
+      sustainabilityCertifications: certs.includes(certification)
+        ? certs.filter((current: string) => current !== certification)
+        : [...certs, certification],
     });
   }
 
-  const inp: React.CSSProperties = {
-    border: `1px solid ${COLORS.inputBorder}`,
-    borderRadius: 6,
-    padding: '0.35rem 0.5rem',
-    fontSize: FONT.xs,
-    background: '#fff',
-    color: COLORS.textPrimary,
-  };
-
   return (
-    <div style={{ padding: '1.5rem', background: COLORS.contentBg, minHeight: '100vh' }}>
-      <div style={{ marginBottom: '1.5rem' }}>
-        <h1 style={{ fontSize: FONT.xl, fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>Supplier Diversity & ESG</h1>
-        <p style={{ fontSize: FONT.sm, color: COLORS.textSecondary, margin: '0.25rem 0 0' }}>
-          Track diversity certifications, ESG ratings, and sustainability initiatives across your supply chain
-        </p>
-      </div>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="Supplier Diversity & ESG"
+        description="Track diversity certifications, ESG ratings, and sustainability signals across the vendor base."
+        actions={
+          <div className="flex items-center gap-2 rounded-full border border-border/70 bg-background/80 px-4 py-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+            <Leaf className="h-4 w-4" />
+            Supplier insights
+          </div>
+        }
+      />
 
-      {msg && (
-        <div style={{ background: COLORS.accentBlueLight, color: COLORS.accentBlueDark, padding: '0.5rem 0.75rem', borderRadius: 8, marginBottom: '1rem', fontSize: FONT.sm }}>
-          {msg}
+      {message ? (
+        <Alert>
+          <AlertDescription>{message}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {summary && !loading ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard icon={Users2} label="Total Vendors" value={String(summary.totalVendors)} tone="text-sky-700" />
+          <StatCard icon={Sprout} label="Diverse Suppliers" value={String(summary.diverseVendors)} tone="text-violet-700" />
+          <StatCard icon={ShieldCheck} label="Diversity Rate" value={`${summary.diversityRate}%`} tone="text-emerald-700" />
+          <StatCard icon={Leaf} label="ESG Rated" value={String(summary.esgRatedVendors)} tone="text-amber-700" />
         </div>
-      )}
+      ) : null}
 
-      {/* Summary cards */}
-      {summary && !loading && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
-          {[
-            { label: 'Total Vendors', value: summary.totalVendors, color: COLORS.accentBlue },
-            { label: 'Diverse Suppliers', value: summary.diverseVendors, color: COLORS.accentPurple },
-            { label: 'Diversity Rate', value: `${summary.diversityRate}%`, color: COLORS.accentGreen },
-            { label: 'ESG Rated', value: summary.esgRatedVendors, color: COLORS.accentAmber },
-          ].map((s) => (
-            <div key={s.label} style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 12, padding: '1.25rem', boxShadow: SHADOWS.card }}>
-              <div style={{ fontSize: FONT.xs, color: COLORS.textSecondary, marginBottom: '0.5rem' }}>{s.label}</div>
-              <div style={{ fontSize: FONT.xxl, fontWeight: 700, color: s.color }}>{s.value}</div>
+      {summary && Object.keys(summary.diversityBreakdown ?? {}).length > 0 ? (
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">Diversity Category Breakdown</CardTitle>
+            <CardDescription>High-level distribution of registered diverse supplier categories.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-3">
+              {Object.entries(summary.diversityBreakdown).map(([category, count]: any) => (
+                <Badge
+                  key={category}
+                  variant="outline"
+                  className="gap-2 border-violet-200 bg-violet-50 px-3 py-1 text-violet-800"
+                >
+                  {DIVERSITY_LABELS[category] ?? category}
+                  <span className="rounded-full bg-violet-700 px-2 py-0.5 text-[10px] font-bold text-white">
+                    {count}
+                  </span>
+                </Badge>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
+          </CardContent>
+        </Card>
+      ) : null}
 
-      {/* Diversity breakdown */}
-      {summary && Object.keys(summary.diversityBreakdown ?? {}).length > 0 && (
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-          <h3 style={{ fontSize: FONT.base, fontWeight: 700, color: COLORS.textPrimary, margin: '0 0 1rem' }}>Diversity Category Breakdown</h3>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
-            {Object.entries(summary.diversityBreakdown).map(([cat, count]: any) => (
-              <div key={cat} style={{ background: COLORS.accentPurpleLight, borderRadius: 8, padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: FONT.sm, color: COLORS.accentPurpleDark, fontWeight: 600 }}>{DIVERSITY_LABELS[cat] ?? cat}</span>
-                <span style={{ fontSize: FONT.xs, background: COLORS.accentPurple, color: '#fff', borderRadius: 20, padding: '0.1rem 0.4rem', fontWeight: 700 }}>{count}</span>
-              </div>
-            ))}
+      <Card className="rounded-[24px]">
+        <CardHeader>
+          <CardTitle className="text-xl">All Vendors</CardTitle>
+          <CardDescription>Maintain diversity categories, ESG scores, certifications, and carbon disclosures by vendor.</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {loading ? (
+            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+              Loading...
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Vendor</TableHead>
+                  <TableHead>Diversity Categories</TableHead>
+                  <TableHead>ESG Rating</TableHead>
+                  <TableHead>Certifications</TableHead>
+                  <TableHead>Carbon (tons/yr)</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {vendors.map((vendor) => {
+                  const categories = (vendor.diversityCategories as string[]) ?? [];
+                  const certs = (vendor.sustainabilityCertifications as string[]) ?? [];
+                  const isEditing = editingId === vendor.id;
+                  return (
+                    <TableRow key={vendor.id}>
+                      <TableCell className="font-medium text-foreground">{vendor.name}</TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <div className="flex flex-wrap gap-2">
+                            {Object.keys(DIVERSITY_LABELS).map((category) => (
+                              <button
+                                key={category}
+                                type="button"
+                                onClick={() => toggleCategory(category)}
+                                className={`rounded-full border px-3 py-1 text-xs ${
+                                  editForm.diversityCategories?.includes(category)
+                                    ? 'border-violet-700 bg-violet-700 text-white'
+                                    : 'border-border/70 bg-muted/20 text-muted-foreground'
+                                }`}
+                              >
+                                {DIVERSITY_LABELS[category]}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap gap-2">
+                            {categories.length === 0 ? (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            ) : (
+                              categories.map((category) => (
+                                <Badge
+                                  key={category}
+                                  variant="outline"
+                                  className="border-violet-200 bg-violet-50 text-violet-800"
+                                >
+                                  {DIVERSITY_LABELS[category] ?? category}
+                                </Badge>
+                              ))
+                            )}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <Select
+                            value={editForm.esgRating}
+                            onChange={(event) =>
+                              setEditForm({ ...editForm, esgRating: event.target.value })
+                            }
+                            className="w-full"
+                          >
+                            <option value="">Not Rated</option>
+                            {['A+', 'A', 'B+', 'B', 'C', 'D'].map((rating) => (
+                              <option key={rating}>{rating}</option>
+                            ))}
+                          </Select>
+                        ) : vendor.esgRating ? (
+                          <Badge
+                            variant="outline"
+                            className={ESG_COLORS[vendor.esgRating] ?? 'border-slate-200 bg-slate-100 text-slate-700'}
+                          >
+                            {vendor.esgRating}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <div className="flex flex-wrap gap-2">
+                            {Object.keys(CERT_LABELS).map((certification) => (
+                              <button
+                                key={certification}
+                                type="button"
+                                onClick={() => toggleCertification(certification)}
+                                className={`rounded-full border px-3 py-1 text-xs ${
+                                  editForm.sustainabilityCertifications?.includes(certification)
+                                    ? 'border-emerald-700 bg-emerald-700 text-white'
+                                    : 'border-border/70 bg-muted/20 text-muted-foreground'
+                                }`}
+                              >
+                                {CERT_LABELS[certification]}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap gap-2">
+                            {certs.length === 0 ? (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            ) : (
+                              certs.map((certification) => (
+                                <Badge
+                                  key={certification}
+                                  variant="outline"
+                                  className="border-emerald-200 bg-emerald-50 text-emerald-800"
+                                >
+                                  {CERT_LABELS[certification] ?? certification}
+                                </Badge>
+                              ))
+                            )}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {isEditing ? (
+                          <Input
+                            type="number"
+                            value={editForm.carbonFootprintTons}
+                            onChange={(event) =>
+                              setEditForm({
+                                ...editForm,
+                                carbonFootprintTons: event.target.value,
+                              })
+                            }
+                            className="w-28"
+                            placeholder="0"
+                          />
+                        ) : (
+                          <span className="text-sm text-muted-foreground">
+                            {vendor.carbonFootprintTons ?? '—'}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {isEditing ? (
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => saveEdit(vendor.id)}
+                              disabled={saving}
+                            >
+                              Save
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setEditingId(null)}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button type="button" size="sm" variant="outline" onClick={() => startEdit(vendor)}>
+                            Edit ESG
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  tone: string;
+}) {
+  return (
+    <Card className="rounded-[24px]">
+      <CardContent className="p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            {label}
+          </div>
+          <div className="rounded-full border border-border/70 bg-muted/30 p-2">
+            <Icon className="h-4 w-4 text-foreground" />
           </div>
         </div>
-      )}
-
-      {/* Vendor table */}
-      <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 12, boxShadow: SHADOWS.card, overflow: 'hidden' }}>
-        <div style={{ padding: '1rem 1.25rem', borderBottom: `1px solid ${COLORS.border}` }}>
-          <h3 style={{ fontSize: FONT.base, fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>All Vendors</h3>
-        </div>
-        {loading ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>Loading...</div>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: COLORS.tableHeaderBg }}>
-                {['Vendor', 'Diversity Categories', 'ESG Rating', 'Certifications', 'Carbon (tons/yr)', 'Actions'].map((h) => (
-                  <th key={h} style={{ padding: '0.6rem 1rem', textAlign: 'left', fontSize: FONT.xs, fontWeight: 700, color: COLORS.textSecondary, borderBottom: `1px solid ${COLORS.tableBorder}` }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {vendors.map((v) => {
-                const cats = (v.diversityCategories as string[]) ?? [];
-                const certs = (v.sustainabilityCertifications as string[]) ?? [];
-                const isEditing = editingId === v.id;
-                return (
-                  <tr key={v.id} style={{ borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                    <td style={{ padding: '0.75rem 1rem', fontSize: FONT.sm, fontWeight: 600, color: COLORS.textPrimary }}>{v.name}</td>
-                    <td style={{ padding: '0.75rem 1rem' }}>
-                      {isEditing ? (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                          {Object.keys(DIVERSITY_LABELS).map((cat) => (
-                            <button key={cat} onClick={() => toggleCategory(cat)} style={{
-                              background: editForm.diversityCategories?.includes(cat) ? COLORS.accentPurple : COLORS.contentBg,
-                              color: editForm.diversityCategories?.includes(cat) ? '#fff' : COLORS.textSecondary,
-                              border: `1px solid ${COLORS.border}`, borderRadius: 20,
-                              padding: '0.15rem 0.5rem', fontSize: FONT.xs, cursor: 'pointer',
-                            }}>{DIVERSITY_LABELS[cat]}</button>
-                          ))}
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                          {cats.length === 0 ? <span style={{ fontSize: FONT.xs, color: COLORS.textMuted }}>—</span> :
-                            cats.map((c) => <span key={c} style={{ fontSize: FONT.xs, background: COLORS.accentPurpleLight, color: COLORS.accentPurpleDark, borderRadius: 20, padding: '0.15rem 0.5rem', fontWeight: 600 }}>{DIVERSITY_LABELS[c] ?? c}</span>)
-                          }
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem' }}>
-                      {isEditing ? (
-                        <select style={inp} value={editForm.esgRating} onChange={(e) => setEditForm({ ...editForm, esgRating: e.target.value })}>
-                          <option value="">Not Rated</option>
-                          {['A+', 'A', 'B+', 'B', 'C', 'D'].map((r) => <option key={r}>{r}</option>)}
-                        </select>
-                      ) : v.esgRating ? (
-                        <span style={{ fontSize: FONT.xs, fontWeight: 700, padding: '0.2rem 0.5rem', borderRadius: 20, ...(ESG_COLORS[v.esgRating] ?? {}) }}>{v.esgRating}</span>
-                      ) : <span style={{ fontSize: FONT.xs, color: COLORS.textMuted }}>—</span>}
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem' }}>
-                      {isEditing ? (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                          {Object.keys(CERT_LABELS).map((cert) => (
-                            <button key={cert} onClick={() => toggleCert(cert)} style={{
-                              background: editForm.sustainabilityCertifications?.includes(cert) ? COLORS.accentGreen : COLORS.contentBg,
-                              color: editForm.sustainabilityCertifications?.includes(cert) ? '#fff' : COLORS.textSecondary,
-                              border: `1px solid ${COLORS.border}`, borderRadius: 20,
-                              padding: '0.15rem 0.5rem', fontSize: FONT.xs, cursor: 'pointer',
-                            }}>{CERT_LABELS[cert]}</button>
-                          ))}
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                          {certs.length === 0 ? <span style={{ fontSize: FONT.xs, color: COLORS.textMuted }}>—</span> :
-                            certs.map((c) => <span key={c} style={{ fontSize: FONT.xs, background: COLORS.accentGreenLight, color: COLORS.accentGreenDark, borderRadius: 20, padding: '0.15rem 0.5rem' }}>{CERT_LABELS[c] ?? c}</span>)
-                          }
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem' }}>
-                      {isEditing ? (
-                        <input style={{ ...inp, width: 80 }} type="number" value={editForm.carbonFootprintTons} onChange={(e) => setEditForm({ ...editForm, carbonFootprintTons: e.target.value })} placeholder="0" />
-                      ) : <span style={{ fontSize: FONT.sm, color: COLORS.textSecondary }}>{v.carbonFootprintTons ?? '—'}</span>}
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem' }}>
-                      {isEditing ? (
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
-                          <button onClick={() => saveEdit(v.id)} disabled={saving} style={{ background: COLORS.accentBlue, color: '#fff', border: 'none', borderRadius: 6, padding: '0.3rem 0.6rem', fontSize: FONT.xs, cursor: 'pointer' }}>Save</button>
-                          <button onClick={() => setEditingId(null)} style={{ background: 'none', border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '0.3rem 0.6rem', fontSize: FONT.xs, cursor: 'pointer', color: COLORS.textSecondary }}>Cancel</button>
-                        </div>
-                      ) : (
-                        <button onClick={() => startEdit(v)} style={{ background: 'none', border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '0.3rem 0.6rem', fontSize: FONT.xs, cursor: 'pointer', color: COLORS.textSecondary }}>Edit ESG</button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
+        <div className={`text-3xl font-semibold tracking-[-0.03em] ${tone}`}>{value}</div>
+      </CardContent>
+    </Card>
   );
 }
