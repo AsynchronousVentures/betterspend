@@ -34,6 +34,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Reworked auth surfaces, toast, breadcrumbs, document upload UI, and sidebar navigation onto the new frontend foundation while bridging legacy pages through updated palette tokens.
 - Refactored the authenticated app shell, search surface, notifications panel, entity switcher, and shortcuts modal onto the new Tailwind-based chrome.
 - Migrated the dashboard, approvals queue, vendors, purchase orders, invoices, and requisitions list pages onto reusable Tailwind/shadcn-style page-header, table, select, and status-badge primitives.
+- Continued the UI migration across software licenses, notifications, spend guard, and receiving so those operational views now share the new card, form, and filter system.
 
 ### Fixed
 

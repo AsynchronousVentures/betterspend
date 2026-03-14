@@ -2,8 +2,13 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, BellRing } from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
+import { PageHeader } from '../../components/page-header';
+import { StatusBadge } from '../../components/status-badge';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import { Select } from '../../components/ui/select';
 
 type NotificationPrefs = {
   emailEnabled: boolean;
@@ -113,190 +118,185 @@ export default function NotificationsPage() {
   }
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '1080px' }}>
-      <div style={{ marginBottom: '1.5rem' }}>
-        <Link href="/" style={{ color: COLORS.textSecondary, textDecoration: 'none', fontSize: '0.875rem' }}>
-          &larr; Back to Dashboard
-        </Link>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
-          <div>
-            <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary, margin: 0 }}>Notifications</h1>
-            <p style={{ color: COLORS.textSecondary, fontSize: '0.875rem', margin: '0.25rem 0 0' }}>
-              Full notification history with saved delivery preferences and paginated filters.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={handleMarkAllRead}
-            style={{
-              padding: '0.55rem 0.9rem',
-              borderRadius: '8px',
-              border: `1px solid ${COLORS.border}`,
-              background: COLORS.cardBg,
-              color: COLORS.textPrimary,
-              fontSize: '0.8125rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
+    <div className="space-y-6 p-4 lg:p-8">
+      <Link href="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
+        <ArrowLeft className="h-4 w-4" />
+        Back to Dashboard
+      </Link>
+
+      <PageHeader
+        title="Notifications"
+        description="Full notification history with saved delivery preferences and paginated filters."
+        actions={
+          <Button variant="outline" onClick={handleMarkAllRead}>
             Mark all read
-          </button>
-        </div>
-      </div>
+          </Button>
+        }
+      />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '1rem' }}>
-        <div
-          style={{
-            background: COLORS.cardBg,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '10px',
-            boxShadow: SHADOWS.card,
-            padding: '1rem',
-            alignSelf: 'start',
-          }}
-        >
-          <h2 style={{ fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary, marginTop: 0 }}>Preferences</h2>
-          <label style={{ display: 'flex', gap: '0.625rem', alignItems: 'flex-start', marginTop: '0.75rem' }}>
-            <input
-              type="checkbox"
-              checked={prefs.emailEnabled}
-              onChange={(event) => persistPreferences({ ...prefs, emailEnabled: event.target.checked })}
-            />
-            <div>
-              <div style={{ fontSize: '0.875rem', fontWeight: 500, color: COLORS.textPrimary }}>Email notifications</div>
-              <div style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>Stored server-side for this user.</div>
-            </div>
-          </label>
-          <div style={{ marginTop: '1rem' }}>
-            <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, fontWeight: 600, textTransform: 'uppercase' }}>Digest Frequency</div>
-            <select
-              value={prefs.frequency}
-              onChange={(event) => persistPreferences({ ...prefs, frequency: event.target.value as NotificationPrefs['frequency'] })}
-              style={{ width: '100%', marginTop: '0.35rem', padding: '0.55rem 0.65rem', borderRadius: '8px', border: `1px solid ${COLORS.border}`, fontSize: '0.8125rem' }}
-            >
-              <option value="instant">Instant</option>
-              <option value="daily">Daily digest</option>
-              <option value="weekly">Weekly digest</option>
-            </select>
-          </div>
-          <div style={{ marginTop: '1rem' }}>
-            <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, fontWeight: 600, textTransform: 'uppercase' }}>Enabled Types</div>
-            <div style={{ display: 'grid', gap: '0.45rem', marginTop: '0.6rem' }}>
-              {availableTypes.map((type) => (
-                <label key={type} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8125rem', color: COLORS.textPrimary }}>
-                  <input
-                    type="checkbox"
-                    checked={prefs.enabledTypes.includes(type)}
-                    onChange={(event) => {
-                      const enabledTypes = event.target.checked
-                        ? [...prefs.enabledTypes, type]
-                        : prefs.enabledTypes.filter((item) => item !== type);
-                      persistPreferences({ ...prefs, enabledTypes });
-                    }}
-                  />
-                  {type.replace(/_/g, ' ')}
-                </label>
-              ))}
-            </div>
-            {savingPrefs && <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: COLORS.textMuted }}>Saving preferences...</div>}
-          </div>
-        </div>
-
-        <div
-          style={{
-            background: COLORS.cardBg,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '10px',
-            boxShadow: SHADOWS.card,
-            overflow: 'hidden',
-          }}
-        >
-          <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.border}`, display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-            <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', fontSize: '0.8125rem', color: COLORS.textSecondary }}>
-              <input type="checkbox" checked={showUnreadOnly} onChange={(event) => setShowUnreadOnly(event.target.checked)} />
-              Unread only
+      <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
+        <Card className="self-start">
+          <CardHeader>
+            <CardTitle className="text-base">Preferences</CardTitle>
+            <CardDescription>Stored server-side for your account.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <label className="flex gap-3">
+              <input
+                type="checkbox"
+                checked={prefs.emailEnabled}
+                onChange={(event) => persistPreferences({ ...prefs, emailEnabled: event.target.checked })}
+              />
+              <div>
+                <div className="text-sm font-medium text-foreground">Email notifications</div>
+                <div className="text-xs text-muted-foreground">Deliver messages outside the app.</div>
+              </div>
             </label>
-            <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} style={{ padding: '0.45rem 0.6rem', borderRadius: '8px', border: `1px solid ${COLORS.border}`, fontSize: '0.8125rem' }}>
-              <option value="all">All types</option>
-              {availableTypes.map((type) => (
-                <option key={type} value={type}>{type.replace(/_/g, ' ')}</option>
-              ))}
-            </select>
-            <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as 'newest' | 'oldest')} style={{ padding: '0.45rem 0.6rem', borderRadius: '8px', border: `1px solid ${COLORS.border}`, fontSize: '0.8125rem' }}>
-              <option value="newest">Newest first</option>
-              <option value="oldest">Oldest first</option>
-            </select>
-            <div style={{ marginLeft: 'auto', fontSize: '0.75rem', color: COLORS.textMuted }}>
-              Page {page} of {pageCount}
-            </div>
-          </div>
 
-          {loading ? (
-            <div style={{ padding: '2rem', color: COLORS.textMuted }}>Loading notifications...</div>
-          ) : filteredNotifications.length === 0 ? (
-            <div style={{ padding: '2rem', color: COLORS.textMuted }}>No notifications match the current filters or enabled types.</div>
-          ) : (
-            filteredNotifications.map((notification) => {
-              const unread = !notification.readAt;
-              const href = entityHref(notification);
-              return (
-                <div key={notification.id} style={{ padding: '0.9rem 1rem', borderBottom: `1px solid ${COLORS.contentBg}`, background: unread ? COLORS.accentBlueLight : COLORS.white }}>
-                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
-                    <div style={{ width: '8px', height: '8px', borderRadius: '999px', background: unread ? COLORS.accentBlue : 'transparent', marginTop: '0.35rem', flexShrink: 0 }} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'baseline' }}>
-                        <div style={{ fontSize: '0.875rem', fontWeight: unread ? 600 : 500, color: COLORS.textPrimary }}>{notification.title}</div>
-                        <div style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>{timeAgo(notification.createdAt)}</div>
+            <div className="space-y-2">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Digest Frequency</div>
+              <Select
+                value={prefs.frequency}
+                onChange={(event) =>
+                  persistPreferences({ ...prefs, frequency: event.target.value as NotificationPrefs['frequency'] })
+                }
+                className="w-full"
+              >
+                <option value="instant">Instant</option>
+                <option value="daily">Daily digest</option>
+                <option value="weekly">Weekly digest</option>
+              </Select>
+            </div>
+
+            <div className="space-y-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Enabled Types</div>
+              <div className="grid gap-2">
+                {availableTypes.map((type) => (
+                  <label key={type} className="flex items-center gap-3 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={prefs.enabledTypes.includes(type)}
+                      onChange={(event) => {
+                        const enabledTypes = event.target.checked
+                          ? [...prefs.enabledTypes, type]
+                          : prefs.enabledTypes.filter((item) => item !== type);
+                        persistPreferences({ ...prefs, enabledTypes });
+                      }}
+                    />
+                    <span className="capitalize">{type.replace(/_/g, ' ')}</span>
+                  </label>
+                ))}
+              </div>
+              {savingPrefs ? <div className="text-xs text-muted-foreground">Saving preferences...</div> : null}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="overflow-hidden">
+          <CardHeader className="gap-4 border-b border-border/70 bg-muted/20 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <CardTitle className="text-base">Inbox</CardTitle>
+              <CardDescription>
+                Page {page} of {pageCount} · {total} total notifications
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                <input type="checkbox" checked={showUnreadOnly} onChange={(event) => setShowUnreadOnly(event.target.checked)} />
+                Unread only
+              </label>
+              <Select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} className="min-w-[180px]">
+                <option value="all">All types</option>
+                {availableTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {type.replace(/_/g, ' ')}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                value={sortOrder}
+                onChange={(event) => setSortOrder(event.target.value as 'newest' | 'oldest')}
+                className="min-w-[160px]"
+              >
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+              </Select>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            {loading ? (
+              <div className="flex min-h-[280px] items-center justify-center text-sm text-muted-foreground">
+                Loading notifications...
+              </div>
+            ) : filteredNotifications.length === 0 ? (
+              <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 px-6 text-center">
+                <div className="rounded-full bg-muted p-4">
+                  <BellRing className="h-6 w-6 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-base font-semibold text-foreground">No notifications match</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Current filters or enabled types are excluding everything from the feed.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="divide-y divide-border/70">
+                  {filteredNotifications.map((notification) => {
+                    const unread = !notification.readAt;
+                    const href = entityHref(notification);
+
+                    return (
+                      <div key={notification.id} className={unread ? 'bg-primary/5' : undefined}>
+                        <div className="flex gap-3 px-5 py-4">
+                          <div className={`mt-2 h-2.5 w-2.5 rounded-full ${unread ? 'bg-primary' : 'bg-transparent'}`} />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className={`text-sm ${unread ? 'font-semibold text-foreground' : 'font-medium text-foreground'}`}>
+                                  {notification.title}
+                                </div>
+                                {notification.body ? (
+                                  <div className="mt-1 text-sm leading-6 text-muted-foreground">{notification.body}</div>
+                                ) : null}
+                              </div>
+                              <div className="text-xs text-muted-foreground">{timeAgo(notification.createdAt)}</div>
+                            </div>
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              <StatusBadge value={unread ? 'pending' : 'approved'} label={notification.type.replace(/_/g, ' ')} className="capitalize" />
+                              {href ? (
+                                <Link href={href} className="text-sm font-semibold text-primary hover:underline">
+                                  Open record
+                                </Link>
+                              ) : null}
+                              {unread ? (
+                                <button onClick={() => handleMarkRead(notification.id)} className="text-sm font-semibold text-primary">
+                                  Mark read
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      {notification.body ? (
-                        <div style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginTop: '0.25rem', lineHeight: 1.5 }}>{notification.body}</div>
-                      ) : null}
-                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem', flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: '0.6875rem', color: COLORS.textMuted, background: COLORS.contentBg, padding: '0.15rem 0.45rem', borderRadius: '999px' }}>
-                          {notification.type.replace(/_/g, ' ')}
-                        </span>
-                        {href ? (
-                          <Link href={href} style={{ fontSize: '0.75rem', color: COLORS.accentBlue, textDecoration: 'none', fontWeight: 600 }}>
-                            Open record &rarr;
-                          </Link>
-                        ) : null}
-                        {unread ? (
-                          <button type="button" onClick={() => handleMarkRead(notification.id)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: '0.75rem', color: COLORS.accentBlue, fontWeight: 600 }}>
-                            Mark read
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center justify-between border-t border-border/70 px-5 py-4">
+                  <div className="text-xs text-muted-foreground">{total} total notifications</div>
+                  <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page <= 1}>
+                      Previous
+                    </Button>
+                    <Button variant="outline" onClick={() => setPage((current) => Math.min(pageCount, current + 1))} disabled={page >= pageCount}>
+                      Next
+                    </Button>
                   </div>
                 </div>
-              );
-            })
-          )}
-
-          <div style={{ padding: '0.875rem 1rem', borderTop: `1px solid ${COLORS.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>
-              {total} total notifications
-            </div>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button
-                type="button"
-                onClick={() => setPage((current) => Math.max(1, current - 1))}
-                disabled={page <= 1}
-                style={{ padding: '0.45rem 0.75rem', borderRadius: '8px', border: `1px solid ${COLORS.border}`, background: page <= 1 ? COLORS.contentBg : COLORS.white, color: COLORS.textPrimary, cursor: page <= 1 ? 'not-allowed' : 'pointer' }}
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
-                disabled={page >= pageCount}
-                style={{ padding: '0.45rem 0.75rem', borderRadius: '8px', border: `1px solid ${COLORS.border}`, background: page >= pageCount ? COLORS.contentBg : COLORS.white, color: COLORS.textPrimary, cursor: page >= pageCount ? 'not-allowed' : 'pointer' }}
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

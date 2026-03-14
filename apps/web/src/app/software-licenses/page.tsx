@@ -2,15 +2,17 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { Layers3, Plus } from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
-
-const STATUS_STYLES: Record<string, { background: string; color: string }> = {
-  active: { background: COLORS.accentGreenLight, color: COLORS.accentGreenDark },
-  renewal_due: { background: COLORS.accentAmberLight, color: COLORS.accentAmberDark },
-  cancelled: { background: COLORS.contentBg, color: COLORS.textSecondary },
-  expired: { background: COLORS.accentRedLight, color: COLORS.accentRedDark },
-};
+import { PageHeader } from '../../components/page-header';
+import { StatusBadge } from '../../components/status-badge';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
+import { Textarea } from '../../components/ui/textarea';
 
 function fmtCurrency(n: string | number | null | undefined, currency = 'USD') {
   if (n == null || n === '') return '—';
@@ -82,7 +84,7 @@ export default function SoftwareLicensesPage() {
           setForm((current) => ({ ...current, vendorId: vendorRows[0].id }));
         }
       })
-      .catch((e) => setError(e.message))
+      .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }
 
@@ -99,8 +101,8 @@ export default function SoftwareLicensesPage() {
     [utilization],
   );
 
-  async function submitForm(e: React.FormEvent) {
-    e.preventDefault();
+  async function submitForm(event: React.FormEvent) {
+    event.preventDefault();
     setSaving(true);
     setError('');
     try {
@@ -125,219 +127,259 @@ export default function SoftwareLicensesPage() {
         notes: '',
       }));
       loadData();
-    } catch (e: any) {
-      setError(e.message);
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setSaving(false);
     }
   }
 
-  const thStyle: React.CSSProperties = {
-    padding: '0.75rem 1rem',
-    textAlign: 'left',
-    fontWeight: 600,
-    color: COLORS.textSecondary,
-    fontSize: '0.78rem',
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-    whiteSpace: 'nowrap',
-  };
-
   return (
-    <div style={{ padding: '2rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-        <div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: COLORS.textPrimary }}>Software Licenses</h1>
-          <p style={{ margin: '0.25rem 0 0', color: COLORS.textSecondary, fontSize: '0.875rem' }}>
-            Track seat utilization and renewal exposure for SaaS spend.
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }}>
-            <option value="">All statuses</option>
-            <option value="active">Active</option>
-            <option value="renewal_due">Renewal Due</option>
-            <option value="cancelled">Cancelled</option>
-            <option value="expired">Expired</option>
-          </select>
-          <select value={vendorFilter} onChange={(e) => setVendorFilter(e.target.value)} style={{ padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }}>
-            <option value="">All vendors</option>
-            {vendors.map((vendor) => (
-              <option key={vendor.id} value={vendor.id}>{vendor.name}</option>
-            ))}
-          </select>
-        </div>
-      </div>
+    <div className="space-y-6 p-4 lg:p-8">
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      {error && (
-        <div style={{ background: COLORS.accentRedLight, border: '1px solid #fecaca', borderRadius: '6px', padding: '0.75rem 1rem', color: COLORS.accentRedDark, fontSize: '0.875rem', marginBottom: '1rem' }}>
-          {error}
-        </div>
-      )}
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: '8px', padding: '1.25rem', boxShadow: SHADOWS.card }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: COLORS.textMuted, textTransform: 'uppercase', marginBottom: '0.5rem' }}>Active Licenses</div>
-          <div style={{ fontSize: '1.6rem', fontWeight: 700, color: COLORS.textPrimary }}>{licenses.length}</div>
-          <div style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginTop: '0.35rem' }}>{renewals.length} renewal events in the next 90 days</div>
-        </div>
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: '8px', padding: '1.25rem', boxShadow: SHADOWS.card }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: COLORS.textMuted, textTransform: 'uppercase', marginBottom: '0.5rem' }}>Annualized Spend</div>
-          <div style={{ fontSize: '1.6rem', fontWeight: 700, color: COLORS.textPrimary }}>{fmtCurrency(totalAnnualized)}</div>
-          <div style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginTop: '0.35rem' }}>Based on current seat counts and billing cycles</div>
-        </div>
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: '8px', padding: '1.25rem', boxShadow: SHADOWS.card }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: COLORS.textMuted, textTransform: 'uppercase', marginBottom: '0.5rem' }}>Underutilized Licenses</div>
-          <div style={{ fontSize: '1.6rem', fontWeight: 700, color: COLORS.textPrimary }}>{utilization.filter((row) => Number(row.utilizationPct ?? 0) < 70).length}</div>
-          <div style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginTop: '0.35rem' }}>Using less than 70% of purchased seats</div>
-        </div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', overflow: 'hidden', boxShadow: SHADOWS.card }}>
-          <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.tableBorder}`, fontWeight: 600, color: COLORS.textPrimary }}>License Inventory</div>
-          {loading ? (
-            <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>Loading...</div>
-          ) : licenses.length === 0 ? (
-            <div style={{ padding: '2rem', textAlign: 'center', color: COLORS.textMuted }}>No software licenses tracked yet.</div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: `1px solid ${COLORS.tableBorder}`, background: COLORS.tableHeaderBg }}>
-                    <th style={thStyle}>Product</th>
-                    <th style={thStyle}>Vendor</th>
-                    <th style={thStyle}>Seats</th>
-                    <th style={thStyle}>Renewal</th>
-                    <th style={thStyle}>Status</th>
-                    <th style={{ ...thStyle, textAlign: 'right' }}>Value</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {licenses.map((license, idx) => {
-                    const style = STATUS_STYLES[license.status] ?? { background: COLORS.contentBg, color: COLORS.textSecondary };
-                    return (
-                      <tr key={license.id} style={{ borderBottom: idx < licenses.length - 1 ? `1px solid ${COLORS.contentBg}` : undefined }}>
-                        <td style={{ padding: '0.875rem 1rem', fontWeight: 600 }}>
-                          <Link href={`/software-licenses/${license.id}`} style={{ color: COLORS.textPrimary, textDecoration: 'none' }}>
-                            {license.productName}
-                          </Link>
-                        </td>
-                        <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{license.vendor?.name ?? '—'}</td>
-                        <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{license.seatsUsed}/{license.seatCount}</td>
-                        <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{fmtDate(license.renewalDate)}</td>
-                        <td style={{ padding: '0.875rem 1rem' }}>
-                          <span style={{ ...style, padding: '0.2rem 0.6rem', borderRadius: '9999px', fontSize: '0.75rem', fontWeight: 600 }}>
-                            {license.status.replace('_', ' ')}
-                          </span>
-                        </td>
-                        <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary, textAlign: 'right' }}>
-                          {fmtCurrency(Number(license.seatCount) * Number(license.pricePerSeat), license.currency)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        <form onSubmit={submitForm} style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: '8px', padding: '1.25rem', boxShadow: SHADOWS.card }}>
-          <h2 style={{ margin: '0 0 1rem', fontSize: '1rem', fontWeight: 600, color: COLORS.textPrimary }}>Add License</h2>
-          <div style={{ display: 'grid', gap: '0.75rem' }}>
-            <input value={form.productName} onChange={(e) => setForm({ ...form, productName: e.target.value })} placeholder="Product name" required style={{ padding: '0.625rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }} />
-            <select value={form.vendorId} onChange={(e) => setForm({ ...form, vendorId: e.target.value })} required style={{ padding: '0.625rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }}>
-              <option value="">Select vendor</option>
+      <PageHeader
+        title="Software Licenses"
+        description="Track seat utilization, annualized spend, and renewal exposure for SaaS contracts."
+        actions={
+          <>
+            <Select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="min-w-[170px]">
+              <option value="">All statuses</option>
+              <option value="active">Active</option>
+              <option value="renewal_due">Renewal Due</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="expired">Expired</option>
+            </Select>
+            <Select value={vendorFilter} onChange={(event) => setVendorFilter(event.target.value)} className="min-w-[180px]">
+              <option value="">All vendors</option>
               {vendors.map((vendor) => (
-                <option key={vendor.id} value={vendor.id}>{vendor.name}</option>
+                <option key={vendor.id} value={vendor.id}>
+                  {vendor.name}
+                </option>
               ))}
-            </select>
-            <select value={form.contractId} onChange={(e) => setForm({ ...form, contractId: e.target.value })} style={{ padding: '0.625rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }}>
-              <option value="">No linked contract</option>
-              {contracts.map((contract) => (
-                <option key={contract.id} value={contract.id}>{contract.contractNumber} · {contract.title}</option>
-              ))}
-            </select>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              <input type="number" min="1" value={form.seatCount} onChange={(e) => setForm({ ...form, seatCount: e.target.value })} placeholder="Seats purchased" required style={{ padding: '0.625rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }} />
-              <input type="number" min="0" value={form.seatsUsed} onChange={(e) => setForm({ ...form, seatsUsed: e.target.value })} placeholder="Seats used" required style={{ padding: '0.625rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }} />
+            </Select>
+          </>
+        }
+      />
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card>
+          <CardContent className="space-y-2 p-5">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Active Licenses</div>
+            <div className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{licenses.length}</div>
+            <div className="text-sm text-muted-foreground">{renewals.length} renewal events in the next 90 days</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="space-y-2 p-5">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Annualized Spend</div>
+            <div className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{fmtCurrency(totalAnnualized)}</div>
+            <div className="text-sm text-muted-foreground">Based on current seat counts and billing cycles</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="space-y-2 p-5">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Underutilized Licenses</div>
+            <div className="text-3xl font-semibold tracking-[-0.04em] text-foreground">
+              {utilization.filter((row) => Number(row.utilizationPct ?? 0) < 70).length}
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' }}>
-              <input value={form.pricePerSeat} onChange={(e) => setForm({ ...form, pricePerSeat: e.target.value })} placeholder="Price / seat" required style={{ padding: '0.625rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }} />
-              <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })} style={{ padding: '0.625rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }}>
-                <option value="USD">USD</option>
-                <option value="EUR">EUR</option>
-                <option value="GBP">GBP</option>
-              </select>
-              <select value={form.billingCycle} onChange={(e) => setForm({ ...form, billingCycle: e.target.value })} style={{ padding: '0.625rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }}>
-                <option value="annual">Annual</option>
-                <option value="monthly">Monthly</option>
-              </select>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              <input type="date" value={form.renewalDate} onChange={(e) => setForm({ ...form, renewalDate: e.target.value })} style={{ padding: '0.625rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }} />
-              <input type="number" min="1" max="365" value={form.renewalLeadDays} onChange={(e) => setForm({ ...form, renewalLeadDays: e.target.value })} placeholder="Lead days" style={{ padding: '0.625rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }} />
-            </div>
-            <select value={form.ownerUserId} onChange={(e) => setForm({ ...form, ownerUserId: e.target.value })} style={{ padding: '0.625rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem' }}>
-              <option value="">No owner assigned</option>
-              {users.map((user) => (
-                <option key={user.id} value={user.id}>{user.name ?? user.email}</option>
-              ))}
-            </select>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: COLORS.textPrimary }}>
-              <input type="checkbox" checked={form.autoRenews} onChange={(e) => setForm({ ...form, autoRenews: e.target.checked })} />
-              Auto-renews
-            </label>
-            <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Notes" rows={4} style={{ padding: '0.625rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', resize: 'vertical' }} />
-            <button type="submit" disabled={saving} style={{ padding: '0.7rem 1rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer' }}>
-              {saving ? 'Saving...' : 'Add Software License'}
-            </button>
-          </div>
-        </form>
+            <div className="text-sm text-muted-foreground">Using less than 70% of purchased seats</div>
+          </CardContent>
+        </Card>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: '8px', boxShadow: SHADOWS.card }}>
-          <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.cardBorder}`, fontWeight: 600, color: COLORS.textPrimary }}>Renewal Calendar</div>
-          <div style={{ padding: '0.5rem 0' }}>
-            {renewals.slice(0, 8).map((renewal) => (
-              <div key={renewal.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 1rem', borderBottom: `1px solid ${COLORS.contentBg}` }}>
+      <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+        <Card className="overflow-hidden">
+          <CardHeader>
+            <CardTitle className="text-base">License Inventory</CardTitle>
+            <CardDescription>Current products, renewal timing, and active value by vendor.</CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            {loading ? (
+              <div className="flex min-h-[260px] items-center justify-center text-sm text-muted-foreground">
+                Loading licenses...
+              </div>
+            ) : licenses.length === 0 ? (
+              <div className="flex min-h-[280px] flex-col items-center justify-center gap-3 px-6 text-center">
+                <div className="rounded-full bg-muted p-4">
+                  <Layers3 className="h-6 w-6 text-muted-foreground" />
+                </div>
                 <div>
-                  <Link href={`/software-licenses/${renewal.id}`} style={{ fontWeight: 600, color: COLORS.textPrimary, textDecoration: 'none' }}>
+                  <p className="text-base font-semibold text-foreground">No software licenses tracked yet</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Add your first SaaS license to start renewal and utilization monitoring.</p>
+                </div>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Product</TableHead>
+                    <TableHead>Vendor</TableHead>
+                    <TableHead>Seats</TableHead>
+                    <TableHead>Renewal</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Value</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {licenses.map((license) => (
+                    <TableRow key={license.id}>
+                      <TableCell className="font-semibold">
+                        <Link href={`/software-licenses/${license.id}`} className="text-primary hover:underline">
+                          {license.productName}
+                        </Link>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{license.vendor?.name ?? '—'}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {license.seatsUsed}/{license.seatCount}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{fmtDate(license.renewalDate)}</TableCell>
+                      <TableCell>
+                        <StatusBadge value={license.status} />
+                      </TableCell>
+                      <TableCell className="text-right font-medium text-foreground">
+                        {fmtCurrency(Number(license.seatCount) * Number(license.pricePerSeat), license.currency)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Add License</CardTitle>
+            <CardDescription>Create a new tracked SaaS contract and renewal profile.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={submitForm} className="grid gap-3">
+              <Input
+                value={form.productName}
+                onChange={(event) => setForm({ ...form, productName: event.target.value })}
+                placeholder="Product name"
+                required
+              />
+              <Select value={form.vendorId} onChange={(event) => setForm({ ...form, vendorId: event.target.value })} required className="w-full">
+                <option value="">Select vendor</option>
+                {vendors.map((vendor) => (
+                  <option key={vendor.id} value={vendor.id}>
+                    {vendor.name}
+                  </option>
+                ))}
+              </Select>
+              <Select value={form.contractId} onChange={(event) => setForm({ ...form, contractId: event.target.value })} className="w-full">
+                <option value="">No linked contract</option>
+                {contracts.map((contract) => (
+                  <option key={contract.id} value={contract.id}>
+                    {contract.contractNumber} · {contract.title}
+                  </option>
+                ))}
+              </Select>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Input type="number" min="1" value={form.seatCount} onChange={(event) => setForm({ ...form, seatCount: event.target.value })} placeholder="Seats purchased" required />
+                <Input type="number" min="0" value={form.seatsUsed} onChange={(event) => setForm({ ...form, seatsUsed: event.target.value })} placeholder="Seats used" required />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Input value={form.pricePerSeat} onChange={(event) => setForm({ ...form, pricePerSeat: event.target.value })} placeholder="Price / seat" required />
+                <Select value={form.currency} onChange={(event) => setForm({ ...form, currency: event.target.value.toUpperCase() })} className="w-full">
+                  <option value="USD">USD</option>
+                  <option value="EUR">EUR</option>
+                  <option value="GBP">GBP</option>
+                </Select>
+                <Select value={form.billingCycle} onChange={(event) => setForm({ ...form, billingCycle: event.target.value })} className="w-full">
+                  <option value="annual">Annual</option>
+                  <option value="monthly">Monthly</option>
+                </Select>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Input type="date" value={form.renewalDate} onChange={(event) => setForm({ ...form, renewalDate: event.target.value })} />
+                <Input
+                  type="number"
+                  min="1"
+                  max="365"
+                  value={form.renewalLeadDays}
+                  onChange={(event) => setForm({ ...form, renewalLeadDays: event.target.value })}
+                  placeholder="Lead days"
+                />
+              </div>
+              <Select value={form.ownerUserId} onChange={(event) => setForm({ ...form, ownerUserId: event.target.value })} className="w-full">
+                <option value="">No owner assigned</option>
+                {users.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.name ?? user.email}
+                  </option>
+                ))}
+              </Select>
+              <label className="flex items-center gap-3 text-sm text-foreground">
+                <input type="checkbox" checked={form.autoRenews} onChange={(event) => setForm({ ...form, autoRenews: event.target.checked })} />
+                Auto-renews
+              </label>
+              <Textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="Notes" rows={4} />
+              <Button type="submit" disabled={saving}>
+                <Plus className="h-4 w-4" />
+                {saving ? 'Saving...' : 'Add Software License'}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Renewal Calendar</CardTitle>
+            <CardDescription>Upcoming renewal deadlines in the next 90 days.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {renewals.slice(0, 8).map((renewal) => (
+              <div key={renewal.id} className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/80 px-4 py-3">
+                <div>
+                  <Link href={`/software-licenses/${renewal.id}`} className="font-medium text-primary hover:underline">
                     {renewal.productName}
                   </Link>
-                  <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>{renewal.vendor?.name ?? '—'}</div>
+                  <div className="text-sm text-muted-foreground">{renewal.vendor?.name ?? '—'}</div>
                 </div>
-                <div style={{ fontSize: '0.8125rem', color: COLORS.textSecondary }}>{fmtDate(renewal.renewalDate)}</div>
+                <div className="text-sm text-muted-foreground">{fmtDate(renewal.renewalDate)}</div>
               </div>
             ))}
-            {renewals.length === 0 && <div style={{ padding: '1rem', color: COLORS.textMuted }}>No renewals due in the next 90 days.</div>}
-          </div>
-        </div>
+            {renewals.length === 0 ? <div className="text-sm text-muted-foreground">No renewals due in the next 90 days.</div> : null}
+          </CardContent>
+        </Card>
 
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: '8px', boxShadow: SHADOWS.card }}>
-          <div style={{ padding: '0.875rem 1rem', borderBottom: `1px solid ${COLORS.cardBorder}`, fontWeight: 600, color: COLORS.textPrimary }}>Utilization Watchlist</div>
-          <div style={{ padding: '0.5rem 0' }}>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Utilization Watchlist</CardTitle>
+            <CardDescription>Seats that are materially underused relative to the contract.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
             {utilization.slice(0, 8).map((row) => (
-              <div key={row.id} style={{ padding: '0.75rem 1rem', borderBottom: `1px solid ${COLORS.contentBg}` }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-                  <Link href={`/software-licenses/${row.id}`} style={{ fontWeight: 600, color: COLORS.textPrimary, textDecoration: 'none' }}>
+              <div key={row.id} className="rounded-2xl border border-border/70 bg-background/80 px-4 py-3">
+                <div className="mb-2 flex items-center justify-between gap-4">
+                  <Link href={`/software-licenses/${row.id}`} className="font-medium text-primary hover:underline">
                     {row.productName}
                   </Link>
-                  <div style={{ fontSize: '0.8125rem', color: COLORS.textSecondary }}>{Number(row.utilizationPct ?? 0).toFixed(1)}%</div>
+                  <div className="text-sm text-muted-foreground">{Number(row.utilizationPct ?? 0).toFixed(1)}%</div>
                 </div>
-                <div style={{ height: '8px', background: COLORS.contentBg, borderRadius: '999px', overflow: 'hidden', marginBottom: '0.35rem' }}>
-                  <div style={{ width: `${Math.min(Number(row.utilizationPct ?? 0), 100)}%`, height: '100%', background: Number(row.utilizationPct ?? 0) < 70 ? COLORS.accentAmber : COLORS.accentGreen }} />
+                <div className="mb-2 h-2 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={`h-full ${Number(row.utilizationPct ?? 0) < 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                    style={{ width: `${Math.min(Number(row.utilizationPct ?? 0), 100)}%` }}
+                  />
                 </div>
-                <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>
+                <div className="text-sm text-muted-foreground">
                   {row.seatsUsed}/{row.seatCount} seats used · {fmtCurrency(row.contractValue, row.currency)}
                 </div>
               </div>
             ))}
-            {utilization.length === 0 && <div style={{ padding: '1rem', color: COLORS.textMuted }}>No utilization data yet.</div>}
-          </div>
-        </div>
+            {utilization.length === 0 ? <div className="text-sm text-muted-foreground">No utilization data yet.</div> : null}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
