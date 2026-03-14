@@ -1,30 +1,50 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { FolderTree, Pencil, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
+import { PageHeader } from '../../components/page-header';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
+
+const EMPTY_FORM = { name: '', code: '', parentId: '' };
 
 export default function DepartmentsPage() {
   const [departments, setDepartments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: '', code: '', parentId: '' });
+  const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
 
   async function load() {
     try {
       setLoading(true);
-      const data = await api.departments.list();
-      setDepartments(data);
-    } catch {
-      // silently fail — user sees empty state
+      setDepartments(await api.departments.list());
+    } catch (err: any) {
+      setError(err.message ?? 'Unable to load departments.');
     } finally {
       setLoading(false);
     }
+  }
+
+  function resetForm() {
+    setShowForm(false);
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+  }
+
+  function setField(key: keyof typeof EMPTY_FORM, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
   }
 
   async function handleSave() {
@@ -37,12 +57,10 @@ export default function DepartmentsPage() {
       } else {
         await api.departments.create(payload);
       }
-      setShowForm(false);
-      setEditingId(null);
-      setForm({ name: '', code: '', parentId: '' });
+      resetForm();
       await load();
-    } catch (e: any) {
-      setError(e.message);
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setSaving(false);
     }
@@ -53,95 +71,154 @@ export default function DepartmentsPage() {
     try {
       await api.departments.remove(id);
       await load();
-    } catch (e: any) {
-      setError(e.message);
+    } catch (err: any) {
+      setError(err.message);
     }
   }
 
-  function startEdit(dept: any) {
-    setForm({ name: dept.name, code: dept.code, parentId: dept.parentId || '' });
-    setEditingId(dept.id);
+  function startEdit(department: any) {
+    setForm({ name: department.name, code: department.code, parentId: department.parentId || '' });
+    setEditingId(department.id);
     setShowForm(true);
   }
 
-  const deptById = Object.fromEntries(departments.map((d) => [d.id, d]));
+  const deptById = Object.fromEntries(departments.map((department) => [department.id, department]));
 
   return (
-    <div style={{ padding: '2rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary }}>Departments</h1>
-        <button onClick={() => { setShowForm(true); setEditingId(null); setForm({ name: '', code: '', parentId: '' }); }} style={{ padding: '0.5rem 1rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 500 }}>
-          + New Department
-        </button>
-      </div>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="Departments"
+        description="Maintain budget centers and reporting hierarchies for approval routing, project ownership, and org visibility."
+        actions={
+          <Button
+            type="button"
+            onClick={() => {
+              setError('');
+              setShowForm(true);
+              setEditingId(null);
+              setForm(EMPTY_FORM);
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            New Department
+          </Button>
+        }
+      />
 
-      {showForm && (
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-          <h2 style={{ fontWeight: 600, marginBottom: '1rem' }}>{editingId ? 'Edit' : 'New'} Department</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>Name *</label>
-              <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} style={{ width: '100%', padding: '0.5rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>Code *</label>
-              <input value={form.code} onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.toUpperCase() }))} placeholder="e.g. ENG, FIN" style={{ width: '100%', padding: '0.5rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>Parent Department</label>
-              <select value={form.parentId} onChange={(e) => setForm((f) => ({ ...f, parentId: e.target.value }))} style={{ width: '100%', padding: '0.5rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px' }}>
-                <option value="">None</option>
-                {departments.filter((d) => d.id !== editingId).map((d) => (
-                  <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          {error && <div style={{ marginTop: '0.75rem', background: COLORS.accentRedLight, border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.5rem 0.75rem', color: COLORS.accentRedDark, fontSize: '0.875rem' }}>{error}</div>}
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-            <button onClick={handleSave} disabled={saving || !form.name || !form.code} style={{ padding: '0.5rem 1rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
-              {saving ? 'Saving...' : 'Save'}
-            </button>
-            <button onClick={() => { setShowForm(false); setError(''); }} style={{ padding: '0.5rem 1rem', background: COLORS.tableBorder, color: COLORS.textSecondary, border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Cancel</button>
-          </div>
-        </div>
-      )}
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      {loading ? <p style={{ color: COLORS.textSecondary }}>Loading...</p> : (
-        <div style={{ background: COLORS.cardBg, borderRadius: '8px', border: `1px solid ${COLORS.tableBorder}`, overflow: 'hidden', boxShadow: SHADOWS.card }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                  {['Name', 'Code', 'Parent', 'Actions'].map((h) => (
-                    <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600, color: COLORS.textSecondary, textTransform: 'uppercase' }}>{h}</th>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.8fr)]">
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">{editingId ? 'Edit department' : 'Department details'}</CardTitle>
+            <CardDescription>Create new teams, assign parent departments, and keep codes aligned with ERP exports.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {showForm ? (
+              <div className="space-y-5">
+                <div className="grid gap-4">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-foreground">Name</label>
+                    <Input value={form.name} onChange={(event) => setField('name', event.target.value)} placeholder="Engineering" />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-foreground">Code</label>
+                    <Input value={form.code} onChange={(event) => setField('code', event.target.value.toUpperCase())} placeholder="ENG" />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-foreground">Parent Department</label>
+                    <Select value={form.parentId} onChange={(event) => setField('parentId', event.target.value)} className="w-full">
+                      <option value="">None</option>
+                      {departments
+                        .filter((department) => department.id !== editingId)
+                        .map((department) => (
+                          <option key={department.id} value={department.id}>
+                            {department.name} ({department.code})
+                          </option>
+                        ))}
+                    </Select>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Button type="button" disabled={saving || !form.name || !form.code} onClick={handleSave}>
+                    <Plus className="h-4 w-4" />
+                    {saving ? 'Saving...' : editingId ? 'Update Department' : 'Save Department'}
+                  </Button>
+                  <Button type="button" variant="outline" onClick={resetForm}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
+                <FolderTree className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
+                <div className="text-sm font-medium text-foreground">Ready for the next org change</div>
+                <p className="mt-2 text-sm text-muted-foreground">Open the form to create a new department or edit an existing one from the registry.</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">Department registry</CardTitle>
+            <CardDescription>See the current parent-child hierarchy and quickly clean up outdated org units.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {loading ? (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                Loading departments...
+              </div>
+            ) : departments.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                No departments yet.
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Code</TableHead>
+                    <TableHead>Parent</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {departments.map((department) => (
+                    <TableRow key={department.id}>
+                      <TableCell>
+                        <div className="font-medium text-foreground">{department.name}</div>
+                      </TableCell>
+                      <TableCell>
+                        <code className="rounded-md bg-muted px-2 py-1 text-xs font-medium text-foreground">{department.code}</code>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {department.parentId ? deptById[department.parentId]?.name || department.parentId : '—'}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button type="button" variant="outline" size="sm" onClick={() => startEdit(department)}>
+                            <Pencil className="h-3.5 w-3.5" />
+                            Edit
+                          </Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => handleDelete(department.id)}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
-                {departments.map((dept, i) => (
-                  <tr key={dept.id} style={{ borderBottom: i < departments.length - 1 ? `1px solid ${COLORS.contentBg}` : 'none' }}>
-                    <td style={{ padding: '0.875rem 1rem', fontWeight: 500, color: COLORS.textPrimary }}>{dept.name}</td>
-                    <td style={{ padding: '0.875rem 1rem' }}>
-                      <code style={{ background: COLORS.contentBg, padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.85rem' }}>{dept.code}</code>
-                    </td>
-                    <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary, fontSize: '0.875rem' }}>
-                      {dept.parentId ? deptById[dept.parentId]?.name || dept.parentId : '—'}
-                    </td>
-                    <td style={{ padding: '0.875rem 1rem' }}>
-                      <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button onClick={() => startEdit(dept)} style={{ fontSize: '0.8rem', padding: '0.3rem 0.6rem', border: `1px solid ${COLORS.tableBorder}`, borderRadius: '4px', background: COLORS.white, cursor: 'pointer' }}>Edit</button>
-                        <button onClick={() => handleDelete(dept.id)} style={{ fontSize: '0.8rem', padding: '0.3rem 0.6rem', border: '1px solid #fecaca', borderRadius: '4px', background: COLORS.white, color: COLORS.accentRedDark, cursor: 'pointer' }}>Delete</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {departments.length === 0 && <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>No departments yet.</div>}
-        </div>
-      )}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

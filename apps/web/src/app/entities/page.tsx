@@ -1,24 +1,22 @@
 'use client';
 
-import type { CSSProperties } from 'react';
 import { useEffect, useState } from 'react';
+import { Building2, Pencil, Plus, Rows3, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
+import { PageHeader } from '../../components/page-header';
+import { StatusBadge } from '../../components/status-badge';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 
-const inputStyle: CSSProperties = {
-  width: '100%',
-  padding: '0.55rem 0.7rem',
-  border: `1px solid ${COLORS.inputBorder}`,
-  borderRadius: '6px',
-  fontSize: '0.875rem',
-  boxSizing: 'border-box',
-};
-
-const cardStyle: CSSProperties = {
-  background: COLORS.cardBg,
-  border: `1px solid ${COLORS.tableBorder}`,
-  borderRadius: '8px',
-  boxShadow: SHADOWS.card,
+const EMPTY_FORM = {
+  name: '',
+  code: '',
+  currency: 'USD',
+  glAccountPrefix: '',
+  taxId: '',
 };
 
 export default function EntitiesPage() {
@@ -27,20 +25,14 @@ export default function EntitiesPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({
-    name: '',
-    code: '',
-    currency: 'USD',
-    glAccountPrefix: '',
-    taxId: '',
-  });
+  const [form, setForm] = useState(EMPTY_FORM);
 
   async function load() {
     setLoading(true);
     try {
       setEntities(await api.entities.list(true));
-    } catch (e: any) {
-      setError(e.message);
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -52,11 +44,15 @@ export default function EntitiesPage() {
 
   function resetForm() {
     setEditingId(null);
-    setForm({ name: '', code: '', currency: 'USD', glAccountPrefix: '', taxId: '' });
+    setForm(EMPTY_FORM);
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  function setField(key: keyof typeof EMPTY_FORM, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
     setSaving(true);
     setError('');
     try {
@@ -67,8 +63,8 @@ export default function EntitiesPage() {
       }
       resetForm();
       await load();
-    } catch (e: any) {
-      setError(e.message);
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setSaving(false);
     }
@@ -78,111 +74,157 @@ export default function EntitiesPage() {
     try {
       await api.entities.remove(id);
       await load();
-    } catch (e: any) {
-      setError(e.message);
+    } catch (err: any) {
+      setError(err.message);
     }
   }
 
   return (
-    <div style={{ padding: '2rem', display: 'grid', gap: '1.5rem' }}>
-      <div>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: COLORS.textPrimary }}>Entities</h1>
-        <p style={{ margin: '0.25rem 0 0', color: COLORS.textSecondary, fontSize: '0.875rem' }}>
-          Manage legal entities, subsidiaries, and divisions inside one BetterSpend org.
-        </p>
-      </div>
-
-      <form onSubmit={handleSubmit} style={{ ...cardStyle, padding: '1.5rem', display: 'grid', gap: '1rem' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '1rem' }}>
-          <input style={inputStyle} placeholder="Entity name" value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} />
-          <input style={inputStyle} placeholder="Code" value={form.code} onChange={(e) => setForm((prev) => ({ ...prev, code: e.target.value.toUpperCase() }))} />
-          <input style={inputStyle} placeholder="Currency" value={form.currency} onChange={(e) => setForm((prev) => ({ ...prev, currency: e.target.value.toUpperCase() }))} />
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-          <input style={inputStyle} placeholder="GL account prefix" value={form.glAccountPrefix} onChange={(e) => setForm((prev) => ({ ...prev, glAccountPrefix: e.target.value }))} />
-          <input style={inputStyle} placeholder="Tax ID" value={form.taxId} onChange={(e) => setForm((prev) => ({ ...prev, taxId: e.target.value }))} />
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          {error ? <span style={{ color: COLORS.accentRedDark, fontSize: '0.875rem' }}>{error}</span> : <span />}
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
-            {editingId && (
-              <button
-                type="button"
-                onClick={resetForm}
-                style={{ padding: '0.6rem 1rem', borderRadius: '6px', border: `1px solid ${COLORS.inputBorder}`, background: COLORS.white, color: COLORS.textSecondary, fontWeight: 600, cursor: 'pointer' }}
-              >
-                Cancel
-              </button>
-            )}
-            <button
-              type="submit"
-              disabled={saving}
-              style={{ padding: '0.6rem 1rem', borderRadius: '6px', border: 'none', background: COLORS.accentBlue, color: COLORS.white, fontWeight: 600, cursor: 'pointer' }}
-            >
-              {saving ? 'Saving…' : editingId ? 'Update Entity' : 'Add Entity'}
-            </button>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="Entities"
+        description="Manage legal entities, subsidiaries, and divisions inside one BetterSpend org."
+        actions={
+          <div className="flex items-center gap-2 rounded-full border border-border/70 bg-background/80 px-4 py-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+            <Building2 className="h-4 w-4" />
+            {entities.length} configured
           </div>
-        </div>
-      </form>
+        }
+      />
 
-      <div style={cardStyle}>
-        {loading ? (
-          <div style={{ padding: '2rem', color: COLORS.textMuted }}>Loading…</div>
-        ) : entities.length === 0 ? (
-          <div style={{ padding: '2rem', color: COLORS.textMuted }}>No entities created yet.</div>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-            <thead>
-              <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                {['Name', 'Code', 'Currency', 'GL Prefix', 'Status', ''].map((label) => (
-                  <th key={label} style={{ padding: '0.75rem 1rem', textAlign: 'left', color: COLORS.textSecondary, fontSize: '0.75rem', textTransform: 'uppercase' }}>
-                    {label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {entities.map((entity, index) => (
-                <tr key={entity.id} style={{ borderBottom: index < entities.length - 1 ? `1px solid ${COLORS.contentBg}` : undefined }}>
-                  <td style={{ padding: '0.875rem 1rem', fontWeight: 600, color: COLORS.textPrimary }}>{entity.name}</td>
-                  <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{entity.code}</td>
-                  <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{entity.currency}</td>
-                  <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{entity.glAccountPrefix ?? '—'}</td>
-                  <td style={{ padding: '0.875rem 1rem', color: entity.isActive ? COLORS.accentGreenDark : COLORS.textMuted }}>
-                    {entity.isActive ? 'Active' : 'Archived'}
-                  </td>
-                  <td style={{ padding: '0.875rem 1rem', textAlign: 'right' }}>
-                    <div style={{ display: 'inline-flex', gap: '0.5rem' }}>
-                      <button
-                        onClick={() => {
-                          setEditingId(entity.id);
-                          setForm({
-                            name: entity.name ?? '',
-                            code: entity.code ?? '',
-                            currency: entity.currency ?? 'USD',
-                            glAccountPrefix: entity.glAccountPrefix ?? '',
-                            taxId: entity.taxId ?? '',
-                          });
-                        }}
-                        style={{ background: 'transparent', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', padding: '0.4rem 0.8rem', cursor: 'pointer', color: COLORS.textSecondary }}
-                      >
-                        Edit
-                      </button>
-                      {entity.isActive && (
-                        <button
-                          onClick={() => handleArchive(entity.id)}
-                          style={{ background: 'transparent', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', padding: '0.4rem 0.8rem', cursor: 'pointer', color: COLORS.textSecondary }}
-                        >
-                          Archive
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.9fr)]">
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">{editingId ? 'Edit entity' : 'Add entity'}</CardTitle>
+            <CardDescription>Set the legal code, currency, GL prefix, and tax identity for each operating entity.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-1">
+                <div className="md:col-span-2 xl:col-span-1">
+                  <label className="mb-2 block text-sm font-medium text-foreground">Entity name</label>
+                  <Input required value={form.name} onChange={(event) => setField('name', event.target.value)} placeholder="Acme Holdings LLC" />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Code</label>
+                  <Input required value={form.code} onChange={(event) => setField('code', event.target.value.toUpperCase())} placeholder="ACME-US" />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Currency</label>
+                  <Input required value={form.currency} onChange={(event) => setField('currency', event.target.value.toUpperCase())} placeholder="USD" />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">GL account prefix</label>
+                  <Input value={form.glAccountPrefix} onChange={(event) => setField('glAccountPrefix', event.target.value)} placeholder="1000" />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Tax ID</label>
+                  <Input value={form.taxId} onChange={(event) => setField('taxId', event.target.value)} placeholder="12-3456789" />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <Button type="submit" disabled={saving}>
+                  <Plus className="h-4 w-4" />
+                  {saving ? 'Saving...' : editingId ? 'Update Entity' : 'Add Entity'}
+                </Button>
+                {editingId ? (
+                  <Button type="button" variant="outline" onClick={resetForm}>
+                    Cancel
+                  </Button>
+                ) : null}
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-[24px]">
+          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+            <div>
+              <CardTitle className="text-xl">Entity registry</CardTitle>
+              <CardDescription>Review active entities, archive old ones, and jump into edits without leaving the list.</CardDescription>
+            </div>
+            <div className="hidden items-center gap-2 rounded-full bg-muted/60 px-3 py-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground md:inline-flex">
+              <Rows3 className="h-4 w-4" />
+              {loading ? 'Loading' : `${entities.length} rows`}
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {loading ? (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                Loading entities...
+              </div>
+            ) : entities.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                No entities created yet.
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Code</TableHead>
+                    <TableHead>Currency</TableHead>
+                    <TableHead>GL Prefix</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {entities.map((entity) => (
+                    <TableRow key={entity.id}>
+                      <TableCell>
+                        <div className="font-medium text-foreground">{entity.name}</div>
+                      </TableCell>
+                      <TableCell>
+                        <code className="rounded-md bg-muted px-2 py-1 text-xs font-medium text-foreground">{entity.code}</code>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{entity.currency}</TableCell>
+                      <TableCell className="text-muted-foreground">{entity.glAccountPrefix ?? '—'}</TableCell>
+                      <TableCell>
+                        <StatusBadge value={entity.isActive ? 'active' : 'inactive'} />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setEditingId(entity.id);
+                              setForm({
+                                name: entity.name ?? '',
+                                code: entity.code ?? '',
+                                currency: entity.currency ?? 'USD',
+                                glAccountPrefix: entity.glAccountPrefix ?? '',
+                                taxId: entity.taxId ?? '',
+                              });
+                            }}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            Edit
+                          </Button>
+                          {entity.isActive ? (
+                            <Button type="button" variant="outline" size="sm" onClick={() => handleArchive(entity.id)}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Archive
+                            </Button>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

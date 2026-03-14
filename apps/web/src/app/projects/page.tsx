@@ -1,15 +1,27 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { FolderKanban, Pencil, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
+import { PageHeader } from '../../components/page-header';
+import { StatusBadge } from '../../components/status-badge';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 
-const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
-  active: { bg: COLORS.accentGreenLight, text: '#15803d' },
-  completed: { bg: COLORS.accentBlueLight, text: '#1d4ed8' },
-  cancelled: { bg: COLORS.accentRedLight, text: COLORS.accentRedDark },
-  on_hold: { bg: COLORS.accentAmberLight, text: '#ca8a04' },
+const EMPTY_FORM = {
+  name: '',
+  code: '',
+  departmentId: '',
+  status: 'active',
+  startDate: '',
+  endDate: '',
 };
+
+const PROJECT_STATUSES = ['active', 'on_hold', 'completed', 'cancelled'];
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<any[]>([]);
@@ -17,20 +29,32 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: '', code: '', departmentId: '', status: 'active', startDate: '', endDate: '' });
+  const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    Promise.all([api.projects.list(), api.departments.list()]).then(([p, d]) => {
-      setProjects(p);
-      setDepartments(d);
-    }).catch(() => {}).finally(() => setLoading(false));
+    Promise.all([api.projects.list(), api.departments.list()])
+      .then(([projectData, departmentData]) => {
+        setProjects(projectData);
+        setDepartments(departmentData);
+      })
+      .catch((err: any) => {
+        setError(err.message ?? 'Unable to load projects.');
+      })
+      .finally(() => setLoading(false));
   }, []);
 
-  async function load() {
-    const data = await api.projects.list();
-    setProjects(data);
+  async function loadProjects() {
+    setProjects(await api.projects.list());
+  }
+
+  function resetForm() {
+    setForm(EMPTY_FORM);
+  }
+
+  function setField(key: keyof typeof EMPTY_FORM, value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
   }
 
   async function handleSave() {
@@ -38,23 +62,26 @@ export default function ProjectsPage() {
     setError('');
     try {
       const payload = {
-        name: form.name, code: form.code,
+        name: form.name,
+        code: form.code,
         departmentId: form.departmentId || undefined,
         status: form.status,
         startDate: form.startDate || undefined,
         endDate: form.endDate || undefined,
       };
+
       if (editingId) {
         await api.projects.update(editingId, payload);
       } else {
         await api.projects.create(payload);
       }
+
       setShowForm(false);
       setEditingId(null);
       resetForm();
-      await load();
-    } catch (e: any) {
-      setError(e.message);
+      await loadProjects();
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setSaving(false);
     }
@@ -64,15 +91,16 @@ export default function ProjectsPage() {
     if (!confirm('Delete this project?')) return;
     try {
       await api.projects.remove(id);
-      await load();
-    } catch (e: any) {
-      setError(e.message);
+      await loadProjects();
+    } catch (err: any) {
+      setError(err.message);
     }
   }
 
   function startEdit(project: any) {
     setForm({
-      name: project.name, code: project.code,
+      name: project.name,
+      code: project.code,
       departmentId: project.departmentId || '',
       status: project.status || 'active',
       startDate: project.startDate ? project.startDate.slice(0, 10) : '',
@@ -82,112 +110,174 @@ export default function ProjectsPage() {
     setShowForm(true);
   }
 
-  function resetForm() {
-    setForm({ name: '', code: '', departmentId: '', status: 'active', startDate: '', endDate: '' });
-  }
-
-  const deptById = Object.fromEntries(departments.map((d) => [d.id, d]));
+  const departmentMap = Object.fromEntries(departments.map((department) => [department.id, department]));
 
   return (
-    <div style={{ padding: '2rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary }}>Projects</h1>
-        <button onClick={() => { setShowForm(true); setEditingId(null); resetForm(); }} style={{ padding: '0.5rem 1rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 500 }}>
-          + New Project
-        </button>
-      </div>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="Projects"
+        description="Track initiative-level ownership, time windows, and the operating status that approval rules and budget reporting depend on."
+        actions={
+          <Button
+            type="button"
+            onClick={() => {
+              setShowForm(true);
+              setEditingId(null);
+              resetForm();
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            New Project
+          </Button>
+        }
+      />
 
-      {showForm && (
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-          <h2 style={{ fontWeight: 600, marginBottom: '1rem' }}>{editingId ? 'Edit' : 'New'} Project</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>Name *</label>
-              <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} style={{ width: '100%', padding: '0.5rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>Code *</label>
-              <input value={form.code} onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.toUpperCase() }))} placeholder="e.g. PROJ-001" style={{ width: '100%', padding: '0.5rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>Department</label>
-              <select value={form.departmentId} onChange={(e) => setForm((f) => ({ ...f, departmentId: e.target.value }))} style={{ width: '100%', padding: '0.5rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px' }}>
-                <option value="">None</option>
-                {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>Status</label>
-              <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} style={{ width: '100%', padding: '0.5rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px' }}>
-                {['active', 'on_hold', 'completed', 'cancelled'].map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>Start Date</label>
-              <input type="date" value={form.startDate} onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))} style={{ width: '100%', padding: '0.5rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>End Date</label>
-              <input type="date" value={form.endDate} onChange={(e) => setForm((f) => ({ ...f, endDate: e.target.value }))} style={{ width: '100%', padding: '0.5rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', boxSizing: 'border-box' }} />
-            </div>
-          </div>
-          {error && <div style={{ marginTop: '0.75rem', background: COLORS.accentRedLight, border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.5rem 0.75rem', color: COLORS.accentRedDark, fontSize: '0.875rem' }}>{error}</div>}
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-            <button onClick={handleSave} disabled={saving || !form.name || !form.code} style={{ padding: '0.5rem 1rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
-              {saving ? 'Saving...' : 'Save'}
-            </button>
-            <button onClick={() => { setShowForm(false); setError(''); }} style={{ padding: '0.5rem 1rem', background: COLORS.tableBorder, color: COLORS.textSecondary, border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Cancel</button>
-          </div>
-        </div>
-      )}
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      {loading ? <p style={{ color: COLORS.textSecondary }}>Loading...</p> : (
-        <div style={{ background: COLORS.cardBg, borderRadius: '8px', border: `1px solid ${COLORS.tableBorder}`, overflow: 'hidden', boxShadow: SHADOWS.card }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                  {['Name', 'Code', 'Department', 'Status', 'Dates', 'Actions'].map((h) => (
-                    <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600, color: COLORS.textSecondary, textTransform: 'uppercase' }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {projects.map((project, i) => {
-                  const sc = STATUS_COLORS[project.status] || { bg: COLORS.contentBg, text: COLORS.textSecondary };
-                  return (
-                    <tr key={project.id} style={{ borderBottom: i < projects.length - 1 ? `1px solid ${COLORS.contentBg}` : 'none' }}>
-                      <td style={{ padding: '0.875rem 1rem', fontWeight: 500, color: COLORS.textPrimary }}>{project.name}</td>
-                      <td style={{ padding: '0.875rem 1rem' }}>
-                        <code style={{ background: COLORS.contentBg, padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.85rem' }}>{project.code}</code>
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary, fontSize: '0.875rem' }}>
-                        {project.departmentId ? deptById[project.departmentId]?.name || '—' : '—'}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem' }}>
-                        <span style={{ padding: '0.2rem 0.6rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 600, background: sc.bg, color: sc.text }}>
-                          {project.status}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary, fontSize: '0.8rem' }}>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.9fr)]">
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">{editingId ? 'Edit project' : 'Project details'}</CardTitle>
+            <CardDescription>Keep department ownership, lifecycle dates, and status labels consistent for every tracked project.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {showForm ? (
+              <div className="space-y-5">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-1">
+                  <div className="md:col-span-2 xl:col-span-1">
+                    <label className="mb-2 block text-sm font-medium text-foreground">Name</label>
+                    <Input value={form.name} onChange={(event) => setField('name', event.target.value)} placeholder="Global ERP Rollout" />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-foreground">Code</label>
+                    <Input value={form.code} onChange={(event) => setField('code', event.target.value.toUpperCase())} placeholder="PROJ-001" />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-foreground">Department</label>
+                    <Select value={form.departmentId} onChange={(event) => setField('departmentId', event.target.value)} className="w-full">
+                      <option value="">None</option>
+                      {departments.map((department) => (
+                        <option key={department.id} value={department.id}>
+                          {department.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-foreground">Status</label>
+                    <Select value={form.status} onChange={(event) => setField('status', event.target.value)} className="w-full">
+                      {PROJECT_STATUSES.map((status) => (
+                        <option key={status} value={status}>
+                          {status.replace('_', ' ')}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-foreground">Start date</label>
+                    <Input type="date" value={form.startDate} onChange={(event) => setField('startDate', event.target.value)} />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-foreground">End date</label>
+                    <Input type="date" value={form.endDate} onChange={(event) => setField('endDate', event.target.value)} />
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Button type="button" disabled={saving || !form.name || !form.code} onClick={handleSave}>
+                    <Plus className="h-4 w-4" />
+                    {saving ? 'Saving...' : editingId ? 'Update Project' : 'Save Project'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setShowForm(false);
+                      setError('');
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
+                <FolderKanban className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
+                <div className="text-sm font-medium text-foreground">Project setup is ready</div>
+                <p className="mt-2 text-sm text-muted-foreground">Open the form to add a new initiative or edit an existing status and timeline.</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">Project portfolio</CardTitle>
+            <CardDescription>Review current ownership, watch for stale timelines, and clean up inactive or cancelled workstreams.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {loading ? (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                Loading projects...
+              </div>
+            ) : projects.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                No projects yet.
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Code</TableHead>
+                    <TableHead>Department</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Dates</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {projects.map((project) => (
+                    <TableRow key={project.id}>
+                      <TableCell>
+                        <div className="font-medium text-foreground">{project.name}</div>
+                      </TableCell>
+                      <TableCell>
+                        <code className="rounded-md bg-muted px-2 py-1 text-xs font-medium text-foreground">{project.code}</code>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {project.departmentId ? departmentMap[project.departmentId]?.name || '—' : '—'}
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge value={project.status || 'inactive'} />
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
                         {project.startDate ? new Date(project.startDate).toLocaleDateString() : '—'}
-                        {project.endDate ? ` → ${new Date(project.endDate).toLocaleDateString()}` : ''}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem' }}>
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
-                          <button onClick={() => startEdit(project)} style={{ fontSize: '0.8rem', padding: '0.3rem 0.6rem', border: `1px solid ${COLORS.tableBorder}`, borderRadius: '4px', background: COLORS.white, cursor: 'pointer' }}>Edit</button>
-                          <button onClick={() => handleDelete(project.id)} style={{ fontSize: '0.8rem', padding: '0.3rem 0.6rem', border: '1px solid #fecaca', borderRadius: '4px', background: COLORS.white, color: COLORS.accentRedDark, cursor: 'pointer' }}>Delete</button>
+                        {project.endDate ? ` -> ${new Date(project.endDate).toLocaleDateString()}` : ''}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button type="button" variant="outline" size="sm" onClick={() => startEdit(project)}>
+                            <Pencil className="h-3.5 w-3.5" />
+                            Edit
+                          </Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => handleDelete(project.id)}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete
+                          </Button>
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {projects.length === 0 && <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>No projects yet.</div>}
-        </div>
-      )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

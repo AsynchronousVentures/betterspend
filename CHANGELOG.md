@@ -41,6 +41,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated the contract detail page, including activation, termination, contract lines, amendments, and document management, onto the new Tailwind-based detail layout.
 - Migrated the vendor detail page, including onboarding review, transaction history, portal access, punchout controls, and edit mode, onto the new detail-page system.
 - Migrated audit, search, intake, and approval-detail workflow pages onto the new operational UI primitives so internal review tools match the rest of the application.
+- Migrated the entities, departments, projects, and users admin CRUD pages onto the Tailwind/shadcn-style form, table, and status-badge system, removing another batch of legacy inline theme usage.
 
 ### Fixed
 
