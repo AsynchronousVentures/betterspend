@@ -187,7 +187,7 @@ export default function SupplierScorecardPage() {
       ) : rows.length === 0 ? (
         <EmptyCard text="No vendor data yet. Scores appear once vendors have purchase orders or invoices." />
       ) : (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Scoreboard</CardTitle>
             <CardDescription>Click a vendor row to expand operational detail and see the latest PO and invoice activity behind the score.</CardDescription>
@@ -452,7 +452,7 @@ function LegendBadge({
 
 function EmptyCard({ text }: { text: string }) {
   return (
-    <Card className="rounded-[24px]">
+    <Card className="rounded-lg">
       <CardContent className="p-8 text-sm text-muted-foreground">{text}</CardContent>
     </Card>
   );

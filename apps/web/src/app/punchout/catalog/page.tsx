@@ -154,7 +154,7 @@ export default function PunchoutCatalogPage() {
               <AlertTriangle className="h-10 w-10" />
             </div>
             <div className="space-y-2">
-              <h1 className="font-display text-3xl font-semibold tracking-[-0.04em] text-foreground">
+              <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">
                 Invalid or Expired Session
               </h1>
               <p className="text-sm leading-6 text-muted-foreground">
@@ -178,7 +178,7 @@ export default function PunchoutCatalogPage() {
                   <Check className="h-10 w-10" />
                 </div>
                 <div className="space-y-2">
-                  <h1 className="font-display text-3xl font-semibold tracking-[-0.04em] text-emerald-700">
+                  <h1 className="text-3xl font-semibold tracking-[-0.04em] text-emerald-700">
                     Items Sent to Requisition
                   </h1>
                   <p className="text-sm text-muted-foreground">
@@ -186,7 +186,7 @@ export default function PunchoutCatalogPage() {
                   </p>
                 </div>
               </div>
-              <Card className="rounded-[24px] bg-emerald-50/60">
+              <Card className="rounded-lg bg-emerald-50/60">
                 <CardContent className="grid gap-3 p-5">
                   {(checkoutResult.lines ?? []).map((line: any, index: number) => (
                     <div key={index} className="flex items-center justify-between gap-4 border-b border-emerald-200/80 pb-3 text-sm last:border-0 last:pb-0">
@@ -215,7 +215,7 @@ export default function PunchoutCatalogPage() {
             <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-200/80">
               Punchout Catalog
             </div>
-            <div className="font-display text-3xl font-semibold tracking-[-0.04em]">Vendor Catalog</div>
+            <div className="text-3xl font-semibold tracking-[-0.04em]">Vendor Catalog</div>
           </div>
           <div className="flex items-center gap-3">
             {cart.length > 0 ? (
@@ -256,7 +256,7 @@ export default function PunchoutCatalogPage() {
               </div>
 
               {filtered.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-14 text-center text-sm text-muted-foreground">
+                <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-14 text-center text-sm text-muted-foreground">
                   {items.length === 0 ? 'No catalog items available for this vendor.' : 'No items match your search.'}
                 </div>
               ) : (
@@ -266,7 +266,7 @@ export default function PunchoutCatalogPage() {
                     return (
                       <Card
                         key={item.id}
-                        className={`rounded-[24px] border-border/70 bg-card/95 ${
+                        className={`rounded-lg border-border/70 bg-card/95 ${
                           inCart ? 'border-sky-300 shadow-[0_18px_52px_-36px_rgba(14,165,233,0.45)]' : ''
                         }`}
                       >
@@ -326,7 +326,7 @@ export default function PunchoutCatalogPage() {
           </CardHeader>
           <CardContent className="grid gap-4">
             {cart.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-5 py-10 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-5 py-10 text-center text-sm text-muted-foreground">
                 No items yet.
               </div>
             ) : (

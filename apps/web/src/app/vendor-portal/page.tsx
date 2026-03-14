@@ -121,7 +121,7 @@ function PortalShell({
             <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-200/80">
               Vendor Portal
             </div>
-            <div className="font-display text-3xl font-semibold tracking-[-0.04em]">
+            <div className="text-3xl font-semibold tracking-[-0.04em]">
               {vendorName ?? 'BetterSpend Supplier Access'}
             </div>
           </div>
@@ -156,7 +156,7 @@ function EmptyPortalState({
               {icon}
             </div>
             <div className="space-y-2">
-              <h1 className="font-display text-3xl font-semibold tracking-[-0.04em] text-foreground">{title}</h1>
+              <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{title}</h1>
               <p className="text-sm leading-6 text-muted-foreground">{description}</p>
             </div>
           </CardContent>
@@ -178,9 +178,9 @@ function VendorStatCard({
   tone: string;
 }) {
   return (
-    <Card className="rounded-[24px] border-border/70 bg-card/90">
+    <Card className="rounded-lg border-border/70 bg-card/90">
       <CardContent className="flex items-center gap-4 p-5">
-        <div className={cn('flex h-12 w-12 items-center justify-center rounded-2xl', tone)}>{icon}</div>
+        <div className={cn('flex h-12 w-12 items-center justify-center rounded-lg', tone)}>{icon}</div>
         <div className="space-y-1">
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
           <div className="text-xl font-semibold tracking-[-0.03em] text-foreground">{value}</div>
@@ -304,7 +304,7 @@ function SubmitInvoiceModal({
       >
         <div className="mb-6 flex items-start justify-between gap-4">
           <div className="space-y-1">
-            <h2 className="font-display text-2xl font-semibold tracking-[-0.03em] text-foreground">
+            <h2 className="text-2xl font-semibold tracking-[-0.03em] text-foreground">
               Submit Invoice
             </h2>
             <p className="text-sm text-muted-foreground">
@@ -323,7 +323,7 @@ function SubmitInvoiceModal({
             </Alert>
           ) : null}
 
-          <Card className="rounded-[24px]">
+          <Card className="rounded-lg">
             <CardHeader>
               <CardTitle className="text-base">Invoice details</CardTitle>
               <CardDescription>Choose the PO and provide your reference numbers and dates.</CardDescription>
@@ -361,7 +361,7 @@ function SubmitInvoiceModal({
             </CardContent>
           </Card>
 
-          <Card className="rounded-[24px]">
+          <Card className="rounded-lg">
             <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <CardTitle className="text-base">Line items</CardTitle>
@@ -418,7 +418,7 @@ function SubmitInvoiceModal({
                   </div>
                 </div>
               ))}
-              <div className="flex justify-end rounded-2xl bg-muted/30 px-4 py-3 text-sm font-semibold text-foreground">
+              <div className="flex justify-end rounded-lg bg-muted/30 px-4 py-3 text-sm font-semibold text-foreground">
                 Total: {fmt(total)}
               </div>
             </CardContent>
@@ -670,7 +670,7 @@ function VendorPortalContent() {
               type="button"
               onClick={() => setActiveTab(tab.key)}
               className={cn(
-                'rounded-2xl px-4 py-2 text-sm font-medium transition-colors',
+                'rounded-lg px-4 py-2 text-sm font-medium transition-colors',
                 activeTab === tab.key
                   ? 'bg-slate-950 text-slate-50 shadow-sm'
                   : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
@@ -712,28 +712,28 @@ function VendorPortalContent() {
               <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 {vendor.taxId ? (
                   <Field label="Tax ID">
-                    <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground">
+                    <div className="rounded-lg border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground">
                       {vendor.taxId}
                     </div>
                   </Field>
                 ) : null}
                 {vendor.paymentTerms ? (
                   <Field label="Payment Terms">
-                    <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground">
+                    <div className="rounded-lg border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground">
                       {vendor.paymentTerms}
                     </div>
                   </Field>
                 ) : null}
                 {vendorContact.email ? (
                   <Field label="Contact Email">
-                    <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground">
+                    <div className="rounded-lg border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground">
                       {vendorContact.email}
                     </div>
                   </Field>
                 ) : null}
                 {vendorContact.phone ? (
                   <Field label="Phone">
-                    <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground">
+                    <div className="rounded-lg border border-border/70 bg-background/70 px-4 py-3 text-sm text-foreground">
                       {vendorContact.phone}
                     </div>
                   </Field>
@@ -989,19 +989,19 @@ function VendorPortalContent() {
                   <CardDescription>Buyer review, risk scoring, and the latest submission state.</CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-3 text-sm text-muted-foreground">
-                  <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
+                  <div className="flex items-center justify-between gap-4 rounded-lg border border-border/70 bg-background/70 px-4 py-3">
                     <span>Status</span>
                     <Badge variant="outline">{String(vendor.onboardingStatus ?? 'not_started').replace(/_/g, ' ')}</Badge>
                   </div>
-                  <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
+                  <div className="flex items-center justify-between gap-4 rounded-lg border border-border/70 bg-background/70 px-4 py-3">
                     <span>Risk score</span>
                     <span className="font-medium text-foreground">{vendor.onboardingRiskScore ?? 0}</span>
                   </div>
-                  <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
+                  <div className="flex items-center justify-between gap-4 rounded-lg border border-border/70 bg-background/70 px-4 py-3">
                     <span>Risk level</span>
                     <StatusBadge value={String(vendor.onboardingRiskLevel ?? 'low')} />
                   </div>
-                  <div className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
+                  <div className="flex items-center justify-between gap-4 rounded-lg border border-border/70 bg-background/70 px-4 py-3">
                     <span>Last submitted</span>
                     <span className="text-foreground">
                       {vendor.onboardingLastSubmittedAt
@@ -1148,7 +1148,7 @@ function VendorPortalContent() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-3">
-                  <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-border/80 bg-background/60 px-4 py-4 text-sm text-muted-foreground hover:bg-muted/20">
+                  <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-border/80 bg-background/60 px-4 py-4 text-sm text-muted-foreground hover:bg-muted/20">
                     <Upload className="h-4 w-4" />
                     <span>Choose CSV file</span>
                     <input
@@ -1174,7 +1174,7 @@ function VendorPortalContent() {
                 </CardHeader>
                 <CardContent className="grid gap-3">
                   {!catalogData || catalogData.proposals.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
+                    <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
                       No price proposals submitted yet.
                     </div>
                   ) : (

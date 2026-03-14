@@ -51,7 +51,7 @@ export default function SignUpPage() {
   return (
     <AuthShell
       title="Create account"
-      description="Set up your BetterSpend workspace access with the new token-driven UI foundation."
+      description="Create your account to start managing procurement workflows with your team."
       footer={
         <>
           Already have an account?{' '}

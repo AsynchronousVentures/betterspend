@@ -196,7 +196,7 @@ export default function CatalogPage() {
       ) : null}
 
       {showForm ? (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">{editId ? 'Edit Item' : 'New Catalog Item'}</CardTitle>
             <CardDescription>Maintain item metadata, supplier reference, and pricing defaults.</CardDescription>
@@ -312,7 +312,7 @@ export default function CatalogPage() {
         </Card>
       ) : null}
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardContent className="flex flex-wrap items-center gap-3 p-6">
           <Input
             className="w-[220px]"
@@ -368,7 +368,7 @@ export default function CatalogPage() {
       </Card>
 
       {priceProposals.length > 0 ? (
-        <Card className="rounded-[24px] border-amber-200/70 bg-amber-50/60">
+        <Card className="rounded-lg border-amber-200/70 bg-amber-50/60">
           <CardHeader>
             <CardTitle className="text-xl">Pending Supplier Price Updates</CardTitle>
             <CardDescription>{priceProposals.length} proposals waiting for buyer review.</CardDescription>
@@ -377,7 +377,7 @@ export default function CatalogPage() {
             {priceProposals.slice(0, 6).map((proposal) => (
               <div
                 key={proposal.id}
-                className="grid gap-3 rounded-2xl border border-border/70 bg-background p-4 xl:grid-cols-[1.2fr_1fr_1fr_1.3fr_auto]"
+                className="grid gap-3 rounded-lg border border-border/70 bg-background p-4 xl:grid-cols-[1.2fr_1fr_1fr_1.3fr_auto]"
               >
                 <div>
                   <div className="font-medium text-foreground">{proposal.item?.name}</div>
@@ -423,18 +423,18 @@ export default function CatalogPage() {
         </Card>
       ) : null}
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Catalog Items</CardTitle>
           <CardDescription>Browse, edit, deactivate, and requisition active catalog items.</CardDescription>
         </CardHeader>
         <CardContent className="pt-0">
           {loading ? (
-            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+            <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
               Loading...
             </div>
           ) : items.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center">
+            <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center">
               <div className="text-base font-medium text-foreground">No catalog items</div>
               <div className="mt-2 text-sm text-muted-foreground">
                 Add items to the catalog to enable quick selection in requisitions.

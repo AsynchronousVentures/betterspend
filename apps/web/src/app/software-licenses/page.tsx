@@ -338,7 +338,7 @@ export default function SoftwareLicensesPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {renewals.slice(0, 8).map((renewal) => (
-              <div key={renewal.id} className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/80 px-4 py-3">
+              <div key={renewal.id} className="flex items-center justify-between gap-4 rounded-lg border border-border/70 bg-background/80 px-4 py-3">
                 <div>
                   <Link href={`/software-licenses/${renewal.id}`} className="font-medium text-primary hover:underline">
                     {renewal.productName}
@@ -359,7 +359,7 @@ export default function SoftwareLicensesPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {utilization.slice(0, 8).map((row) => (
-              <div key={row.id} className="rounded-2xl border border-border/70 bg-background/80 px-4 py-3">
+              <div key={row.id} className="rounded-lg border border-border/70 bg-background/80 px-4 py-3">
                 <div className="mb-2 flex items-center justify-between gap-4">
                   <Link href={`/software-licenses/${row.id}`} className="font-medium text-primary hover:underline">
                     {row.productName}

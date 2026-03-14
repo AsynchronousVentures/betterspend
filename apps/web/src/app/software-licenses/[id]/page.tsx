@@ -92,7 +92,7 @@ export default function SoftwareLicenseDetailPage({
   if (loading) {
     return (
       <div className="p-4 lg:p-8">
-        <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+        <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
           Loading software license...
         </div>
       </div>
@@ -184,7 +184,7 @@ export default function SoftwareLicenseDetailPage({
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_380px]">
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">License Details</CardTitle>
             <CardDescription>
@@ -212,7 +212,7 @@ export default function SoftwareLicenseDetailPage({
               <DetailField label="Currency" value={license.currency} />
             </div>
             {license.notes ? (
-              <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
+              <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                   Notes
                 </div>
@@ -224,7 +224,7 @@ export default function SoftwareLicenseDetailPage({
           </CardContent>
         </Card>
 
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Renewal Timeline</CardTitle>
             <CardDescription>
@@ -254,7 +254,7 @@ export default function SoftwareLicenseDetailPage({
               note="Driven by seat utilization and renewal settings."
             />
 
-            <div className="space-y-3 rounded-2xl border border-border/70 bg-background/70 p-4">
+            <div className="space-y-3 rounded-lg border border-border/70 bg-background/70 p-4">
               <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                 Renewal Note
               </div>
@@ -310,7 +310,7 @@ function DetailField({
   icon?: React.ComponentType<{ className?: string }>;
 }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+    <div className="rounded-lg border border-border/70 bg-background/70 p-4">
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
         {Icon ? <Icon className="h-3.5 w-3.5" /> : null}
         {label}
@@ -330,7 +330,7 @@ function TimelineCard({
   note: string;
 }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+    <div className="rounded-lg border border-border/70 bg-background/70 p-4">
       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
         {label}
       </div>
@@ -354,16 +354,16 @@ function StatCard({
   tone: string;
 }) {
   return (
-    <Card className="rounded-[24px] border-border/70 bg-card/95">
+    <Card className="rounded-lg border-border/70 bg-card/95">
       <CardContent className="flex items-center gap-4 p-6">
-        <div className={`rounded-2xl border border-current/10 bg-current/10 p-3 ${tone}`}>
+        <div className={`rounded-lg border border-current/10 bg-current/10 p-3 ${tone}`}>
           <Icon className="h-5 w-5" />
         </div>
         <div className="space-y-1">
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {label}
           </div>
-          <div className="font-display text-2xl font-semibold tracking-[-0.04em] text-foreground">
+          <div className="text-2xl font-semibold tracking-[-0.04em] text-foreground">
             {value}
           </div>
           <div className="text-sm text-muted-foreground">{meta}</div>

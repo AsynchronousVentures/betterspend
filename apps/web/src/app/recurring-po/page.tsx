@@ -136,9 +136,9 @@ function StatCard({
         : 'bg-sky-50 text-sky-700';
 
   return (
-    <Card className="rounded-[24px] border-border/70">
+    <Card className="rounded-lg border-border/70">
       <CardContent className="flex items-center gap-4 p-5">
-        <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ${toneClass}`}>{icon}</div>
+        <div className={`flex h-11 w-11 items-center justify-center rounded-lg ${toneClass}`}>{icon}</div>
         <div className="space-y-1">
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
           <div className="text-lg font-semibold tracking-[-0.03em] text-foreground">{value}</div>
@@ -152,11 +152,11 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
     <Card className="rounded-[28px] border-dashed border-border/80 bg-card/80">
       <CardContent className="flex flex-col items-center gap-4 px-6 py-14 text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-sky-50 text-sky-700">
+        <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-sky-50 text-sky-700">
           <Repeat2 className="h-8 w-8" />
         </div>
         <div className="space-y-2">
-          <h2 className="font-display text-2xl font-semibold tracking-[-0.03em] text-foreground">
+          <h2 className="text-2xl font-semibold tracking-[-0.03em] text-foreground">
             No recurring schedules yet
           </h2>
           <p className="max-w-xl text-sm text-muted-foreground">
@@ -462,7 +462,7 @@ export default function RecurringPoPage() {
       ) : (
         <Card className="overflow-hidden rounded-[28px] border-border/70 bg-card/95">
           <CardHeader className="border-b border-border/70 pb-4">
-            <CardTitle className="font-display text-xl tracking-[-0.03em]">Schedule inventory</CardTitle>
+            <CardTitle className="text-xl tracking-[-0.03em]">Schedule inventory</CardTitle>
             <CardDescription>
               Pause, run, or inspect any recurring PO schedule without leaving the queue.
             </CardDescription>
@@ -628,21 +628,21 @@ export default function RecurringPoPage() {
                                 </div>
 
                                 <div className="grid gap-5 xl:grid-cols-[1.15fr_1fr]">
-                                  <Card className="rounded-[24px]">
+                                  <Card className="rounded-lg">
                                     <CardHeader>
                                       <CardTitle className="text-base">Upcoming runs</CardTitle>
                                       <CardDescription>Preview the next execution dates on this schedule.</CardDescription>
                                     </CardHeader>
                                     <CardContent className="grid gap-3">
                                       {(detail.upcomingRuns ?? []).length === 0 ? (
-                                        <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
+                                        <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
                                           No future runs scheduled.
                                         </div>
                                       ) : (
                                         (detail.upcomingRuns ?? []).map((runAt, index) => (
                                           <div
                                             key={runAt}
-                                            className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/80 px-4 py-3"
+                                            className="flex items-center justify-between gap-4 rounded-lg border border-border/70 bg-background/80 px-4 py-3"
                                           >
                                             <div className="font-medium text-foreground">{fmtDate(runAt)}</div>
                                             <div className="text-xs text-muted-foreground">
@@ -654,19 +654,19 @@ export default function RecurringPoPage() {
                                     </CardContent>
                                   </Card>
 
-                                  <Card className="rounded-[24px]">
+                                  <Card className="rounded-lg">
                                     <CardHeader>
                                       <CardTitle className="text-base">Generated PO history</CardTitle>
                                       <CardDescription>Recent purchase orders created from this schedule.</CardDescription>
                                     </CardHeader>
                                     <CardContent className="grid gap-3">
                                       {(detail.recentHistory ?? []).length === 0 ? (
-                                        <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
+                                        <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-4 py-6 text-sm text-muted-foreground">
                                           No purchase orders have been created from this schedule yet.
                                         </div>
                                       ) : (
                                         (detail.recentHistory ?? []).map((po) => (
-                                          <div key={po.id} className="rounded-2xl border border-border/70 bg-background/80 px-4 py-3">
+                                          <div key={po.id} className="rounded-lg border border-border/70 bg-background/80 px-4 py-3">
                                             <div className="flex items-center justify-between gap-4">
                                               <Link
                                                 href={`/purchase-orders/${po.id}`}
@@ -715,7 +715,7 @@ export default function RecurringPoPage() {
           >
             <div className="mb-6 flex items-start justify-between gap-4">
               <div className="space-y-1">
-                <h2 className="font-display text-2xl font-semibold tracking-[-0.03em] text-foreground">
+                <h2 className="text-2xl font-semibold tracking-[-0.03em] text-foreground">
                   New Recurring PO
                 </h2>
                 <p className="text-sm text-muted-foreground">
@@ -734,7 +734,7 @@ export default function RecurringPoPage() {
             ) : null}
 
             <div className="grid gap-6">
-              <Card className="rounded-[24px]">
+              <Card className="rounded-lg">
                 <CardHeader>
                   <CardTitle className="text-base">Schedule configuration</CardTitle>
                   <CardDescription>Set the cadence, owner context, and schedule constraints.</CardDescription>
@@ -833,7 +833,7 @@ export default function RecurringPoPage() {
                 </CardContent>
               </Card>
 
-              <Card className="rounded-[24px]">
+              <Card className="rounded-lg">
                 <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <CardTitle className="text-base">Line items</CardTitle>
@@ -895,7 +895,7 @@ export default function RecurringPoPage() {
                       </div>
                     </div>
                   ))}
-                  <div className="flex items-center justify-end rounded-2xl bg-muted/35 px-4 py-3 text-sm">
+                  <div className="flex items-center justify-end rounded-lg bg-muted/35 px-4 py-3 text-sm">
                     <span className="font-semibold text-foreground">Total: {fmtCurrency(computedTotal, form.currency)}</span>
                   </div>
                 </CardContent>

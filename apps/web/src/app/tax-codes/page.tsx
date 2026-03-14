@@ -128,7 +128,7 @@ export default function TaxCodesPage() {
       ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.9fr)]">
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">{editingId ? 'Edit tax code' : 'Create tax code'}</CardTitle>
             <CardDescription>Capture the rate, tax type, GL mapping, and whether tax should consume budget or stay net-only.</CardDescription>
@@ -192,14 +192,14 @@ export default function TaxCodesPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Tax code library</CardTitle>
             <CardDescription>Keep tax treatment readable for finance ops and ensure downstream matching uses the right budget and ledger assumptions.</CardDescription>
           </CardHeader>
           <CardContent className="pt-0">
             {taxCodes.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
                 No tax codes yet.
               </div>
             ) : (

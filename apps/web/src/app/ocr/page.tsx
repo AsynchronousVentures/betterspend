@@ -87,7 +87,7 @@ export default function OcrJobsPage() {
         <StatCard icon={RefreshCcw} label="Failed" value={String(failedJobs)} tone="text-rose-700" />
       </div>
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Extraction History</CardTitle>
           <CardDescription>
@@ -239,7 +239,7 @@ export default function OcrJobsPage() {
                                 ].map(({ label, value }) => (
                                   <div
                                     key={label}
-                                    className="rounded-2xl border border-border/70 bg-background/80 p-4"
+                                    className="rounded-lg border border-border/70 bg-background/80 p-4"
                                   >
                                     <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                                       {label}
@@ -302,7 +302,7 @@ export default function OcrJobsPage() {
 
 function EmptyState({ message }: { message: string }) {
   return (
-    <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+    <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
       {message}
     </div>
   );
@@ -320,16 +320,16 @@ function StatCard({
   tone: string;
 }) {
   return (
-    <Card className="rounded-[24px] border-border/70 bg-card/95">
+    <Card className="rounded-lg border-border/70 bg-card/95">
       <CardContent className="flex items-center gap-4 p-6">
-        <div className={`rounded-2xl border border-current/10 bg-current/10 p-3 ${tone}`}>
+        <div className={`rounded-lg border border-current/10 bg-current/10 p-3 ${tone}`}>
           <Icon className="h-5 w-5" />
         </div>
         <div className="space-y-1">
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {label}
           </div>
-          <div className="font-display text-3xl font-semibold tracking-[-0.04em] text-foreground">
+          <div className="text-3xl font-semibold tracking-[-0.04em] text-foreground">
             {value}
           </div>
         </div>

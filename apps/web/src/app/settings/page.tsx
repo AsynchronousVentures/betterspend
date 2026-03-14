@@ -550,7 +550,7 @@ function SettingsContent() {
         description="Control branding, email delivery, approval automation, integrations, exchange rates, and platform-wide security defaults."
       />
 
-      <div className="flex flex-wrap gap-2 rounded-[24px] border border-border/70 bg-card/90 p-2 shadow-[0_22px_70px_-42px_rgba(15,23,42,0.45)]">
+      <div className="flex flex-wrap gap-2 rounded-lg border border-border/70 bg-card/90 p-2 shadow-[0_22px_70px_-42px_rgba(15,23,42,0.45)]">
         {(Object.keys(TAB_META) as Tab[]).map((tab) => {
           const Icon = TAB_META[tab].icon;
           return (
@@ -570,7 +570,7 @@ function SettingsContent() {
 
       {activeTab === 'branding' ? (
         <form onSubmit={handleSaveBranding}>
-          <Card className="rounded-[24px]">
+          <Card className="rounded-lg">
             <CardHeader>
               <CardTitle className="text-xl">White-label Branding</CardTitle>
               <CardDescription>Customize the app name, logo, colors, and footer presentation across the workspace.</CardDescription>
@@ -630,7 +630,7 @@ function SettingsContent() {
 
       {activeTab === 'email' ? (
         <form onSubmit={handleSaveSmtp}>
-          <Card className="rounded-[24px]">
+          <Card className="rounded-lg">
             <CardHeader>
               <CardTitle className="text-xl">Email / SMTP Configuration</CardTitle>
               <CardDescription>Configure outbound email for approval requests, PO issuance, invoice exceptions, and contract alerts.</CardDescription>
@@ -678,7 +678,7 @@ function SettingsContent() {
 
       {activeTab === 'approval' ? (
         <form onSubmit={handleSaveApprovalPolicy}>
-          <Card className="rounded-[24px]">
+          <Card className="rounded-lg">
             <CardHeader>
               <CardTitle className="text-xl">Approval Policy</CardTitle>
               <CardDescription>Configure the low-value purchase fast lane for requisitions that should clear without manual review.</CardDescription>
@@ -728,7 +728,7 @@ function SettingsContent() {
 
       {activeTab === 'compliance' ? (
         <form onSubmit={handleSaveCompliance}>
-          <Card className="rounded-[24px]">
+          <Card className="rounded-lg">
             <CardHeader>
               <CardTitle className="text-xl">Contract Compliance</CardTitle>
               <CardDescription>Control how the system handles PO line prices that deviate from active contract rates.</CardDescription>
@@ -792,7 +792,7 @@ function SettingsContent() {
 
       {activeTab === 'integrations' ? (
         <div className="space-y-6">
-          <Card className="rounded-[24px]">
+          <Card className="rounded-lg">
             <CardHeader>
               <CardTitle className="text-xl">GL Integrations</CardTitle>
               <CardDescription>BetterSpend uses platform-managed OAuth apps. End users only authorize access for their QuickBooks or Xero company.</CardDescription>
@@ -832,7 +832,7 @@ function SettingsContent() {
       {activeTab === 'org' ? (
         <form onSubmit={handleSaveOrg}>
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
-            <Card className="rounded-[24px]">
+            <Card className="rounded-lg">
               <CardHeader>
                 <CardTitle className="text-xl">System Information</CardTitle>
                 <CardDescription>Reference build metadata, tax-code access, and the base platform configuration exposed to this workspace.</CardDescription>
@@ -844,7 +844,7 @@ function SettingsContent() {
                 <InfoRow label="Version" value={appReleaseLabel} />
                 <InfoRow label="License" value="MIT License" />
                 <InfoRow label="Source Code" value="github.com/AsyncronousVentures/betterspend" />
-                <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
+                <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <div className="text-sm font-medium text-foreground">Tax Code Management</div>
@@ -863,7 +863,7 @@ function SettingsContent() {
               </CardContent>
             </Card>
 
-            <Card className="rounded-[24px]">
+            <Card className="rounded-lg">
               <CardHeader>
                 <CardTitle className="text-xl">Currency Controls</CardTitle>
                 <CardDescription>Set the organization base currency and maintain saved manual exchange-rate overrides.</CardDescription>
@@ -897,7 +897,7 @@ function SettingsContent() {
                       </Button>
                     ) : null}
                   </div>
-                  <div className="rounded-2xl border border-border/70">
+                  <div className="rounded-lg border border-border/70">
                     {exchangeRates.length === 0 ? (
                       <div className="px-4 py-5 text-sm text-muted-foreground">No exchange rates configured yet.</div>
                     ) : (
@@ -948,7 +948,7 @@ function SettingsContent() {
       ) : null}
 
       {activeTab === 'password' ? (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Change Password</CardTitle>
             <CardDescription>Update the current user password for this workspace login.</CardDescription>
@@ -1030,7 +1030,7 @@ function CheckboxRow({
   description?: string;
 }) {
   return (
-    <label className="flex gap-3 rounded-2xl border border-border/70 bg-muted/20 px-4 py-4">
+    <label className="flex gap-3 rounded-lg border border-border/70 bg-muted/20 px-4 py-4">
       <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-1" />
       <div>
         <div className="text-sm font-medium text-foreground">{title}</div>
@@ -1052,7 +1052,7 @@ function RadioCard({
   description: string;
 }) {
   return (
-    <label className="flex gap-3 rounded-2xl border border-border/70 bg-muted/20 px-4 py-4">
+    <label className="flex gap-3 rounded-lg border border-border/70 bg-muted/20 px-4 py-4">
       <input type="radio" checked={checked} onChange={onChange} className="mt-1" />
       <div>
         <div className="text-sm font-medium text-foreground">{title}</div>
@@ -1106,7 +1106,7 @@ function IntegrationCard({
   onDisconnect: () => void;
 }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-background/80 p-5">
+    <div className="rounded-lg border border-border/70 bg-background/80 p-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="mb-2 flex items-center gap-2">

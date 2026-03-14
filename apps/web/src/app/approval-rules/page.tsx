@@ -623,11 +623,11 @@ export default function ApprovalRulesPage() {
           </CardHeader>
           <CardContent className="grid gap-3">
             {loading ? (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-5 py-10 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-5 py-10 text-center text-sm text-muted-foreground">
                 Loading approval rules...
               </div>
             ) : rules.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-5 py-10 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-5 py-10 text-center text-sm text-muted-foreground">
                 No approval rules configured yet.
               </div>
             ) : (
@@ -762,7 +762,7 @@ export default function ApprovalRulesPage() {
                 </CardHeader>
                 <CardContent className="grid gap-4">
                   {!simulationResult ? (
-                    <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-5 py-10 text-center text-sm text-muted-foreground">
+                    <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-5 py-10 text-center text-sm text-muted-foreground">
                       Run a simulation to see the resulting approval flow.
                     </div>
                   ) : (
@@ -950,14 +950,14 @@ export default function ApprovalRulesPage() {
                 <CardContent>
                   <div className="overflow-x-auto pb-2">
                     <div className="flex min-w-fit items-stretch gap-3">
-                      <div className="flex min-w-[10rem] flex-col items-center justify-center rounded-[24px] border border-dashed border-border/80 bg-muted/20 px-4 py-8 text-center">
+                      <div className="flex min-w-[10rem] flex-col items-center justify-center rounded-lg border border-dashed border-border/80 bg-muted/20 px-4 py-8 text-center">
                         <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Start</div>
                         <div className="mt-2 font-semibold text-foreground">Request Submitted</div>
                       </div>
 
                       {draft.steps.map((step, index) => (
                         <div key={`step-${index}`} className="flex items-center gap-3">
-                          <Card className="min-w-[19rem] max-w-[19rem] rounded-[24px]">
+                          <Card className="min-w-[19rem] max-w-[19rem] rounded-lg">
                             <CardContent className="grid gap-4 p-5">
                               <div className="flex items-start justify-between gap-3">
                                 <div>
@@ -1064,7 +1064,7 @@ export default function ApprovalRulesPage() {
                         </div>
                       ))}
 
-                      <div className="flex min-w-[10rem] flex-col items-center justify-center rounded-[24px] border border-dashed border-emerald-300 bg-emerald-50 px-4 py-8 text-center">
+                      <div className="flex min-w-[10rem] flex-col items-center justify-center rounded-lg border border-dashed border-emerald-300 bg-emerald-50 px-4 py-8 text-center">
                         <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">End</div>
                         <div className="mt-2 font-semibold text-emerald-800">Entity Approved</div>
                       </div>

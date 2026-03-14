@@ -338,7 +338,7 @@ export default function AnalyticsPage() {
       </div>
 
       {cycle ? (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">PO Cycle Time</CardTitle>
             <CardDescription>Draft-to-issued turnaround for purchase orders.</CardDescription>
@@ -358,7 +358,7 @@ export default function AnalyticsPage() {
         </Card>
       ) : null}
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Budget Utilization</CardTitle>
           <CardDescription>Current fiscal year budget consumption across departments and projects.</CardDescription>
@@ -412,7 +412,7 @@ export default function AnalyticsPage() {
         </CardContent>
       </Card>
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Vendor Performance</CardTitle>
           <CardDescription>Exception rates, approval speed, and approved spend quality by vendor.</CardDescription>
@@ -483,7 +483,7 @@ export default function AnalyticsPage() {
           )}
         </ChartCard>
 
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Spend Anomalies</CardTitle>
             <CardDescription>Vendors with a monthly peak more than 2x their average run rate.</CardDescription>
@@ -494,7 +494,7 @@ export default function AnalyticsPage() {
             ) : (
               <div className="space-y-3">
                 {anomalies.map((anomaly: any) => (
-                  <div key={anomaly.vendorId} className="flex items-center justify-between gap-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+                  <div key={anomaly.vendorId} className="flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-4">
                     <div>
                       <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                         <AlertTriangle className="h-4 w-4 text-amber-700" />
@@ -516,7 +516,7 @@ export default function AnalyticsPage() {
         </Card>
       </div>
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Department Spend</CardTitle>
           <CardDescription>Approved spend and PO volume by department.</CardDescription>
@@ -564,7 +564,7 @@ function ChartCard({
   children: React.ReactNode;
 }) {
   return (
-    <Card className="rounded-[24px]">
+    <Card className="rounded-lg">
       <CardHeader>
         <CardTitle className="text-xl">{title}</CardTitle>
         <CardDescription>{description}</CardDescription>
@@ -586,7 +586,7 @@ function KpiTile({
   sub: string;
 }) {
   return (
-    <Card className="rounded-[24px]">
+    <Card className="rounded-lg">
       <CardContent className="p-6">
         <div className="mb-4 flex items-center justify-between">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -605,7 +605,7 @@ function KpiTile({
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-muted/20 px-4 py-5">
+    <div className="rounded-lg border border-border/70 bg-muted/20 px-4 py-5">
       <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{label}</div>
       <div className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-foreground">{value}</div>
     </div>
@@ -614,7 +614,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function Empty({ text }: { text: string }) {
   return (
-    <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+    <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
       {text}
     </div>
   );

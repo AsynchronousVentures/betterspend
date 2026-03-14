@@ -3,8 +3,10 @@ import { cn } from '../../lib/utils';
 
 const Table = React.forwardRef<HTMLTableElement, React.TableHTMLAttributes<HTMLTableElement>>(
   ({ className, ...props }, ref) => (
-    <div className="w-full overflow-x-auto">
-      <table ref={ref} className={cn('w-full caption-bottom text-sm', className)} {...props} />
+    <div className="w-full overflow-hidden rounded-lg border border-border/70">
+      <div className="overflow-x-auto">
+        <table ref={ref} className={cn('w-full caption-bottom text-sm', className)} {...props} />
+      </div>
     </div>
   ),
 );
@@ -24,7 +26,7 @@ const TableRow = React.forwardRef<HTMLTableRowElement, React.HTMLAttributes<HTML
   ({ className, ...props }, ref) => (
     <tr
       ref={ref}
-      className={cn('border-b border-border/70 transition-colors hover:bg-muted/40 data-[state=selected]:bg-muted', className)}
+      className={cn('border-b border-border/70 transition-colors even:bg-muted/[0.12] hover:bg-primary/[0.04] data-[state=selected]:bg-muted', className)}
       {...props}
     />
   ),
@@ -36,7 +38,7 @@ const TableHead = React.forwardRef<HTMLTableCellElement, React.ThHTMLAttributes<
     <th
       ref={ref}
       className={cn(
-        'h-11 bg-muted/40 px-4 text-left align-middle text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground',
+        'h-11 bg-muted/50 px-4 text-left align-middle text-[10.5px] font-semibold uppercase tracking-[0.15em] text-muted-foreground',
         className,
       )}
       {...props}
@@ -46,7 +48,7 @@ const TableHead = React.forwardRef<HTMLTableCellElement, React.ThHTMLAttributes<
 TableHead.displayName = 'TableHead';
 
 const TableCell = React.forwardRef<HTMLTableCellElement, React.TdHTMLAttributes<HTMLTableCellElement>>(
-  ({ className, ...props }, ref) => <td ref={ref} className={cn('px-4 py-3 align-middle', className)} {...props} />,
+  ({ className, ...props }, ref) => <td ref={ref} className={cn('px-4 py-3 align-middle text-[13.5px]', className)} {...props} />,
 );
 TableCell.displayName = 'TableCell';
 

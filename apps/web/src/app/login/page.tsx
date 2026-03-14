@@ -43,7 +43,7 @@ function LoginForm() {
   return (
     <AuthShell
       title="Sign in"
-      description="Access approvals, vendors, invoices, and procurement workflows from the refreshed BetterSpend console."
+      description="Sign in to manage purchase orders, approvals, vendors, and invoices across your organization."
       footer={
         <>
           Don&apos;t have an account?{' '}

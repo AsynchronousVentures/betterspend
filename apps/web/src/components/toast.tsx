@@ -76,7 +76,7 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
     <div
       onClick={onDismiss}
       className={cn(
-        'pointer-events-auto flex cursor-pointer items-start gap-3 rounded-xl border p-4 shadow-[0_18px_50px_-26px_rgba(15,23,42,0.45)] transition-all',
+        'pointer-events-auto flex cursor-pointer items-start gap-3 rounded-lg border p-4 shadow-lg transition-all',
         tone.className,
         visible ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0',
       )}

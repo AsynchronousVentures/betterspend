@@ -131,7 +131,7 @@ function NewGRNForm() {
       ) : null}
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Receipt Details</CardTitle>
             <CardDescription>
@@ -170,7 +170,7 @@ function NewGRNForm() {
                 />
               </Field>
 
-              <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
+              <div className="rounded-lg border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
                 Only lines with a positive received quantity will be added to the GRN.
               </div>
             </div>
@@ -182,7 +182,7 @@ function NewGRNForm() {
         </Card>
 
         {selectedPO && (selectedPO.lines ?? []).length > 0 ? (
-          <Card className="rounded-[24px]">
+          <Card className="rounded-lg">
             <CardHeader>
               <CardTitle className="text-xl">Line Items</CardTitle>
               <CardDescription>
@@ -267,7 +267,7 @@ export default function NewGRNPage() {
     <Suspense
       fallback={
         <div className="p-4 lg:p-8">
-          <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+          <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
             Loading...
           </div>
         </div>

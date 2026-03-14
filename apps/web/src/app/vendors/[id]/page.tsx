@@ -226,7 +226,7 @@ export default function VendorDetailPage() {
               </div>
 
               {latestSubmission ? (
-                <div className="rounded-2xl border border-border/70 bg-muted/40 p-4 text-sm text-muted-foreground">
+                <div className="rounded-lg border border-border/70 bg-muted/40 p-4 text-sm text-muted-foreground">
                   <div>Latest questionnaire: {latestSubmission.questionnaire?.name ?? 'Default questionnaire'}</div>
                   <div className="mt-2">
                     Documents: W-9 {latestSubmission.documentLinks?.w9 ? 'attached' : 'missing'} · COI {latestSubmission.documentLinks?.coi ? 'attached' : 'missing'} · Banking {latestSubmission.documentLinks?.banking ? 'attached' : 'missing'}

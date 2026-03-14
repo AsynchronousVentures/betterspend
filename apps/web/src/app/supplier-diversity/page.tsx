@@ -170,7 +170,7 @@ export default function SupplierDiversityPage() {
       ) : null}
 
       {summary && Object.keys(summary.diversityBreakdown ?? {}).length > 0 ? (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Diversity Category Breakdown</CardTitle>
             <CardDescription>High-level distribution of registered diverse supplier categories.</CardDescription>
@@ -194,14 +194,14 @@ export default function SupplierDiversityPage() {
         </Card>
       ) : null}
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">All Vendors</CardTitle>
           <CardDescription>Maintain diversity categories, ESG scores, certifications, and carbon disclosures by vendor.</CardDescription>
         </CardHeader>
         <CardContent className="pt-0">
           {loading ? (
-            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+            <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
               Loading...
             </div>
           ) : (
@@ -391,7 +391,7 @@ function StatCard({
   tone: string;
 }) {
   return (
-    <Card className="rounded-[24px]">
+    <Card className="rounded-lg">
       <CardContent className="p-6">
         <div className="mb-4 flex items-center justify-between">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">

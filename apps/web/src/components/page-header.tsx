@@ -11,13 +11,14 @@ export function PageHeader({ title, description, actions, className, ...props }:
   return (
     <div
       className={cn(
-        'flex flex-col gap-4 rounded-[28px] border border-border/70 bg-card/90 px-6 py-5 shadow-[0_22px_70px_-42px_rgba(15,23,42,0.45)] lg:flex-row lg:items-end lg:justify-between',
+        'flex flex-col gap-4 border-b border-border/60 pb-5 lg:flex-row lg:items-end lg:justify-between',
+        'animate-[fadeIn_0.25s_ease-out_both]',
         className,
       )}
       {...props}
     >
       <div className="space-y-1">
-        <h1 className="font-display text-2xl font-semibold tracking-[-0.03em] text-foreground">{title}</h1>
+        <h1 className="text-[1.75rem] font-semibold tracking-[-0.02em] text-foreground">{title}</h1>
         {description ? <p className="max-w-2xl text-sm text-muted-foreground">{description}</p> : null}
       </div>
       {actions ? <div className="flex flex-wrap items-center gap-3">{actions}</div> : null}

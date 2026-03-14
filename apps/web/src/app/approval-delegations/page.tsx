@@ -172,7 +172,7 @@ export default function ApprovalDelegationsPage() {
       ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.8fr)]">
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Delegation Setup</CardTitle>
             <CardDescription>Choose a delegate, define the coverage window, and optionally record a reason for audit context.</CardDescription>
@@ -235,7 +235,7 @@ export default function ApprovalDelegationsPage() {
                 </div>
               </div>
             ) : (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
                 <CalendarRange className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
                 <div className="text-sm font-medium text-foreground">Delegation controls are ready</div>
                 <p className="mt-2 text-sm text-muted-foreground">
@@ -247,18 +247,18 @@ export default function ApprovalDelegationsPage() {
         </Card>
 
         <div className="space-y-6">
-          <Card className="rounded-[24px]">
+          <Card className="rounded-lg">
             <CardHeader>
               <CardTitle className="text-xl">Delegated By Me</CardTitle>
               <CardDescription>Coverage windows where another user is acting on your behalf.</CardDescription>
             </CardHeader>
             <CardContent className="pt-0">
               {loading ? (
-                <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
                   Loading delegations...
                 </div>
               ) : myDelegations.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
                   No active or historical delegations yet.
                 </div>
               ) : (
@@ -312,18 +312,18 @@ export default function ApprovalDelegationsPage() {
             </CardContent>
           </Card>
 
-          <Card className="rounded-[24px]">
+          <Card className="rounded-lg">
             <CardHeader>
               <CardTitle className="text-xl">Delegated To Me</CardTitle>
               <CardDescription>Approvals you are currently covering for other teammates.</CardDescription>
             </CardHeader>
             <CardContent className="pt-0">
               {loading ? (
-                <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
                   Loading inbound delegations...
                 </div>
               ) : delegateForMe.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
+                <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
                   <UserCheck className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
                   <div className="text-sm font-medium text-foreground">No delegations assigned to you</div>
                   <p className="mt-2 text-sm text-muted-foreground">

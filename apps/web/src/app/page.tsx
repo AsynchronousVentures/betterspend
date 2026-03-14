@@ -4,15 +4,6 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   AlertTriangle,
-  ArrowRight,
-  BadgeCheck,
-  Boxes,
-  Building2,
-  ClipboardList,
-  FileSpreadsheet,
-  PackageSearch,
-  Receipt,
-  ShieldAlert,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { PageHeader } from '../components/page-header';
@@ -71,43 +62,24 @@ const ACTIVITY_ENTITY_ROUTES: Record<string, string> = {
   budget: '/budgets',
 };
 
-const MODULES = [
-  { title: 'Vendors', href: '/vendors', desc: 'Supplier master records and contract ownership', icon: Building2 },
-  { title: 'Catalog', href: '/catalog', desc: 'Pre-approved items for faster ordering', icon: Boxes },
-  { title: 'Requisitions', href: '/requisitions', desc: 'Submit and track purchase requests', icon: ClipboardList },
-  { title: 'Purchase Orders', href: '/purchase-orders', desc: 'Issue and manage PO lifecycle', icon: FileSpreadsheet },
-  { title: 'Approvals', href: '/approvals', desc: 'Pending items requiring your action', icon: BadgeCheck },
-  { title: 'Receiving', href: '/receiving', desc: 'Log goods receipts and exceptions', icon: PackageSearch },
-  { title: 'Inventory', href: '/inventory', desc: 'Track stock levels and reorder signals', icon: Boxes },
-  { title: 'Invoices', href: '/invoices', desc: 'AP workflows and three-way matching', icon: Receipt },
-  { title: 'Budgets', href: '/budgets', desc: 'Department and project budget controls', icon: ShieldAlert },
-  { title: 'GL Integration', href: '/gl-mappings', desc: 'QuickBooks and Xero mappings', icon: Building2 },
-  { title: 'Contracts', href: '/contracts', desc: 'Renewals, obligations, and commercial terms', icon: FileSpreadsheet },
-  { title: 'Analytics', href: '/analytics', desc: 'Spend intelligence and KPI reporting', icon: BadgeCheck },
-  { title: 'Approval Rules', href: '/approval-rules', desc: 'Configure routing logic and simulation', icon: ShieldAlert },
-  { title: 'Webhooks', href: '/webhooks', desc: 'Outbound event integrations', icon: ArrowRight },
-];
-
 function KpiCard({
   label,
   value,
   sub,
   href,
-  accentClass,
 }: {
   label: string;
   value: string;
   sub?: string;
   href?: string;
-  accentClass: string;
 }) {
   const content = (
-    <Card className={`h-full border-border/70 bg-card/95 transition-transform duration-150 hover:-translate-y-0.5 ${accentClass}`}>
-      <CardContent className="space-y-3 p-5">
+    <Card className="h-full">
+      <CardContent className="space-y-2 p-5">
         <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
-        <div className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{value}</div>
+        <div className="font-mono text-2xl font-semibold tracking-[-0.02em] text-foreground">{value}</div>
         {sub ? <div className="text-sm text-muted-foreground">{sub}</div> : null}
-        {href ? <div className="text-sm font-semibold text-primary">View details</div> : null}
+        {href ? <div className="text-sm font-medium text-primary">View details</div> : null}
       </CardContent>
     </Card>
   );
@@ -136,7 +108,7 @@ function ActionItem({
   return (
     <Link
       href={href}
-      className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/80 px-4 py-3 transition-colors hover:bg-muted/40"
+      className="flex items-center justify-between gap-4 rounded-lg border border-border/70 bg-background/80 px-4 py-2.5 transition-colors hover:bg-muted/40"
     >
       <span className="text-sm text-foreground">{label}</span>
       <StatusBadge value={urgent ? 'exception' : 'pending'} label={String(count)} className="min-w-9 justify-center" />
@@ -290,7 +262,7 @@ export default function HomePage() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {loading ? (
             [...Array(4)].map((_, index) => (
-              <div key={index} className="h-36 animate-pulse rounded-[24px] border border-border/70 bg-muted/60" />
+              <div key={index} className="h-32 animate-pulse rounded-lg border border-border/70 bg-muted/60" />
             ))
           ) : (
             <>
@@ -299,28 +271,24 @@ export default function HomePage() {
                 value={String(po?.active ?? 0)}
                 sub={`${po?.total ?? 0} total · ${fmt(po?.totalValue)} committed`}
                 href="/purchase-orders"
-                accentClass="border-l-[3px] border-l-primary"
               />
               <KpiCard
                 label="Open Requisitions"
                 value={String(req?.total ?? 0)}
                 sub="Pending approval or in progress"
                 href="/requisitions"
-                accentClass="border-l-[3px] border-l-emerald-500"
               />
               <KpiCard
                 label="Invoices Paid"
                 value={fmt(inv?.paid)}
                 sub={`${fmt(inv?.pending)} still pending`}
                 href="/invoices"
-                accentClass="border-l-[3px] border-l-amber-500"
               />
               <KpiCard
                 label="Annual Budget"
                 value={fmt(bud?.totalBudget)}
                 sub="All active budgets combined"
                 href="/budgets"
-                accentClass="border-l-[3px] border-l-sky-500"
               />
             </>
           )}
@@ -334,12 +302,12 @@ export default function HomePage() {
                 <CardDescription>Queues that need attention across approvals, invoices, and controls.</CardDescription>
               </div>
               {totalActions > 0 ? (
-                <div className="rounded-full bg-rose-600 px-2.5 py-1 text-xs font-semibold text-white">{totalActions}</div>
+                <div className="rounded bg-rose-600 px-2 py-0.5 text-xs font-semibold text-white">{totalActions}</div>
               ) : null}
             </CardHeader>
             <CardContent className="space-y-3">
               {!pending || totalActions === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+                <div className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
                   {loading ? 'Loading...' : 'All caught up.'}
                 </div>
               ) : (
@@ -366,41 +334,40 @@ export default function HomePage() {
                 View audit log
               </Link>
             </CardHeader>
-            <CardContent className="max-h-[420px] space-y-3 overflow-y-auto">
+            <CardContent className="max-h-[420px] overflow-y-auto">
               {loading ? (
-                <div className="rounded-2xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+                <div className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
                   Loading...
                 </div>
               ) : activity.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+                <div className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
                   No recent activity
                 </div>
               ) : (
-                activity.slice(0, 12).map((item, index) => {
-                  const baseRoute = ACTIVITY_ENTITY_ROUTES[String(item.entityType ?? '')];
-                  const detailHref = baseRoute && item.entityId ? `${baseRoute}/${item.entityId}` : null;
-                  const activityCard = (
-                    <div className="flex gap-3 rounded-2xl border border-border/70 bg-background/80 p-4 transition-colors hover:bg-muted/40">
-                      <div className="mt-1 h-2.5 w-2.5 rounded-full bg-primary" />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm text-muted-foreground">
-                          <span className="font-semibold text-foreground">{item.userName ?? 'System'}</span> {item.action}{' '}
-                          <span className="capitalize">{String(item.entityType ?? '').replace(/_/g, ' ')}</span>
+                <div className="divide-y divide-border/50">
+                  {activity.slice(0, 12).map((item, index) => {
+                    const baseRoute = ACTIVITY_ENTITY_ROUTES[String(item.entityType ?? '')];
+                    const detailHref = baseRoute && item.entityId ? `${baseRoute}/${item.entityId}` : null;
+                    const row = (
+                      <div className="flex items-center gap-3 px-1 py-2.5 transition-colors hover:bg-muted/30">
+                        <span className="size-1.5 shrink-0 rounded-full bg-primary/60" />
+                        <div className="min-w-0 flex-1 text-sm">
+                          <span className="font-medium text-foreground">{item.userName ?? 'System'}</span>
+                          {' '}{item.action}{' '}
+                          <span className="text-muted-foreground capitalize">{String(item.entityType ?? '').replace(/_/g, ' ')}</span>
                         </div>
-                        <div className="mt-1 text-xs text-muted-foreground">{formatRelativeTime(item.createdAt, relativeNow)}</div>
-                        {detailHref ? <div className="mt-2 text-xs font-semibold text-primary">Open record</div> : null}
+                        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                          {formatRelativeTime(item.createdAt, relativeNow)}
+                        </span>
                       </div>
-                    </div>
-                  );
-
-                  return detailHref ? (
-                    <Link key={item.id ?? index} href={detailHref}>
-                      {activityCard}
-                    </Link>
-                  ) : (
-                    <div key={item.id ?? index}>{activityCard}</div>
-                  );
-                })
+                    );
+                    return detailHref ? (
+                      <Link key={item.id ?? index} href={detailHref}>{row}</Link>
+                    ) : (
+                      <div key={item.id ?? index}>{row}</div>
+                    );
+                  })}
+                </div>
               )}
             </CardContent>
           </Card>
@@ -427,7 +394,7 @@ export default function HomePage() {
                   <Link
                     key={contract.id}
                     href={`/contracts/${contract.id}`}
-                    className="flex items-center justify-between gap-4 rounded-2xl border border-amber-200/80 bg-white/70 px-4 py-3 transition-colors hover:bg-white"
+                    className="flex items-center justify-between gap-4 rounded-lg border border-amber-200/80 bg-white/70 px-4 py-3 transition-colors hover:bg-white"
                   >
                     <div>
                       <div className="font-medium text-amber-950">
@@ -464,7 +431,7 @@ export default function HomePage() {
                 <Link
                   key={item.id}
                   href={`/inventory/${item.id}`}
-                  className="flex items-center justify-between gap-4 rounded-2xl border border-orange-200/80 bg-white/70 px-4 py-3 transition-colors hover:bg-white"
+                  className="flex items-center justify-between gap-4 rounded-lg border border-orange-200/80 bg-white/70 px-4 py-3 transition-colors hover:bg-white"
                 >
                   <div>
                     <div className="font-medium text-orange-950">{item.name}</div>
@@ -533,32 +500,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="space-y-3">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Modules</div>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {MODULES.map((item) => {
-              const Icon = item.icon;
-              return (
-                <Link key={item.href} href={item.href}>
-                  <Card className="h-full border-border/70 bg-card/95 transition-all hover:-translate-y-0.5 hover:border-primary/40">
-                    <CardContent className="space-y-3 p-5">
-                      <div className="flex items-center justify-between">
-                        <div className="rounded-2xl bg-muted p-3">
-                          <Icon className="h-5 w-5 text-foreground" />
-                        </div>
-                        <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                      <div>
-                        <div className="font-semibold text-foreground">{item.title}</div>
-                        <div className="mt-1 text-sm text-muted-foreground">{item.desc}</div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
-              );
-            })}
-          </div>
-        </section>
       </div>
     </div>
   );

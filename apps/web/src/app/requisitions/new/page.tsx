@@ -361,7 +361,7 @@ function NewRequisitionContent() {
         </Alert>
       ) : null}
 
-      <Card className="rounded-[24px] border-sky-200/70 bg-gradient-to-br from-sky-50 to-indigo-50">
+      <Card className="rounded-lg border-sky-200/70 bg-gradient-to-br from-sky-50 to-indigo-50">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-xl">
             <Sparkles className="h-5 w-5 text-sky-700" />
@@ -406,7 +406,7 @@ function NewRequisitionContent() {
       ) : null}
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Details</CardTitle>
             <CardDescription>Set the header details and request urgency for this requisition.</CardDescription>
@@ -457,7 +457,7 @@ function NewRequisitionContent() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-1.5">
               <CardTitle className="text-xl">Line Items</CardTitle>
@@ -542,7 +542,7 @@ function NewRequisitionContent() {
             </Table>
 
             <div className="mt-4 flex justify-end">
-              <div className="rounded-2xl border border-border/70 bg-muted/20 px-5 py-3 text-right">
+              <div className="rounded-lg border border-border/70 bg-muted/20 px-5 py-3 text-right">
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                   Total
                 </div>
@@ -572,7 +572,7 @@ export default function NewRequisitionPage() {
     <Suspense
       fallback={
         <div className="p-4 lg:p-8">
-          <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+          <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
             Loading...
           </div>
         </div>

@@ -132,7 +132,7 @@ export default function WebhooksPage() {
       ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.9fr)]">
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Endpoint setup</CardTitle>
             <CardDescription>Use a dedicated endpoint URL and optional HMAC secret. Leaving the event list empty subscribes the endpoint to every supported event.</CardDescription>
@@ -179,7 +179,7 @@ export default function WebhooksPage() {
                 </div>
               </div>
             ) : (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
                 <Webhook className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
                 <div className="text-sm font-medium text-foreground">Webhook registry is ready</div>
                 <p className="mt-2 text-sm text-muted-foreground">Create a new endpoint to stream procurement events into automation, alerts, or external ledgers.</p>
@@ -188,23 +188,23 @@ export default function WebhooksPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Endpoint registry</CardTitle>
             <CardDescription>Enable, disable, or delete endpoints and open delivery history for the ones currently in service.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 pt-0">
             {loading ? (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
                 Loading endpoints...
               </div>
             ) : endpoints.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
                 No webhook endpoints yet.
               </div>
             ) : (
               endpoints.map((endpoint) => (
-                <div key={endpoint.id} className="rounded-2xl border border-border/70 bg-background/80 p-5 shadow-[0_18px_48px_-36px_rgba(15,23,42,0.35)]">
+                <div key={endpoint.id} className="rounded-lg border border-border/70 bg-background/80 p-5 shadow-[0_18px_48px_-36px_rgba(15,23,42,0.35)]">
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div className="space-y-3">
                       <div className="break-all text-sm font-semibold text-foreground">{endpoint.url}</div>
@@ -240,7 +240,7 @@ export default function WebhooksPage() {
       </div>
 
       {selectedEndpoint ? (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
             <div>
               <CardTitle className="text-xl">Delivery history</CardTitle>
@@ -252,7 +252,7 @@ export default function WebhooksPage() {
           </CardHeader>
           <CardContent className="pt-0">
             {deliveries.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
                 No deliveries yet.
               </div>
             ) : (

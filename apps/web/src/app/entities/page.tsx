@@ -99,7 +99,7 @@ export default function EntitiesPage() {
       ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.9fr)]">
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">{editingId ? 'Edit entity' : 'Add entity'}</CardTitle>
             <CardDescription>Set the legal code, currency, GL prefix, and tax identity for each operating entity.</CardDescription>
@@ -144,7 +144,7 @@ export default function EntitiesPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
             <div>
               <CardTitle className="text-xl">Entity registry</CardTitle>
@@ -157,11 +157,11 @@ export default function EntitiesPage() {
           </CardHeader>
           <CardContent className="pt-0">
             {loading ? (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
                 Loading entities...
               </div>
             ) : entities.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
                 No entities created yet.
               </div>
             ) : (

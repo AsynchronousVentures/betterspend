@@ -108,7 +108,7 @@ function MarkPaidModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-[24px] border border-border/70 bg-card p-6 shadow-[0_30px_90px_-48px_rgba(15,23,42,0.55)]"
+        className="w-full max-w-md rounded-lg border border-border/70 bg-card p-6 shadow-[0_30px_90px_-48px_rgba(15,23,42,0.55)]"
         onClick={(event) => event.stopPropagation()}
       >
         <h3 className="text-xl font-semibold tracking-[-0.03em] text-foreground">Mark Invoice as Paid</h3>
@@ -285,7 +285,7 @@ export default function ApAgingPage() {
           {bucketCards.map((bucket) => (
             <div
               key={bucket.label}
-              className={`rounded-[24px] border px-5 py-5 ${bucket.className}`}
+              className={`rounded-lg border px-5 py-5 ${bucket.className}`}
             >
               <div className="text-[11px] font-semibold uppercase tracking-[0.18em] opacity-80">
                 {bucket.label}
@@ -299,14 +299,14 @@ export default function ApAgingPage() {
         </div>
       ) : null}
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Unpaid Invoices</CardTitle>
           <CardDescription>Track due dates, overdue exposure, discount windows, and mark approved invoices as paid.</CardDescription>
         </CardHeader>
         <CardContent className="pt-0">
           {invoices.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+            <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
               No unpaid invoices found.
             </div>
           ) : (
@@ -432,7 +432,7 @@ function StatCard({
   tone: string;
 }) {
   return (
-    <Card className="rounded-[24px]">
+    <Card className="rounded-lg">
       <CardContent className="p-6">
         <div className="mb-4 flex items-center justify-between">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">

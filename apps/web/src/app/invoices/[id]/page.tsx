@@ -180,7 +180,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   if (loading) {
     return (
       <div className="p-4 lg:p-8">
-        <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+        <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
           Loading invoice...
         </div>
       </div>
@@ -247,7 +247,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       ) : null}
 
       {hasExceptions ? (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Finance Exception Resolution</CardTitle>
             <CardDescription>
@@ -274,7 +274,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         <StatCard label="Total" value={formatCurrency(invoice.totalAmount, invoice.currency)} />
       </div>
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Invoice Details</CardTitle>
           <CardDescription>Commercial details, linked PO, and lifecycle timestamps.</CardDescription>
@@ -289,7 +289,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         </CardContent>
       </Card>
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Line Items & 3-Way Match</CardTitle>
           <CardDescription>Review line-level quantities, PO linkage, and match variances.</CardDescription>
@@ -392,7 +392,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             <Button type="button" onClick={doMarkPaid} disabled={actionLoading !== null}>
               {actionLoading === 'paid' ? 'Marking...' : 'Mark as Paid'}
             </Button>
-            <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border/70 bg-background/80 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border/70 bg-background/80 px-4 py-3">
               <span className="text-sm font-medium text-muted-foreground">Export to GL</span>
               <Select
                 value={glSystem}
@@ -421,7 +421,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
 
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+    <div className="rounded-lg border border-border/70 bg-background/70 p-4">
       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
       <div className="mt-2 text-sm text-foreground">{value}</div>
     </div>
@@ -430,10 +430,10 @@ function DetailField({ label, value }: { label: string; value: string }) {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <Card className="rounded-[24px] border-border/70 bg-card/95">
+    <Card className="rounded-lg border-border/70 bg-card/95">
       <CardContent className="p-6">
         <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
-        <div className="mt-2 font-display text-3xl font-semibold tracking-[-0.04em] text-foreground">{value}</div>
+        <div className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-foreground">{value}</div>
       </CardContent>
     </Card>
   );

@@ -106,7 +106,7 @@ export default function CatalogItemDetailPage({ params }: { params: Promise<{ id
   if (loading) {
     return (
       <div className="p-4 lg:p-8">
-        <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+        <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
           Loading catalog item...
         </div>
       </div>
@@ -168,7 +168,7 @@ export default function CatalogItemDetailPage({ params }: { params: Promise<{ id
       ) : null}
 
       {editing ? (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Edit Catalog Item</CardTitle>
             <CardDescription>Update catalog metadata, pricing, and category details.</CardDescription>
@@ -229,7 +229,7 @@ export default function CatalogItemDetailPage({ params }: { params: Promise<{ id
           </CardContent>
         </Card>
       ) : (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Item Details</CardTitle>
             <CardDescription>Core catalog metadata, pricing, and vendor linkages.</CardDescription>
@@ -251,7 +251,7 @@ export default function CatalogItemDetailPage({ params }: { params: Promise<{ id
       )}
 
       {item.vendor ? (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Vendor</CardTitle>
             <CardDescription>Primary supplier associated with this catalog item.</CardDescription>
@@ -268,14 +268,14 @@ export default function CatalogItemDetailPage({ params }: { params: Promise<{ id
       ) : null}
 
       {item.priceProposals?.length ? (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Supplier Price Proposal History</CardTitle>
             <CardDescription>Submitted, reviewed, and applied supplier price changes for this item.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {item.priceProposals.map((proposal: any) => (
-              <div key={proposal.id} className="rounded-2xl border border-border/70 bg-background/70 p-4">
+              <div key={proposal.id} className="rounded-lg border border-border/70 bg-background/70 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="text-base font-semibold text-foreground">
                     {formatPrice(proposal.currentPrice, item.currency || 'USD')} to{' '}
@@ -339,7 +339,7 @@ function Field({
 
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+    <div className="rounded-lg border border-border/70 bg-background/70 p-4">
       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
       <div className="mt-2 text-sm text-foreground">{value}</div>
     </div>

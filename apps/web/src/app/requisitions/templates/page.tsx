@@ -128,7 +128,7 @@ export default function RequisitionTemplatesPage() {
       {loading ? (
         <EmptyState message="Loading requisition templates..." />
       ) : templates.length === 0 ? (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardContent className="px-6 py-12 text-center">
             <div className="text-lg font-semibold text-foreground">No templates yet</div>
             <div className="mt-2 text-sm text-muted-foreground">
@@ -150,7 +150,7 @@ export default function RequisitionTemplatesPage() {
             const total = totalFromLines(template.templateData?.lines ?? []);
             const lineCount = template.templateData?.lines?.length ?? 0;
             return (
-              <Card key={template.id} className="rounded-[24px]">
+              <Card key={template.id} className="rounded-lg">
                 <CardHeader className="space-y-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0 space-y-1">
@@ -178,7 +178,7 @@ export default function RequisitionTemplatesPage() {
                     {(template.templateData?.lines ?? []).slice(0, 3).map((line, index) => (
                       <div
                         key={index}
-                        className="rounded-2xl border border-border/70 bg-background/70 p-4"
+                        className="rounded-lg border border-border/70 bg-background/70 p-4"
                       >
                         <div className="text-sm font-medium text-foreground">
                           {line.description}
@@ -227,7 +227,7 @@ export default function RequisitionTemplatesPage() {
 
 function EmptyState({ message }: { message: string }) {
   return (
-    <Card className="rounded-[24px]">
+    <Card className="rounded-lg">
       <CardContent className="px-6 py-12 text-center text-sm text-muted-foreground">
         {message}
       </CardContent>
@@ -247,16 +247,16 @@ function StatCard({
   tone: string;
 }) {
   return (
-    <Card className="rounded-[24px] border-border/70 bg-card/95">
+    <Card className="rounded-lg border-border/70 bg-card/95">
       <CardContent className="flex items-center gap-4 p-6">
-        <div className={`rounded-2xl border border-current/10 bg-current/10 p-3 ${tone}`}>
+        <div className={`rounded-lg border border-current/10 bg-current/10 p-3 ${tone}`}>
           <Icon className="h-5 w-5" />
         </div>
         <div className="space-y-1">
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {label}
           </div>
-          <div className="font-display text-3xl font-semibold tracking-[-0.04em] text-foreground">
+          <div className="text-3xl font-semibold tracking-[-0.04em] text-foreground">
             {value}
           </div>
         </div>

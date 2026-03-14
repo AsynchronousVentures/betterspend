@@ -170,7 +170,7 @@ export default function VendorOnboardingPage() {
         />
       </div>
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Questionnaire Builder</CardTitle>
           <CardDescription>
@@ -201,7 +201,7 @@ export default function VendorOnboardingPage() {
             {questions.map((question, index) => (
               <div
                 key={question.id}
-                className="rounded-2xl border border-border/70 bg-background/70 p-4 shadow-sm"
+                className="rounded-lg border border-border/70 bg-background/70 p-4 shadow-sm"
               >
                 <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_200px_180px_auto] xl:items-end">
                   <Field label={`Question ${index + 1}`}>
@@ -289,7 +289,7 @@ export default function VendorOnboardingPage() {
         </CardContent>
       </Card>
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Pending Reviews</CardTitle>
           <CardDescription>
@@ -360,7 +360,7 @@ export default function VendorOnboardingPage() {
         </CardContent>
       </Card>
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Saved Questionnaires</CardTitle>
           <CardDescription>
@@ -430,7 +430,7 @@ function EmptyState({
 }) {
   return (
     <div
-      className={`rounded-2xl border border-dashed border-border/70 bg-muted/20 text-center text-sm text-muted-foreground ${
+      className={`rounded-lg border border-dashed border-border/70 bg-muted/20 text-center text-sm text-muted-foreground ${
         compact ? 'px-6 py-8' : 'px-6 py-12'
       }`}
     >
@@ -451,16 +451,16 @@ function StatCard({
   tone: string;
 }) {
   return (
-    <Card className="rounded-[24px] border-border/70 bg-card/95">
+    <Card className="rounded-lg border-border/70 bg-card/95">
       <CardContent className="flex items-center gap-4 p-6">
-        <div className={`rounded-2xl border border-current/10 bg-current/10 p-3 ${tone}`}>
+        <div className={`rounded-lg border border-current/10 bg-current/10 p-3 ${tone}`}>
           <Icon className="h-5 w-5" />
         </div>
         <div className="space-y-1">
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {label}
           </div>
-          <div className="font-display text-3xl font-semibold tracking-[-0.04em] text-foreground">
+          <div className="text-3xl font-semibold tracking-[-0.04em] text-foreground">
             {value}
           </div>
         </div>

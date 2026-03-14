@@ -298,7 +298,7 @@ export default function NewPurchaseOrderPage() {
       />
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Details</CardTitle>
             <CardDescription>Vendor, commercial terms, base currency, and internal notes.</CardDescription>
@@ -366,7 +366,7 @@ export default function NewPurchaseOrderPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-1.5">
               <CardTitle className="text-xl">Line Items</CardTitle>
@@ -489,7 +489,7 @@ export default function NewPurchaseOrderPage() {
             </Table>
 
             <div className="mt-4 flex justify-end">
-              <div className="rounded-2xl border border-border/70 bg-muted/20 px-5 py-3 text-right">
+              <div className="rounded-lg border border-border/70 bg-muted/20 px-5 py-3 text-right">
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                   Total
                 </div>

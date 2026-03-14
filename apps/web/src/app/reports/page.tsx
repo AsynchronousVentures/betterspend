@@ -182,7 +182,7 @@ function SaveModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm rounded-[24px] border border-border/70 bg-card p-6 shadow-[0_30px_90px_-48px_rgba(15,23,42,0.55)]"
+        className="w-full max-w-sm rounded-lg border border-border/70 bg-card p-6 shadow-[0_30px_90px_-48px_rgba(15,23,42,0.55)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="text-xl font-semibold tracking-[-0.03em] text-foreground">Save Report</div>
@@ -215,7 +215,7 @@ function SaveModal({
 function ResultTable({ rows }: { rows: Record<string, unknown>[] }) {
   if (!rows.length) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+      <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
         No data found for the selected criteria.
       </div>
     );
@@ -439,7 +439,7 @@ export default function ReportsPage() {
         }
       />
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Custom Report Builder</CardTitle>
           <CardDescription>Choose a report type, date range, grouping, and run or export the result directly from the app.</CardDescription>
@@ -517,18 +517,18 @@ export default function ReportsPage() {
         </CardContent>
       </Card>
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Saved Reports</CardTitle>
           <CardDescription>Store frequently used report definitions and rerun them with a single click.</CardDescription>
         </CardHeader>
         <CardContent className="pt-0">
           {loadingSaved ? (
-            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+            <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
               Loading saved reports...
             </div>
           ) : savedReports.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
+            <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
               <FolderClock className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
               <div className="text-sm font-medium text-foreground">No saved reports yet</div>
               <p className="mt-2 text-sm text-muted-foreground">
@@ -544,7 +544,7 @@ export default function ReportsPage() {
                 return (
                   <div
                     key={report.id}
-                    className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-muted/20 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
+                    className="flex flex-col gap-3 rounded-lg border border-border/70 bg-muted/20 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div className="min-w-0">
                       <div className="font-medium text-foreground">{report.name}</div>
@@ -571,7 +571,7 @@ export default function ReportsPage() {
         </CardContent>
       </Card>
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Standard Exports</CardTitle>
           <CardDescription>Download raw CSV extracts for downstream analysis in spreadsheets or BI tools.</CardDescription>
@@ -580,7 +580,7 @@ export default function ReportsPage() {
           {REPORTS.map((report) => (
             <div
               key={report.id}
-              className="rounded-2xl border border-border/70 bg-muted/20 p-4"
+              className="rounded-lg border border-border/70 bg-muted/20 p-4"
             >
               <div className="text-base font-semibold text-foreground">{report.title}</div>
               <p className="mt-1 text-sm text-muted-foreground">{report.description}</p>

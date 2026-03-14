@@ -133,7 +133,7 @@ export default function UsersPage() {
       ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">User invitation</CardTitle>
             <CardDescription>Create new accounts with a temporary password and an initial global role.</CardDescription>
@@ -182,7 +182,7 @@ export default function UsersPage() {
                 </div>
               </form>
             ) : (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
                 <UserCog className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
                 <div className="text-sm font-medium text-foreground">Ready to onboard another teammate</div>
                 <p className="mt-2 text-sm text-muted-foreground">Open the invite form to issue a new account, then manage roles from the directory.</p>
@@ -191,18 +191,18 @@ export default function UsersPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">User directory</CardTitle>
             <CardDescription>See current access levels, activate or deactivate accounts, and assign roles without leaving the list.</CardDescription>
           </CardHeader>
           <CardContent className="pt-0">
             {loading ? (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
                 Loading users...
               </div>
             ) : users.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
                 No users found.
               </div>
             ) : (

@@ -293,7 +293,7 @@ export default function NewInvoicePage() {
         }
       />
 
-      <Card className="rounded-[24px] border-sky-200/70 bg-sky-50/80">
+      <Card className="rounded-lg border-sky-200/70 bg-sky-50/80">
         <CardContent className="flex flex-col gap-4 p-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-sm font-semibold text-sky-900">
@@ -336,7 +336,7 @@ export default function NewInvoicePage() {
       ) : null}
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Invoice Details</CardTitle>
             <CardDescription>
@@ -399,13 +399,13 @@ export default function NewInvoicePage() {
               />
             </Field>
 
-            <div className="md:col-span-2 rounded-2xl border border-border/70 bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+            <div className="md:col-span-2 rounded-lg border border-border/70 bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
               Organization base currency is {baseCurrency}. Linked purchase orders default invoice currency and exchange rate.
             </div>
           </CardContent>
         </Card>
 
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-1.5">
               <CardTitle className="text-xl">Line Items</CardTitle>
@@ -506,7 +506,7 @@ export default function NewInvoicePage() {
             </Table>
 
             <div className="mt-4 flex justify-end">
-              <div className="rounded-2xl border border-border/70 bg-muted/20 px-5 py-3 text-right">
+              <div className="rounded-lg border border-border/70 bg-muted/20 px-5 py-3 text-right">
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                   Total
                 </div>

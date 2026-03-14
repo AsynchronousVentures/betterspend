@@ -249,13 +249,13 @@ export default function RfqPage() {
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_460px]">
         <div>
           {loading ? (
-            <Card className="rounded-[24px]">
+            <Card className="rounded-lg">
               <CardContent className="px-6 py-12 text-center text-sm text-muted-foreground">
                 Loading...
               </CardContent>
             </Card>
           ) : rfqs.length === 0 ? (
-            <Card className="rounded-[24px]">
+            <Card className="rounded-lg">
               <CardContent className="px-6 py-12 text-center">
                 <div className="text-base font-medium text-foreground">No RFQs yet</div>
                 <div className="mt-2 text-sm text-muted-foreground">
@@ -268,7 +268,7 @@ export default function RfqPage() {
               {rfqs.map((rfq) => (
                 <Card
                   key={rfq.id}
-                  className={`cursor-pointer rounded-[24px] transition-colors ${
+                  className={`cursor-pointer rounded-lg transition-colors ${
                     selected === rfq.id ? 'border-primary shadow-lg' : ''
                   }`}
                   onClick={() => void loadDetail(rfq.id)}
@@ -301,7 +301,7 @@ export default function RfqPage() {
         </div>
 
         {selected ? (
-          <Card className="rounded-[24px]">
+          <Card className="rounded-lg">
             <CardContent className="max-h-[80vh] space-y-4 overflow-y-auto p-5">
               {detailLoading ? (
                 <div className="py-10 text-center text-sm text-muted-foreground">Loading...</div>
@@ -359,7 +359,7 @@ export default function RfqPage() {
                         </div>
                         <div className="space-y-2">
                           {detail.lines?.map((line: any, index: number) => (
-                            <div key={line.id} className="flex justify-between rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm">
+                            <div key={line.id} className="flex justify-between rounded-lg border border-border/70 bg-background/70 px-4 py-3 text-sm">
                               <span className="text-foreground">
                                 {index + 1}. {line.description}
                               </span>
@@ -377,7 +377,7 @@ export default function RfqPage() {
                         </div>
                         <div className="space-y-2">
                           {detail.invitations?.map((invitation: any) => (
-                            <div key={invitation.id} className="flex items-center justify-between rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm">
+                            <div key={invitation.id} className="flex items-center justify-between rounded-lg border border-border/70 bg-background/70 px-4 py-3 text-sm">
                               <span className="text-foreground">{invitation.vendor?.name ?? '—'}</span>
                               <span className={invitation.respondedAt ? 'text-emerald-700' : 'text-muted-foreground'}>
                                 {invitation.respondedAt ? 'Responded' : 'Pending'}
@@ -432,7 +432,7 @@ export default function RfqPage() {
                           return (
                             <div
                               key={response.id}
-                              className={`rounded-2xl border p-4 ${
+                              className={`rounded-lg border p-4 ${
                                 response.awarded ? 'border-emerald-300 bg-emerald-50/60' : 'border-border/70 bg-background/70'
                               }`}
                             >
@@ -536,7 +536,7 @@ export default function RfqPage() {
 
       {showNew ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-[24px] border border-border/70 bg-background p-6 shadow-[0_30px_100px_-40px_rgba(15,23,42,0.6)]">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg border border-border/70 bg-background p-6 shadow-[0_30px_100px_-40px_rgba(15,23,42,0.6)]">
             <div className="mb-6 flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-xl font-semibold text-foreground">New RFQ</h2>
@@ -607,7 +607,7 @@ export default function RfqPage() {
               </div>
               <div className="space-y-3">
                 {lines.map((line, index) => (
-                  <div key={index} className="grid gap-3 rounded-2xl border border-border/70 bg-background/70 p-4 md:grid-cols-[3fr_1fr_1fr_1fr_auto]">
+                  <div key={index} className="grid gap-3 rounded-lg border border-border/70 bg-background/70 p-4 md:grid-cols-[3fr_1fr_1fr_1fr_auto]">
                     <Input
                       placeholder="Description"
                       value={line.description}
@@ -661,7 +661,7 @@ export default function RfqPage() {
                 <div className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                   Invite Vendors
                 </div>
-                <div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto rounded-2xl border border-border/70 p-3">
+                <div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto rounded-lg border border-border/70 p-3">
                   {vendors.map((vendor) => {
                     const isSelected = selectedVendors.includes(vendor.id);
                     return (
@@ -724,7 +724,7 @@ function Field({
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
+    <div className="rounded-lg border border-border/70 bg-background/70 px-4 py-3">
       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
       <div className="mt-1 text-sm font-semibold text-foreground">{value}</div>
     </div>

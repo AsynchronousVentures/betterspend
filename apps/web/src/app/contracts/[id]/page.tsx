@@ -253,7 +253,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
             <div className="text-sm text-muted-foreground">No amendments recorded.</div>
           ) : (
             amendments.map((amendment: any, index: number) => (
-              <div key={amendment.id ?? index} className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
+              <div key={amendment.id ?? index} className="rounded-lg border border-amber-200 bg-amber-50/60 p-4">
                 <div className="mb-2 flex items-center justify-between gap-4">
                   <span className="text-sm font-semibold text-amber-900">
                     Amendment #{amendment.amendmentNumber ?? index + 1}

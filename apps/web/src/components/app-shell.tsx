@@ -220,7 +220,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   }
 
   return (
-    <div ref={containerRef} className={cn('relative', isMobile ? 'w-full' : 'w-[24rem]')}>
+    <div ref={containerRef} className={cn('relative', isMobile ? 'w-full' : 'w-[22rem]')}>
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -237,7 +237,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
           }}
           onKeyDown={handleKeyDown}
           placeholder="Search requisitions, POs, invoices..."
-          className="h-11 rounded-xl border-border/70 bg-background/85 pl-10 pr-10 shadow-none backdrop-blur"
+          className="h-9 rounded-md border-border/70 bg-background/85 pl-10 pr-10 shadow-none backdrop-blur"
         />
         {loading ? (
           <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">...</div>
@@ -249,7 +249,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
       </div>
 
       {open && (results.length > 0 || (query.length < 2 && recentSearches.length > 0)) ? (
-        <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-50 overflow-hidden rounded-2xl border border-border/70 bg-card shadow-[0_24px_70px_-30px_rgba(15,23,42,0.45)]">
+        <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-50 animate-[slideDown_0.15s_ease-out_both] overflow-hidden rounded-lg border border-border/70 bg-card shadow-xl">
           {query.length < 2 && recentSearches.length > 0 ? (
             <>
               <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
@@ -353,7 +353,7 @@ function EntitySwitcher() {
           }
         }}
         className={cn(
-          'rounded-xl border border-border/70 bg-background/85 px-3 py-2 text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+          'rounded-lg border border-border/70 bg-background/85 px-3 py-1.5 text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
           compactEntitySwitcher ? 'min-w-[9rem]' : 'min-w-[12rem]',
         )}
       >
@@ -483,7 +483,7 @@ function NotificationBell() {
       <button
         onClick={handleBellClick}
         aria-label="Notifications"
-        className="relative inline-flex size-11 items-center justify-center rounded-xl border border-border/70 bg-background/80 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className="relative inline-flex size-9 items-center justify-center rounded-lg border border-border/70 bg-background/80 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         <Bell className={cn('size-4', unreadCount > 0 && 'text-primary')} />
         {hasNewSinceLastView && unreadCount === 0 ? (
@@ -525,7 +525,7 @@ function NotificationBell() {
                 onChange={(event) => {
                   void updatePreferences({ frequency: event.target.value as NotificationPreferences['frequency'] });
                 }}
-                className="h-10 w-full rounded-xl border border-border/70 bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                className="h-10 w-full rounded-md border border-border/70 bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
               >
                 <option value="instant">Instant</option>
                 <option value="daily">Daily digest</option>
@@ -685,7 +685,7 @@ function ShortcutsModal({
               <span className="text-sm text-muted-foreground">{action}</span>
             </div>
           ))}
-          <label className="flex gap-3 rounded-xl border border-border/70 bg-muted/35 p-4 text-sm">
+          <label className="flex gap-3 rounded-lg border border-border/70 bg-muted/35 p-4 text-sm">
             <input
               type="checkbox"
               checked={shortcutsDisabled}
@@ -849,7 +849,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         ) : (
           <span
             title={sidebarCollapsed ? branding.app_name : undefined}
-            className="font-display text-lg font-semibold tracking-[-0.04em] text-sidebar-foreground"
+            className="text-lg font-bold tracking-[-0.02em] text-sidebar-foreground"
           >
             {sidebarCollapsed && !isMobile ? branding.app_name.slice(0, 2).toUpperCase() : branding.app_name}
           </span>
@@ -905,15 +905,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <OfflineIndicator />
-        <header className="sticky top-0 z-40 border-b border-border/70 bg-background/88 backdrop-blur-xl">
-          <div className="flex items-center gap-3 px-4 py-3 md:px-6">
+        <header className="sticky top-0 z-40 border-b border-border/70 bg-background/92 backdrop-blur-md">
+          <div className="flex items-center gap-3 px-4 py-2.5 md:px-6">
             {isMobile ? (
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
                 onClick={() => setSidebarOpen(true)}
-                className="size-11 rounded-xl border border-border/70 bg-background/80"
+                className="size-9 rounded-lg border border-border/70 bg-background/80"
                 aria-label="Open sidebar"
               >
                 <Menu className="size-4" />
@@ -929,7 +929,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 variant="ghost"
                 size="icon"
                 onClick={() => setShowShortcutsModal(true)}
-                className="hidden size-11 rounded-xl border border-border/70 bg-background/80 text-muted-foreground hover:bg-muted md:inline-flex"
+                className="hidden size-9 rounded-lg border border-border/70 bg-background/80 text-muted-foreground hover:bg-muted md:inline-flex"
                 aria-label="Keyboard shortcuts"
               >
                 <Settings2 className="size-4" />

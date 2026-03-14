@@ -241,7 +241,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
   if (loading) {
     return (
       <div className="p-4 lg:p-8">
-        <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+        <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
           Loading purchase order...
         </div>
       </div>
@@ -309,7 +309,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
         <StatCard label="Issued" value={po.issuedAt ? new Date(po.issuedAt).toLocaleDateString() : '—'} />
       </div>
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">PO Summary</CardTitle>
           <CardDescription>Commercial terms, supplier reference, and header notes.</CardDescription>
@@ -330,7 +330,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
       </Card>
 
       {isBlanket ? (
-        <Card className="rounded-[24px] border-amber-200/70 bg-amber-50/60">
+        <Card className="rounded-lg border-amber-200/70 bg-amber-50/60">
           <CardHeader>
             <CardTitle className="text-xl">Blanket PO Summary</CardTitle>
             <CardDescription>Release utilization, term boundaries, and remaining spending room.</CardDescription>
@@ -360,14 +360,14 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
         </Card>
       ) : null}
 
-      <Card className="rounded-[24px]">
+      <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Line Items</CardTitle>
           <CardDescription>Ordered quantities, pricing, and PO totals.</CardDescription>
         </CardHeader>
         <CardContent className="pt-0">
           {lines.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+            <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
               No line items.
             </div>
           ) : (
@@ -409,7 +409,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
       </Card>
 
       {complianceReport?.lines?.length ? (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Contract Compliance</CardTitle>
             <CardDescription>
@@ -462,7 +462,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
       ) : null}
 
       {receivingLines.length > 0 ? (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Receiving Progress</CardTitle>
             <CardDescription>Ordered, received, rejected, and outstanding quantities by line.</CardDescription>
@@ -518,7 +518,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
       ) : null}
 
       {isBlanket ? (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-1.5">
               <CardTitle className="text-xl">Releases</CardTitle>
@@ -532,7 +532,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
           </CardHeader>
           <CardContent className="pt-0">
             {releases.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
                 No releases yet.
               </div>
             ) : (
@@ -576,7 +576,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
       ) : null}
 
       {versions.length > 0 ? (
-        <Card className="rounded-[24px]">
+        <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Version History</CardTitle>
             <CardDescription>Change-order history and revision trail for this purchase order.</CardDescription>
@@ -737,7 +737,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
 
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-background/70 p-4">
+    <div className="rounded-lg border border-border/70 bg-background/70 p-4">
       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
       <div className="mt-2 text-sm text-foreground">{value}</div>
     </div>
@@ -746,10 +746,10 @@ function DetailField({ label, value }: { label: string; value: string }) {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <Card className="rounded-[24px] border-border/70 bg-card/95">
+    <Card className="rounded-lg border-border/70 bg-card/95">
       <CardContent className="p-6">
         <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
-        <div className="mt-2 font-display text-3xl font-semibold tracking-[-0.04em] text-foreground">{value}</div>
+        <div className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-foreground">{value}</div>
       </CardContent>
     </Card>
   );
@@ -784,7 +784,7 @@ function ModalShell({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-xl rounded-[24px] border border-border/70 bg-background p-6 shadow-[0_30px_100px_-40px_rgba(15,23,42,0.6)]">
+      <div className="w-full max-w-xl rounded-lg border border-border/70 bg-background p-6 shadow-[0_30px_100px_-40px_rgba(15,23,42,0.6)]">
         {children}
       </div>
     </div>

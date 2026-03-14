@@ -145,7 +145,7 @@ export default function SpendGuardPage() {
                 ) : null}
               </CardHeader>
               <CardContent>
-                <pre className="overflow-x-auto rounded-2xl border border-border/70 bg-muted/40 p-4 text-xs leading-6 text-muted-foreground">
+                <pre className="overflow-x-auto rounded-lg border border-border/70 bg-muted/40 p-4 text-xs leading-6 text-muted-foreground">
                   {JSON.stringify(alert.details, null, 2)}
                 </pre>
               </CardContent>
