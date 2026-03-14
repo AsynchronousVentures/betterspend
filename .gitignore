@@ -8,3 +8,5 @@ dist
 coverage
 *.log
 ecosystem.config.js
+
+.claude/
