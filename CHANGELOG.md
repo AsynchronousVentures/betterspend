@@ -70,6 +70,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated the vendor portal onto the new design system, covering secure token access, invoice submission, onboarding workflows, catalog pricing proposals, and supplier-side proposal history.
 - Migrated the approval workflow builder onto the new design system, covering saved-rule management, visual condition editing, step sequencing, raw JSON editing, and approval-chain simulation.
 - Migrated the public punchout catalog onto the new design system, covering session validation, search, cart management, and requisition checkout return.
+- Removed the legacy `apps/web/src/lib/theme.ts` bridge after completing the page migration, leaving the web app on the Tailwind/shadcn token system as the sole styling path.
 
 ### Fixed
 
