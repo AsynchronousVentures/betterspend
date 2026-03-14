@@ -1,10 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { ArrowLeft, Pencil, Plus } from 'lucide-react';
 import { api } from '../../../lib/api';
-import { COLORS, SHADOWS } from '../../../lib/theme';
 import Breadcrumbs from '../../../components/breadcrumbs';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
+import { Button } from '../../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Input } from '../../../components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 
 function formatCurrency(amount: string | number | null, currency = 'USD') {
   if (amount === null || amount === undefined) return '—';
@@ -13,10 +18,10 @@ function formatCurrency(amount: string | number | null, currency = 'USD') {
 
 function ProgressBar({ pct }: { pct: number }) {
   const clamped = Math.min(pct, 100);
-  const color = pct > 90 ? COLORS.accentRed : pct > 70 ? COLORS.accentAmber : '#22c55e';
+  const colorClass = pct > 90 ? 'bg-rose-500' : pct > 70 ? 'bg-amber-500' : 'bg-emerald-500';
   return (
-    <div style={{ width: '100%', background: COLORS.tableBorder, borderRadius: 4, height: 10 }}>
-      <div style={{ width: `${clamped}%`, background: color, height: 10, borderRadius: 4, transition: 'width 0.3s' }} />
+    <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+      <div className={`h-full ${colorClass}`} style={{ width: `${clamped}%` }} />
     </div>
   );
 }
@@ -36,7 +41,8 @@ export default function BudgetDetailPage({ params }: { params: Promise<{ id: str
   useEffect(() => {
     params.then(({ id: pid }) => {
       setId(pid);
-      api.budgets.get(pid)
+      api.budgets
+        .get(pid)
         .then((data) => {
           setBudget(data);
           setEditForm({ name: data.name, totalAmount: String(data.totalAmount) });
@@ -55,8 +61,8 @@ export default function BudgetDetailPage({ params }: { params: Promise<{ id: str
       });
       setBudget(updated);
       setEditing(false);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setSaving(false);
     }
@@ -74,7 +80,11 @@ export default function BudgetDetailPage({ params }: { params: Promise<{ id: str
       setBudget(updated);
       setAddPeriodOpen(false);
       setPeriodForm({ periodStart: '', periodEnd: '', allocatedAmount: '' });
-    } catch (e: any) { setError(e.message); } finally { setPeriodSaving(false); }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setPeriodSaving(false);
+    }
   }
 
   async function handleRemovePeriod(periodId: string) {
@@ -82,11 +92,13 @@ export default function BudgetDetailPage({ params }: { params: Promise<{ id: str
     try {
       const updated = await api.budgets.removePeriod(id, periodId);
       setBudget(updated);
-    } catch (e: any) { setError(e.message); }
+    } catch (err: any) {
+      setError(err.message);
+    }
   }
 
-  if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>Loading…</div>;
-  if (!budget) return <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.accentRed }}>Budget not found.</div>;
+  if (loading) return <div className="p-8 text-sm text-muted-foreground">Loading...</div>;
+  if (!budget) return <div className="p-8 text-sm text-rose-700">Budget not found.</div>;
 
   const total = parseFloat(budget.totalAmount ?? '0');
   const spent = parseFloat(budget.spentAmount ?? '0');
@@ -94,173 +106,171 @@ export default function BudgetDetailPage({ params }: { params: Promise<{ id: str
   const pct = total > 0 ? (spent / total) * 100 : 0;
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '800px' }}>
+    <div className="space-y-6 p-4 lg:p-8">
       <Breadcrumbs items={[{ label: 'Budgets', href: '/budgets' }, { label: budget.name }]} />
-      {error && (
-        <div style={{ marginBottom: '1rem', background: COLORS.accentRedLight, border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.625rem 1rem', color: COLORS.accentRedDark, fontSize: '0.875rem', display: 'flex', justifyContent: 'space-between' }}>
-          {error}
-          <button onClick={() => setError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.accentRedDark, fontWeight: 700 }}>×</button>
-        </div>
-      )}
-      <Link href="/budgets" style={{ color: COLORS.textSecondary, fontSize: '0.875rem', textDecoration: 'none' }}>
-        &larr; Back to Budgets
+      <Link href="/budgets" className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
+        <ArrowLeft className="h-4 w-4" />
+        Budgets
       </Link>
 
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', margin: '1rem 0 1.5rem' }}>
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex items-center justify-between gap-4">
+            <span>{error}</span>
+            <button onClick={() => setError('')} className="text-sm font-semibold">
+              Dismiss
+            </button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: COLORS.textPrimary }}>{budget.name}</h1>
-          <p style={{ margin: '0.25rem 0 0', color: COLORS.textSecondary, fontSize: '0.875rem' }}>
+          <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{budget.name}</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
             {budget.budgetType?.replace('_', ' ')} · FY{budget.fiscalYear} · {budget.currency}
           </p>
         </div>
-        <button
-          onClick={() => setEditing(!editing)}
-          style={{ background: editing ? COLORS.hoverBg : COLORS.textPrimary, color: editing ? COLORS.textSecondary : COLORS.white, border: 'none', padding: '0.5rem 1.25rem', borderRadius: '6px', fontSize: '0.875rem', fontWeight: 500, cursor: 'pointer' }}
-        >
+        <Button variant={editing ? 'outline' : 'default'} onClick={() => setEditing(!editing)}>
+          <Pencil className="h-4 w-4" />
           {editing ? 'Cancel' : 'Edit'}
-        </button>
+        </Button>
       </div>
 
-      {editing && (
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-          <h2 style={{ margin: '0 0 1rem', fontSize: '1rem', fontWeight: 600 }}>Edit Budget</h2>
-          <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: '1fr 1fr' }}>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>Name</label>
-              <input
-                value={editForm.name}
-                onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
-                style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box' }}
-              />
+      {editing ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Edit Budget</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            <div className="md:col-span-2">
+              <label className="mb-2 block text-sm font-medium text-foreground">Name</label>
+              <Input value={editForm.name} onChange={(event) => setEditForm((current) => ({ ...current, name: event.target.value }))} />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>Total Budget Amount</label>
-              <input
-                type="number" min="0" step="0.01"
-                value={editForm.totalAmount}
-                onChange={(e) => setEditForm((f) => ({ ...f, totalAmount: e.target.value }))}
-                style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box' }}
-              />
+              <label className="mb-2 block text-sm font-medium text-foreground">Total Budget Amount</label>
+              <Input type="number" min="0" step="0.01" value={editForm.totalAmount} onChange={(event) => setEditForm((current) => ({ ...current, totalAmount: event.target.value }))} />
             </div>
-          </div>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            style={{ marginTop: '1rem', background: COLORS.textPrimary, color: COLORS.white, border: 'none', padding: '0.5rem 1.25rem', borderRadius: '6px', fontSize: '0.875rem', fontWeight: 500, cursor: saving ? 'not-allowed' : 'pointer' }}
-          >
-            {saving ? 'Saving…' : 'Save Changes'}
-          </button>
-        </div>
-      )}
+            <div className="md:col-span-2 flex gap-3">
+              <Button onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving...' : 'Save Changes'}
+              </Button>
+              <Button variant="outline" onClick={() => setEditing(false)}>
+                Cancel
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
-      {/* Summary cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+      <div className="grid gap-4 md:grid-cols-3">
         {[
-          { label: 'Total Budget', value: formatCurrency(total, budget.currency), color: COLORS.textPrimary },
-          { label: 'Spent', value: formatCurrency(spent, budget.currency), color: pct > 90 ? COLORS.accentRedDark : COLORS.textSecondary },
-          { label: 'Remaining', value: formatCurrency(remaining, budget.currency), color: remaining < 0 ? COLORS.accentRedDark : '#059669' },
+          { label: 'Total Budget', value: formatCurrency(total, budget.currency), tone: 'text-foreground' },
+          { label: 'Spent', value: formatCurrency(spent, budget.currency), tone: pct > 90 ? 'text-rose-700' : 'text-muted-foreground' },
+          { label: 'Remaining', value: formatCurrency(remaining, budget.currency), tone: remaining < 0 ? 'text-rose-700' : 'text-emerald-700' },
         ].map((card) => (
-          <div key={card.label} style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.25rem', boxShadow: SHADOWS.card }}>
-            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: COLORS.textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>{card.label}</div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 700, color: card.color }}>{card.value}</div>
-          </div>
+          <Card key={card.label}>
+            <CardContent className="space-y-2 p-5">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{card.label}</div>
+              <div className={`text-3xl font-semibold tracking-[-0.04em] ${card.tone}`}>{card.value}</div>
+            </CardContent>
+          </Card>
         ))}
       </div>
 
-      {/* Utilization bar */}
-      <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-          <span style={{ fontSize: '0.875rem', fontWeight: 600, color: COLORS.textSecondary }}>Budget Utilization</span>
-          <span style={{ fontSize: '0.875rem', fontWeight: 700, color: pct > 90 ? COLORS.accentRedDark : COLORS.textPrimary }}>{pct.toFixed(1)}%</span>
-        </div>
-        <ProgressBar pct={pct} />
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between text-base">
+            <span>Budget Utilization</span>
+            <span className={pct > 90 ? 'text-rose-700' : 'text-foreground'}>{pct.toFixed(1)}%</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ProgressBar pct={pct} />
+        </CardContent>
+      </Card>
 
-      {/* Budget periods */}
-      <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', overflow: 'hidden', boxShadow: SHADOWS.card }}>
-        <div style={{ padding: '1rem 1.25rem', borderBottom: `1px solid ${COLORS.tableBorder}`, background: COLORS.tableHeaderBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: COLORS.textPrimary }}>Budget Periods ({budget.periods?.length ?? 0})</h2>
-          <button onClick={() => setAddPeriodOpen(!addPeriodOpen)}
-            style={{ background: COLORS.textPrimary, color: COLORS.white, border: 'none', padding: '0.375rem 0.875rem', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 500, cursor: 'pointer' }}>
-            {addPeriodOpen ? 'Cancel' : '+ Add Period'}
-          </button>
-        </div>
-
-        {addPeriodOpen && (
-          <div style={{ padding: '1.25rem', borderBottom: `1px solid ${COLORS.tableBorder}`, background: COLORS.tableHeaderBg }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', alignItems: 'end' }}>
+      <Card className="overflow-hidden">
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-base">Budget Periods ({budget.periods?.length ?? 0})</CardTitle>
+          <Button size="sm" onClick={() => setAddPeriodOpen(!addPeriodOpen)}>
+            <Plus className="h-4 w-4" />
+            {addPeriodOpen ? 'Cancel' : 'Add Period'}
+          </Button>
+        </CardHeader>
+        <CardContent className="p-0">
+          {addPeriodOpen ? (
+            <div className="grid gap-4 border-b border-border/70 bg-muted/20 p-5 md:grid-cols-3">
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>Period Start</label>
-                <input type="date" value={periodForm.periodStart} onChange={(e) => setPeriodForm((f) => ({ ...f, periodStart: e.target.value }))}
-                  style={{ width: '100%', padding: '0.4rem 0.6rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box' }} />
+                <label className="mb-2 block text-sm font-medium text-foreground">Period Start</label>
+                <Input type="date" value={periodForm.periodStart} onChange={(event) => setPeriodForm((current) => ({ ...current, periodStart: event.target.value }))} />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>Period End</label>
-                <input type="date" value={periodForm.periodEnd} onChange={(e) => setPeriodForm((f) => ({ ...f, periodEnd: e.target.value }))}
-                  style={{ width: '100%', padding: '0.4rem 0.6rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box' }} />
+                <label className="mb-2 block text-sm font-medium text-foreground">Period End</label>
+                <Input type="date" value={periodForm.periodEnd} onChange={(event) => setPeriodForm((current) => ({ ...current, periodEnd: event.target.value }))} />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>Allocated Amount</label>
-                <input type="number" min="0" step="0.01" value={periodForm.allocatedAmount} onChange={(e) => setPeriodForm((f) => ({ ...f, allocatedAmount: e.target.value }))}
-                  placeholder="0.00"
-                  style={{ width: '100%', padding: '0.4rem 0.6rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box' }} />
+                <label className="mb-2 block text-sm font-medium text-foreground">Allocated Amount</label>
+                <Input type="number" min="0" step="0.01" value={periodForm.allocatedAmount} onChange={(event) => setPeriodForm((current) => ({ ...current, allocatedAmount: event.target.value }))} placeholder="0.00" />
+              </div>
+              <div className="md:col-span-3">
+                <Button onClick={handleAddPeriod} disabled={periodSaving}>
+                  {periodSaving ? 'Adding...' : 'Add Period'}
+                </Button>
               </div>
             </div>
-            <button onClick={handleAddPeriod} disabled={periodSaving}
-              style={{ marginTop: '0.75rem', background: '#059669', color: COLORS.white, border: 'none', padding: '0.4rem 1rem', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 500, cursor: periodSaving ? 'not-allowed' : 'pointer', opacity: periodSaving ? 0.7 : 1 }}>
-              {periodSaving ? 'Adding…' : 'Add Period'}
-            </button>
-          </div>
-        )}
+          ) : null}
 
-        {budget.periods && budget.periods.length > 0 ? (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${COLORS.tableBorder}`, background: COLORS.tableHeaderBg }}>
-                  {['Period Start', 'Period End', 'Allocated', 'Spent', 'Remaining', 'Utilization', ''].map((h) => (
-                    <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 600, color: COLORS.textSecondary, fontSize: '0.8rem' }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {budget.periods.map((period: any, idx: number) => {
+          {budget.periods && budget.periods.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Period Start</TableHead>
+                  <TableHead>Period End</TableHead>
+                  <TableHead>Allocated</TableHead>
+                  <TableHead>Spent</TableHead>
+                  <TableHead>Remaining</TableHead>
+                  <TableHead>Utilization</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {budget.periods.map((period: any) => {
                   const alloc = parseFloat(period.allocatedAmount ?? period.amount ?? '0');
                   const periodSpent = parseFloat(period.spentAmount ?? '0');
                   const periodPct = alloc > 0 ? (periodSpent / alloc) * 100 : 0;
                   return (
-                    <tr key={period.id} style={{ borderBottom: idx < budget.periods.length - 1 ? `1px solid ${COLORS.hoverBg}` : undefined }}>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{new Date(period.periodStart).toLocaleDateString()}</td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{new Date(period.periodEnd).toLocaleDateString()}</td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textPrimary, fontWeight: 600 }}>{formatCurrency(alloc, budget.currency)}</td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{formatCurrency(periodSpent, budget.currency)}</td>
-                      <td style={{ padding: '0.875rem 1rem', color: alloc - periodSpent < 0 ? COLORS.accentRedDark : '#059669' }}>{formatCurrency(alloc - periodSpent, budget.currency)}</td>
-                      <td style={{ padding: '0.875rem 1rem', minWidth: '120px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <div style={{ flex: 1, background: COLORS.tableBorder, borderRadius: 4, height: 6 }}>
-                            <div style={{ width: `${Math.min(periodPct, 100)}%`, background: periodPct > 90 ? COLORS.accentRed : '#22c55e', height: 6, borderRadius: 4 }} />
+                    <TableRow key={period.id}>
+                      <TableCell className="text-muted-foreground">{new Date(period.periodStart).toLocaleDateString()}</TableCell>
+                      <TableCell className="text-muted-foreground">{new Date(period.periodEnd).toLocaleDateString()}</TableCell>
+                      <TableCell className="font-medium text-foreground">{formatCurrency(alloc, budget.currency)}</TableCell>
+                      <TableCell className="text-muted-foreground">{formatCurrency(periodSpent, budget.currency)}</TableCell>
+                      <TableCell className={alloc - periodSpent < 0 ? 'text-rose-700' : 'text-emerald-700'}>
+                        {formatCurrency(alloc - periodSpent, budget.currency)}
+                      </TableCell>
+                      <TableCell className="min-w-[160px]">
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1">
+                            <ProgressBar pct={periodPct} />
                           </div>
-                          <span style={{ fontSize: '0.75rem', color: COLORS.textSecondary, minWidth: '36px' }}>{periodPct.toFixed(0)}%</span>
+                          <span className="text-xs text-muted-foreground">{periodPct.toFixed(0)}%</span>
                         </div>
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem' }}>
-                        <button onClick={() => handleRemovePeriod(period.id)}
-                          style={{ background: 'none', border: '1px solid #fca5a5', color: COLORS.accentRedDark, borderRadius: '4px', padding: '0.2rem 0.5rem', fontSize: '0.75rem', cursor: 'pointer' }}>
+                      </TableCell>
+                      <TableCell>
+                        <Button variant="outline" size="sm" onClick={() => handleRemovePeriod(period.id)}>
                           Remove
-                        </button>
-                      </td>
-                    </tr>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div style={{ padding: '2rem', textAlign: 'center', color: COLORS.textMuted, fontSize: '0.875rem' }}>
-            No budget periods. Add one above.
-          </div>
-        )}
-      </div>
+              </TableBody>
+            </Table>
+          ) : (
+            <div className="p-8 text-center text-sm text-muted-foreground">No budget periods. Add one above.</div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
