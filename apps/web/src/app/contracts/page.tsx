@@ -1,9 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { AlertTriangle, FileSignature, Plus } from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
+import { PageHeader } from '../../components/page-header';
+import { StatusBadge } from '../../components/status-badge';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent } from '../../components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 
 const CONTRACT_TYPE_LABELS: Record<string, string> = {
   msa: 'MSA',
@@ -15,22 +21,13 @@ const CONTRACT_TYPE_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
-const STATUS_STYLES: Record<string, { background: string; color: string }> = {
-  draft:            { background: '#f1f5f9', color: COLORS.textSecondary },
-  pending_approval: { background: COLORS.accentAmberLight, color: COLORS.accentAmberDark },
-  active:           { background: COLORS.accentGreenLight, color: COLORS.accentGreenDark },
-  expiring_soon:    { background: '#fff7ed', color: '#9a3412' },
-  expired:          { background: COLORS.accentRedLight, color: COLORS.accentRedDark },
-  terminated:       { background: '#f8fafc', color: '#475569' },
-};
-
 const STATUS_LABELS: Record<string, string> = {
-  draft:            'Draft',
+  draft: 'Draft',
   pending_approval: 'Pending Approval',
-  active:           'Active',
-  expiring_soon:    'Expiring Soon',
-  expired:          'Expired',
-  terminated:       'Terminated',
+  active: 'Active',
+  expiring_soon: 'Expiring Soon',
+  expired: 'Expired',
+  terminated: 'Terminated',
 };
 
 const TABS = [
@@ -53,186 +50,159 @@ const fmtDate = (d: string | null | undefined) => {
 };
 
 export default function ContractsPage() {
-  const [contracts, setContracts]       = useState<any[]>([]);
-  const [expiring, setExpiring]         = useState<any[]>([]);
-  const [loading, setLoading]           = useState(true);
-  const [error, setError]               = useState('');
-  const [activeTab, setActiveTab]       = useState('');
+  const [contracts, setContracts] = useState<any[]>([]);
+  const [expiring, setExpiring] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState('');
   const [dismissWarning, setDismissWarning] = useState(false);
 
   useEffect(() => {
     setLoading(true);
     const params = activeTab ? { status: activeTab } : undefined;
-    Promise.all([
-      api.contracts.list(params),
-      api.contracts.expiring(30),
-    ])
+    Promise.all([api.contracts.list(params), api.contracts.expiring(30)])
       .then(([list, exp]) => {
         setContracts(list);
         setExpiring(exp);
       })
-      .catch((e) => setError(e.message))
+      .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [activeTab]);
 
-  const thStyle: React.CSSProperties = {
-    padding: '0.75rem 1rem',
-    textAlign: 'left',
-    fontWeight: 600,
-    color: COLORS.textSecondary,
-    fontSize: '0.78rem',
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-    whiteSpace: 'nowrap',
-  };
-
   return (
-    <div style={{ padding: '2rem' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-        <div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: COLORS.textPrimary }}>Contracts</h1>
-          <p style={{ margin: '0.25rem 0 0', color: COLORS.textSecondary, fontSize: '0.875rem' }}>Vendor agreements and procurement contracts</p>
-        </div>
-        <Link
-          href="/contracts/new"
-          style={{ padding: '0.5rem 1rem', background: COLORS.accentBlue, color: COLORS.white, borderRadius: '6px', textDecoration: 'none', fontWeight: 500, fontSize: '0.875rem' }}
-        >
-          + New Contract
-        </Link>
-      </div>
-
-      {/* Error banner */}
-      {error && (
-        <div style={{ background: COLORS.accentRedLight, border: `1px solid #fecaca`, borderRadius: '6px', padding: '0.75rem 1rem', color: COLORS.accentRedDark, fontSize: '0.875rem', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>{error}</span>
-          <button onClick={() => setError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.accentRedDark, fontWeight: 700, fontSize: '1rem', lineHeight: 1, padding: 0 }}>×</button>
-        </div>
-      )}
-
-      {/* Expiring warning banner */}
-      {!dismissWarning && expiring.length > 0 && (
-        <div style={{ background: '#fffbeb', border: `1px solid #fde68a`, borderRadius: '6px', padding: '0.75rem 1rem', color: '#92400e', fontSize: '0.875rem', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>
-            <strong>Warning:</strong> {expiring.length} contract{expiring.length !== 1 ? 's' : ''} expiring within 30 days.{' '}
-            <button onClick={() => setActiveTab('expiring_soon')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#92400e', textDecoration: 'underline', fontSize: '0.875rem', padding: 0 }}>
-              View expiring contracts
+    <div className="space-y-6 p-4 lg:p-8">
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex items-center justify-between gap-4">
+            <span>{error}</span>
+            <button onClick={() => setError('')} className="text-sm font-semibold">
+              Dismiss
             </button>
-          </span>
-          <button onClick={() => setDismissWarning(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#92400e', fontWeight: 700, fontSize: '1rem', lineHeight: 1, padding: 0 }}>×</button>
-        </div>
-      )}
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
-      {/* Filter tabs */}
-      <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '1.25rem', borderBottom: `1px solid ${COLORS.tableBorder}` }}>
+      {!dismissWarning && expiring.length > 0 ? (
+        <Alert variant="warning">
+          <AlertDescription className="flex items-center justify-between gap-4">
+            <span>
+              <strong>Warning:</strong> {expiring.length} contract{expiring.length !== 1 ? 's' : ''} expiring within 30 days.
+            </span>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setActiveTab('expiring_soon')} className="text-sm font-semibold underline">
+                View expiring contracts
+              </button>
+              <button onClick={() => setDismissWarning(true)} className="text-sm font-semibold">
+                Dismiss
+              </button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      <PageHeader
+        title="Contracts"
+        description="Vendor agreements, renewal exposure, and procurement commitments in one place."
+        actions={
+          <Button asChild>
+            <Link href="/contracts/new">
+              <Plus className="h-4 w-4" />
+              New Contract
+            </Link>
+          </Button>
+        }
+      />
+
+      <div className="flex flex-wrap gap-2">
         {TABS.map((tab) => {
           const isActive = activeTab === tab.value;
           return (
-            <button
+            <Button
               key={tab.value}
+              variant={isActive ? 'default' : 'outline'}
+              size="sm"
               onClick={() => setActiveTab(tab.value)}
-              style={{
-                padding: '0.5rem 1rem',
-                background: 'none',
-                border: 'none',
-                borderBottom: isActive ? `2px solid ${COLORS.accentBlue}` : '2px solid transparent',
-                color: isActive ? COLORS.accentBlue : COLORS.textSecondary,
-                fontWeight: isActive ? 600 : 400,
-                fontSize: '0.875rem',
-                cursor: 'pointer',
-                marginBottom: '-1px',
-                transition: 'color 0.15s',
-              }}
             >
               {tab.label}
-            </button>
+            </Button>
           );
         })}
       </div>
 
-      {/* Table */}
-      <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', overflow: 'hidden', boxShadow: SHADOWS.card }}>
-        {loading ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>Loading...</div>
-        ) : contracts.length === 0 ? (
-          <div style={{ padding: '4rem 2rem', textAlign: 'center', color: COLORS.textMuted }}>
-            <p style={{ fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.5rem' }}>No contracts found</p>
-            <Link href="/contracts/new" style={{ color: COLORS.accentBlue, textDecoration: 'none', fontSize: '0.875rem' }}>
-              Create your first contract →
-            </Link>
-          </div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${COLORS.tableBorder}`, background: COLORS.tableHeaderBg }}>
-                  <th style={thStyle}>Contract #</th>
-                  <th style={thStyle}>Title</th>
-                  <th style={thStyle}>Vendor</th>
-                  <th style={thStyle}>Type</th>
-                  <th style={thStyle}>Status</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Total Value</th>
-                  <th style={thStyle}>Start Date</th>
-                  <th style={thStyle}>End Date</th>
-                  <th style={thStyle}>Auto-Renew</th>
-                </tr>
-              </thead>
-              <tbody>
-                {contracts.map((contract, idx) => {
-                  const sc = STATUS_STYLES[contract.status] ?? { background: '#f1f5f9', color: COLORS.textSecondary };
-                  return (
-                    <tr
-                      key={contract.id}
-                      style={{ borderBottom: idx < contracts.length - 1 ? `1px solid ${COLORS.contentBg}` : undefined, cursor: 'pointer' }}
-                      onClick={() => (window.location.href = `/contracts/${contract.id}`)}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = COLORS.hoverBg)}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = '')}
-                    >
-                      <td style={{ padding: '0.875rem 1rem', fontFamily: 'monospace', fontSize: '0.8rem', color: COLORS.accentBlueDark, fontWeight: 600 }}>
-                        {contract.contractNumber || '—'}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', fontWeight: 600, color: COLORS.textPrimary, maxWidth: '220px' }}>
-                        <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {contract.title}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>
-                        {contract.vendor?.name ?? contract.vendorId ?? '—'}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>
-                        {CONTRACT_TYPE_LABELS[contract.type] ?? contract.type ?? '—'}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem' }}>
-                        <span style={{ ...sc, padding: '0.2rem 0.6rem', borderRadius: '9999px', fontSize: '0.75rem', fontWeight: 600, display: 'inline-block' }}>
-                          {STATUS_LABELS[contract.status] ?? contract.status}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                        {contract.totalValue != null ? fmt(contract.totalValue, contract.currency ?? 'USD') : '—'}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary, whiteSpace: 'nowrap' }}>
-                        {fmtDate(contract.startDate)}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', color: contract.status === 'expiring_soon' ? '#9a3412' : COLORS.textSecondary, whiteSpace: 'nowrap', fontWeight: contract.status === 'expiring_soon' ? 600 : 400 }}>
-                        {fmtDate(contract.endDate)}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem' }}>
-                        {contract.autoRenew ? (
-                          <span style={{ background: COLORS.accentBlueLight, color: COLORS.accentBlueDark, padding: '0.2rem 0.5rem', borderRadius: '9999px', fontSize: '0.72rem', fontWeight: 600 }}>
-                            Auto-Renew
-                          </span>
-                        ) : (
-                          <span style={{ color: COLORS.textMuted, fontSize: '0.8rem' }}>—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <Card className="overflow-hidden">
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="flex min-h-[260px] items-center justify-center text-sm text-muted-foreground">
+              Loading contracts...
+            </div>
+          ) : contracts.length === 0 ? (
+            <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 px-6 text-center">
+              <div className="rounded-full bg-muted p-4">
+                <FileSignature className="h-6 w-6 text-muted-foreground" />
+              </div>
+              <div>
+                <p className="text-base font-semibold text-foreground">No contracts found</p>
+                <p className="mt-1 text-sm text-muted-foreground">Create your first vendor agreement to start tracking obligations and renewals.</p>
+              </div>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Contract #</TableHead>
+                  <TableHead>Title</TableHead>
+                  <TableHead>Vendor</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Total Value</TableHead>
+                  <TableHead>Start Date</TableHead>
+                  <TableHead>End Date</TableHead>
+                  <TableHead>Auto-Renew</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {contracts.map((contract) => (
+                  <TableRow
+                    key={contract.id}
+                    className="cursor-pointer"
+                    onClick={() => {
+                      window.location.href = `/contracts/${contract.id}`;
+                    }}
+                  >
+                    <TableCell className="font-mono text-xs font-semibold text-primary">
+                      {contract.contractNumber || '—'}
+                    </TableCell>
+                    <TableCell className="max-w-[260px] font-semibold text-foreground">
+                      <span className="block truncate">{contract.title}</span>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{contract.vendor?.name ?? contract.vendorId ?? '—'}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {CONTRACT_TYPE_LABELS[contract.type] ?? contract.type ?? '—'}
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge value={contract.status} label={STATUS_LABELS[contract.status]} />
+                    </TableCell>
+                    <TableCell className="text-right font-medium text-foreground">
+                      {contract.totalValue != null ? fmt(contract.totalValue, contract.currency ?? 'USD') : '—'}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{fmtDate(contract.startDate)}</TableCell>
+                    <TableCell className={contract.status === 'expiring_soon' ? 'font-medium text-amber-700' : 'text-muted-foreground'}>
+                      {fmtDate(contract.endDate)}
+                    </TableCell>
+                    <TableCell>
+                      {contract.autoRenew ? (
+                        <StatusBadge value="partial_match" label="Auto-Renew" />
+                      ) : (
+                        <span className="text-sm text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
