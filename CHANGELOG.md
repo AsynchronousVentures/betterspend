@@ -63,6 +63,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated the requisition detail workspace onto the new design system, covering approval/cancel actions, PO creation, and save-as-template flows.
 - Migrated the catalog workspace onto the new design system, covering item maintenance, supplier price proposal review, and requisition shortcuts.
 - Migrated the catalog item detail workspace onto the new design system, covering inline editing, activation toggles, vendor context, and price proposal history.
+- Migrated the purchase order detail workspace onto the new design system, covering blanket-release management, compliance review, receiving progress, and change-order actions.
 
 ### Fixed
 
