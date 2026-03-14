@@ -53,6 +53,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated the reports workspace onto the new design system, covering the custom report builder, saved reports, standard CSV exports, and the save-report modal.
 - Migrated the vendor onboarding workspace onto the new design system, covering questionnaire building, pending review triage, and saved questionnaire management.
 - Migrated the software license detail workspace onto the new design system, covering utilization metrics, renewal timeline, and renewal action workflows.
+- Migrated the OCR jobs workspace onto the new design system, covering extraction history, confidence indicators, and expanded extracted-data review.
 
 ### Fixed
 
