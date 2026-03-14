@@ -1,11 +1,36 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { Plus, Tag } from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
+import { PageHeader } from '../../components/page-header';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../components/ui/table';
 
-interface Vendor { id: string; name: string; }
+interface Vendor {
+  id: string;
+  name: string;
+}
+
 interface CatalogItem {
   id: string;
   sku: string | null;
@@ -19,27 +44,20 @@ interface CatalogItem {
   vendor: Vendor | null;
 }
 
-const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`,
-  borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box',
-};
-const btnPrimary: React.CSSProperties = {
-  background: COLORS.textPrimary, color: COLORS.white, border: 'none', padding: '0.5rem 1.25rem',
-  borderRadius: '6px', fontSize: '0.875rem', fontWeight: 500, cursor: 'pointer',
-};
-const btnDanger: React.CSSProperties = {
-  background: 'transparent', color: COLORS.accentRedDark, border: `1px solid ${COLORS.accentRedDark}`,
-  padding: '0.25rem 0.625rem', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer',
+const EMPTY_FORM = {
+  name: '',
+  sku: '',
+  description: '',
+  category: '',
+  unitOfMeasure: 'each',
+  unitPrice: '',
+  currency: 'USD',
+  vendorId: '',
 };
 
 function formatPrice(price: string, currency: string) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(parseFloat(price));
 }
-
-const EMPTY_FORM = {
-  name: '', sku: '', description: '', category: '', unitOfMeasure: 'each',
-  unitPrice: '', currency: 'USD', vendorId: '',
-};
 
 export default function CatalogPage() {
   const [items, setItems] = useState<CatalogItem[]>([]);
@@ -54,54 +72,77 @@ export default function CatalogPage() {
   const [saving, setSaving] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
+  const [pageError, setPageError] = useState('');
   const [priceProposals, setPriceProposals] = useState<any[]>([]);
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
 
-  const load = useCallback(async () => {
+  async function load() {
     setLoading(true);
+    setPageError('');
     try {
-      const [items, vendors, cats, proposals] = await Promise.all([
-        searchQ ? api.catalog.search(searchQ) : api.catalog.list({ vendorId: filterVendor || undefined, category: filterCategory || undefined }),
+      const [catalogItems, vendorList, categoryList, proposals] = await Promise.all([
+        searchQ
+          ? api.catalog.search(searchQ)
+          : api.catalog.list({
+              vendorId: filterVendor || undefined,
+              category: filterCategory || undefined,
+            }),
         api.vendors.list(),
         api.catalog.categories(),
         api.catalog.priceProposals('pending'),
       ]);
-      setItems(items as CatalogItem[]);
-      setVendors(vendors as Vendor[]);
-      setCategories(cats);
+      setItems(catalogItems as CatalogItem[]);
+      setVendors(vendorList as Vendor[]);
+      setCategories(categoryList);
       setPriceProposals(proposals);
     } catch {
-      // silently fail
+      setPageError('Failed to load catalog data.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
+  }
+
+  useEffect(() => {
+    void load();
   }, [filterCategory, filterVendor, searchQ]);
 
-  useEffect(() => { void load(); }, [load]);
-
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSave(event: React.FormEvent) {
+    event.preventDefault();
     setSaving(true);
     const body = {
-      name: form.name, sku: form.sku || undefined, description: form.description || undefined,
-      category: form.category || undefined, unitOfMeasure: form.unitOfMeasure,
-      unitPrice: parseFloat(form.unitPrice), currency: form.currency,
+      name: form.name,
+      sku: form.sku || undefined,
+      description: form.description || undefined,
+      category: form.category || undefined,
+      unitOfMeasure: form.unitOfMeasure,
+      unitPrice: parseFloat(form.unitPrice),
+      currency: form.currency,
       vendorId: form.vendorId || undefined,
     };
     try {
       if (editId) await api.catalog.update(editId, body);
       else await api.catalog.create(body);
-      setShowForm(false); setEditId(null); setForm(EMPTY_FORM); setFormError(''); await load();
+      setShowForm(false);
+      setEditId(null);
+      setForm(EMPTY_FORM);
+      setFormError('');
+      await load();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   }
 
   function startEdit(item: CatalogItem) {
     setForm({
-      name: item.name, sku: item.sku ?? '', description: item.description ?? '',
-      category: item.category ?? '', unitOfMeasure: item.unitOfMeasure,
-      unitPrice: item.unitPrice, currency: item.currency,
+      name: item.name,
+      sku: item.sku ?? '',
+      description: item.description ?? '',
+      category: item.category ?? '',
+      unitOfMeasure: item.unitOfMeasure,
+      unitPrice: item.unitPrice,
+      currency: item.currency,
       vendorId: item.vendor?.id ?? '',
     });
     setEditId(item.id);
@@ -110,7 +151,7 @@ export default function CatalogPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this catalog item?')) return;
+    if (!window.confirm('Delete this catalog item?')) return;
     await api.catalog.remove(id).catch(() => {});
     await load();
   }
@@ -120,199 +161,372 @@ export default function CatalogPage() {
     await load();
   }
 
-  const label = (text: string) => (
-    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.25rem' }}>
-      {text}
-    </label>
-  );
+  async function reviewProposal(itemId: string, proposalId: string, status: 'approved' | 'rejected') {
+    await api.catalog.reviewPriceProposal(itemId, proposalId, {
+      status,
+      reviewNote: reviewNotes[proposalId],
+    });
+    await load();
+  }
 
   return (
-    <div style={{ padding: '2rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-        <div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: COLORS.textPrimary }}>Catalog</h1>
-          <p style={{ margin: '0.25rem 0 0', color: COLORS.textSecondary, fontSize: '0.875rem' }}>Managed product & service catalog for requisitions</p>
-        </div>
-        <button style={btnPrimary} onClick={() => { setShowForm(!showForm); setEditId(null); setForm(EMPTY_FORM); }}>
-          {showForm && !editId ? 'Cancel' : '+ Add Item'}
-        </button>
-      </div>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="Catalog"
+        description="Managed product and service catalog for requisitions, supplier price updates, and item governance."
+        actions={
+          <Button
+            type="button"
+            onClick={() => {
+              setShowForm(!showForm);
+              setEditId(null);
+              setForm(EMPTY_FORM);
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            {showForm && !editId ? 'Cancel' : 'Add Item'}
+          </Button>
+        }
+      />
 
-      {/* Create / Edit form */}
-      {showForm && (
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-          <h3 style={{ margin: '0 0 1rem', fontSize: '1rem', fontWeight: 600 }}>{editId ? 'Edit Item' : 'New Catalog Item'}</h3>
-          <form onSubmit={handleSave}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-              <div style={{ gridColumn: '1 / 3' }}>
-                {label('Name *')}
-                <input style={inputStyle} required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Item name" />
-              </div>
-              <div>
-                {label('SKU')}
-                <input style={inputStyle} value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} placeholder="e.g. OFF-PAPER-A4" />
-              </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                {label('Description')}
-                <input style={inputStyle} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Brief description" />
-              </div>
-              <div>
-                {label('Category')}
-                <input style={inputStyle} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="e.g. Office Supplies" list="categories-list" />
-                <datalist id="categories-list">{categories.map((c) => <option key={c} value={c} />)}</datalist>
-              </div>
-              <div>
-                {label('Vendor')}
-                <select style={inputStyle} value={form.vendorId} onChange={(e) => setForm({ ...form, vendorId: e.target.value })}>
-                  <option value="">— No vendor —</option>
-                  {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-                </select>
-              </div>
-              <div>
-                {label('Unit of Measure')}
-                <input style={inputStyle} value={form.unitOfMeasure} onChange={(e) => setForm({ ...form, unitOfMeasure: e.target.value })} placeholder="each" />
-              </div>
-              <div>
-                {label('Unit Price *')}
-                <input style={inputStyle} type="number" required min="0" step="any" value={form.unitPrice} onChange={(e) => setForm({ ...form, unitPrice: e.target.value })} placeholder="0.00" />
-              </div>
-              <div>
-                {label('Currency')}
-                <input style={inputStyle} value={form.currency} maxLength={3} onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })} />
-              </div>
-            </div>
-            {formError && <div style={{ marginBottom: '0.75rem', background: COLORS.accentRedLight, border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.5rem 0.75rem', color: COLORS.accentRedDark, fontSize: '0.875rem' }}>{formError}</div>}
-            <div style={{ display: 'flex', gap: '0.75rem' }}>
-              <button type="submit" style={btnPrimary} disabled={saving}>{saving ? 'Saving…' : editId ? 'Update Item' : 'Create Item'}</button>
-              <button type="button" style={{ ...btnPrimary, background: COLORS.white, color: COLORS.textSecondary, border: `1px solid ${COLORS.inputBorder}` }}
-                onClick={() => { setShowForm(false); setEditId(null); setForm(EMPTY_FORM); setFormError(''); }}>Cancel</button>
-            </div>
-          </form>
-        </div>
-      )}
+      {pageError ? (
+        <Alert variant="destructive">
+          <AlertDescription>{pageError}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      {/* Filters */}
-      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-        <input
-          style={{ ...inputStyle, width: '220px' }} placeholder="Search items…"
-          value={searchQ} onChange={(e) => setSearchQ(e.target.value)}
-        />
-        <select style={{ ...inputStyle, width: '180px' }} value={filterCategory} onChange={(e) => { setFilterCategory(e.target.value); setSearchQ(''); }}>
-          <option value="">All categories</option>
-          {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select style={{ ...inputStyle, width: '180px' }} value={filterVendor} onChange={(e) => { setFilterVendor(e.target.value); setSearchQ(''); }}>
-          <option value="">All vendors</option>
-          {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-        </select>
-        {(filterCategory || filterVendor || searchQ) && (
-          <button style={{ ...btnPrimary, background: 'transparent', color: COLORS.textSecondary, border: `1px solid ${COLORS.inputBorder}` }}
-            onClick={() => { setFilterCategory(''); setFilterVendor(''); setSearchQ(''); }}>Clear</button>
-        )}
-        <span style={{ marginLeft: 'auto', fontSize: '0.875rem', color: COLORS.textSecondary }}>{items.length} items</span>
-      </div>
-
-      {/* Table */}
-      <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', overflow: 'hidden', boxShadow: SHADOWS.card }}>
-        {priceProposals.length > 0 && (
-          <div style={{ padding: '1rem', borderBottom: `1px solid ${COLORS.tableBorder}`, background: '#fff7ed' }}>
-            <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#9a3412', marginBottom: '0.75rem' }}>
-              Pending Supplier Price Updates ({priceProposals.length})
-            </div>
-            <div style={{ display: 'grid', gap: '0.75rem' }}>
-              {priceProposals.slice(0, 6).map((proposal) => (
-                <div key={proposal.id} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1.3fr auto', gap: '0.75rem', alignItems: 'center', background: COLORS.cardBg, border: `1px solid ${COLORS.tableBorder}`, borderRadius: '8px', padding: '0.75rem' }}>
-                  <div>
-                    <div style={{ fontWeight: 600, color: COLORS.textPrimary }}>{proposal.item?.name}</div>
-                    <div style={{ fontSize: '0.78rem', color: COLORS.textMuted }}>{proposal.vendor?.name}</div>
-                  </div>
-                  <div style={{ fontSize: '0.875rem', color: COLORS.textSecondary }}>
-                    {formatPrice(String(proposal.currentPrice), proposal.item?.currency ?? 'USD')} {'->'} {formatPrice(String(proposal.proposedPrice), proposal.item?.currency ?? 'USD')}
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>
-                    Effective: {proposal.effectiveDate ? new Date(proposal.effectiveDate).toLocaleDateString() : 'Immediate'}
-                  </div>
-                  <input
-                    value={reviewNotes[proposal.id] ?? ''}
-                    onChange={(e) => setReviewNotes((current) => ({ ...current, [proposal.id]: e.target.value }))}
-                    placeholder="Review note"
-                    style={{ ...inputStyle, fontSize: '0.8rem' }}
-                  />
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button
-                      onClick={async () => { await api.catalog.reviewPriceProposal(proposal.itemId, proposal.id, { status: 'approved', reviewNote: reviewNotes[proposal.id] }); await load(); }}
-                      style={{ ...btnPrimary, background: '#059669', padding: '0.4rem 0.8rem', fontSize: '0.75rem' }}
-                    >
-                      Approve
-                    </button>
-                    <button
-                      onClick={async () => { await api.catalog.reviewPriceProposal(proposal.itemId, proposal.id, { status: 'rejected', reviewNote: reviewNotes[proposal.id] }); await load(); }}
-                      style={{ ...btnDanger }}
-                    >
-                      Reject
-                    </button>
-                  </div>
+      {showForm ? (
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">{editId ? 'Edit Item' : 'New Catalog Item'}</CardTitle>
+            <CardDescription>Maintain item metadata, supplier reference, and pricing defaults.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSave} className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="md:col-span-2">
+                  <Field label="Name">
+                    <Input
+                      required
+                      value={form.name}
+                      onChange={(event) => setForm({ ...form, name: event.target.value })}
+                      placeholder="Item name"
+                    />
+                  </Field>
                 </div>
-              ))}
+                <Field label="SKU">
+                  <Input
+                    value={form.sku}
+                    onChange={(event) => setForm({ ...form, sku: event.target.value })}
+                    placeholder="OFF-PAPER-A4"
+                  />
+                </Field>
+                <div className="md:col-span-3">
+                  <Field label="Description">
+                    <Input
+                      value={form.description}
+                      onChange={(event) => setForm({ ...form, description: event.target.value })}
+                      placeholder="Brief description"
+                    />
+                  </Field>
+                </div>
+                <Field label="Category">
+                  <Input
+                    value={form.category}
+                    onChange={(event) => setForm({ ...form, category: event.target.value })}
+                    placeholder="Office Supplies"
+                    list="categories-list"
+                  />
+                  <datalist id="categories-list">
+                    {categories.map((category) => (
+                      <option key={category} value={category} />
+                    ))}
+                  </datalist>
+                </Field>
+                <Field label="Vendor">
+                  <Select
+                    value={form.vendorId}
+                    onChange={(event) => setForm({ ...form, vendorId: event.target.value })}
+                    className="w-full"
+                  >
+                    <option value="">No vendor</option>
+                    {vendors.map((vendor) => (
+                      <option key={vendor.id} value={vendor.id}>
+                        {vendor.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Unit of Measure">
+                  <Input
+                    value={form.unitOfMeasure}
+                    onChange={(event) => setForm({ ...form, unitOfMeasure: event.target.value })}
+                    placeholder="each"
+                  />
+                </Field>
+                <Field label="Unit Price">
+                  <Input
+                    type="number"
+                    required
+                    min="0"
+                    step="any"
+                    value={form.unitPrice}
+                    onChange={(event) => setForm({ ...form, unitPrice: event.target.value })}
+                    placeholder="0.00"
+                  />
+                </Field>
+                <Field label="Currency">
+                  <Input
+                    value={form.currency}
+                    maxLength={3}
+                    onChange={(event) => setForm({ ...form, currency: event.target.value.toUpperCase() })}
+                  />
+                </Field>
+              </div>
+
+              {formError ? (
+                <Alert variant="destructive">
+                  <AlertDescription>{formError}</AlertDescription>
+                </Alert>
+              ) : null}
+
+              <div className="flex flex-wrap gap-3">
+                <Button type="submit" disabled={saving}>
+                  {saving ? 'Saving...' : editId ? 'Update Item' : 'Create Item'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setShowForm(false);
+                    setEditId(null);
+                    setForm(EMPTY_FORM);
+                    setFormError('');
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <Card className="rounded-[24px]">
+        <CardContent className="flex flex-wrap items-center gap-3 p-6">
+          <Input
+            className="w-[220px]"
+            placeholder="Search items..."
+            value={searchQ}
+            onChange={(event) => setSearchQ(event.target.value)}
+          />
+          <Select
+            className="w-[180px]"
+            value={filterCategory}
+            onChange={(event) => {
+              setFilterCategory(event.target.value);
+              setSearchQ('');
+            }}
+          >
+            <option value="">All categories</option>
+            {categories.map((category) => (
+              <option key={category} value={category}>
+                {category}
+              </option>
+            ))}
+          </Select>
+          <Select
+            className="w-[180px]"
+            value={filterVendor}
+            onChange={(event) => {
+              setFilterVendor(event.target.value);
+              setSearchQ('');
+            }}
+          >
+            <option value="">All vendors</option>
+            {vendors.map((vendor) => (
+              <option key={vendor.id} value={vendor.id}>
+                {vendor.name}
+              </option>
+            ))}
+          </Select>
+          {filterCategory || filterVendor || searchQ ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setFilterCategory('');
+                setFilterVendor('');
+                setSearchQ('');
+              }}
+            >
+              Clear
+            </Button>
+          ) : null}
+          <div className="ml-auto text-sm text-muted-foreground">{items.length} items</div>
+        </CardContent>
+      </Card>
+
+      {priceProposals.length > 0 ? (
+        <Card className="rounded-[24px] border-amber-200/70 bg-amber-50/60">
+          <CardHeader>
+            <CardTitle className="text-xl">Pending Supplier Price Updates</CardTitle>
+            <CardDescription>{priceProposals.length} proposals waiting for buyer review.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {priceProposals.slice(0, 6).map((proposal) => (
+              <div
+                key={proposal.id}
+                className="grid gap-3 rounded-2xl border border-border/70 bg-background p-4 xl:grid-cols-[1.2fr_1fr_1fr_1.3fr_auto]"
+              >
+                <div>
+                  <div className="font-medium text-foreground">{proposal.item?.name}</div>
+                  <div className="text-sm text-muted-foreground">{proposal.vendor?.name}</div>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {formatPrice(String(proposal.currentPrice), proposal.item?.currency ?? 'USD')} to{' '}
+                  {formatPrice(String(proposal.proposedPrice), proposal.item?.currency ?? 'USD')}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  Effective:{' '}
+                  {proposal.effectiveDate
+                    ? new Date(proposal.effectiveDate).toLocaleDateString()
+                    : 'Immediate'}
+                </div>
+                <Input
+                  value={reviewNotes[proposal.id] ?? ''}
+                  onChange={(event) =>
+                    setReviewNotes((current) => ({ ...current, [proposal.id]: event.target.value }))
+                  }
+                  placeholder="Review note"
+                />
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    className="h-9"
+                    onClick={() => reviewProposal(proposal.itemId, proposal.id, 'approved')}
+                  >
+                    Approve
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="h-9"
+                    onClick={() => reviewProposal(proposal.itemId, proposal.id, 'rejected')}
+                  >
+                    Reject
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <Card className="rounded-[24px]">
+        <CardHeader>
+          <CardTitle className="text-xl">Catalog Items</CardTitle>
+          <CardDescription>Browse, edit, deactivate, and requisition active catalog items.</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {loading ? (
+            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center text-sm text-muted-foreground">
+              Loading...
             </div>
-          </div>
-        )}
-        {loading ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted }}>Loading…</div>
-        ) : items.length === 0 ? (
-          <div style={{ padding: '4rem 2rem', textAlign: 'center', color: COLORS.textMuted }}>
-            <p style={{ fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.5rem' }}>No catalog items</p>
-            <p style={{ fontSize: '0.875rem' }}>Add items to the catalog to enable quick selection in requisitions.</p>
-          </div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${COLORS.tableBorder}`, background: COLORS.tableHeaderBg }}>
-                  {['Name', 'SKU', 'Category', 'Vendor', 'UOM', 'Unit Price', 'Active', ''].map((h) => (
-                    <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 600, color: COLORS.textSecondary, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item, idx) => (
-                  <tr key={item.id} style={{ borderBottom: idx < items.length - 1 ? `1px solid ${COLORS.contentBg}` : undefined, opacity: item.isActive ? 1 : 0.5 }}>
-                    <td style={{ padding: '0.875rem 1rem', fontWeight: 600 }}>
-                      <Link href={`/catalog/${item.id}`} style={{ color: COLORS.accentBlueDark, textDecoration: 'none' }}>{item.name}</Link>
-                      {item.description && <div style={{ fontWeight: 400, fontSize: '0.8rem', color: COLORS.textMuted, marginTop: '2px' }}>{item.description}</div>}
-                    </td>
-                    <td style={{ padding: '0.875rem 1rem', fontFamily: 'monospace', fontSize: '0.8rem', color: COLORS.textSecondary }}>{item.sku ?? '—'}</td>
-                    <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{item.category ?? '—'}</td>
-                    <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{item.vendor?.name ?? '—'}</td>
-                    <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{item.unitOfMeasure}</td>
-                    <td style={{ padding: '0.875rem 1rem', fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: COLORS.textPrimary }}>{formatPrice(item.unitPrice, item.currency)}</td>
-                    <td style={{ padding: '0.875rem 1rem' }}>
-                      <button onClick={() => toggleActive(item)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: item.isActive ? '#059669' : COLORS.textMuted, fontWeight: 600, fontSize: '0.8rem' }}>
+          ) : items.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-12 text-center">
+              <div className="text-base font-medium text-foreground">No catalog items</div>
+              <div className="mt-2 text-sm text-muted-foreground">
+                Add items to the catalog to enable quick selection in requisitions.
+              </div>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>SKU</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead>Vendor</TableHead>
+                  <TableHead>UOM</TableHead>
+                  <TableHead>Unit Price</TableHead>
+                  <TableHead>Active</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((item) => (
+                  <TableRow key={item.id} className={!item.isActive ? 'opacity-50' : undefined}>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <Link href={`/catalog/${item.id}`} className="font-medium text-foreground underline underline-offset-4">
+                          {item.name}
+                        </Link>
+                        {item.description ? (
+                          <div className="text-xs text-muted-foreground">{item.description}</div>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">{item.sku ?? '—'}</TableCell>
+                    <TableCell className="text-muted-foreground">{item.category ?? '—'}</TableCell>
+                    <TableCell className="text-muted-foreground">{item.vendor?.name ?? '—'}</TableCell>
+                    <TableCell className="text-muted-foreground">{item.unitOfMeasure}</TableCell>
+                    <TableCell className="font-medium text-foreground">
+                      {formatPrice(item.unitPrice, item.currency)}
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        type="button"
+                        onClick={() => void toggleActive(item)}
+                        className={item.isActive ? 'text-sm font-semibold text-emerald-700' : 'text-sm font-semibold text-muted-foreground'}
+                      >
                         {item.isActive ? 'Active' : 'Inactive'}
                       </button>
-                    </td>
-                    <td style={{ padding: '0.875rem 1rem' }}>
-                      <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        {item.isActive && (
-                          <Link
-                            href={`/requisitions/new?catalogItemId=${item.id}&description=${encodeURIComponent(item.name)}&unitPrice=${encodeURIComponent(item.unitPrice ?? '0')}&uom=${encodeURIComponent(item.unitOfMeasure ?? 'each')}${item.vendor?.id ? `&vendorId=${item.vendor.id}` : ''}`}
-                            style={{ ...btnDanger, color: '#059669', borderColor: '#059669', textDecoration: 'none', display: 'inline-block' }}
-                          >
-                            + Req
-                          </Link>
-                        )}
-                        <button style={{ ...btnDanger, color: COLORS.accentBlueDark, borderColor: COLORS.accentBlueDark }} onClick={() => startEdit(item)}>Edit</button>
-                        <button style={btnDanger} onClick={() => handleDelete(item.id)}>Delete</button>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        {item.isActive ? (
+                          <Button asChild size="sm" variant="outline">
+                            <Link
+                              href={`/requisitions/new?catalogItemId=${item.id}&description=${encodeURIComponent(item.name)}&unitPrice=${encodeURIComponent(item.unitPrice ?? '0')}&uom=${encodeURIComponent(item.unitOfMeasure ?? 'each')}${item.vendor?.id ? `&vendorId=${item.vendor.id}` : ''}`}
+                            >
+                              <Tag className="h-3.5 w-3.5" />
+                              Req
+                            </Link>
+                          </Button>
+                        ) : null}
+                        <Button size="sm" variant="outline" onClick={() => startEdit(item)}>
+                          Edit
+                        </Button>
+                        <Button size="sm" variant="destructive" onClick={() => void handleDelete(item.id)}>
+                          Delete
+                        </Button>
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="space-y-2">
+      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </span>
+      {children}
+    </label>
   );
 }

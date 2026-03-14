@@ -61,6 +61,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated the goods receipt detail workspace onto the new design system, covering receipt summaries, received-line review, and confirm/cancel actions.
 - Migrated the invoice detail workspace onto the new design system, covering match review, finance exception resolution, AP actions, and GL export controls.
 - Migrated the requisition detail workspace onto the new design system, covering approval/cancel actions, PO creation, and save-as-template flows.
+- Migrated the catalog workspace onto the new design system, covering item maintenance, supplier price proposal review, and requisition shortcuts.
 
 ### Fixed
 
