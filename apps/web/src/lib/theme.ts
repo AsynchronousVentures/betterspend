@@ -1,69 +1,69 @@
-// Centralized design tokens for BetterSpend UI
-// All components import from here instead of hardcoding hex values
+// Legacy bridge tokens for pages that have not migrated off inline styles yet.
+// Keep these aligned with globals.css until the old theme module is removed.
 
 export const COLORS = {
   // Sidebar
-  sidebarBg: '#0f172a',
-  sidebarHover: '#1e293b',
-  sidebarBorder: '#1e293b',
-  sidebarText: '#94a3b8',
-  sidebarTextActive: '#f8fafc',
-  sidebarAccent: '#3b82f6',
-  sidebarGroupLabel: '#64748b',
+  sidebarBg: '#18191d',
+  sidebarHover: 'rgba(255,245,228,0.08)',
+  sidebarBorder: 'rgba(255,245,228,0.08)',
+  sidebarText: '#a79b8b',
+  sidebarTextActive: '#f6ede2',
+  sidebarAccent: '#dd5b38',
+  sidebarGroupLabel: '#8b8074',
 
   // Topbar
-  topbarBg: '#ffffff',
-  topbarBorder: '#e2e8f0',
+  topbarBg: '#fffdf9',
+  topbarBorder: '#ded4c4',
 
   // Content area
-  contentBg: '#f8fafc',
+  contentBg: '#f8f6ef',
 
   // Cards
-  cardBg: '#ffffff',
-  cardBorder: '#e2e8f0',
+  cardBg: '#fffdf9',
+  cardBorder: '#ded4c4',
 
   // Text
-  textPrimary: '#0f172a',
-  textSecondary: '#475569',
-  textMuted: '#94a3b8',
+  textPrimary: '#1f1a17',
+  textSecondary: '#5d4c41',
+  textMuted: '#8d7d71',
 
   // Borders
-  border: '#e2e8f0',
+  border: '#ded4c4',
 
   // Status / accents
-  badgeRed: '#ef4444',
-  accentBlue: '#3b82f6',
-  accentBlueDark: '#2563eb',
-  accentBlueLight: '#eff6ff',
-  accentGreen: '#10b981',
-  accentGreenDark: '#065f46',
-  accentGreenLight: '#ecfdf5',
-  accentAmber: '#f59e0b',
-  accentAmberDark: '#92400e',
-  accentAmberLight: '#fffbeb',
-  accentPurple: '#8b5cf6',
-  accentPurpleDark: '#5b21b6',
-  accentPurpleLight: '#f5f3ff',
-  accentRed: '#ef4444',
-  accentRedDark: '#991b1b',
-  accentRedLight: '#fef2f2',
+  badgeRed: '#c23b33',
+  accentBlue: '#dd5b38',
+  accentBlueDark: '#be4728',
+  accentBlueLight: '#f8e4db',
+  accentGreen: '#1f7a4f',
+  accentGreenDark: '#145438',
+  accentGreenLight: '#e8f7ef',
+  accentAmber: '#f0a230',
+  accentAmberDark: '#8b5710',
+  accentAmberLight: '#fff3dc',
+  accentPurple: '#6f4fd8',
+  accentPurpleDark: '#4d35a3',
+  accentPurpleLight: '#eee9ff',
+  accentRed: '#c23b33',
+  accentRedDark: '#8e2a24',
+  accentRedLight: '#fdeae6',
 
   // Misc
   white: '#ffffff',
-  inputBorder: '#d1d5db',
-  inputBorderFocus: '#3b82f6',
-  hoverBg: '#f9fafb',
-  tableBorder: '#e5e7eb',
-  tableHeaderBg: '#f9fafb',
+  inputBorder: '#d3c7b5',
+  inputBorderFocus: '#dd5b38',
+  hoverBg: '#f2ebe1',
+  tableBorder: '#e1d7c8',
+  tableHeaderBg: '#f3ede4',
 } as const;
 
 export const SHADOWS = {
-  card: '0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)',
-  cardHover: '0 4px 12px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)',
-  dropdown: '0 4px 20px rgba(0,0,0,0.12)',
-  overlay: 'rgba(0,0,0,0.4)',
-  focusRing: '0 0 0 3px rgba(59,130,246,0.15)',
-  auth: '0 4px 24px rgba(0,0,0,0.06)',
+  card: '0 20px 60px -36px rgba(15,23,42,0.35)',
+  cardHover: '0 26px 70px -36px rgba(15,23,42,0.45)',
+  dropdown: '0 24px 70px -30px rgba(15,23,42,0.45)',
+  overlay: 'rgba(19, 18, 21, 0.48)',
+  focusRing: '0 0 0 4px rgba(221,91,56,0.16)',
+  auth: '0 32px 80px -42px rgba(15,23,42,0.42)',
 } as const;
 
 export const FONT = {

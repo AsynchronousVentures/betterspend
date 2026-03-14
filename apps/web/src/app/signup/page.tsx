@@ -3,30 +3,12 @@
 import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { ArrowRight, KeyRound, Mail, UserRound } from 'lucide-react';
 import { signUp } from '../../lib/auth-client';
-import { COLORS, SHADOWS } from '../../lib/theme';
-
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '0.625rem 0.875rem',
-  border: `1px solid ${COLORS.inputBorder}`,
-  borderRadius: '8px',
-  fontSize: '0.8125rem',
-  outline: 'none',
-  boxSizing: 'border-box',
-  transition: 'border-color 0.15s, box-shadow 0.15s',
-  color: COLORS.textPrimary,
-};
-
-function handleFocus(e: React.FocusEvent<HTMLInputElement>) {
-  e.target.style.borderColor = COLORS.inputBorderFocus;
-  e.target.style.boxShadow = SHADOWS.focusRing;
-}
-
-function handleBlur(e: React.FocusEvent<HTMLInputElement>) {
-  e.target.style.borderColor = COLORS.inputBorder;
-  e.target.style.boxShadow = 'none';
-}
+import { AuthShell } from '../../components/auth-shell';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Button } from '../../components/ui/button';
+import { Input } from '../../components/ui/input';
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -67,113 +49,62 @@ export default function SignUpPage() {
   }
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: COLORS.contentBg,
-      padding: '1rem',
-    }}>
-      <div style={{
-        background: COLORS.white,
-        borderRadius: '12px',
-        padding: '2.5rem',
-        boxShadow: SHADOWS.auth,
-        width: '100%',
-        maxWidth: '400px',
-      }}>
-        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <div style={{
-            fontWeight: 700,
-            fontSize: '1.625rem',
-            color: COLORS.textPrimary,
-            letterSpacing: '-0.03em',
-          }}>
-            BetterSpend
-          </div>
-          <div style={{ color: COLORS.textMuted, fontSize: '0.8125rem', marginTop: '0.375rem' }}>
-            Create your account
+    <AuthShell
+      title="Create account"
+      description="Set up your BetterSpend workspace access with the new token-driven UI foundation."
+      footer={
+        <>
+          Already have an account?{' '}
+          <Link href="/login" className="font-medium text-primary transition-colors hover:text-primary/80">
+            Sign in
+          </Link>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-foreground">Full name</label>
+          <div className="relative">
+            <UserRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Jane Smith" className="h-11 pl-10" />
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          {[
-            { label: 'Full name', type: 'text', value: name, setter: setName, placeholder: 'Jane Smith' },
-            { label: 'Email', type: 'email', value: email, setter: setEmail, placeholder: 'you@company.com' },
-            { label: 'Password', type: 'password', value: password, setter: setPassword, placeholder: '••••••••' },
-            { label: 'Confirm password', type: 'password', value: confirm, setter: setConfirm, placeholder: '••••••••' },
-          ].map(({ label, type, value, setter, placeholder }) => (
-            <div key={label}>
-              <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: COLORS.textSecondary, marginBottom: '0.375rem' }}>
-                {label}
-              </label>
-              <input
-                type={type}
-                value={value}
-                onChange={(e) => setter(e.target.value)}
-                required
-                placeholder={placeholder}
-                style={inputStyle}
-                onFocus={handleFocus}
-                onBlur={handleBlur}
-              />
-            </div>
-          ))}
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-foreground">Email</label>
+          <div className="relative">
+            <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" className="h-11 pl-10" />
+          </div>
+        </div>
 
-          {error && (
-            <div style={{
-              background: COLORS.accentRedLight,
-              border: '1px solid #fecaca',
-              borderRadius: '8px',
-              padding: '0.625rem 0.875rem',
-              color: '#dc2626',
-              fontSize: '0.8125rem',
-            }}>
-              {error}
-            </div>
-          )}
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-foreground">Password</label>
+          <div className="relative">
+            <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="new-password" placeholder="••••••••" className="h-11 pl-10" />
+          </div>
+        </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              background: loading ? '#93c5fd' : COLORS.accentBlue,
-              color: '#fff',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '0.6875rem',
-              fontSize: '0.8125rem',
-              fontWeight: 600,
-              cursor: loading ? 'not-allowed' : 'pointer',
-              transition: 'background 0.15s',
-              marginTop: '0.375rem',
-            }}
-            onMouseEnter={(e) => { if (!loading) (e.currentTarget.style.background = COLORS.accentBlueDark); }}
-            onMouseLeave={(e) => { if (!loading) (e.currentTarget.style.background = COLORS.accentBlue); }}
-          >
-            {loading ? 'Creating account...' : 'Create account'}
-          </button>
-        </form>
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-foreground">Confirm password</label>
+          <div className="relative">
+            <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required autoComplete="new-password" placeholder="••••••••" className="h-11 pl-10" />
+          </div>
+        </div>
 
-        <p style={{ textAlign: 'center', fontSize: '0.8125rem', color: COLORS.textMuted, marginTop: '1.5rem' }}>
-          Already have an account?{' '}
-          <Link href="/login" style={{ color: COLORS.accentBlue, textDecoration: 'none', fontWeight: 500 }}>
-            Sign in
-          </Link>
-        </p>
-      </div>
+        {error ? (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
 
-      {/* Credit */}
-      <div style={{
-        marginTop: '1.5rem',
-        fontSize: '0.6875rem',
-        color: COLORS.textMuted,
-        textAlign: 'center',
-      }}>
-        Open Source Procure-to-Pay by Asynchronous Ventures LLC
-      </div>
-    </div>
+        <Button type="submit" disabled={loading} className="h-11 w-full rounded-lg">
+          {loading ? 'Creating account...' : 'Create account'}
+          {!loading ? <ArrowRight className="size-4" /> : null}
+        </Button>
+      </form>
+    </AuthShell>
   );
 }

@@ -3,24 +3,17 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect, useCallback } from 'react';
+import { ChevronRight, LogOut } from 'lucide-react';
 import { signOut } from '../lib/auth-client';
 import { api } from '../lib/api';
-import { COLORS } from '../lib/theme';
 import { useBranding } from '../lib/branding';
 import { appReleaseVersion } from '../lib/release';
-
-/* ── Types ── */
+import { Badge } from './ui/badge';
+import { cn } from '../lib/utils';
 
 type NavChild = { label: string; href: string };
-
-type NavGroup = {
-  label: string;
-  children: NavChild[];
-  defaultOpen?: boolean;
-};
-
+type NavGroup = { label: string; children: NavChild[]; defaultOpen?: boolean };
 type NavTopLevel = { label: string; href: string };
-
 type NavEntry = NavTopLevel | NavGroup;
 
 function isGroup(entry: NavEntry): entry is NavGroup {
@@ -35,8 +28,6 @@ function compactLabel(label: string) {
     .map((part) => part[0]?.toUpperCase() ?? '')
     .join('');
 }
-
-/* ── Navigation config ── */
 
 const NAV_CONFIG: NavEntry[] = [
   { label: 'Dashboard', href: '/' },
@@ -113,34 +104,6 @@ const NAV_CONFIG: NavEntry[] = [
   },
 ];
 
-/* ── Chevron SVG ── */
-
-function Chevron({ open }: { open: boolean }) {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 12 12"
-      fill="none"
-      style={{
-        transition: 'transform 0.2s ease',
-        transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
-        flexShrink: 0,
-      }}
-    >
-      <path
-        d="M4.5 2.5L8 6L4.5 9.5"
-        stroke={COLORS.sidebarGroupLabel}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-/* ── Component ── */
-
 export default function SidebarNav({
   onClose,
   collapsed = false,
@@ -156,7 +119,6 @@ export default function SidebarNav({
   const [softwareRenewalCount, setSoftwareRenewalCount] = useState(0);
   const branding = useBranding();
 
-  // Determine which groups should be open initially
   const getInitialOpen = useCallback(() => {
     const initial = new Set<string>();
     for (const entry of NAV_CONFIG) {
@@ -173,7 +135,6 @@ export default function SidebarNav({
 
   const [openGroups, setOpenGroups] = useState<Set<string>>(getInitialOpen);
 
-  // Auto-open group for active route on navigation
   useEffect(() => {
     setOpenGroups((prev) => {
       const next = new Set(prev);
@@ -189,7 +150,6 @@ export default function SidebarNav({
     });
   }, [pathname]);
 
-  // Fetch pending count
   useEffect(() => {
     api.analytics
       .pendingItems()
@@ -233,236 +193,116 @@ export default function SidebarNav({
     return undefined;
   }
 
-  /* ── Render helpers ── */
-
   function renderLink(item: NavChild, indented: boolean) {
     const active = isActive(item.href);
     const badge = getBadge(item.href);
     const initials = compactLabel(item.label);
+
     return (
       <Link
         key={item.href}
         href={item.href}
         title={collapsed ? item.label : undefined}
         onClick={handleLinkClick}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: collapsed
-            ? '0.5rem 0.625rem'
-            : indented
-              ? '0.5rem 1rem 0.5rem 2.5rem'
-              : '0.5rem 1rem 0.5rem 1.25rem',
-          color: active ? COLORS.sidebarTextActive : COLORS.sidebarText,
-          textDecoration: 'none',
-          fontSize: '0.8125rem',
-          fontWeight: active ? 500 : 400,
-          background: active ? COLORS.sidebarHover : 'transparent',
-          borderLeft: active ? `2px solid ${COLORS.sidebarAccent}` : '2px solid transparent',
-          transition: 'background 0.15s, color 0.15s',
-          lineHeight: '1.4',
-          gap: '0.625rem',
-        }}
-        onMouseEnter={(e) => {
-          if (!active) {
-            (e.currentTarget as HTMLAnchorElement).style.background = COLORS.sidebarHover;
-            (e.currentTarget as HTMLAnchorElement).style.color = COLORS.sidebarTextActive;
-          }
-        }}
-        onMouseLeave={(e) => {
-          if (!active) {
-            (e.currentTarget as HTMLAnchorElement).style.background = 'transparent';
-            (e.currentTarget as HTMLAnchorElement).style.color = COLORS.sidebarText;
-          }
-        }}
+        className={cn(
+          'group flex items-center justify-between gap-3 rounded-xl transition-colors',
+          collapsed ? 'px-2 py-2' : indented ? 'px-3 py-2 pl-6' : 'px-3 py-2.5',
+          active ? 'bg-white/10 text-sidebar-foreground' : 'text-sidebar-muted hover:bg-white/6 hover:text-sidebar-foreground',
+        )}
       >
-        <span style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', minWidth: 0 }}>
+        <span className="flex min-w-0 items-center gap-3">
           <span
-            style={{
-              width: '28px',
-              height: '28px',
-              borderRadius: '8px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: active ? COLORS.sidebarAccent : COLORS.sidebarHover,
-              color: COLORS.sidebarTextActive,
-              fontSize: '0.6875rem',
-              fontWeight: 700,
-              flexShrink: 0,
-            }}
+            className={cn(
+              'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold tracking-wide',
+              active ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'bg-white/7 text-sidebar-foreground',
+            )}
           >
             {initials}
           </span>
-          {!collapsed ? <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.label}</span> : null}
+          {!collapsed ? <span className="truncate text-sm">{item.label}</span> : null}
         </span>
-        {badge != null && badge > 0 && (
-          <span
-            style={{
-              background: COLORS.badgeRed,
-              color: '#fff',
-              borderRadius: '9999px',
-              fontSize: '0.625rem',
-              fontWeight: 600,
-              minWidth: '18px',
-              height: '18px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '0 5px',
-              flexShrink: 0,
-            }}
-          >
+        {badge != null && badge > 0 ? (
+          <Badge variant="destructive" className="h-5 min-w-5 justify-center rounded-full px-1.5 text-[10px]">
             {badge > 99 ? '99+' : badge}
-          </span>
-        )}
+          </Badge>
+        ) : null}
       </Link>
     );
   }
 
   function renderGroup(group: NavGroup) {
     const open = openGroups.has(group.label);
-    const hasActiveChild = group.children.some((c) => isActive(c.href));
-    const groupBadge = group.children.reduce((sum, c) => sum + (getBadge(c.href) ?? 0), 0);
+    const hasActiveChild = group.children.some((child) => isActive(child.href));
+    const groupBadge = group.children.reduce((sum, child) => sum + (getBadge(child.href) ?? 0), 0);
     const initials = compactLabel(group.label);
 
     return (
-      <div key={group.label} style={{ marginBottom: '0.125rem' }}>
+      <div key={group.label} className="space-y-1">
         <button
+          type="button"
           onClick={() => toggleGroup(group.label)}
           title={collapsed ? group.label : undefined}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            width: '100%',
-            padding: collapsed ? '0.625rem 0.625rem' : '0.625rem 1rem 0.625rem 1.25rem',
-            background: 'transparent',
-            border: 'none',
-            cursor: 'pointer',
-            color: hasActiveChild ? COLORS.sidebarTextActive : COLORS.sidebarGroupLabel,
-            fontSize: '0.6875rem',
-            fontWeight: 600,
-            letterSpacing: '0.06em',
-            textTransform: 'uppercase' as const,
-            textAlign: 'left' as const,
-            transition: 'color 0.15s',
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.color = COLORS.sidebarTextActive;
-          }}
-          onMouseLeave={(e) => {
-            if (!hasActiveChild) {
-              (e.currentTarget as HTMLButtonElement).style.color = COLORS.sidebarGroupLabel;
-            }
-          }}
+          className={cn(
+            'flex w-full items-center justify-between rounded-xl transition-colors',
+            collapsed ? 'px-2 py-2' : 'px-3 py-2',
+            hasActiveChild ? 'text-sidebar-foreground' : 'text-sidebar-muted hover:text-sidebar-foreground',
+          )}
         >
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span className="flex items-center gap-3">
             {collapsed ? (
               <span
-                style={{
-                  width: '28px',
-                  height: '28px',
-                  borderRadius: '8px',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  background: hasActiveChild ? COLORS.sidebarAccent : COLORS.sidebarHover,
-                  color: COLORS.sidebarTextActive,
-                  fontSize: '0.6875rem',
-                  fontWeight: 700,
-                  flexShrink: 0,
-                }}
+                className={cn(
+                  'inline-flex h-8 w-8 items-center justify-center rounded-lg text-[11px] font-bold tracking-wide',
+                  hasActiveChild ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'bg-white/7 text-sidebar-foreground',
+                )}
               >
                 {initials}
               </span>
             ) : (
-              group.label
+              <span className="text-[11px] font-semibold uppercase tracking-[0.24em]">{group.label}</span>
             )}
-            {!open && groupBadge > 0 && (
-              <span
-                style={{
-                  background: COLORS.badgeRed,
-                  color: '#fff',
-                  borderRadius: '9999px',
-                  fontSize: '0.5625rem',
-                  fontWeight: 600,
-                  minWidth: '16px',
-                  height: '16px',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: '0 4px',
-                }}
-              >
+            {!open && groupBadge > 0 ? (
+              <Badge variant="destructive" className="h-5 min-w-5 rounded-full px-1.5 text-[10px]">
                 {groupBadge > 99 ? '99+' : groupBadge}
-              </span>
-            )}
+              </Badge>
+            ) : null}
           </span>
-          {!collapsed ? <Chevron open={open} /> : null}
+          {!collapsed ? <ChevronRight className={cn('size-4 transition-transform', open && 'rotate-90')} /> : null}
         </button>
-        {open && <div>{group.children.map((child) => renderLink(child, true))}</div>}
+        {open ? <div className="space-y-1">{group.children.map((child) => renderLink(child, true))}</div> : null}
       </div>
     );
   }
 
-  /* ── Main render ── */
-
   return (
     <>
-      <nav style={{ flex: 1, paddingTop: '0.5rem', overflowY: 'auto' }}>
-        {NAV_CONFIG.map((entry) =>
-          isGroup(entry) ? renderGroup(entry) : renderLink(entry, false),
-        )}
+      <nav className="flex-1 space-y-2 overflow-y-auto px-3 py-3">
+        {NAV_CONFIG.map((entry) => (isGroup(entry) ? renderGroup(entry) : renderLink(entry, false)))}
       </nav>
 
-      {/* Sign out */}
-      <div style={{ padding: '0.5rem 1rem', borderTop: `1px solid ${COLORS.sidebarBorder}` }}>
+      <div className="border-t border-sidebar-border px-3 py-3">
         <button
+          type="button"
           title={collapsed ? 'Sign out' : undefined}
           onClick={handleSignOut}
-          style={{
-            width: '100%',
-            background: 'transparent',
-            border: 'none',
-            color: COLORS.sidebarText,
-            fontSize: '0.8125rem',
-            textAlign: collapsed ? 'center' : 'left',
-            padding: '0.5rem 0.25rem',
-            cursor: 'pointer',
-            borderRadius: '4px',
-            transition: 'color 0.15s, background 0.15s',
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.color = COLORS.sidebarTextActive;
-            (e.currentTarget as HTMLButtonElement).style.background = COLORS.sidebarHover;
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.color = COLORS.sidebarText;
-            (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-          }}
+          className={cn(
+            'flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-sidebar-muted transition-colors hover:bg-white/6 hover:text-sidebar-foreground',
+            collapsed && 'justify-center px-2',
+          )}
         >
-          {collapsed ? 'SO' : 'Sign out'}
+          <LogOut className="size-4" />
+          {!collapsed ? <span>Sign out</span> : null}
         </button>
       </div>
 
-      {/* Copyright / branding footer */}
-      <div
-        style={{
-          padding: collapsed ? '0.625rem 0.5rem' : '0.625rem 1.25rem',
-          borderTop: `1px solid ${COLORS.sidebarBorder}`,
-          fontSize: '0.6875rem',
-          color: COLORS.sidebarGroupLabel,
-          lineHeight: 1.5,
-          textAlign: collapsed ? 'center' : 'left',
-        }}
-      >
-        {!collapsed ? <div style={{ opacity: 0.8 }}>{branding.copyright_text}</div> : null}
-        <div style={{ opacity: 0.65, marginTop: '0.125rem' }}>{collapsed ? `v${appReleaseVersion}` : `Version ${appReleaseVersion}`}</div>
-        {!collapsed && branding.hide_powered_by !== 'true' && (
-          <div style={{ opacity: 0.5, marginTop: '0.125rem' }}>Powered by BetterSpend</div>
-        )}
+      <div className={cn('border-t border-sidebar-border px-4 py-4 text-sidebar-muted', collapsed ? 'text-center' : 'text-left')}>
+        {!collapsed ? <div className="text-[11px] leading-5 text-sidebar-muted/90">{branding.copyright_text}</div> : null}
+        <div className="mt-1 text-[11px] uppercase tracking-[0.2em] text-sidebar-muted/70">
+          {collapsed ? `v${appReleaseVersion}` : `Version ${appReleaseVersion}`}
+        </div>
+        {!collapsed && branding.hide_powered_by !== 'true' ? (
+          <div className="mt-1 text-[11px] text-sidebar-muted/55">Powered by BetterSpend</div>
+        ) : null}
       </div>
     </>
   );

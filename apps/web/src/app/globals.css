@@ -1,26 +1,113 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-sans);
+  --font-display: var(--font-display);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-ember-50: var(--ember-50);
+  --color-ember-100: var(--ember-100);
+
+  --radius-sm: calc(var(--radius) - 6px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 8px);
+}
+
+:root {
+  --background: #f8f6ef;
+  --foreground: #1f1a17;
+  --card: #fffdf9;
+  --card-foreground: #1f1a17;
+  --popover: #fffdf9;
+  --popover-foreground: #1f1a17;
+  --primary: #dd5b38;
+  --primary-foreground: #fff8f4;
+  --secondary: #efe5d4;
+  --secondary-foreground: #45322c;
+  --muted: #f2ebe1;
+  --muted-foreground: #6a594d;
+  --accent: #1f4f46;
+  --accent-foreground: #eefaf6;
+  --destructive: #c23b33;
+  --destructive-foreground: #fff7f6;
+  --border: #ded4c4;
+  --input: #d3c7b5;
+  --ring: #dd5b38;
+  --sidebar: #18191d;
+  --sidebar-foreground: #f6ede2;
+  --sidebar-muted: #a79b8b;
+  --sidebar-border: rgba(255, 245, 228, 0.08);
+  --sidebar-accent: #dd5b38;
+  --sidebar-accent-foreground: #fff8f4;
+  --success: #1f7a4f;
+  --success-foreground: #f2fff7;
+  --warning: #f0a230;
+  --warning-foreground: #422503;
+  --ember-50: #f9efe4;
+  --ember-100: #f2decb;
+  --radius: 1rem;
+}
+
 * {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+  @apply border-border;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  background: #f8fafc;
-  color: #0f172a;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  @apply bg-background text-foreground font-sans antialiased;
+  background-image:
+    radial-gradient(circle at top left, rgba(221, 91, 56, 0.12), transparent 22%),
+    radial-gradient(circle at 85% 5%, rgba(31, 79, 70, 0.1), transparent 18%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0));
 }
 
-/* Focus-visible defaults */
+a, button, input, textarea, select {
+  @apply transition-colors;
+}
+
 :focus-visible {
-  outline: 2px solid #3b82f6;
-  outline-offset: 2px;
+  @apply outline-none ring-2 ring-ring/60 ring-offset-2 ring-offset-background;
 }
 
-/* Scrollbar styling */
+::selection {
+  background: color-mix(in srgb, var(--primary) 28%, white);
+}
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
@@ -28,15 +115,18 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 3px;
+  background: color-mix(in srgb, var(--foreground) 18%, white);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: color-mix(in srgb, var(--foreground) 28%, white);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
-/* Responsive table scroll */
 @media (max-width: 768px) {
   table {
     display: block;

@@ -1,7 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { COLORS, SHADOWS } from '../lib/theme';
+import { Download, FileText, Loader2, Trash2, Upload, X } from 'lucide-react';
+import { Alert, AlertDescription } from './ui/alert';
+import { Button } from './ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001';
 
@@ -68,14 +71,14 @@ export function DocumentUploader({ entityType, entityId, label = 'Documents' }: 
     } finally {
       setLoading(false);
     }
-  }, [entityType, entityId]);
+  }, [entityId, entityType]);
 
   useEffect(() => {
-    if (entityId) fetchDocs();
-  }, [fetchDocs, entityId]);
+    if (entityId) void fetchDocs();
+  }, [entityId, fetchDocs]);
 
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+  async function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
     if (!file) return;
 
     setUploading(true);
@@ -141,139 +144,83 @@ export function DocumentUploader({ entityType, entityId, label = 'Documents' }: 
     }
   }
 
-  const cardStyle: React.CSSProperties = {
-    background: COLORS.cardBg,
-    border: `1px solid ${COLORS.tableBorder}`,
-    borderRadius: '8px',
-    padding: '1.25rem',
-    boxShadow: SHADOWS.card,
-    marginBottom: '1rem',
-  };
-
   return (
-    <div style={cardStyle}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <h2 style={{ fontWeight: 600, fontSize: '0.9rem', color: COLORS.textSecondary, margin: 0 }}>
+    <Card className="mb-4 overflow-hidden">
+      <CardHeader className="flex flex-row items-center justify-between gap-4 border-b border-border/70 pb-4">
+        <CardTitle className="text-base font-semibold">
           {label} {docs.length > 0 ? `(${docs.length})` : ''}
-        </h2>
+        </CardTitle>
         <div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            onChange={handleUpload}
-            style={{ display: 'none' }}
-            disabled={uploading}
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            style={{
-              padding: '0.375rem 0.875rem',
-              background: COLORS.accentBlue,
-              color: COLORS.white,
-              border: 'none',
-              borderRadius: '6px',
-              fontSize: '0.8125rem',
-              fontWeight: 500,
-              cursor: uploading ? 'not-allowed' : 'pointer',
-              opacity: uploading ? 0.7 : 1,
-            }}
-          >
-            {uploading ? 'Uploading...' : 'Upload File'}
-          </button>
+          <input ref={fileInputRef} type="file" onChange={handleUpload} className="hidden" disabled={uploading} />
+          <Button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} size="sm">
+            {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+            {uploading ? 'Uploading...' : 'Upload file'}
+          </Button>
         </div>
-      </div>
-
-      {error && (
-        <div style={{
-          background: COLORS.accentRedLight,
-          border: `1px solid #fecaca`,
-          borderRadius: '6px',
-          padding: '0.5rem 0.75rem',
-          color: COLORS.accentRedDark,
-          fontSize: '0.8125rem',
-          marginBottom: '0.75rem',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}>
-          <span>{error}</span>
-          <button
-            onClick={() => setError('')}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.accentRedDark, fontWeight: 700, fontSize: '1rem', padding: 0, lineHeight: 1 }}
-          >
-            x
-          </button>
-        </div>
-      )}
-
-      {loading ? (
-        <div style={{ fontSize: '0.875rem', color: COLORS.textMuted, padding: '0.5rem 0' }}>Loading...</div>
-      ) : docs.length === 0 ? (
-        <div style={{ fontSize: '0.875rem', color: COLORS.textMuted, padding: '0.25rem 0' }}>
-          No documents attached. Click Upload File to add one.
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          {docs.map((doc) => (
-            <div
-              key={doc.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '0.625rem 0.875rem',
-                background: COLORS.contentBg,
-                borderRadius: '6px',
-                border: `1px solid ${COLORS.border}`,
-              }}
+      </CardHeader>
+      <CardContent className="space-y-4 pt-6">
+        {error ? (
+          <Alert variant="destructive" className="flex items-start justify-between gap-3">
+            <AlertDescription>{error}</AlertDescription>
+            <button
+              type="button"
+              onClick={() => setError('')}
+              className="mt-0.5 inline-flex size-5 items-center justify-center rounded-sm text-current/80 hover:bg-black/5"
             >
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: '0.875rem', color: COLORS.textPrimary, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {doc.filename}
+              <X className="size-4" />
+            </button>
+          </Alert>
+        ) : null}
+
+        {loading ? (
+          <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            Loading documents...
+          </div>
+        ) : docs.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+            No documents attached yet. Upload a file to start building the record.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {docs.map((doc) => (
+              <div
+                key={doc.id}
+                className="flex items-center justify-between gap-4 rounded-xl border border-border/70 bg-muted/40 px-4 py-3"
+              >
+                <div className="flex min-w-0 flex-1 items-start gap-3">
+                  <div className="mt-0.5 rounded-lg bg-primary/10 p-2 text-primary">
+                    <FileText className="size-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-foreground">{doc.filename}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {doc.contentType} • {formatBytes(doc.sizeBytes)} • {formatDate(doc.createdAt)}
+                    </div>
+                  </div>
                 </div>
-                <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.125rem' }}>
-                  {doc.contentType} — {formatBytes(doc.sizeBytes)} — {formatDate(doc.createdAt)}
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => handleDownload(doc)}>
+                    <Download className="size-4" />
+                    Download
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDelete(doc)}
+                    disabled={deletingId === doc.id}
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  >
+                    {deletingId === doc.id ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                    Remove
+                  </Button>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0, marginLeft: '1rem' }}>
-                <button
-                  onClick={() => handleDownload(doc)}
-                  style={{
-                    padding: '0.25rem 0.625rem',
-                    background: COLORS.white,
-                    color: COLORS.accentBlueDark,
-                    border: `1px solid ${COLORS.accentBlue}`,
-                    borderRadius: '4px',
-                    fontSize: '0.78rem',
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                  }}
-                >
-                  Download
-                </button>
-                <button
-                  onClick={() => handleDelete(doc)}
-                  disabled={deletingId === doc.id}
-                  style={{
-                    padding: '0.25rem 0.625rem',
-                    background: COLORS.white,
-                    color: COLORS.accentRedDark,
-                    border: `1px solid #fca5a5`,
-                    borderRadius: '4px',
-                    fontSize: '0.78rem',
-                    fontWeight: 500,
-                    cursor: deletingId === doc.id ? 'not-allowed' : 'pointer',
-                    opacity: deletingId === doc.id ? 0.6 : 1,
-                  }}
-                >
-                  {deletingId === doc.id ? '...' : 'Delete'}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

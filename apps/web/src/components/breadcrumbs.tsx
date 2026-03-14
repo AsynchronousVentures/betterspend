@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { COLORS } from '../lib/theme';
+import { ChevronRight, Home } from 'lucide-react';
 
 interface BreadcrumbItem {
   label: string;
@@ -12,20 +12,21 @@ export default function Breadcrumbs({ items }: { items: BreadcrumbItem[] }) {
   if (items.length === 0) return null;
 
   return (
-    <nav aria-label="Breadcrumb" style={{ marginBottom: '0.875rem' }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', alignItems: 'center', fontSize: '0.8125rem', color: COLORS.textMuted }}>
-        <Link href="/" style={{ color: COLORS.textSecondary, textDecoration: 'none' }}>
+    <nav aria-label="Breadcrumb" className="mb-4">
+      <div className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
+        <Link href="/" className="inline-flex items-center gap-1 rounded-md px-2 py-1 transition-colors hover:bg-muted hover:text-foreground">
+          <Home className="size-3.5" />
           Dashboard
         </Link>
         {items.map((item, index) => (
-          <span key={`${item.label}-${index}`} style={{ display: 'inline-flex', gap: '0.35rem', alignItems: 'center' }}>
-            <span style={{ color: COLORS.textMuted }}>/</span>
+          <span key={`${item.label}-${index}`} className="inline-flex items-center gap-1">
+            <ChevronRight className="size-3.5 text-muted-foreground/70" />
             {item.href && index < items.length - 1 ? (
-              <Link href={item.href} style={{ color: COLORS.textSecondary, textDecoration: 'none' }}>
+              <Link href={item.href} className="rounded-md px-2 py-1 transition-colors hover:bg-muted hover:text-foreground">
                 {item.label}
               </Link>
             ) : (
-              <span style={{ color: COLORS.textPrimary, fontWeight: 500 }}>{item.label}</span>
+              <span className="rounded-md px-2 py-1 font-medium text-foreground">{item.label}</span>
             )}
           </span>
         ))}

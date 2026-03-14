@@ -30,6 +30,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - API health checks now report the canonical root application version instead of a fallback constant.
 - GL integrations now explicitly present QuickBooks and Xero as platform-managed OAuth connections and report whether platform credentials are configured.
 - Root PM2 runtime ownership was stabilized under a single daemon after clearing duplicate stale PM2 daemons.
+- Began the web design-system migration to Tailwind CSS v4, shadcn/ui-style primitives, Lucide icons, and a new tokenized warm enterprise visual language.
+- Reworked auth surfaces, toast, breadcrumbs, document upload UI, and sidebar navigation onto the new frontend foundation while bridging legacy pages through updated palette tokens.
 
 ### Fixed
 

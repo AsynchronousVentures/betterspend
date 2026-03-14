@@ -1,13 +1,20 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import { Manrope, Space_Grotesk } from 'next/font/google';
 import AppShell from '../components/app-shell';
 import { ToastProvider } from '../components/toast';
 import { PwaRegister } from '../components/pwa-register';
 import './globals.css';
 
-const inter = Inter({
+const sans = Manrope({
   subsets: ['latin'],
   display: 'swap',
+  variable: '--font-sans',
+});
+
+const display = Space_Grotesk({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-display',
 });
 
 export const metadata: Metadata = {
@@ -27,15 +34,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={inter.className}>
+    <html lang="en" className={`${sans.variable} ${display.variable}`}>
       <head>
-        <meta name="theme-color" content="#3b82f6" />
+        <meta name="theme-color" content="#dd5b38" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <link rel="apple-touch-icon" href="/icon-192.png" />
         <link rel="manifest" href="/manifest.json" />
       </head>
-      <body>
+      <body className="font-sans">
         <PwaRegister />
         <ToastProvider>
           <AppShell>
