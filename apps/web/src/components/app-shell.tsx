@@ -47,7 +47,7 @@ function OfflineIndicator() {
   );
 }
 
-const AUTH_PATHS = ['/login', '/signup', '/punchout', '/forgot-password', '/reset-password', '/vendor-portal'];
+const AUTH_PATHS = ['/login', '/signup', '/punchout', '/forgot-password', '/reset-password', '/vendor-portal', '/account/verify-email'];
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 const SHORTCUTS_DISABLED_KEY = 'betterspend:shortcuts-disabled';
 const SIDEBAR_COLLAPSED_KEY = 'betterspend:sidebar-collapsed';

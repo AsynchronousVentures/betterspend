@@ -64,7 +64,91 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+async function apiFetchForm<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = getCookie('bs_token');
+  const headers = new Headers(options?.headers);
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+
+  const res = await fetch(`${API_BASE}/api/v1${path}`, {
+    ...options,
+    headers,
+  });
+
+  if (res.status === 401) {
+    clearAuthAndRedirect();
+    throw new Error('Session expired. Please log in again.');
+  }
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ message: 'Request failed' }));
+    throw new Error(error.message || `HTTP ${res.status}`);
+  }
+
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
 export const api = {
+  account: {
+    me: () =>
+      apiFetch<{
+        name: string;
+        email: string;
+        avatarUrl: string;
+        hasCustomImage: boolean;
+        pendingEmail: string | null;
+        pendingEmailExpiresAt: string | null;
+      }>('/account/me'),
+    update: (data: { name: string }) =>
+      apiFetch<{
+        name: string;
+        email: string;
+        avatarUrl: string;
+        hasCustomImage: boolean;
+        pendingEmail: string | null;
+        pendingEmailExpiresAt: string | null;
+      }>('/account/me', {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    changePassword: (data: { currentPassword: string; newPassword: string }) =>
+      apiFetch<{ success?: boolean; message?: string }>('/account/me/change-password', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    requestEmailChange: (email: string) =>
+      apiFetch<{ success: boolean; pendingEmail: string; pendingEmailExpiresAt: string }>('/account/me/email/change-request', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      }),
+    verifyEmail: (token: string) =>
+      apiFetch<{ success: boolean; email: string; name: string }>('/account/me/email/verify', {
+        method: 'POST',
+        body: JSON.stringify({ token }),
+      }),
+    uploadAvatar: (file: File) => {
+      const body = new FormData();
+      body.append('file', file);
+      return apiFetchForm<{
+        name: string;
+        email: string;
+        avatarUrl: string;
+        hasCustomImage: boolean;
+        pendingEmail: string | null;
+        pendingEmailExpiresAt: string | null;
+      }>('/account/me/avatar', {
+        method: 'POST',
+        body,
+      });
+    },
+    removeAvatar: () =>
+      apiFetchForm<void>('/account/me/avatar', {
+        method: 'DELETE',
+      }),
+  },
+  health: {
+    check: () => apiFetch<{ status: string; timestamp: string; service: string; version: string }>('/health'),
+  },
   entities: {
     list: (includeInactive = false) =>
       apiFetch<any[]>(`/entities${includeInactive ? '?includeInactive=true' : ''}`),

@@ -125,10 +125,10 @@ export class GlController {
         // state parse failure — fall back to demo org
       }
       await this.oauthService.exchangeQboCode(organizationId, code, realmId);
-      res.redirect(`${webUrl}/settings?tab=integrations&connected=qbo`);
+      res.redirect(`${webUrl}/addons?connected=qbo`);
     } catch (err) {
       const message = encodeURIComponent(String(err));
-      res.redirect(`${webUrl}/settings?tab=integrations&error=qbo&message=${message}`);
+      res.redirect(`${webUrl}/addons?error=qbo&message=${message}`);
     }
   }
 
@@ -166,10 +166,10 @@ export class GlController {
         // state parse failure — fall back to demo org
       }
       await this.oauthService.exchangeXeroCode(organizationId, code);
-      res.redirect(`${webUrl}/settings?tab=integrations&connected=xero`);
+      res.redirect(`${webUrl}/addons?connected=xero`);
     } catch (err) {
       const message = encodeURIComponent(String(err));
-      res.redirect(`${webUrl}/settings?tab=integrations&error=xero&message=${message}`);
+      res.redirect(`${webUrl}/addons?error=xero&message=${message}`);
     }
   }
 

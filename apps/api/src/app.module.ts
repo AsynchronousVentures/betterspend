@@ -46,6 +46,7 @@ import { ExchangeRatesModule } from './modules/exchange-rates/exchange-rates.mod
 import { SpendGuardModule } from './modules/spend-guard/spend-guard.module';
 import { SoftwareLicensesModule } from './modules/software-licenses/software-licenses.module';
 import { EmailIntakeModule } from './modules/email-intake/email-intake.module';
+import { AccountModule } from './modules/account/account.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { EmailIntakeModule } from './modules/email-intake/email-intake.module';
     QueueModule,
     StorageModule,
     NotificationsModule,
+    AccountModule,
     AuthModule,
     CommonServicesModule,
     WebhooksModule,

@@ -10,7 +10,7 @@ import {
   PiggyBank, ShieldAlert, Percent, Clock, Link2, Upload,
   BarChart2, FileBarChart2, Building2, Star, Leaf, UserPlus,
   ScrollText, KeyRound, Users, FolderTree, Briefcase, Building,
-  Zap, History, Settings, LogOut, ChevronRight,
+  Zap, History, Settings, ChevronRight, Puzzle,
   type LucideIcon,
 } from 'lucide-react';
 import { signOut } from '../lib/auth-client';
@@ -19,6 +19,7 @@ import { useBranding } from '../lib/branding';
 import { appReleaseVersion } from '../lib/release';
 import { Badge } from './ui/badge';
 import { cn } from '../lib/utils';
+import { SidebarAccount } from './sidebar-account';
 
 type NavChild = { label: string; href: string };
 type NavGroup = { label: string; children: NavChild[]; defaultOpen?: boolean };
@@ -49,6 +50,7 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   'Tax Codes':                Percent,
   'AP Aging':                 Clock,
   'GL Integration':           Link2,
+  'Add-ons':                  Puzzle,
   'GL Export Jobs':           Upload,
   'Analytics':                BarChart2,
   'Reports':                  FileBarChart2,
@@ -65,6 +67,8 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   'Webhooks':                 Zap,
   'Audit Log':                History,
   'Settings':                 Settings,
+  'Workspace Settings':       Settings,
+  'Currencies':               ArrowLeftRight,
 };
 
 const GROUP_ICONS: Record<string, LucideIcon> = {
@@ -115,6 +119,7 @@ const NAV_CONFIG: NavEntry[] = [
       { label: 'Budgets', href: '/budgets' },
       { label: 'Spend Guard', href: '/spend-guard' },
       { label: 'Tax Codes', href: '/tax-codes' },
+      { label: 'Currencies', href: '/currencies' },
       { label: 'AP Aging', href: '/ap-aging' },
       { label: 'GL Integration', href: '/gl-mappings' },
       { label: 'GL Export Jobs', href: '/gl-export-jobs' },
@@ -145,9 +150,10 @@ const NAV_CONFIG: NavEntry[] = [
   {
     label: 'System',
     children: [
+      { label: 'Add-ons', href: '/addons' },
       { label: 'Webhooks', href: '/webhooks' },
       { label: 'Audit Log', href: '/audit' },
-      { label: 'Settings', href: '/settings' },
+      { label: 'Workspace Settings', href: '/workspace-settings' },
     ],
   },
 ];
@@ -329,20 +335,7 @@ export default function SidebarNav({
         {NAV_CONFIG.map((entry) => (isGroup(entry) ? renderGroup(entry) : renderLink(entry, false)))}
       </nav>
 
-      <div className="border-t border-sidebar-border px-3 py-3">
-        <button
-          type="button"
-          title={collapsed ? 'Sign out' : undefined}
-          onClick={handleSignOut}
-          className={cn(
-            'flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-sidebar-muted transition-colors hover:bg-white/[0.05] hover:text-sidebar-foreground',
-            collapsed && 'justify-center px-2',
-          )}
-        >
-          <LogOut className="size-4" />
-          {!collapsed ? <span>Sign out</span> : null}
-        </button>
-      </div>
+      <SidebarAccount collapsed={collapsed} onSignOut={handleSignOut} />
 
       <div className={cn('border-t border-sidebar-border px-4 py-4 text-sidebar-muted', collapsed ? 'text-center' : 'text-left')}>
         {!collapsed ? <div className="text-[11px] leading-5 text-sidebar-muted/90">{branding.copyright_text}</div> : null}
