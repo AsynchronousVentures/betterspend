@@ -1,13 +1,27 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { BellRing, Plus, Power, Truck, Trash2, Webhook } from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
+import { PageHeader } from '../../components/page-header';
+import { StatusBadge } from '../../components/status-badge';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 
 const ALL_EVENTS = [
-  'requisition.created', 'requisition.approved', 'requisition.rejected',
-  'purchase_order.created', 'purchase_order.issued', 'purchase_order.cancelled',
-  'invoice.created', 'invoice.matched', 'invoice.approved',
+  'requisition.created',
+  'requisition.approved',
+  'requisition.rejected',
+  'purchase_order.created',
+  'purchase_order.issued',
+  'purchase_order.cancelled',
+  'invoice.created',
+  'invoice.matched',
+  'invoice.approved',
   'receiving.created',
   'budget.exceeded',
 ];
@@ -22,41 +36,50 @@ export default function WebhooksPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
 
   async function load() {
     try {
       setLoading(true);
-      const data = await api.webhooks.list();
-      setEndpoints(data);
-    } catch {
-      // silently fail
+      setEndpoints(await api.webhooks.list());
+    } catch (err: any) {
+      setError(err.message ?? 'Unable to load webhooks.');
     } finally {
       setLoading(false);
     }
+  }
+
+  function setField(key: 'url' | 'secret', value: string) {
+    setForm((current) => ({ ...current, [key]: value }));
   }
 
   async function handleSave() {
     setSaving(true);
     setError('');
     try {
-      await api.webhooks.create({ url: form.url, events: form.events, secret: form.secret || undefined });
+      await api.webhooks.create({
+        url: form.url,
+        events: form.events,
+        secret: form.secret || undefined,
+      });
       setShowForm(false);
       setForm({ url: '', events: [], secret: '' });
       await load();
-    } catch (e: any) {
-      setError(e.message);
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleToggleActive(ep: any) {
+  async function handleToggleActive(endpoint: any) {
     try {
-      await api.webhooks.update(ep.id, { isActive: !ep.isActive });
+      await api.webhooks.update(endpoint.id, { isActive: !endpoint.isActive });
       await load();
-    } catch (e: any) {
-      setError(e.message);
+    } catch (err: any) {
+      setError(err.message);
     }
   }
 
@@ -66,154 +89,201 @@ export default function WebhooksPage() {
       await api.webhooks.remove(id);
       if (selectedEndpoint?.id === id) setSelectedEndpoint(null);
       await load();
-    } catch (e: any) {
-      setError(e.message);
+    } catch (err: any) {
+      setError(err.message);
     }
   }
 
-  async function viewDeliveries(ep: any) {
-    setSelectedEndpoint(ep);
+  async function viewDeliveries(endpoint: any) {
+    setSelectedEndpoint(endpoint);
     try {
-      const data = await api.webhooks.deliveries(ep.id);
-      setDeliveries(data);
-    } catch (e: any) {
-      setError(e.message);
+      setDeliveries(await api.webhooks.deliveries(endpoint.id));
+    } catch (err: any) {
+      setError(err.message);
     }
   }
 
-  function toggleEvent(event: string) {
-    setForm((f) => ({
-      ...f,
-      events: f.events.includes(event) ? f.events.filter((e) => e !== event) : [...f.events, event],
+  function toggleEvent(eventName: string) {
+    setForm((current) => ({
+      ...current,
+      events: current.events.includes(eventName)
+        ? current.events.filter((value) => value !== eventName)
+        : [...current.events, eventName],
     }));
   }
 
-  const statusColor: Record<string, string> = {
-    delivered: '#15803d', failed: COLORS.accentRedDark, retrying: '#d97706', pending: COLORS.textSecondary,
-  };
-
   return (
-    <div style={{ padding: '2rem' }}>
-      {error && (
-        <div style={{ marginBottom: '1rem', background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '6px', padding: '0.625rem 1rem', color: COLORS.accentRedDark, fontSize: '0.875rem', display: 'flex', justifyContent: 'space-between' }}>
-          {error}
-          <button onClick={() => setError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.accentRedDark, fontWeight: 700 }}>×</button>
-        </div>
-      )}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary }}>Webhooks</h1>
-        <button
-          onClick={() => setShowForm(true)}
-          style={{ padding: '0.5rem 1rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 500 }}
-        >
-          + New Endpoint
-        </button>
-      </div>
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="Webhooks"
+        description="Register downstream listeners for procurement lifecycle events, rotate secrets, and inspect delivery attempts."
+        actions={
+          <Button type="button" onClick={() => setShowForm(true)}>
+            <Plus className="h-4 w-4" />
+            New Endpoint
+          </Button>
+        }
+      />
 
-      {showForm && (
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: '8px', padding: '1.5rem', marginBottom: '1.5rem', boxShadow: SHADOWS.card }}>
-          <h2 style={{ fontWeight: 600, marginBottom: '1rem' }}>New Webhook Endpoint</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>URL *</label>
-              <input
-                value={form.url} onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
-                placeholder="https://example.com/webhook"
-                style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box' }}
-              />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>Secret (leave blank to auto-generate)</label>
-              <input
-                value={form.secret} onChange={(e) => setForm((f) => ({ ...f, secret: e.target.value }))}
-                placeholder="Optional HMAC secret"
-                style={{ width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box' }}
-              />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Events (empty = all events)</label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                {ALL_EVENTS.map((ev) => (
-                  <label key={ev} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={form.events.includes(ev)} onChange={() => toggleEvent(ev)} />
-                    {ev}
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button onClick={handleSave} disabled={saving || !form.url} style={{ padding: '0.5rem 1rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
-                {saving ? 'Saving...' : 'Save'}
-              </button>
-              <button onClick={() => setShowForm(false)} style={{ padding: '0.5rem 1rem', background: COLORS.tableBorder, color: COLORS.textSecondary, border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      {loading ? <p style={{ color: COLORS.textSecondary }}>Loading...</p> : (
-        <div style={{ display: 'grid', gap: '1rem' }}>
-          {endpoints.map((ep) => (
-            <div key={ep.id} style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: '8px', padding: '1.25rem', boxShadow: SHADOWS.card }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.9fr)]">
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">Endpoint setup</CardTitle>
+            <CardDescription>Use a dedicated endpoint URL and optional HMAC secret. Leaving the event list empty subscribes the endpoint to every supported event.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {showForm ? (
+              <div className="space-y-5">
                 <div>
-                  <div style={{ fontWeight: 600, color: COLORS.textPrimary, marginBottom: '0.25rem' }}>{ep.url}</div>
-                  <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>
-                    Events: {ep.events.length === 0 ? 'All' : ep.events.join(', ')}
+                  <label className="mb-2 block text-sm font-medium text-foreground">URL</label>
+                  <Input value={form.url} onChange={(event) => setField('url', event.target.value)} placeholder="https://example.com/webhook" />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Secret</label>
+                  <Input value={form.secret} onChange={(event) => setField('secret', event.target.value)} placeholder="Optional HMAC secret" />
+                </div>
+                <div className="space-y-3">
+                  <label className="block text-sm font-medium text-foreground">Events</label>
+                  <div className="flex flex-wrap gap-2">
+                    {ALL_EVENTS.map((eventName) => (
+                      <button
+                        key={eventName}
+                        type="button"
+                        onClick={() => toggleEvent(eventName)}
+                        className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                          form.events.includes(eventName)
+                            ? 'border-sky-200 bg-sky-50 text-sky-700'
+                            : 'border-border/70 bg-background text-muted-foreground hover:bg-muted/50'
+                        }`}
+                      >
+                        {eventName}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">No event tags selected means this endpoint receives every event.</p>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Button type="button" disabled={saving || !form.url} onClick={handleSave}>
+                    <Plus className="h-4 w-4" />
+                    {saving ? 'Saving...' : 'Save Endpoint'}
+                  </Button>
+                  <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
+                <Webhook className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
+                <div className="text-sm font-medium text-foreground">Webhook registry is ready</div>
+                <p className="mt-2 text-sm text-muted-foreground">Create a new endpoint to stream procurement events into automation, alerts, or external ledgers.</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">Endpoint registry</CardTitle>
+            <CardDescription>Enable, disable, or delete endpoints and open delivery history for the ones currently in service.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 pt-0">
+            {loading ? (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                Loading endpoints...
+              </div>
+            ) : endpoints.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                No webhook endpoints yet.
+              </div>
+            ) : (
+              endpoints.map((endpoint) => (
+                <div key={endpoint.id} className="rounded-2xl border border-border/70 bg-background/80 p-5 shadow-[0_18px_48px_-36px_rgba(15,23,42,0.35)]">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="space-y-3">
+                      <div className="break-all text-sm font-semibold text-foreground">{endpoint.url}</div>
+                      <div className="flex flex-wrap gap-2">
+                        <StatusBadge value={endpoint.isActive ? 'active' : 'inactive'} />
+                        {(endpoint.events.length === 0 ? ['All events'] : endpoint.events).map((eventName: string) => (
+                          <Badge key={eventName} variant="outline" className="border-border/80 bg-muted/40 text-muted-foreground">
+                            {eventName}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => viewDeliveries(endpoint)}>
+                        <Truck className="h-3.5 w-3.5" />
+                        Deliveries
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => handleToggleActive(endpoint)}>
+                        <Power className="h-3.5 w-3.5" />
+                        {endpoint.isActive ? 'Disable' : 'Enable'}
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => handleDelete(endpoint.id)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete
+                      </Button>
+                    </div>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <span style={{ padding: '0.2rem 0.6rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 600, background: ep.isActive ? '#dcfce7' : '#fee2e2', color: ep.isActive ? '#15803d' : COLORS.accentRedDark }}>
-                    {ep.isActive ? 'Active' : 'Inactive'}
-                  </span>
-                  <button onClick={() => viewDeliveries(ep)} style={{ fontSize: '0.8rem', padding: '0.3rem 0.6rem', border: `1px solid ${COLORS.border}`, borderRadius: '4px', background: COLORS.cardBg, cursor: 'pointer' }}>Deliveries</button>
-                  <button onClick={() => handleToggleActive(ep)} style={{ fontSize: '0.8rem', padding: '0.3rem 0.6rem', border: `1px solid ${COLORS.border}`, borderRadius: '4px', background: COLORS.cardBg, cursor: 'pointer' }}>
-                    {ep.isActive ? 'Disable' : 'Enable'}
-                  </button>
-                  <button onClick={() => handleDelete(ep.id)} style={{ fontSize: '0.8rem', padding: '0.3rem 0.6rem', border: '1px solid #fecaca', borderRadius: '4px', background: COLORS.cardBg, color: COLORS.accentRedDark, cursor: 'pointer' }}>Delete</button>
-                </div>
-              </div>
-            </div>
-          ))}
-          {endpoints.length === 0 && <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted, background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: '8px' }}>No webhook endpoints yet.</div>}
-        </div>
-      )}
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
-      {selectedEndpoint && (
-        <div style={{ marginTop: '2rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <h2 style={{ fontWeight: 600, fontSize: '1.125rem' }}>Deliveries — {selectedEndpoint.url}</h2>
-            <button onClick={() => setSelectedEndpoint(null)} style={{ fontSize: '0.875rem', color: COLORS.textSecondary, background: 'none', border: 'none', cursor: 'pointer' }}>Close</button>
-          </div>
-          <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: '8px', overflow: 'hidden', boxShadow: SHADOWS.card }}>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: COLORS.tableHeaderBg, borderBottom: `1px solid ${COLORS.tableBorder}` }}>
-                    {['Event', 'Status', 'Attempts', 'Response', 'Date'].map((h) => (
-                      <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600, color: COLORS.textSecondary, textTransform: 'uppercase' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {deliveries.map((d, i) => (
-                    <tr key={d.id} style={{ borderBottom: i < deliveries.length - 1 ? `1px solid ${COLORS.contentBg}` : 'none' }}>
-                      <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', fontFamily: 'monospace' }}>{d.eventType}</td>
-                      <td style={{ padding: '0.75rem 1rem' }}>
-                        <span style={{ fontWeight: 600, fontSize: '0.8rem', color: statusColor[d.status] || COLORS.textSecondary }}>{d.status}</span>
-                      </td>
-                      <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary, fontSize: '0.875rem' }}>{d.attempts}</td>
-                      <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary, fontSize: '0.875rem' }}>{d.responseStatus || '—'}</td>
-                      <td style={{ padding: '0.75rem 1rem', color: COLORS.textSecondary, fontSize: '0.8rem' }}>{new Date(d.createdAt).toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {selectedEndpoint ? (
+        <Card className="rounded-[24px]">
+          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+            <div>
+              <CardTitle className="text-xl">Delivery history</CardTitle>
+              <CardDescription>{selectedEndpoint.url}</CardDescription>
             </div>
-            {deliveries.length === 0 && <div style={{ padding: '2rem', textAlign: 'center', color: COLORS.textMuted }}>No deliveries yet.</div>}
-          </div>
-        </div>
-      )}
+            <Button type="button" variant="outline" onClick={() => setSelectedEndpoint(null)}>
+              Close
+            </Button>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {deliveries.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                No deliveries yet.
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Event</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Attempts</TableHead>
+                    <TableHead>Response</TableHead>
+                    <TableHead>Date</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {deliveries.map((delivery) => (
+                    <TableRow key={delivery.id}>
+                      <TableCell className="font-mono text-xs text-foreground">{delivery.eventType}</TableCell>
+                      <TableCell>
+                        <StatusBadge value={delivery.status} />
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{delivery.attempts}</TableCell>
+                      <TableCell className="text-muted-foreground">{delivery.responseStatus || '—'}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{new Date(delivery.createdAt).toLocaleString()}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 }

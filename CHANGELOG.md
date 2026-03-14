@@ -42,6 +42,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated the vendor detail page, including onboarding review, transaction history, portal access, punchout controls, and edit mode, onto the new detail-page system.
 - Migrated audit, search, intake, and approval-detail workflow pages onto the new operational UI primitives so internal review tools match the rest of the application.
 - Migrated the entities, departments, projects, and users admin CRUD pages onto the Tailwind/shadcn-style form, table, and status-badge system, removing another batch of legacy inline theme usage.
+- Migrated GL export jobs, webhooks, and tax code management onto the new admin/settings UI layer while preserving retry, delivery-history, and tax-treatment workflows.
 
 ### Fixed
 

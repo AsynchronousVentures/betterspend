@@ -1,8 +1,16 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { Percent, Pencil, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
+import { PageHeader } from '../../components/page-header';
+import { Badge } from '../../components/ui/badge';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 
 interface TaxCode {
   id: string;
@@ -14,25 +22,7 @@ interface TaxCode {
   glAccountCode?: string | null;
 }
 
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '0.5rem 0.75rem',
-  border: `1px solid ${COLORS.inputBorder}`,
-  borderRadius: '6px',
-  fontSize: '0.875rem',
-  boxSizing: 'border-box',
-  background: COLORS.white,
-};
-
-const labelStyle: React.CSSProperties = {
-  display: 'block',
-  fontSize: '0.8rem',
-  fontWeight: 600,
-  color: COLORS.textSecondary,
-  marginBottom: '0.375rem',
-};
-
-const defaultForm = {
+const DEFAULT_FORM = {
   name: '',
   code: '',
   ratePercent: '0',
@@ -43,7 +33,7 @@ const defaultForm = {
 
 export default function TaxCodesPage() {
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
-  const [form, setForm] = useState(defaultForm);
+  const [form, setForm] = useState(DEFAULT_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -58,10 +48,14 @@ export default function TaxCodesPage() {
     load().catch(() => {});
   }, []);
 
-  const title = useMemo(() => (editingId ? 'Edit Tax Code' : 'Create Tax Code'), [editingId]);
+  const formTitle = useMemo(() => (editingId ? 'Update Tax Code' : 'Create Tax Code'), [editingId]);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  function setField(key: keyof typeof DEFAULT_FORM, value: string | boolean) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
     setSaving(true);
     setError('');
     setMessage('');
@@ -83,7 +77,7 @@ export default function TaxCodesPage() {
         setMessage('Tax code created.');
       }
 
-      setForm(defaultForm);
+      setForm(DEFAULT_FORM);
       setEditingId(null);
       await load();
     } catch (err: any) {
@@ -100,7 +94,7 @@ export default function TaxCodesPage() {
       await api.taxCodes.remove(id);
       if (editingId === id) {
         setEditingId(null);
-        setForm(defaultForm);
+        setForm(DEFAULT_FORM);
       }
       setMessage('Tax code removed.');
       await load();
@@ -110,112 +104,171 @@ export default function TaxCodesPage() {
   }
 
   return (
-    <div style={{ padding: '2rem', display: 'grid', gap: '1.5rem', gridTemplateColumns: 'minmax(320px, 420px) 1fr' }}>
-      <section style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: '10px', padding: '1.5rem', boxShadow: SHADOWS.card, height: 'fit-content' }}>
-        <h1 style={{ fontSize: '1.4rem', fontWeight: 700, margin: 0, color: COLORS.textPrimary }}>Tax Codes</h1>
-        <p style={{ marginTop: '0.5rem', color: COLORS.textSecondary, fontSize: '0.875rem' }}>
-          Define recoverable and non-recoverable tax rates for purchase orders and invoices.
-        </p>
-        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: '1rem', marginTop: '1.25rem' }}>
-          <div>
-            <label style={labelStyle}>Name</label>
-            <input style={inputStyle} value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} required />
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="Tax Codes"
+        description="Define recoverable and non-recoverable tax treatments for purchase orders, invoice matching, and budget impact calculations."
+        actions={
+          <div className="flex items-center gap-2 rounded-full border border-border/70 bg-background/80 px-4 py-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+            <Percent className="h-4 w-4" />
+            {taxCodes.length} configured
           </div>
-          <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: '1fr 1fr' }}>
-            <div>
-              <label style={labelStyle}>Code</label>
-              <input style={inputStyle} value={form.code} onChange={(e) => setForm((prev) => ({ ...prev, code: e.target.value.toUpperCase() }))} required />
-            </div>
-            <div>
-              <label style={labelStyle}>Rate %</label>
-              <input style={inputStyle} type="number" min="0" step="0.01" value={form.ratePercent} onChange={(e) => setForm((prev) => ({ ...prev, ratePercent: e.target.value }))} required />
-            </div>
-          </div>
-          <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: '1fr 1fr' }}>
-            <div>
-              <label style={labelStyle}>Tax Type</label>
-              <select style={inputStyle} value={form.taxType} onChange={(e) => setForm((prev) => ({ ...prev, taxType: e.target.value as TaxCode['taxType'] }))}>
-                <option value="VAT">VAT</option>
-                <option value="GST">GST</option>
-                <option value="SALES_TAX">Sales Tax</option>
-                <option value="EXEMPT">Exempt</option>
-              </select>
-            </div>
-            <div>
-              <label style={labelStyle}>GL Account</label>
-              <input style={inputStyle} value={form.glAccountCode} onChange={(e) => setForm((prev) => ({ ...prev, glAccountCode: e.target.value }))} />
-            </div>
-          </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: COLORS.textPrimary }}>
-            <input type="checkbox" checked={form.isRecoverable} onChange={(e) => setForm((prev) => ({ ...prev, isRecoverable: e.target.checked }))} />
-            Recoverable for budget consumption
-          </label>
-          {error ? <div style={{ color: COLORS.accentRedDark, fontSize: '0.875rem' }}>{error}</div> : null}
-          {message ? <div style={{ color: COLORS.accentGreenDark, fontSize: '0.875rem' }}>{message}</div> : null}
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
-            <button type="submit" disabled={saving} style={{ background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', padding: '0.7rem 1rem', fontWeight: 600, cursor: 'pointer' }}>
-              {saving ? 'Saving...' : title}
-            </button>
-            {editingId ? (
-              <button type="button" onClick={() => { setEditingId(null); setForm(defaultForm); }} style={{ background: 'transparent', color: COLORS.textSecondary, border: `1px solid ${COLORS.border}`, borderRadius: '6px', padding: '0.7rem 1rem', cursor: 'pointer' }}>
-                Cancel
-              </button>
-            ) : null}
-          </div>
-        </form>
-      </section>
+        }
+      />
 
-      <section style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: '10px', boxShadow: SHADOWS.card, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead style={{ background: COLORS.tableHeaderBg }}>
-            <tr>
-              {['Code', 'Name', 'Rate', 'Type', 'Budget Impact', 'GL', ''].map((header) => (
-                <th key={header} style={{ textAlign: 'left', padding: '0.875rem 1rem', color: COLORS.textSecondary, fontSize: '0.78rem', fontWeight: 700, letterSpacing: '0.04em' }}>{header}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {taxCodes.length === 0 ? (
-              <tr>
-                <td colSpan={7} style={{ padding: '1.5rem 1rem', color: COLORS.textSecondary }}>No tax codes yet.</td>
-              </tr>
-            ) : taxCodes.map((taxCode) => (
-              <tr key={taxCode.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
-                <td style={{ padding: '0.875rem 1rem', fontWeight: 700, color: COLORS.textPrimary }}>{taxCode.code}</td>
-                <td style={{ padding: '0.875rem 1rem', color: COLORS.textPrimary }}>{taxCode.name}</td>
-                <td style={{ padding: '0.875rem 1rem', color: COLORS.textPrimary }}>{taxCode.ratePercent}%</td>
-                <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{taxCode.taxType}</td>
-                <td style={{ padding: '0.875rem 1rem', color: taxCode.isRecoverable ? COLORS.accentGreenDark : COLORS.accentAmberDark }}>
-                  {taxCode.isRecoverable ? 'Net only' : 'Gross incl. tax'}
-                </td>
-                <td style={{ padding: '0.875rem 1rem', color: COLORS.textSecondary }}>{taxCode.glAccountCode || '—'}</td>
-                <td style={{ padding: '0.875rem 1rem', textAlign: 'right' }}>
-                  <button
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      {message ? (
+        <Alert variant="success">
+          <AlertDescription>{message}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.9fr)]">
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">{editingId ? 'Edit tax code' : 'Create tax code'}</CardTitle>
+            <CardDescription>Capture the rate, tax type, GL mapping, and whether tax should consume budget or stay net-only.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div className="grid gap-4">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-foreground">Name</label>
+                  <Input required value={form.name} onChange={(event) => setField('name', event.target.value)} />
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-1">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-foreground">Code</label>
+                    <Input required value={form.code} onChange={(event) => setField('code', event.target.value.toUpperCase())} />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-foreground">Rate %</label>
+                    <Input required type="number" min="0" step="0.01" value={form.ratePercent} onChange={(event) => setField('ratePercent', event.target.value)} />
+                  </div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-1">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-foreground">Tax type</label>
+                    <Select value={form.taxType} onChange={(event) => setField('taxType', event.target.value as TaxCode['taxType'])} className="w-full">
+                      <option value="VAT">VAT</option>
+                      <option value="GST">GST</option>
+                      <option value="SALES_TAX">Sales Tax</option>
+                      <option value="EXEMPT">Exempt</option>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-foreground">GL account</label>
+                    <Input value={form.glAccountCode} onChange={(event) => setField('glAccountCode', event.target.value)} />
+                  </div>
+                </div>
+                <label className="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/20 px-4 py-3 text-sm text-foreground">
+                  <input type="checkbox" checked={form.isRecoverable} onChange={(event) => setField('isRecoverable', event.target.checked)} />
+                  Recoverable for budget consumption
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button type="submit" disabled={saving}>
+                  <Plus className="h-4 w-4" />
+                  {saving ? 'Saving...' : formTitle}
+                </Button>
+                {editingId ? (
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => {
-                      setEditingId(taxCode.id);
-                      setForm({
-                        name: taxCode.name,
-                        code: taxCode.code,
-                        ratePercent: String(taxCode.ratePercent),
-                        taxType: taxCode.taxType,
-                        isRecoverable: taxCode.isRecoverable,
-                        glAccountCode: taxCode.glAccountCode || '',
-                      });
+                      setEditingId(null);
+                      setForm(DEFAULT_FORM);
                     }}
-                    style={{ background: 'transparent', border: 'none', color: COLORS.accentBlueDark, cursor: 'pointer', marginRight: '0.75rem' }}
                   >
-                    Edit
-                  </button>
-                  <button type="button" onClick={() => handleDelete(taxCode.id)} style={{ background: 'transparent', border: 'none', color: COLORS.accentRedDark, cursor: 'pointer' }}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
+                    Cancel
+                  </Button>
+                ) : null}
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">Tax code library</CardTitle>
+            <CardDescription>Keep tax treatment readable for finance ops and ensure downstream matching uses the right budget and ledger assumptions.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {taxCodes.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                No tax codes yet.
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Code</TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Rate</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Budget Impact</TableHead>
+                    <TableHead>GL</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {taxCodes.map((taxCode) => (
+                    <TableRow key={taxCode.id}>
+                      <TableCell>
+                        <code className="rounded-md bg-muted px-2 py-1 text-xs font-semibold text-foreground">{taxCode.code}</code>
+                      </TableCell>
+                      <TableCell className="font-medium text-foreground">{taxCode.name}</TableCell>
+                      <TableCell className="text-muted-foreground">{taxCode.ratePercent}%</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="border-border/80 bg-muted/40 text-muted-foreground">
+                          {taxCode.taxType}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={taxCode.isRecoverable ? 'success' : 'warning'}>
+                          {taxCode.isRecoverable ? 'Net only' : 'Gross incl. tax'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{taxCode.glAccountCode || '—'}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setEditingId(taxCode.id);
+                              setForm({
+                                name: taxCode.name,
+                                code: taxCode.code,
+                                ratePercent: String(taxCode.ratePercent),
+                                taxType: taxCode.taxType,
+                                isRecoverable: taxCode.isRecoverable,
+                                glAccountCode: taxCode.glAccountCode || '',
+                              });
+                            }}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            Edit
+                          </Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => handleDelete(taxCode.id)}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
