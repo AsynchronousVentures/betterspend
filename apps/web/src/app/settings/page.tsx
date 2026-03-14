@@ -1,21 +1,32 @@
 'use client';
 
-import { useEffect, Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import {
+  BadgeCheck,
+  Building2,
+  CircleAlert,
+  CreditCard,
+  ExternalLink,
+  KeyRound,
+  Landmark,
+  Mail,
+  Palette,
+  ShieldCheck,
+} from 'lucide-react';
 import { api } from '../../lib/api';
-import { COLORS, SHADOWS } from '../../lib/theme';
 import { invalidateBrandingCache } from '../../lib/branding';
 import { appReleaseLabel } from '../../lib/release';
+import { PageHeader } from '../../components/page-header';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
 
 type Tab = 'org' | 'branding' | 'email' | 'password' | 'integrations' | 'approval' | 'compliance';
-
-const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '0.5rem 0.75rem', border: `1px solid ${COLORS.inputBorder}`,
-  borderRadius: '6px', fontSize: '0.875rem', boxSizing: 'border-box',
-};
-const labelStyle: React.CSSProperties = { display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem', color: COLORS.textPrimary };
-const card: React.CSSProperties = { background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: '8px', padding: '1.5rem', boxShadow: SHADOWS.card };
 
 interface OAuthStatus {
   qbo: boolean;
@@ -47,6 +58,16 @@ interface SettingsSnapshots {
   };
 }
 
+const TAB_META: Record<Tab, { label: string; icon: React.ComponentType<{ className?: string }> }> = {
+  branding: { label: 'Branding', icon: Palette },
+  email: { label: 'Email / SMTP', icon: Mail },
+  approval: { label: 'Approval Policy', icon: BadgeCheck },
+  compliance: { label: 'Contract Compliance', icon: ShieldCheck },
+  integrations: { label: 'Integrations', icon: CreditCard },
+  org: { label: 'System Info', icon: Building2 },
+  password: { label: 'Change Password', icon: KeyRound },
+};
+
 function SettingsContent() {
   const router = useRouter();
   const pathname = usePathname();
@@ -65,23 +86,31 @@ function SettingsContent() {
   const [pwError, setPwError] = useState('');
 
   const [branding, setBranding] = useState({
-    app_name: 'BetterSpend', app_logo_url: '', app_favicon_url: '',
+    app_name: 'BetterSpend',
+    app_logo_url: '',
+    app_favicon_url: '',
     copyright_text: '© 2026 BetterSpend. Open source under MIT License.',
-    support_email: '', primary_color: '#3b82f6', accent_color: '#0f172a', hide_powered_by: 'false',
+    support_email: '',
+    primary_color: '#3b82f6',
+    accent_color: '#0f172a',
+    hide_powered_by: 'false',
   });
   const [brandingSaving, setBrandingSaving] = useState(false);
   const [brandingMsg, setBrandingMsg] = useState('');
   const [brandingError, setBrandingError] = useState('');
 
   const [smtp, setSmtp] = useState({
-    smtp_host: '', smtp_port: '587', smtp_user: '', smtp_pass: '',
-    smtp_from: 'noreply@betterspend.io', smtp_secure: 'false',
+    smtp_host: '',
+    smtp_port: '587',
+    smtp_user: '',
+    smtp_pass: '',
+    smtp_from: 'noreply@betterspend.io',
+    smtp_secure: 'false',
   });
   const [smtpSaving, setSmtpSaving] = useState(false);
   const [smtpMsg, setSmtpMsg] = useState('');
   const [smtpError, setSmtpError] = useState('');
 
-  // Approval policy state
   const [approvalPolicy, setApprovalPolicy] = useState({
     auto_approve_threshold: '0',
     auto_approve_require_budget_check: 'false',
@@ -91,7 +120,6 @@ function SettingsContent() {
   const [approvalPolicyMsg, setApprovalPolicyMsg] = useState('');
   const [approvalPolicyError, setApprovalPolicyError] = useState('');
 
-  // Contract compliance state
   const [compliance, setCompliance] = useState({
     contract_price_deviation_threshold: '5',
     contract_price_deviation_action: 'warn' as 'warn' | 'block',
@@ -100,7 +128,6 @@ function SettingsContent() {
   const [complianceMsg, setComplianceMsg] = useState('');
   const [complianceError, setComplianceError] = useState('');
 
-  // Integrations state
   const [oauthStatus, setOauthStatus] = useState<OAuthStatus>({ qbo: false, xero: false });
   const [oauthLoading, setOauthLoading] = useState(false);
   const [integrationsMsg, setIntegrationsMsg] = useState('');
@@ -159,11 +186,13 @@ function SettingsContent() {
     baseCurrency !== snapshots.org.baseCurrency ||
     JSON.stringify(rateForm) !== JSON.stringify(snapshots.org.rateForm) ||
     editingRateId !== snapshots.org.editingRateId;
-  const hasUnsavedChanges =
-    isBrandingDirty || isSmtpDirty || isApprovalDirty || isComplianceDirty || isOrgDirty;
+  const hasUnsavedChanges = isBrandingDirty || isSmtpDirty || isApprovalDirty || isComplianceDirty || isOrgDirty;
 
   async function refreshExchangeRateSettings() {
-    const [base, rates] = await Promise.all([api.exchangeRates.getBaseCurrency(), api.exchangeRates.list()]);
+    const [base, rates] = await Promise.all([
+      api.exchangeRates.getBaseCurrency(),
+      api.exchangeRates.list(),
+    ]);
     setBaseCurrency(base.baseCurrency ?? 'USD');
     setExchangeRates(rates);
     setSnapshots((prev) => ({
@@ -177,60 +206,64 @@ function SettingsContent() {
   }
 
   useEffect(() => {
-    api.settings.getAll().then((all) => {
-      const nextBranding = { ...branding, ...Object.fromEntries(Object.entries(all).filter(([k]) => Object.keys(branding).includes(k))) };
-      const nextSmtp = { ...smtp, ...Object.fromEntries(Object.entries(all).filter(([k]) => Object.keys(smtp).includes(k))) };
-      const nextApprovalPolicy = { ...approvalPolicy, ...Object.fromEntries(Object.entries(all).filter(([k]) => Object.keys(approvalPolicy).includes(k))) };
-      const nextCompliance = {
-        contract_price_deviation_threshold: all.contract_price_deviation_threshold ?? '5',
-        contract_price_deviation_action: (all.contract_price_deviation_action as 'warn' | 'block') ?? 'warn',
-      };
-      setBranding(nextBranding);
-      setSmtp(nextSmtp);
-      setApprovalPolicy(nextApprovalPolicy);
-      setCompliance(nextCompliance);
-      setSnapshots((prev) => ({
-        ...prev,
-        branding: nextBranding,
-        smtp: nextSmtp,
-        approvalPolicy: nextApprovalPolicy,
-        compliance: nextCompliance,
-      }));
-    }).catch(() => {});
+    api.settings
+      .getAll()
+      .then((all) => {
+        const nextBranding = {
+          ...branding,
+          ...Object.fromEntries(Object.entries(all).filter(([key]) => Object.keys(branding).includes(key))),
+        };
+        const nextSmtp = {
+          ...smtp,
+          ...Object.fromEntries(Object.entries(all).filter(([key]) => Object.keys(smtp).includes(key))),
+        };
+        const nextApprovalPolicy = {
+          ...approvalPolicy,
+          ...Object.fromEntries(
+            Object.entries(all).filter(([key]) => Object.keys(approvalPolicy).includes(key)),
+          ),
+        };
+        const nextCompliance = {
+          contract_price_deviation_threshold: all.contract_price_deviation_threshold ?? '5',
+          contract_price_deviation_action:
+            (all.contract_price_deviation_action as 'warn' | 'block') ?? 'warn',
+        };
+        setBranding(nextBranding);
+        setSmtp(nextSmtp);
+        setApprovalPolicy(nextApprovalPolicy);
+        setCompliance(nextCompliance);
+        setSnapshots((prev) => ({
+          ...prev,
+          branding: nextBranding,
+          smtp: nextSmtp,
+          approvalPolicy: nextApprovalPolicy,
+          compliance: nextCompliance,
+        }));
+      })
+      .catch(() => {});
     refreshExchangeRateSettings().catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load OAuth connection status and handle callback params
   useEffect(() => {
     const connected = searchParams.get('connected');
     const error = searchParams.get('error');
     const message = searchParams.get('message');
 
     if (connected) {
-      setIntegrationsMsg(`${connected === 'qbo' ? 'QuickBooks Online' : 'Xero'} connected successfully.`);
+      setIntegrationsMsg(
+        `${connected === 'qbo' ? 'QuickBooks Online' : 'Xero'} connected successfully.`,
+      );
     }
     if (error) {
-      setIntegrationsError(`Failed to connect ${error === 'qbo' ? 'QuickBooks Online' : 'Xero'}: ${message ? decodeURIComponent(message) : 'Unknown error'}`);
+      setIntegrationsError(
+        `Failed to connect ${error === 'qbo' ? 'QuickBooks Online' : 'Xero'}: ${
+          message ? decodeURIComponent(message) : 'Unknown error'
+        }`,
+      );
     }
 
     api.gl.oauthStatus().then(setOauthStatus).catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const tabStyle = (active: boolean): React.CSSProperties => ({
-    padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: active ? 600 : 400,
-    color: active ? COLORS.textPrimary : COLORS.textSecondary, cursor: 'pointer', background: 'none', border: 'none',
-    borderBottom: `2px solid ${active ? COLORS.accentBlue : 'transparent'}`,
-  });
-
-  function handleTabChange(tab: Tab) {
-    if (tab !== activeTab && hasUnsavedChanges && !confirmLeaveIfDirty()) return;
-    setActiveTab(tab);
-    const params = new URLSearchParams(searchParams.toString());
-    params.set('tab', tab);
-    router.push(`${pathname}?${params.toString()}`);
-  }
+  }, [searchParams]);
 
   useEffect(() => {
     if (!hasUnsavedChanges) return;
@@ -270,91 +303,163 @@ function SettingsContent() {
     };
   }, [hasUnsavedChanges, pathname, searchParams]);
 
-  async function handleChangePassword(e: React.FormEvent) {
-    e.preventDefault(); setPwError(''); setPwMsg('');
-    if (pwForm.newPassword !== pwForm.confirmPassword) { setPwError('New passwords do not match'); return; }
-    if (pwForm.newPassword.length < 8) { setPwError('Password must be at least 8 characters'); return; }
-    setPwSaving(true);
-    try {
-      const res = await api.auth.changePassword({ currentPassword: pwForm.currentPassword, newPassword: pwForm.newPassword });
-      if (res.ok) { setPwMsg('Password changed successfully.'); setPwForm({ currentPassword: '', newPassword: '', confirmPassword: '' }); }
-      else { const err = await res.json().catch(() => ({})); setPwError(err.message || 'Failed to change password'); }
-    } catch (e: any) { setPwError(e.message); } finally { setPwSaving(false); }
+  function handleTabChange(tab: Tab) {
+    if (tab !== activeTab && hasUnsavedChanges && !confirmLeaveIfDirty()) return;
+    setActiveTab(tab);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('tab', tab);
+    router.push(`${pathname}?${params.toString()}`);
   }
 
-  async function handleSaveBranding(e: React.FormEvent) {
-    e.preventDefault(); setBrandingError(''); setBrandingMsg(''); setBrandingSaving(true);
+  async function handleChangePassword(event: React.FormEvent) {
+    event.preventDefault();
+    setPwError('');
+    setPwMsg('');
+    if (pwForm.newPassword !== pwForm.confirmPassword) {
+      setPwError('New passwords do not match');
+      return;
+    }
+    if (pwForm.newPassword.length < 8) {
+      setPwError('Password must be at least 8 characters');
+      return;
+    }
+    setPwSaving(true);
+    try {
+      const res = await api.auth.changePassword({
+        currentPassword: pwForm.currentPassword,
+        newPassword: pwForm.newPassword,
+      });
+      if (res.ok) {
+        setPwMsg('Password changed successfully.');
+        setPwForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setPwError(err.message || 'Failed to change password');
+      }
+    } catch (err: any) {
+      setPwError(err.message);
+    } finally {
+      setPwSaving(false);
+    }
+  }
+
+  async function handleSaveBranding(event: React.FormEvent) {
+    event.preventDefault();
+    setBrandingError('');
+    setBrandingMsg('');
+    setBrandingSaving(true);
     try {
       await api.settings.updateBranding(branding);
       invalidateBrandingCache();
       setSnapshots((prev) => ({ ...prev, branding }));
       setBrandingMsg('Branding settings saved. Reload the page to see changes in the sidebar.');
-    } catch (e: any) { setBrandingError(e.message); } finally { setBrandingSaving(false); }
+    } catch (err: any) {
+      setBrandingError(err.message);
+    } finally {
+      setBrandingSaving(false);
+    }
   }
 
-  async function handleSaveSmtp(e: React.FormEvent) {
-    e.preventDefault(); setSmtpError(''); setSmtpMsg(''); setSmtpSaving(true);
+  async function handleSaveSmtp(event: React.FormEvent) {
+    event.preventDefault();
+    setSmtpError('');
+    setSmtpMsg('');
+    setSmtpSaving(true);
     try {
       await api.settings.updateSmtp(smtp);
       setSnapshots((prev) => ({ ...prev, smtp }));
       setSmtpMsg('SMTP settings saved.');
-    } catch (e: any) { setSmtpError(e.message); } finally { setSmtpSaving(false); }
+    } catch (err: any) {
+      setSmtpError(err.message);
+    } finally {
+      setSmtpSaving(false);
+    }
   }
 
-  async function handleSaveApprovalPolicy(e: React.FormEvent) {
-    e.preventDefault(); setApprovalPolicyError(''); setApprovalPolicyMsg(''); setApprovalPolicySaving(true);
+  async function handleSaveApprovalPolicy(event: React.FormEvent) {
+    event.preventDefault();
+    setApprovalPolicyError('');
+    setApprovalPolicyMsg('');
+    setApprovalPolicySaving(true);
     try {
       await api.settings.updateApprovalPolicy(approvalPolicy);
       setSnapshots((prev) => ({ ...prev, approvalPolicy }));
       setApprovalPolicyMsg('Approval policy saved.');
-    } catch (e: any) { setApprovalPolicyError(e.message); } finally { setApprovalPolicySaving(false); }
+    } catch (err: any) {
+      setApprovalPolicyError(err.message);
+    } finally {
+      setApprovalPolicySaving(false);
+    }
   }
 
-  async function handleSaveCompliance(e: React.FormEvent) {
-    e.preventDefault(); setComplianceError(''); setComplianceMsg(''); setComplianceSaving(true);
+  async function handleSaveCompliance(event: React.FormEvent) {
+    event.preventDefault();
+    setComplianceError('');
+    setComplianceMsg('');
+    setComplianceSaving(true);
     try {
       await api.settings.updateContractCompliance(compliance);
       setSnapshots((prev) => ({ ...prev, compliance }));
       setComplianceMsg('Contract compliance settings saved.');
-    } catch (e: any) { setComplianceError(e.message); } finally { setComplianceSaving(false); }
+    } catch (err: any) {
+      setComplianceError(err.message);
+    } finally {
+      setComplianceSaving(false);
+    }
   }
 
   async function handleConnectQbo() {
-    setIntegrationsError(''); setIntegrationsMsg(''); setOauthLoading(true);
+    setIntegrationsError('');
+    setIntegrationsMsg('');
+    setOauthLoading(true);
     try {
       const { url } = await api.gl.oauthConnect('qbo');
       window.location.href = url;
-    } catch (e: any) { setIntegrationsError(e.message); setOauthLoading(false); }
+    } catch (err: any) {
+      setIntegrationsError(err.message);
+      setOauthLoading(false);
+    }
   }
 
   async function handleConnectXero() {
-    setIntegrationsError(''); setIntegrationsMsg(''); setOauthLoading(true);
+    setIntegrationsError('');
+    setIntegrationsMsg('');
+    setOauthLoading(true);
     try {
       const { url } = await api.gl.oauthConnect('xero');
       window.location.href = url;
-    } catch (e: any) { setIntegrationsError(e.message); setOauthLoading(false); }
+    } catch (err: any) {
+      setIntegrationsError(err.message);
+      setOauthLoading(false);
+    }
   }
 
   async function handleDisconnectQbo() {
-    setIntegrationsError(''); setIntegrationsMsg('');
+    setIntegrationsError('');
+    setIntegrationsMsg('');
     try {
       await api.gl.oauthDisconnect('qbo');
-      setOauthStatus((s) => ({ ...s, qbo: false, qboRealmId: undefined }));
+      setOauthStatus((current) => ({ ...current, qbo: false, qboRealmId: undefined }));
       setIntegrationsMsg('QuickBooks Online disconnected.');
-    } catch (e: any) { setIntegrationsError(e.message); }
+    } catch (err: any) {
+      setIntegrationsError(err.message);
+    }
   }
 
   async function handleDisconnectXero() {
-    setIntegrationsError(''); setIntegrationsMsg('');
+    setIntegrationsError('');
+    setIntegrationsMsg('');
     try {
       await api.gl.oauthDisconnect('xero');
-      setOauthStatus((s) => ({ ...s, xero: false, xeroTenantId: undefined }));
+      setOauthStatus((current) => ({ ...current, xero: false, xeroTenantId: undefined }));
       setIntegrationsMsg('Xero disconnected.');
-    } catch (e: any) { setIntegrationsError(e.message); }
+    } catch (err: any) {
+      setIntegrationsError(err.message);
+    }
   }
 
-  async function handleSaveOrg(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSaveOrg(event: React.FormEvent) {
+    event.preventDefault();
     setOrgError('');
     setOrgMsg('');
     setOrgSaving(true);
@@ -393,8 +498,8 @@ function SettingsContent() {
       setEditingRateId(null);
       setRateForm({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '1.08' });
       setOrgMsg(editingRateId ? 'Exchange rate updated.' : 'Base currency and exchange rate saved.');
-    } catch (e: any) {
-      setOrgError(e.message);
+    } catch (err: any) {
+      setOrgError(err.message);
     } finally {
       setOrgSaving(false);
     }
@@ -413,8 +518,8 @@ function SettingsContent() {
         setRateForm({ fromCurrency: 'EUR', toCurrency: 'USD', rate: '1.08' });
       }
       setOrgMsg('Exchange rate deleted.');
-    } catch (e: any) {
-      setOrgError(e.message);
+    } catch (err: any) {
+      setOrgError(err.message);
     } finally {
       setOrgSaving(false);
     }
@@ -438,490 +543,617 @@ function SettingsContent() {
     setOrgMsg('Exchange rate editor reset.');
   }
 
-  const successStyle: React.CSSProperties = { background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', padding: '0.75rem', color: '#15803d', fontSize: '0.875rem', marginTop: '1rem' };
-  const errorStyle: React.CSSProperties = { background: COLORS.accentRedLight, border: '1px solid #fecaca', borderRadius: '6px', padding: '0.75rem', color: COLORS.accentRedDark, fontSize: '0.875rem', marginTop: '1rem' };
-  const btnPrimary: React.CSSProperties = { padding: '0.625rem 1.25rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 500, fontSize: '0.875rem' };
-  const btnDanger: React.CSSProperties = { padding: '0.5rem 1rem', background: 'transparent', color: COLORS.accentRedDark, border: `1px solid #fecaca`, borderRadius: '6px', cursor: 'pointer', fontWeight: 500, fontSize: '0.875rem' };
-
   return (
-    <div style={{ padding: '2rem', maxWidth: '720px' }}>
-      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: COLORS.textPrimary, marginBottom: '1.5rem' }}>Settings</h1>
-      <div style={{ display: 'flex', gap: 0, borderBottom: `1px solid ${COLORS.border}`, marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-        {(['branding', 'email', 'approval', 'compliance', 'integrations', 'org', 'password'] as Tab[]).map((t) => (
-          <button key={t} style={tabStyle(activeTab === t)} onClick={() => handleTabChange(t)}>
-            {t === 'branding' ? 'Branding' : t === 'email' ? 'Email / SMTP' : t === 'approval' ? 'Approval Policy' : t === 'compliance' ? 'Contract Compliance' : t === 'integrations' ? 'Integrations' : t === 'org' ? 'System Info' : 'Change Password'}
-          </button>
-        ))}
+    <div className="space-y-6 p-4 lg:p-8">
+      <PageHeader
+        title="Settings"
+        description="Control branding, email delivery, approval automation, integrations, exchange rates, and platform-wide security defaults."
+      />
+
+      <div className="flex flex-wrap gap-2 rounded-[24px] border border-border/70 bg-card/90 p-2 shadow-[0_22px_70px_-42px_rgba(15,23,42,0.45)]">
+        {(Object.keys(TAB_META) as Tab[]).map((tab) => {
+          const Icon = TAB_META[tab].icon;
+          return (
+            <Button
+              key={tab}
+              type="button"
+              variant={activeTab === tab ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => handleTabChange(tab)}
+            >
+              <Icon className="h-4 w-4" />
+              {TAB_META[tab].label}
+            </Button>
+          );
+        })}
       </div>
 
-      {activeTab === 'branding' && (
+      {activeTab === 'branding' ? (
         <form onSubmit={handleSaveBranding}>
-          <div style={card}>
-            <h2 style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.25rem', color: COLORS.textPrimary }}>White-Label Branding</h2>
-            <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginBottom: '1.5rem', marginTop: '0.25rem' }}>
-              Customize the app name, logo, colors, and footer. Perfect for agencies and enterprise deployments. Changes are reflected across all users.
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label style={labelStyle}>Application Name</label>
-                  <input style={inputStyle} value={branding.app_name} onChange={(e) => setBranding((b) => ({ ...b, app_name: e.target.value }))} placeholder="BetterSpend" />
-                </div>
-                <div>
-                  <label style={labelStyle}>Support Email</label>
-                  <input type="email" style={inputStyle} value={branding.support_email} onChange={(e) => setBranding((b) => ({ ...b, support_email: e.target.value }))} placeholder="support@yourcompany.com" />
-                </div>
+          <Card className="rounded-[24px]">
+            <CardHeader>
+              <CardTitle className="text-xl">White-label Branding</CardTitle>
+              <CardDescription>Customize the app name, logo, colors, and footer presentation across the workspace.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Application Name">
+                  <Input value={branding.app_name} onChange={(event) => setBranding((current) => ({ ...current, app_name: event.target.value }))} />
+                </Field>
+                <Field label="Support Email">
+                  <Input type="email" value={branding.support_email} onChange={(event) => setBranding((current) => ({ ...current, support_email: event.target.value }))} placeholder="support@yourcompany.com" />
+                </Field>
               </div>
-              <div>
-                <label style={labelStyle}>Logo URL <span style={{ fontWeight: 400, color: COLORS.textMuted }}>(shown in sidebar)</span></label>
-                <input style={inputStyle} value={branding.app_logo_url} onChange={(e) => setBranding((b) => ({ ...b, app_logo_url: e.target.value }))} placeholder="https://example.com/logo.svg" />
-                {branding.app_logo_url && <img src={branding.app_logo_url} alt="Logo preview" style={{ marginTop: '0.5rem', maxHeight: '40px', borderRadius: '4px' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />}
-              </div>
-              <div>
-                <label style={labelStyle}>Copyright / Footer Text</label>
-                <input style={inputStyle} value={branding.copyright_text} onChange={(e) => setBranding((b) => ({ ...b, copyright_text: e.target.value }))} placeholder="© 2026 Your Company. All rights reserved." />
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label style={labelStyle}>Primary Color <span style={{ fontWeight: 400, color: COLORS.textMuted }}>(buttons, links)</span></label>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <input type="color" value={branding.primary_color} onChange={(e) => setBranding((b) => ({ ...b, primary_color: e.target.value }))} style={{ width: '40px', height: '36px', padding: '2px', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', cursor: 'pointer' }} />
-                    <input style={{ ...inputStyle, flex: 1 }} value={branding.primary_color} onChange={(e) => setBranding((b) => ({ ...b, primary_color: e.target.value }))} />
-                  </div>
-                </div>
-                <div>
-                  <label style={labelStyle}>Sidebar Color</label>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <input type="color" value={branding.accent_color} onChange={(e) => setBranding((b) => ({ ...b, accent_color: e.target.value }))} style={{ width: '40px', height: '36px', padding: '2px', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', cursor: 'pointer' }} />
-                    <input style={{ ...inputStyle, flex: 1 }} value={branding.accent_color} onChange={(e) => setBranding((b) => ({ ...b, accent_color: e.target.value }))} />
-                  </div>
-                </div>
-              </div>
-              <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', cursor: 'pointer', fontSize: '0.875rem', color: COLORS.textPrimary }}>
-                <input type="checkbox" checked={branding.hide_powered_by === 'true'} onChange={(e) => setBranding((b) => ({ ...b, hide_powered_by: e.target.checked ? 'true' : 'false' }))} />
-                Hide "Powered by BetterSpend" footer attribution
-              </label>
-            </div>
-            {brandingError && <div style={errorStyle}>{brandingError}</div>}
-            {brandingMsg && <div style={successStyle}>{brandingMsg}</div>}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
-              <button type="submit" disabled={brandingSaving} style={btnPrimary}>{brandingSaving ? 'Saving...' : 'Save Branding'}</button>
-            </div>
-          </div>
-        </form>
-      )}
-
-      {activeTab === 'email' && (
-        <form onSubmit={handleSaveSmtp}>
-          <div style={card}>
-            <h2 style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.25rem', color: COLORS.textPrimary }}>Email / SMTP Configuration</h2>
-            <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginBottom: '1.5rem', marginTop: '0.25rem' }}>
-              Configure SMTP to enable email notifications for approvals, PO issuance, invoice exceptions, and contract expiry alerts.
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label style={labelStyle}>SMTP Host</label>
-                  <input style={inputStyle} value={smtp.smtp_host} onChange={(e) => setSmtp((s) => ({ ...s, smtp_host: e.target.value }))} placeholder="smtp.gmail.com" />
-                </div>
-                <div>
-                  <label style={labelStyle}>Port</label>
-                  <input type="number" style={inputStyle} value={smtp.smtp_port} onChange={(e) => setSmtp((s) => ({ ...s, smtp_port: e.target.value }))} placeholder="587" />
-                </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label style={labelStyle}>Username</label>
-                  <input style={inputStyle} value={smtp.smtp_user} onChange={(e) => setSmtp((s) => ({ ...s, smtp_user: e.target.value }))} placeholder="user@example.com" />
-                </div>
-                <div>
-                  <label style={labelStyle}>Password</label>
-                  <input type="password" style={inputStyle} value={smtp.smtp_pass} onChange={(e) => setSmtp((s) => ({ ...s, smtp_pass: e.target.value }))} placeholder="••••••••" />
-                </div>
-              </div>
-              <div>
-                <label style={labelStyle}>From Address</label>
-                <input type="email" style={inputStyle} value={smtp.smtp_from} onChange={(e) => setSmtp((s) => ({ ...s, smtp_from: e.target.value }))} placeholder="noreply@yourcompany.com" />
-              </div>
-              <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', cursor: 'pointer', fontSize: '0.875rem', color: COLORS.textPrimary }}>
-                <input type="checkbox" checked={smtp.smtp_secure === 'true'} onChange={(e) => setSmtp((s) => ({ ...s, smtp_secure: e.target.checked ? 'true' : 'false' }))} />
-                Use TLS/SSL (port 465)
-              </label>
-              <div style={{ padding: '0.75rem 1rem', background: COLORS.accentBlueLight, borderRadius: '6px', border: '1px solid #bfdbfe', fontSize: '0.8125rem', color: '#1e40af' }}>
-                Notifications sent for: approval requests, PO issued, invoice match exceptions, and contract expiry alerts.
-              </div>
-            </div>
-            {smtpError && <div style={errorStyle}>{smtpError}</div>}
-            {smtpMsg && <div style={successStyle}>{smtpMsg}</div>}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
-              <button type="submit" disabled={smtpSaving} style={btnPrimary}>{smtpSaving ? 'Saving...' : 'Save SMTP Settings'}</button>
-            </div>
-          </div>
-        </form>
-      )}
-
-      {activeTab === 'approval' && (
-        <form onSubmit={handleSaveApprovalPolicy}>
-          <div style={card}>
-            <h2 style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.25rem', color: COLORS.textPrimary }}>Approval Policy</h2>
-            <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginBottom: '1.5rem', marginTop: '0.25rem' }}>
-              Configure the low-value purchase fast lane. Requisitions at or below the threshold are automatically approved without requiring manual review.
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div>
-                <label style={labelStyle}>Auto-approve Threshold</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '1rem', color: COLORS.textSecondary, fontWeight: 600 }}>$</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    style={{ ...inputStyle, maxWidth: '200px' }}
-                    value={approvalPolicy.auto_approve_threshold}
-                    onChange={(e) => setApprovalPolicy((p) => ({ ...p, auto_approve_threshold: e.target.value }))}
-                    placeholder="0"
+              <Field label="Logo URL">
+                <Input value={branding.app_logo_url} onChange={(event) => setBranding((current) => ({ ...current, app_logo_url: event.target.value }))} placeholder="https://example.com/logo.svg" />
+                {branding.app_logo_url ? (
+                  <img
+                    src={branding.app_logo_url}
+                    alt="Logo preview"
+                    className="mt-3 max-h-12 rounded-md border border-border/70 bg-background p-2"
+                    onError={(event) => {
+                      (event.target as HTMLImageElement).style.display = 'none';
+                    }}
                   />
-                </div>
-                <p style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.375rem' }}>
-                  Set to 0 to disable auto-approval. Requisitions at or below this amount are approved instantly.
-                </p>
+                ) : null}
+              </Field>
+              <Field label="Copyright / Footer Text">
+                <Input value={branding.copyright_text} onChange={(event) => setBranding((current) => ({ ...current, copyright_text: event.target.value }))} />
+              </Field>
+              <div className="grid gap-4 md:grid-cols-2">
+                <ColorField
+                  label="Primary Color"
+                  value={branding.primary_color}
+                  onChange={(value) => setBranding((current) => ({ ...current, primary_color: value }))}
+                />
+                <ColorField
+                  label="Sidebar Color"
+                  value={branding.accent_color}
+                  onChange={(value) => setBranding((current) => ({ ...current, accent_color: value }))}
+                />
               </div>
-              <label style={{ display: 'flex', gap: '0.625rem', alignItems: 'flex-start', cursor: 'pointer', fontSize: '0.875rem', color: COLORS.textPrimary }}>
-                <input
-                  type="checkbox"
-                  style={{ marginTop: '2px', flexShrink: 0 }}
-                  checked={approvalPolicy.auto_approve_require_budget_check === 'true'}
-                  onChange={(e) => setApprovalPolicy((p) => ({ ...p, auto_approve_require_budget_check: e.target.checked ? 'true' : 'false' }))}
-                />
-                <div>
-                  <div style={{ fontWeight: 500 }}>Require budget check</div>
-                  <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.125rem' }}>Only auto-approve if the requisition is within budget limits</div>
-                </div>
-              </label>
-              <label style={{ display: 'flex', gap: '0.625rem', alignItems: 'flex-start', cursor: 'pointer', fontSize: '0.875rem', color: COLORS.textPrimary }}>
-                <input
-                  type="checkbox"
-                  style={{ marginTop: '2px', flexShrink: 0 }}
-                  checked={approvalPolicy.auto_approve_notify_manager === 'true'}
-                  onChange={(e) => setApprovalPolicy((p) => ({ ...p, auto_approve_notify_manager: e.target.checked ? 'true' : 'false' }))}
-                />
-                <div>
-                  <div style={{ fontWeight: 500 }}>Add audit note when auto-approving</div>
-                  <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.125rem' }}>Adds a detailed note to the approval record explaining why it was auto-approved</div>
-                </div>
-              </label>
-              {Number(approvalPolicy.auto_approve_threshold) > 0 && (
-                <div style={{ padding: '0.75rem 1rem', background: COLORS.accentGreenLight, borderRadius: '6px', border: `1px solid ${COLORS.accentGreen}`, fontSize: '0.8125rem', color: COLORS.accentGreenDark }}>
-                  Fast lane active: requisitions up to ${Number(approvalPolicy.auto_approve_threshold).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} will be auto-approved.
-                </div>
-              )}
-            </div>
-            {approvalPolicyError && <div style={errorStyle}>{approvalPolicyError}</div>}
-            {approvalPolicyMsg && <div style={successStyle}>{approvalPolicyMsg}</div>}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
-              <button type="submit" disabled={approvalPolicySaving} style={btnPrimary}>
-                {approvalPolicySaving ? 'Saving...' : 'Save Approval Policy'}
-              </button>
-            </div>
-          </div>
+              <CheckboxRow
+                checked={branding.hide_powered_by === 'true'}
+                onChange={(checked) => setBranding((current) => ({ ...current, hide_powered_by: checked ? 'true' : 'false' }))}
+                title='Hide "Powered by BetterSpend" footer attribution'
+              />
+              <InlineNotice error={brandingError} success={brandingMsg} />
+              <div className="flex justify-end">
+                <Button type="submit" disabled={brandingSaving}>
+                  {brandingSaving ? 'Saving...' : 'Save Branding'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </form>
-      )}
+      ) : null}
 
-      {activeTab === 'compliance' && (
+      {activeTab === 'email' ? (
+        <form onSubmit={handleSaveSmtp}>
+          <Card className="rounded-[24px]">
+            <CardHeader>
+              <CardTitle className="text-xl">Email / SMTP Configuration</CardTitle>
+              <CardDescription>Configure outbound email for approval requests, PO issuance, invoice exceptions, and contract alerts.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid gap-4 md:grid-cols-[2fr_1fr]">
+                <Field label="SMTP Host">
+                  <Input value={smtp.smtp_host} onChange={(event) => setSmtp((current) => ({ ...current, smtp_host: event.target.value }))} placeholder="smtp.gmail.com" />
+                </Field>
+                <Field label="Port">
+                  <Input type="number" value={smtp.smtp_port} onChange={(event) => setSmtp((current) => ({ ...current, smtp_port: event.target.value }))} />
+                </Field>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Username">
+                  <Input value={smtp.smtp_user} onChange={(event) => setSmtp((current) => ({ ...current, smtp_user: event.target.value }))} />
+                </Field>
+                <Field label="Password">
+                  <Input type="password" value={smtp.smtp_pass} onChange={(event) => setSmtp((current) => ({ ...current, smtp_pass: event.target.value }))} autoComplete="current-password" />
+                </Field>
+              </div>
+              <Field label="From Address">
+                <Input type="email" value={smtp.smtp_from} onChange={(event) => setSmtp((current) => ({ ...current, smtp_from: event.target.value }))} />
+              </Field>
+              <CheckboxRow
+                checked={smtp.smtp_secure === 'true'}
+                onChange={(checked) => setSmtp((current) => ({ ...current, smtp_secure: checked ? 'true' : 'false' }))}
+                title="Use TLS / SSL (port 465)"
+              />
+              <Alert>
+                <AlertDescription>
+                  Notifications are sent for approval requests, PO issuance, invoice match exceptions, and contract expiry alerts.
+                </AlertDescription>
+              </Alert>
+              <InlineNotice error={smtpError} success={smtpMsg} />
+              <div className="flex justify-end">
+                <Button type="submit" disabled={smtpSaving}>
+                  {smtpSaving ? 'Saving...' : 'Save SMTP Settings'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </form>
+      ) : null}
+
+      {activeTab === 'approval' ? (
+        <form onSubmit={handleSaveApprovalPolicy}>
+          <Card className="rounded-[24px]">
+            <CardHeader>
+              <CardTitle className="text-xl">Approval Policy</CardTitle>
+              <CardDescription>Configure the low-value purchase fast lane for requisitions that should clear without manual review.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <Field label="Auto-approve Threshold">
+                <div className="flex max-w-xs items-center gap-2">
+                  <span className="text-sm font-semibold text-muted-foreground">$</span>
+                  <Input type="number" min="0" step="0.01" value={approvalPolicy.auto_approve_threshold} onChange={(event) => setApprovalPolicy((current) => ({ ...current, auto_approve_threshold: event.target.value }))} />
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">Set to 0 to disable auto-approval.</p>
+              </Field>
+              <CheckboxRow
+                checked={approvalPolicy.auto_approve_require_budget_check === 'true'}
+                onChange={(checked) => setApprovalPolicy((current) => ({ ...current, auto_approve_require_budget_check: checked ? 'true' : 'false' }))}
+                title="Require budget check"
+                description="Only auto-approve if the requisition is within budget limits."
+              />
+              <CheckboxRow
+                checked={approvalPolicy.auto_approve_notify_manager === 'true'}
+                onChange={(checked) => setApprovalPolicy((current) => ({ ...current, auto_approve_notify_manager: checked ? 'true' : 'false' }))}
+                title="Add audit note when auto-approving"
+                description="Writes a detailed reason into the approval record."
+              />
+              {Number(approvalPolicy.auto_approve_threshold) > 0 ? (
+                <Alert variant="success">
+                  <AlertDescription>
+                    Fast lane active: requisitions up to $
+                    {Number(approvalPolicy.auto_approve_threshold).toLocaleString('en-US', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                    {' '}will be auto-approved.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              <InlineNotice error={approvalPolicyError} success={approvalPolicyMsg} />
+              <div className="flex justify-end">
+                <Button type="submit" disabled={approvalPolicySaving}>
+                  {approvalPolicySaving ? 'Saving...' : 'Save Approval Policy'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </form>
+      ) : null}
+
+      {activeTab === 'compliance' ? (
         <form onSubmit={handleSaveCompliance}>
-          <div style={card}>
-            <h2 style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.25rem', color: COLORS.textPrimary }}>Contract Compliance</h2>
-            <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginBottom: '1.5rem', marginTop: '0.25rem' }}>
-              Configure how the system handles purchase order line prices that deviate from contracted rates. Compliance is checked automatically when creating or modifying PO lines.
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div>
-                <label style={labelStyle}>Deviation Threshold</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <input
+          <Card className="rounded-[24px]">
+            <CardHeader>
+              <CardTitle className="text-xl">Contract Compliance</CardTitle>
+              <CardDescription>Control how the system handles PO line prices that deviate from active contract rates.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <Field label="Deviation Threshold">
+                <div className="flex max-w-xs items-center gap-2">
+                  <Input
                     type="number"
                     min="0"
                     max="100"
                     step="0.1"
-                    style={{ ...inputStyle, maxWidth: '120px' }}
                     value={compliance.contract_price_deviation_threshold}
-                    onChange={(e) => setCompliance((c) => ({ ...c, contract_price_deviation_threshold: e.target.value }))}
+                    onChange={(event) =>
+                      setCompliance((current) => ({
+                        ...current,
+                        contract_price_deviation_threshold: event.target.value,
+                      }))
+                    }
                   />
-                  <span style={{ fontSize: '0.875rem', color: COLORS.textSecondary, fontWeight: 500 }}>%</span>
+                  <span className="text-sm font-semibold text-muted-foreground">%</span>
                 </div>
-                <p style={{ fontSize: '0.8rem', color: COLORS.textMuted, marginTop: '0.375rem', margin: '0.375rem 0 0' }}>
-                  Price deviations within this percentage of the contracted price are treated as minor deviations. Set to 0 to require exact price match.
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Set to 0 to require an exact match against contract price.
                 </p>
+              </Field>
+              <div className="space-y-3">
+                <div className="text-sm font-medium text-foreground">Action When Threshold Exceeded</div>
+                <RadioCard
+                  checked={compliance.contract_price_deviation_action === 'warn'}
+                  onChange={() =>
+                    setCompliance((current) => ({ ...current, contract_price_deviation_action: 'warn' }))
+                  }
+                  title="Warn"
+                  description="Show an amber warning badge on the PO line, but allow submission."
+                />
+                <RadioCard
+                  checked={compliance.contract_price_deviation_action === 'block'}
+                  onChange={() =>
+                    setCompliance((current) => ({ ...current, contract_price_deviation_action: 'block' }))
+                  }
+                  title="Block submission"
+                  description="Prevent PO creation if any line price exceeds the threshold."
+                />
               </div>
-              <div>
-                <label style={labelStyle}>Action When Threshold Exceeded</label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', marginTop: '0.25rem' }}>
-                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.625rem', cursor: 'pointer' }}>
-                    <input
-                      type="radio"
-                      name="deviation_action"
-                      value="warn"
-                      checked={compliance.contract_price_deviation_action === 'warn'}
-                      onChange={() => setCompliance((c) => ({ ...c, contract_price_deviation_action: 'warn' }))}
-                      style={{ marginTop: '0.15rem' }}
-                    />
-                    <div>
-                      <div style={{ fontSize: '0.875rem', fontWeight: 500, color: COLORS.textPrimary }}>Warn</div>
-                      <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>Show an amber warning badge on the PO line, but allow submission.</div>
-                    </div>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.625rem', cursor: 'pointer' }}>
-                    <input
-                      type="radio"
-                      name="deviation_action"
-                      value="block"
-                      checked={compliance.contract_price_deviation_action === 'block'}
-                      onChange={() => setCompliance((c) => ({ ...c, contract_price_deviation_action: 'block' }))}
-                      style={{ marginTop: '0.15rem' }}
-                    />
-                    <div>
-                      <div style={{ fontSize: '0.875rem', fontWeight: 500, color: COLORS.textPrimary }}>Block submission</div>
-                      <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>Prevent PO creation if any line price exceeds the threshold.</div>
-                    </div>
-                  </label>
-                </div>
+              <Alert>
+                <AlertDescription>
+                  Compliance is checked against active contracts for the selected vendor. Lines without a matching contract line are marked as no-contract and are not subject to threshold enforcement.
+                </AlertDescription>
+              </Alert>
+              <InlineNotice error={complianceError} success={complianceMsg} />
+              <div className="flex justify-end">
+                <Button type="submit" disabled={complianceSaving}>
+                  {complianceSaving ? 'Saving...' : 'Save Compliance Settings'}
+                </Button>
               </div>
-              <div style={{ padding: '0.75rem 1rem', background: COLORS.accentBlueLight, borderRadius: '6px', border: '1px solid #bfdbfe', fontSize: '0.8125rem', color: '#1e40af' }}>
-                Compliance is checked against active contracts for the selected vendor. Lines without a matching contract line are marked as "No contract" and are not subject to threshold enforcement.
-              </div>
-            </div>
-            {complianceError && <div style={errorStyle}>{complianceError}</div>}
-            {complianceMsg && <div style={successStyle}>{complianceMsg}</div>}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
-              <button type="submit" disabled={complianceSaving} style={btnPrimary}>{complianceSaving ? 'Saving...' : 'Save Compliance Settings'}</button>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         </form>
-      )}
+      ) : null}
 
-      {activeTab === 'integrations' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div style={card}>
-            <h2 style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.25rem', color: COLORS.textPrimary }}>GL Integrations</h2>
-            <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, marginBottom: '1.5rem', marginTop: '0.25rem' }}>
-              Connect your accounting platform to automatically post approved invoices as bills or AP invoices. BetterSpend uses platform-managed OAuth apps; end users only authorize the connection for their QuickBooks or Xero company.
-            </p>
+      {activeTab === 'integrations' ? (
+        <div className="space-y-6">
+          <Card className="rounded-[24px]">
+            <CardHeader>
+              <CardTitle className="text-xl">GL Integrations</CardTitle>
+              <CardDescription>BetterSpend uses platform-managed OAuth apps. End users only authorize access for their QuickBooks or Xero company.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <InlineNotice error={integrationsError} success={integrationsMsg} />
+              <IntegrationCard
+                title="QuickBooks Online"
+                connected={oauthStatus.qbo}
+                configured={oauthStatus.qboConfigured !== false}
+                connectionId={oauthStatus.qboRealmId}
+                description="Posts approved invoices as Bills in QuickBooks Online using platform-managed OAuth credentials."
+                oauthLoading={oauthLoading}
+                onConnect={handleConnectQbo}
+                onDisconnect={handleDisconnectQbo}
+              />
+              <IntegrationCard
+                title="Xero"
+                connected={oauthStatus.xero}
+                configured={oauthStatus.xeroConfigured !== false}
+                connectionId={oauthStatus.xeroTenantId}
+                description="Posts approved invoices as Accounts Payable invoices in Xero using platform-managed OAuth credentials."
+                oauthLoading={oauthLoading}
+                onConnect={handleConnectXero}
+                onDisconnect={handleDisconnectXero}
+              />
+              <Alert variant="warning">
+                <AlertDescription>
+                  These integrations rely on platform-owned OAuth apps configured on the BetterSpend server. End users do not need to manage their own OAuth applications.
+                </AlertDescription>
+              </Alert>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
 
-            {integrationsMsg && <div style={successStyle}>{integrationsMsg}</div>}
-            {integrationsError && <div style={errorStyle}>{integrationsError}</div>}
+      {activeTab === 'org' ? (
+        <form onSubmit={handleSaveOrg}>
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
+            <Card className="rounded-[24px]">
+              <CardHeader>
+                <CardTitle className="text-xl">System Information</CardTitle>
+                <CardDescription>Reference build metadata, tax-code access, and the base platform configuration exposed to this workspace.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <InfoRow label="Organization ID" value="00000000-0000-0000-0000-000000000001" mono />
+                <InfoRow label="Demo Organization" value="Acme Corp" />
+                <InfoRow label="API Base URL" value={process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001'} mono />
+                <InfoRow label="Version" value={appReleaseLabel} />
+                <InfoRow label="License" value="MIT License" />
+                <InfoRow label="Source Code" value="github.com/AsyncronousVentures/betterspend" />
+                <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="text-sm font-medium text-foreground">Tax Code Management</div>
+                      <p className="mt-1 text-sm text-muted-foreground">Manage VAT and sales tax rates used on purchase order and invoice lines.</p>
+                    </div>
+                    <Button asChild>
+                      <Link href="/tax-codes">Open Tax Codes</Link>
+                    </Button>
+                  </div>
+                </div>
+                <Alert variant="warning">
+                  <AlertDescription>
+                    <strong>Open Source (MIT):</strong> BetterSpend is free to use, modify, and distribute. White-labeling is fully supported via the Branding tab.
+                  </AlertDescription>
+                </Alert>
+              </CardContent>
+            </Card>
 
-            {/* QuickBooks Online */}
-            <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: '8px', padding: '1.25rem', marginBottom: '1rem', marginTop: '1rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                    <span style={{ fontWeight: 600, fontSize: '0.9375rem', color: COLORS.textPrimary }}>QuickBooks Online</span>
-                    {oauthStatus.qbo ? (
-                      <span style={{ background: '#dcfce7', color: '#15803d', fontSize: '0.75rem', fontWeight: 600, padding: '0.125rem 0.5rem', borderRadius: '999px', border: '1px solid #bbf7d0' }}>Connected</span>
+            <Card className="rounded-[24px]">
+              <CardHeader>
+                <CardTitle className="text-xl">Currency Controls</CardTitle>
+                <CardDescription>Set the organization base currency and maintain saved manual exchange-rate overrides.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="Organization Base Currency">
+                    <Input maxLength={3} value={baseCurrency} onChange={(event) => setBaseCurrency(event.target.value.toUpperCase())} />
+                  </Field>
+                  <Field label="Rate">
+                    <Input type="number" min="0" step="0.00000001" value={rateForm.rate} onChange={(event) => setRateForm((current) => ({ ...current, rate: event.target.value }))} />
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {editingRateId ? 'Editing an existing exchange rate.' : 'Create or override a saved manual rate pair.'}
+                    </p>
+                  </Field>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="From Currency">
+                    <Input maxLength={3} value={rateForm.fromCurrency} onChange={(event) => setRateForm((current) => ({ ...current, fromCurrency: event.target.value.toUpperCase() }))} />
+                  </Field>
+                  <Field label="To Currency">
+                    <Input maxLength={3} value={rateForm.toCurrency} onChange={(event) => setRateForm((current) => ({ ...current, toCurrency: event.target.value.toUpperCase() }))} />
+                  </Field>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-medium text-foreground">Saved Exchange Rates</div>
+                    {editingRateId ? (
+                      <Button type="button" variant="outline" size="sm" onClick={handleCancelRateEdit}>
+                        Cancel Edit
+                      </Button>
+                    ) : null}
+                  </div>
+                  <div className="rounded-2xl border border-border/70">
+                    {exchangeRates.length === 0 ? (
+                      <div className="px-4 py-5 text-sm text-muted-foreground">No exchange rates configured yet.</div>
                     ) : (
-                      <span style={{ background: COLORS.accentRedLight, color: COLORS.accentRedDark, fontSize: '0.75rem', fontWeight: 600, padding: '0.125rem 0.5rem', borderRadius: '999px', border: '1px solid #fecaca' }}>Not connected</span>
+                      exchangeRates.map((rate, index) => (
+                        <div
+                          key={`${rate.fromCurrency}-${rate.toCurrency}-${rate.id ?? index}`}
+                          className={`grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto_auto_auto] md:items-center ${
+                            index < exchangeRates.length - 1 ? 'border-b border-border/70' : ''
+                          }`}
+                        >
+                          <div>
+                            <div className="text-sm font-medium text-foreground">
+                              {rate.fromCurrency} {'->'} {rate.toCurrency}
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {rate.isManual ? 'Manual override' : 'Imported'}
+                            </div>
+                          </div>
+                          <div className="font-mono text-sm text-muted-foreground">
+                            {Number(rate.rate).toFixed(6)}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {rate.fetchedAt ? new Date(rate.fetchedAt).toLocaleString() : 'Unknown'}
+                          </div>
+                          <div className="flex gap-2 md:justify-end">
+                            <Button type="button" size="sm" onClick={() => handleEditRate(rate)}>
+                              Edit
+                            </Button>
+                            <Button type="button" size="sm" variant="outline" onClick={() => handleDeleteRate(rate.id)}>
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
+                      ))
                     )}
                   </div>
-                  <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, margin: 0 }}>
-                    Posts approved invoices as Bills in QuickBooks Online using AsyncronousVentures-managed OAuth credentials.
-                  </p>
-                  <p style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.25rem' }}>
-                    Connection mode: platform-managed OAuth
-                  </p>
-                  {oauthStatus.qbo && oauthStatus.qboRealmId && (
-                    <p style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.25rem', fontFamily: 'monospace' }}>
-                      Realm ID: {oauthStatus.qboRealmId}
-                    </p>
-                  )}
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0, marginLeft: '1rem' }}>
-                  {oauthStatus.qbo ? (
-                    <button onClick={handleDisconnectQbo} style={btnDanger}>Disconnect</button>
-                  ) : oauthStatus.qboConfigured === false ? (
-                    <button disabled style={{ ...btnPrimary, opacity: 0.6, cursor: 'not-allowed' }}>
-                      Platform App Not Configured
-                    </button>
-                  ) : (
-                    <button onClick={handleConnectQbo} disabled={oauthLoading} style={btnPrimary}>
-                      {oauthLoading ? 'Redirecting...' : 'Connect QuickBooks'}
-                    </button>
-                  )}
+                <InlineNotice error={orgError} success={orgMsg} />
+                <div className="flex justify-end">
+                  <Button type="submit" disabled={orgSaving}>
+                    {orgSaving ? 'Saving...' : editingRateId ? 'Update Exchange Rate' : 'Save Currency Settings'}
+                  </Button>
                 </div>
-              </div>
-            </div>
-
-            {/* Xero */}
-            <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: '8px', padding: '1.25rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                    <span style={{ fontWeight: 600, fontSize: '0.9375rem', color: COLORS.textPrimary }}>Xero</span>
-                    {oauthStatus.xero ? (
-                      <span style={{ background: '#dcfce7', color: '#15803d', fontSize: '0.75rem', fontWeight: 600, padding: '0.125rem 0.5rem', borderRadius: '999px', border: '1px solid #bbf7d0' }}>Connected</span>
-                    ) : (
-                      <span style={{ background: COLORS.accentRedLight, color: COLORS.accentRedDark, fontSize: '0.75rem', fontWeight: 600, padding: '0.125rem 0.5rem', borderRadius: '999px', border: '1px solid #fecaca' }}>Not connected</span>
-                    )}
-                  </div>
-                  <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, margin: 0 }}>
-                    Posts approved invoices as Accounts Payable invoices in Xero using AsyncronousVentures-managed OAuth credentials.
-                  </p>
-                  <p style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.25rem' }}>
-                    Connection mode: platform-managed OAuth
-                  </p>
-                  {oauthStatus.xero && oauthStatus.xeroTenantId && (
-                    <p style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.25rem', fontFamily: 'monospace' }}>
-                      Tenant ID: {oauthStatus.xeroTenantId}
-                    </p>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0, marginLeft: '1rem' }}>
-                  {oauthStatus.xero ? (
-                    <button onClick={handleDisconnectXero} style={btnDanger}>Disconnect</button>
-                  ) : oauthStatus.xeroConfigured === false ? (
-                    <button disabled style={{ ...btnPrimary, opacity: 0.6, cursor: 'not-allowed' }}>
-                      Platform App Not Configured
-                    </button>
-                  ) : (
-                    <button onClick={handleConnectXero} disabled={oauthLoading} style={btnPrimary}>
-                      {oauthLoading ? 'Redirecting...' : 'Connect Xero'}
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ padding: '0.75rem 1rem', background: '#fef9c3', borderRadius: '6px', border: '1px solid #fde68a', fontSize: '0.8125rem', color: COLORS.accentAmberDark, marginTop: '1rem' }}>
-              These integrations rely on platform-owned OAuth apps configured on the BetterSpend server. End users do not need to create or manage their own QuickBooks or Xero OAuth applications.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'org' && (
-        <form onSubmit={handleSaveOrg} style={card}>
-          <h2 style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '1rem', color: COLORS.textPrimary }}>System Information</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <InfoRow label="Organization ID" value="00000000-0000-0000-0000-000000000001" mono />
-            <InfoRow label="Demo Organization" value="Acme Corp" />
-            <InfoRow label="API Base URL" value={process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001'} mono />
-            <InfoRow label="Version" value={appReleaseLabel} />
-            <InfoRow label="License" value="MIT License" />
-            <InfoRow label="Source Code" value="github.com/AsyncronousVentures/betterspend" />
-          </div>
-          <div style={{ marginTop: '1.5rem', padding: '1rem', background: COLORS.contentBg, borderRadius: '6px', border: `1px solid ${COLORS.border}` }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-              <div>
-                <h3 style={{ fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary, margin: 0 }}>Tax Code Management</h3>
-                <p style={{ fontSize: '0.8125rem', color: COLORS.textSecondary, margin: '0.35rem 0 0' }}>
-                  Manage VAT and sales tax rates used on purchase order and invoice lines.
-                </p>
-              </div>
-              <Link
-                href="/tax-codes"
-                style={{ ...btnPrimary, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
-              >
-                Open Tax Codes
-              </Link>
-            </div>
-          </div>
-          <div style={{ marginTop: '1.5rem', display: 'grid', gap: '1rem' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div>
-                <label style={labelStyle}>Organization Base Currency</label>
-                <input style={inputStyle} maxLength={3} value={baseCurrency} onChange={(e) => setBaseCurrency(e.target.value.toUpperCase())} />
-              </div>
-              <div>
-                <label style={labelStyle}>Add Exchange Rate</label>
-                <input style={inputStyle} type="number" min="0" step="0.00000001" value={rateForm.rate} onChange={(e) => setRateForm((prev) => ({ ...prev, rate: e.target.value }))} />
-                <div style={{ fontSize: '0.75rem', color: COLORS.textMuted, marginTop: '0.35rem' }}>
-                  {editingRateId ? 'Editing an existing exchange rate.' : 'Create or override a saved manual rate pair.'}
-                </div>
-              </div>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div>
-                <label style={labelStyle}>From Currency</label>
-                <input style={inputStyle} maxLength={3} value={rateForm.fromCurrency} onChange={(e) => setRateForm((prev) => ({ ...prev, fromCurrency: e.target.value.toUpperCase() }))} />
-              </div>
-              <div>
-                <label style={labelStyle}>To Currency</label>
-                <input style={inputStyle} maxLength={3} value={rateForm.toCurrency} onChange={(e) => setRateForm((prev) => ({ ...prev, toCurrency: e.target.value.toUpperCase() }))} />
-              </div>
-            </div>
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: COLORS.textSecondary }}>Saved Exchange Rates</div>
-                {editingRateId ? (
-                  <button type="button" onClick={handleCancelRateEdit} style={btnDanger}>Cancel Edit</button>
-                ) : null}
-              </div>
-              <div style={{ border: `1px solid ${COLORS.border}`, borderRadius: '6px', overflow: 'hidden' }}>
-                {exchangeRates.length === 0 ? (
-                  <div style={{ padding: '0.875rem 1rem', fontSize: '0.875rem', color: COLORS.textMuted }}>No exchange rates configured yet.</div>
-                ) : exchangeRates.map((rate, idx) => (
-                  <div key={`${rate.fromCurrency}-${rate.toCurrency}-${rate.id ?? idx}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr) auto', gap: '0.75rem', alignItems: 'center', padding: '0.75rem 1rem', borderBottom: idx < exchangeRates.length - 1 ? `1px solid ${COLORS.contentBg}` : undefined }}>
-                    <div>
-                      <div style={{ fontSize: '0.875rem', color: COLORS.textPrimary }}>{rate.fromCurrency} → {rate.toCurrency}</div>
-                      <div style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>
-                        {rate.isManual ? 'Manual override' : 'Imported'}
-                      </div>
-                    </div>
-                    <span style={{ fontSize: '0.875rem', color: COLORS.textSecondary, fontFamily: 'monospace' }}>{Number(rate.rate).toFixed(6)}</span>
-                    <span style={{ fontSize: '0.75rem', color: COLORS.textMuted }}>
-                      {rate.fetchedAt ? new Date(rate.fetchedAt).toLocaleString() : 'Unknown'}
-                    </span>
-                    <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                      <button type="button" onClick={() => handleEditRate(rate)} style={btnPrimary}>Edit</button>
-                      <button type="button" onClick={() => handleDeleteRate(rate.id)} style={btnDanger}>Delete</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-          {orgError && <div style={errorStyle}>{orgError}</div>}
-          {orgMsg && <div style={successStyle}>{orgMsg}</div>}
-          <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#fef9c3', borderRadius: '6px', border: '1px solid #fde68a' }}>
-            <p style={{ fontSize: '0.85rem', color: COLORS.accentAmberDark, margin: 0 }}>
-              <strong>Open Source (MIT):</strong> BetterSpend is free to use, modify, and distribute. White-labeling is fully supported via the Branding tab.
-            </p>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
-            <button type="submit" disabled={orgSaving} style={btnPrimary}>{orgSaving ? 'Saving...' : editingRateId ? 'Update Exchange Rate' : 'Save Currency Settings'}</button>
+              </CardContent>
+            </Card>
           </div>
         </form>
-      )}
+      ) : null}
 
-      {activeTab === 'password' && (
-        <div style={card}>
-          <h2 style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '1rem', color: COLORS.textPrimary }}>Change Password</h2>
-          <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div><label style={labelStyle}>Current Password</label><input type="password" required value={pwForm.currentPassword} onChange={(e) => setPwForm((f) => ({ ...f, currentPassword: e.target.value }))} style={inputStyle} /></div>
-            <div><label style={labelStyle}>New Password</label><input type="password" required value={pwForm.newPassword} onChange={(e) => setPwForm((f) => ({ ...f, newPassword: e.target.value }))} style={inputStyle} /></div>
-            <div><label style={labelStyle}>Confirm New Password</label><input type="password" required value={pwForm.confirmPassword} onChange={(e) => setPwForm((f) => ({ ...f, confirmPassword: e.target.value }))} style={inputStyle} /></div>
-            {pwError && <div style={errorStyle}>{pwError}</div>}
-            {pwMsg && <div style={successStyle}>{pwMsg}</div>}
-            <button type="submit" disabled={pwSaving} style={btnPrimary}>{pwSaving ? 'Changing...' : 'Change Password'}</button>
-          </form>
-        </div>
-      )}
+      {activeTab === 'password' ? (
+        <Card className="rounded-[24px]">
+          <CardHeader>
+            <CardTitle className="text-xl">Change Password</CardTitle>
+            <CardDescription>Update the current user password for this workspace login.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleChangePassword} className="space-y-5">
+              <Field label="Current Password">
+                <Input type="password" required value={pwForm.currentPassword} onChange={(event) => setPwForm((current) => ({ ...current, currentPassword: event.target.value }))} autoComplete="current-password" />
+              </Field>
+              <Field label="New Password">
+                <Input type="password" required value={pwForm.newPassword} onChange={(event) => setPwForm((current) => ({ ...current, newPassword: event.target.value }))} autoComplete="new-password" />
+              </Field>
+              <Field label="Confirm New Password">
+                <Input type="password" required value={pwForm.confirmPassword} onChange={(event) => setPwForm((current) => ({ ...current, confirmPassword: event.target.value }))} autoComplete="new-password" />
+              </Field>
+              <InlineNotice error={pwError} success={pwMsg} />
+              <div className="flex justify-end">
+                <Button type="submit" disabled={pwSaving}>
+                  {pwSaving ? 'Changing...' : 'Change Password'}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 }
 
 export default function SettingsPage() {
   return (
-    <Suspense fallback={<div style={{ padding: '2rem', color: COLORS.textMuted }}>Loading settings...</div>}>
+    <Suspense fallback={<div className="p-8 text-sm text-muted-foreground">Loading settings...</div>}>
       <SettingsContent />
     </Suspense>
   );
 }
 
-function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: `1px solid ${COLORS.contentBg}` }}>
-      <span style={{ fontSize: '0.875rem', color: COLORS.textSecondary }}>{label}</span>
-      <span style={{ fontSize: '0.875rem', color: COLORS.textPrimary, fontFamily: mono ? 'monospace' : undefined }}>{value}</span>
+    <div>
+      <label className="mb-2 block text-sm font-medium text-foreground">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function InlineNotice({ error, success }: { error?: string; success?: string }) {
+  return (
+    <>
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      {success ? (
+        <Alert variant="success">
+          <AlertDescription>{success}</AlertDescription>
+        </Alert>
+      ) : null}
+    </>
+  );
+}
+
+function CheckboxRow({
+  checked,
+  onChange,
+  title,
+  description,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  title: string;
+  description?: string;
+}) {
+  return (
+    <label className="flex gap-3 rounded-2xl border border-border/70 bg-muted/20 px-4 py-4">
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-1" />
+      <div>
+        <div className="text-sm font-medium text-foreground">{title}</div>
+        {description ? <div className="mt-1 text-xs text-muted-foreground">{description}</div> : null}
+      </div>
+    </label>
+  );
+}
+
+function RadioCard({
+  checked,
+  onChange,
+  title,
+  description,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  title: string;
+  description: string;
+}) {
+  return (
+    <label className="flex gap-3 rounded-2xl border border-border/70 bg-muted/20 px-4 py-4">
+      <input type="radio" checked={checked} onChange={onChange} className="mt-1" />
+      <div>
+        <div className="text-sm font-medium text-foreground">{title}</div>
+        <div className="mt-1 text-xs text-muted-foreground">{description}</div>
+      </div>
+    </label>
+  );
+}
+
+function ColorField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Field label={label}>
+      <div className="flex items-center gap-3">
+        <input
+          type="color"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="h-10 w-12 rounded-md border border-input bg-background p-1"
+        />
+        <Input value={value} onChange={(event) => onChange(event.target.value)} />
+      </div>
+    </Field>
+  );
+}
+
+function IntegrationCard({
+  title,
+  description,
+  connected,
+  configured,
+  connectionId,
+  oauthLoading,
+  onConnect,
+  onDisconnect,
+}: {
+  title: string;
+  description: string;
+  connected: boolean;
+  configured: boolean;
+  connectionId?: string;
+  oauthLoading: boolean;
+  onConnect: () => void;
+  onDisconnect: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-border/70 bg-background/80 p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="mb-2 flex items-center gap-2">
+            <div className="text-sm font-semibold text-foreground">{title}</div>
+            <Badge variant={connected ? 'success' : 'destructive'}>
+              {connected ? 'Connected' : 'Not connected'}
+            </Badge>
+          </div>
+          <p className="text-sm text-muted-foreground">{description}</p>
+          <p className="mt-2 text-xs text-muted-foreground">Connection mode: platform-managed OAuth</p>
+          {connectionId ? (
+            <p className="mt-2 font-mono text-xs text-muted-foreground">{connectionId}</p>
+          ) : null}
+        </div>
+        <div className="flex gap-2">
+          {connected ? (
+            <Button type="button" variant="outline" onClick={onDisconnect}>
+              Disconnect
+            </Button>
+          ) : configured ? (
+            <Button type="button" onClick={onConnect} disabled={oauthLoading}>
+              {oauthLoading ? 'Redirecting...' : `Connect ${title}`}
+            </Button>
+          ) : (
+            <Button type="button" disabled>
+              Platform App Not Configured
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InfoRow({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b border-border/70 py-3 last:border-b-0">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className={`text-sm text-foreground ${mono ? 'font-mono' : ''}`}>{value}</span>
     </div>
   );
 }

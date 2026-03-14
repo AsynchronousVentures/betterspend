@@ -44,6 +44,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated the entities, departments, projects, and users admin CRUD pages onto the Tailwind/shadcn-style form, table, and status-badge system, removing another batch of legacy inline theme usage.
 - Migrated GL export jobs, webhooks, and tax code management onto the new admin/settings UI layer while preserving retry, delivery-history, and tax-treatment workflows.
 - Migrated GL mappings and its embedded export-job view onto the shared Tailwind/shadcn admin surface so the accounting integration area no longer relies on legacy inline theme styling.
+- Migrated the main settings workspace onto the new design system, covering branding, SMTP, approval policy, compliance, integrations, currency controls, and password updates while preserving dirty-state protection.
 
 ### Fixed
 
