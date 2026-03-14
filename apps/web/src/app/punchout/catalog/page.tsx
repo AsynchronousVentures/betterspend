@@ -1,9 +1,20 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { AlertTriangle, Check, LoaderCircle, Search, ShoppingCart } from 'lucide-react';
 import { api } from '../../../lib/api';
-import { COLORS, SHADOWS } from '../../../lib/theme';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
+import { Badge } from '../../../components/ui/badge';
+import { Button } from '../../../components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../../components/ui/card';
+import { Input } from '../../../components/ui/input';
 
 interface CatalogItem {
   id: string;
@@ -19,6 +30,10 @@ interface CatalogItem {
 interface CartItem {
   item: CatalogItem;
   quantity: number;
+}
+
+function formatPrice(price: string | number, currency: string) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(price));
 }
 
 export default function PunchoutCatalogPage() {
@@ -45,43 +60,55 @@ export default function PunchoutCatalogPage() {
       try {
         const sessionInfo = await api.punchout.getSession(session);
         setSessionValid(sessionInfo.valid);
-        if (!sessionInfo.valid) { setLoading(false); return; }
+        if (!sessionInfo.valid) {
+          setLoading(false);
+          return;
+        }
 
-        // Load catalog items for this vendor
         const data = await api.catalog.list({ vendorId });
-        setItems((data as CatalogItem[]).filter((i: any) => i.isActive));
+        setItems((data as CatalogItem[]).filter((item: any) => item.isActive));
       } catch {
         setSessionValid(false);
       } finally {
         setLoading(false);
       }
     }
+
     void init();
   }, [session, vendorId]);
 
-  const filtered = items.filter((i) =>
-    !searchQ || i.name.toLowerCase().includes(searchQ.toLowerCase()) ||
-    (i.sku ?? '').toLowerCase().includes(searchQ.toLowerCase()) ||
-    (i.category ?? '').toLowerCase().includes(searchQ.toLowerCase())
+  const filtered = items.filter(
+    (item) =>
+      !searchQ ||
+      item.name.toLowerCase().includes(searchQ.toLowerCase()) ||
+      (item.sku ?? '').toLowerCase().includes(searchQ.toLowerCase()) ||
+      (item.category ?? '').toLowerCase().includes(searchQ.toLowerCase()),
   );
 
   function addToCart(item: CatalogItem) {
-    setCart((prev) => {
-      const existing = prev.find((c) => c.item.id === item.id);
-      if (existing) return prev.map((c) => c.item.id === item.id ? { ...c, quantity: c.quantity + 1 } : c);
-      return [...prev, { item, quantity: 1 }];
+    setCart((current) => {
+      const existing = current.find((entry) => entry.item.id === item.id);
+      if (existing) {
+        return current.map((entry) =>
+          entry.item.id === item.id ? { ...entry, quantity: entry.quantity + 1 } : entry,
+        );
+      }
+      return [...current, { item, quantity: 1 }];
     });
   }
 
   function updateQty(itemId: string, qty: number) {
     if (qty <= 0) {
-      setCart((prev) => prev.filter((c) => c.item.id !== itemId));
-    } else {
-      setCart((prev) => prev.map((c) => c.item.id === itemId ? { ...c, quantity: qty } : c));
+      setCart((current) => current.filter((entry) => entry.item.id !== itemId));
+      return;
     }
+
+    setCart((current) =>
+      current.map((entry) => (entry.item.id === itemId ? { ...entry, quantity: qty } : entry)),
+    );
   }
 
-  const cartTotal = cart.reduce((sum, c) => sum + parseFloat(c.item.unitPrice) * c.quantity, 0);
+  const cartTotal = cart.reduce((sum, entry) => sum + parseFloat(entry.item.unitPrice) * entry.quantity, 0);
 
   async function checkout() {
     if (cart.length === 0) return;
@@ -89,167 +116,256 @@ export default function PunchoutCatalogPage() {
     try {
       const orderMessage = {
         buyerCookie: session,
-        itemIn: cart.map((c) => ({
-          supplierPartId: c.item.sku ?? c.item.id,
-          description: c.item.name,
-          quantity: c.quantity,
-          unitPrice: parseFloat(c.item.unitPrice),
-          unitOfMeasure: c.item.unitOfMeasure,
-          currency: c.item.currency,
+        itemIn: cart.map((entry) => ({
+          supplierPartId: entry.item.sku ?? entry.item.id,
+          description: entry.item.name,
+          quantity: entry.quantity,
+          unitPrice: parseFloat(entry.item.unitPrice),
+          unitOfMeasure: entry.item.unitOfMeasure,
+          currency: entry.item.currency,
         })),
       };
       const result = await api.punchout.orderReturn(session, orderMessage);
       setCheckoutResult(result);
-    } catch (err) {
-      setCheckoutError(err instanceof Error ? err.message : 'Checkout failed');
+    } catch (error) {
+      setCheckoutError(error instanceof Error ? error.message : 'Checkout failed');
     } finally {
       setCheckingOut(false);
     }
   }
 
-  function formatPrice(price: string, currency: string) {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(parseFloat(price));
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,#f8fafc_0%,#eef4ff_100%)] px-4">
+        <div className="flex items-center gap-3 rounded-full border border-border/70 bg-card/80 px-5 py-3 text-sm text-muted-foreground">
+          <LoaderCircle className="h-4 w-4 animate-spin" />
+          Loading catalog...
+        </div>
+      </div>
+    );
   }
 
-  if (loading) return <div style={{ padding: '2rem', color: COLORS.textSecondary, textAlign: 'center' }}>Loading catalog…</div>;
-
-  if (!sessionValid) return (
-    <div style={{ padding: '3rem', textAlign: 'center', maxWidth: '480px', margin: '0 auto' }}>
-      <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠️</div>
-      <h2 style={{ color: COLORS.textPrimary, marginBottom: '0.5rem' }}>Invalid or Expired Session</h2>
-      <p style={{ color: COLORS.textSecondary, fontSize: '0.875rem' }}>
-        This punchout session is no longer valid. Please restart the punchout from your procurement system.
-      </p>
-    </div>
-  );
-
-  if (checkoutResult) return (
-    <div style={{ padding: '3rem', textAlign: 'center', maxWidth: '560px', margin: '0 auto' }}>
-      <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>✓</div>
-      <h2 style={{ color: '#059669', marginBottom: '0.5rem' }}>Items Sent to Requisition</h2>
-      <p style={{ color: COLORS.textSecondary, fontSize: '0.875rem', marginBottom: '1.5rem' }}>
-        {checkoutResult.lines?.length ?? 0} line(s) have been returned to your procurement system. You may close this window.
-      </p>
-      <div style={{ background: COLORS.accentGreenLight, border: '1px solid #bbf7d0', borderRadius: '8px', padding: '1.25rem', textAlign: 'left' }}>
-        {checkoutResult.lines?.map((l: any, i: number) => (
-          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.375rem 0', borderBottom: i < checkoutResult.lines.length - 1 ? '1px solid #d1fae5' : undefined, fontSize: '0.875rem' }}>
-            <span style={{ color: COLORS.textSecondary }}>{l.description} × {l.quantity}</span>
-            <span style={{ color: '#059669', fontWeight: 600 }}>${(l.unitPrice * l.quantity).toFixed(2)}</span>
-          </div>
-        ))}
+  if (!sessionValid) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,#f8fafc_0%,#eef4ff_100%)] px-4">
+        <Card className="w-full max-w-xl rounded-[30px] border-border/70 bg-card/95">
+          <CardContent className="flex flex-col items-center gap-5 px-8 py-14 text-center">
+            <div className="flex h-20 w-20 items-center justify-center rounded-[28px] bg-amber-50 text-amber-700">
+              <AlertTriangle className="h-10 w-10" />
+            </div>
+            <div className="space-y-2">
+              <h1 className="font-display text-3xl font-semibold tracking-[-0.04em] text-foreground">
+                Invalid or Expired Session
+              </h1>
+              <p className="text-sm leading-6 text-muted-foreground">
+                This punchout session is no longer valid. Restart the punchout from your procurement system.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
-    </div>
-  );
+    );
+  }
+
+  if (checkoutResult) {
+    return (
+      <div className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef4ff_100%)] px-4 py-10">
+        <div className="mx-auto max-w-3xl">
+          <Card className="rounded-[30px] border-border/70 bg-card/95">
+            <CardContent className="space-y-6 px-8 py-10">
+              <div className="flex flex-col items-center gap-4 text-center">
+                <div className="flex h-20 w-20 items-center justify-center rounded-[28px] bg-emerald-50 text-emerald-700">
+                  <Check className="h-10 w-10" />
+                </div>
+                <div className="space-y-2">
+                  <h1 className="font-display text-3xl font-semibold tracking-[-0.04em] text-emerald-700">
+                    Items Sent to Requisition
+                  </h1>
+                  <p className="text-sm text-muted-foreground">
+                    {checkoutResult.lines?.length ?? 0} line(s) were returned to your procurement system. You may close this window.
+                  </p>
+                </div>
+              </div>
+              <Card className="rounded-[24px] bg-emerald-50/60">
+                <CardContent className="grid gap-3 p-5">
+                  {(checkoutResult.lines ?? []).map((line: any, index: number) => (
+                    <div key={index} className="flex items-center justify-between gap-4 border-b border-emerald-200/80 pb-3 text-sm last:border-0 last:pb-0">
+                      <span className="text-muted-foreground">
+                        {line.description} x {line.quantity}
+                      </span>
+                      <span className="font-semibold text-emerald-700">
+                        {(line.unitPrice * line.quantity).toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ minHeight: '100vh', background: COLORS.hoverBg, fontFamily: 'system-ui, sans-serif' }}>
-      {/* Header */}
-      <div style={{ background: '#1e3a5f', color: COLORS.white, padding: '1rem 2rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>Vendor Catalog</div>
-          <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>Punchout Session</div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          {cart.length > 0 && (
-            <div style={{ fontSize: '0.875rem', background: 'rgba(255,255,255,0.1)', padding: '0.375rem 0.75rem', borderRadius: '6px' }}>
-              Cart: {cart.length} item{cart.length !== 1 ? 's' : ''} — ${cartTotal.toFixed(2)}
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.12),_transparent_30%),linear-gradient(180deg,#f8fafc_0%,#eef4ff_100%)]">
+      <div className="border-b border-slate-900/10 bg-slate-950 text-slate-50 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.75)]">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-6 md:flex-row md:items-center md:justify-between md:px-6">
+          <div className="space-y-1">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-200/80">
+              Punchout Catalog
             </div>
-          )}
-          <button
-            onClick={checkout}
-            disabled={cart.length === 0 || checkingOut}
-            style={{ background: cart.length > 0 ? COLORS.accentBlue : COLORS.textSecondary, color: COLORS.white, border: 'none', padding: '0.5rem 1.25rem', borderRadius: '6px', fontSize: '0.875rem', fontWeight: 600, cursor: cart.length > 0 ? 'pointer' : 'not-allowed', opacity: checkingOut ? 0.7 : 1 }}
-          >
-            {checkingOut ? 'Checking out…' : `Checkout (${cart.length})`}
-          </button>
+            <div className="font-display text-3xl font-semibold tracking-[-0.04em]">Vendor Catalog</div>
+          </div>
+          <div className="flex items-center gap-3">
+            {cart.length > 0 ? (
+              <div className="rounded-full border border-slate-700/80 bg-slate-900/60 px-4 py-2 text-sm text-slate-200">
+                Cart: {cart.length} item{cart.length !== 1 ? 's' : ''} · {cartTotal.toFixed(2)}
+              </div>
+            ) : null}
+            <Button type="button" onClick={checkout} disabled={cart.length === 0 || checkingOut} className="gap-2 bg-sky-500 text-white hover:bg-sky-400">
+              <ShoppingCart className="h-4 w-4" />
+              {checkingOut ? 'Checking out...' : `Checkout (${cart.length})`}
+            </Button>
+          </div>
         </div>
       </div>
 
-      {checkoutError && (
-        <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', padding: '0.75rem 1.5rem', color: COLORS.accentRedDark, fontSize: '0.875rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          {checkoutError}
-          <button onClick={() => setCheckoutError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.accentRedDark, fontWeight: 700 }}>×</button>
-        </div>
-      )}
-      <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '1.5rem 2rem', display: 'grid', gridTemplateColumns: '1fr 300px', gap: '1.5rem', alignItems: 'start' }}>
-        {/* Main catalog */}
-        <div>
-          <input
-            value={searchQ}
-            onChange={(e) => setSearchQ(e.target.value)}
-            placeholder="Search catalog…"
-            style={{ width: '100%', padding: '0.625rem 0.875rem', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '6px', fontSize: '0.875rem', marginBottom: '1rem', boxSizing: 'border-box', background: COLORS.cardBg }}
-          />
-          {filtered.length === 0 ? (
-            <div style={{ padding: '3rem', textAlign: 'center', color: COLORS.textMuted, background: COLORS.cardBg, borderRadius: '8px', border: `1px solid ${COLORS.border}` }}>
-              {items.length === 0 ? 'No catalog items available for this vendor.' : 'No items match your search.'}
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' }}>
-              {filtered.map((item) => {
-                const inCart = cart.find((c) => c.item.id === item.id);
-                return (
-                  <div key={item.id} style={{ background: COLORS.cardBg, border: `1px solid ${inCart ? COLORS.accentBlue : COLORS.border}`, borderRadius: '8px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', boxShadow: SHADOWS.card }}>
-                    {item.category && (
-                      <span style={{ fontSize: '0.7rem', fontWeight: 600, color: COLORS.textSecondary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{item.category}</span>
-                    )}
-                    <div style={{ fontWeight: 600, fontSize: '0.9rem', color: COLORS.textPrimary }}>{item.name}</div>
-                    {item.sku && <div style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: COLORS.textMuted }}>SKU: {item.sku}</div>}
-                    {item.description && <div style={{ fontSize: '0.8rem', color: COLORS.textSecondary }}>{item.description}</div>}
-                    <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ fontWeight: 700, color: '#059669' }}>{formatPrice(item.unitPrice, item.currency)}<span style={{ fontWeight: 400, color: COLORS.textMuted, fontSize: '0.75rem' }}>/{item.unitOfMeasure}</span></div>
-                      {inCart ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                          <button onClick={() => updateQty(item.id, inCart.quantity - 1)} style={{ width: '24px', height: '24px', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '4px', background: COLORS.cardBg, cursor: 'pointer', fontWeight: 600 }}>−</button>
-                          <span style={{ fontSize: '0.875rem', fontWeight: 600, minWidth: '24px', textAlign: 'center' }}>{inCart.quantity}</span>
-                          <button onClick={() => updateQty(item.id, inCart.quantity + 1)} style={{ width: '24px', height: '24px', border: `1px solid ${COLORS.inputBorder}`, borderRadius: '4px', background: COLORS.cardBg, cursor: 'pointer', fontWeight: 600 }}>+</button>
-                        </div>
-                      ) : (
-                        <button onClick={() => addToCart(item)} style={{ background: COLORS.accentBlue, color: COLORS.white, border: 'none', borderRadius: '6px', padding: '0.25rem 0.75rem', fontSize: '0.8rem', fontWeight: 500, cursor: 'pointer' }}>Add</button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+      <div className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 md:px-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-5">
+          {checkoutError ? (
+            <Alert variant="destructive">
+              <AlertDescription>{checkoutError}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          <Card className="rounded-[28px]">
+            <CardHeader>
+              <CardTitle className="text-xl">Browse catalog</CardTitle>
+              <CardDescription>Search by name, SKU, or category, then send selected lines back into the requisition flow.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-5">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchQ}
+                  onChange={(event) => setSearchQ(event.target.value)}
+                  placeholder="Search catalog..."
+                  className="pl-9"
+                />
+              </div>
+
+              {filtered.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-6 py-14 text-center text-sm text-muted-foreground">
+                  {items.length === 0 ? 'No catalog items available for this vendor.' : 'No items match your search.'}
+                </div>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {filtered.map((item) => {
+                    const inCart = cart.find((entry) => entry.item.id === item.id);
+                    return (
+                      <Card
+                        key={item.id}
+                        className={`rounded-[24px] border-border/70 bg-card/95 ${
+                          inCart ? 'border-sky-300 shadow-[0_18px_52px_-36px_rgba(14,165,233,0.45)]' : ''
+                        }`}
+                      >
+                        <CardContent className="flex h-full flex-col gap-4 p-5">
+                          <div className="space-y-3">
+                            {item.category ? <Badge variant="outline">{item.category}</Badge> : null}
+                            <div className="space-y-1">
+                              <div className="font-semibold text-foreground">{item.name}</div>
+                              {item.sku ? (
+                                <div className="font-mono text-xs text-muted-foreground">SKU: {item.sku}</div>
+                              ) : null}
+                            </div>
+                            {item.description ? (
+                              <div className="text-sm text-muted-foreground">{item.description}</div>
+                            ) : null}
+                          </div>
+
+                          <div className="mt-auto flex items-end justify-between gap-4">
+                            <div>
+                              <div className="text-lg font-semibold text-emerald-700">
+                                {formatPrice(item.unitPrice, item.currency)}
+                              </div>
+                              <div className="text-xs text-muted-foreground">per {item.unitOfMeasure}</div>
+                            </div>
+                            {inCart ? (
+                              <div className="flex items-center gap-2">
+                                <Button type="button" size="icon" variant="outline" onClick={() => updateQty(item.id, inCart.quantity - 1)}>
+                                  -
+                                </Button>
+                                <span className="min-w-6 text-center text-sm font-semibold text-foreground">
+                                  {inCart.quantity}
+                                </span>
+                                <Button type="button" size="icon" variant="outline" onClick={() => updateQty(item.id, inCart.quantity + 1)}>
+                                  +
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button type="button" onClick={() => addToCart(item)}>
+                                Add
+                              </Button>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
 
-        {/* Cart sidebar */}
-        <div style={{ background: COLORS.cardBg, border: `1px solid ${COLORS.border}`, borderRadius: '8px', padding: '1.25rem', position: 'sticky', top: '1.5rem', boxShadow: SHADOWS.card }}>
-          <h3 style={{ margin: '0 0 1rem', fontSize: '0.95rem', fontWeight: 600, color: COLORS.textPrimary }}>Cart ({cart.length})</h3>
-          {cart.length === 0 ? (
-            <p style={{ color: COLORS.textMuted, fontSize: '0.875rem', textAlign: 'center', padding: '1rem 0' }}>No items yet</p>
-          ) : (
-            <>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', marginBottom: '1rem' }}>
-                {cart.map((c) => (
-                  <div key={c.item.id} style={{ fontSize: '0.8rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
-                      <span style={{ color: COLORS.textSecondary, fontWeight: 500, flex: 1 }}>{c.item.name}</span>
-                      <button onClick={() => updateQty(c.item.id, 0)} style={{ background: 'none', border: 'none', color: COLORS.textMuted, cursor: 'pointer', fontSize: '1rem', padding: 0, lineHeight: 1 }}>×</button>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.25rem', color: COLORS.textSecondary }}>
-                      <span>{c.quantity} × {formatPrice(c.item.unitPrice, c.item.currency)}</span>
-                      <span style={{ fontWeight: 600, color: COLORS.textPrimary }}>{formatPrice(String(parseFloat(c.item.unitPrice) * c.quantity), c.item.currency)}</span>
-                    </div>
-                  </div>
-                ))}
+        <Card className="sticky top-6 rounded-[28px] self-start">
+          <CardHeader>
+            <CardTitle className="text-xl">Cart ({cart.length})</CardTitle>
+            <CardDescription>Review selected items before sending them back to the requisition flow.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            {cart.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-5 py-10 text-center text-sm text-muted-foreground">
+                No items yet.
               </div>
-              <div style={{ borderTop: `2px solid ${COLORS.border}`, paddingTop: '0.75rem', display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '0.95rem' }}>
-                <span>Total</span>
-                <span>${cartTotal.toFixed(2)}</span>
-              </div>
-              <button
-                onClick={checkout}
-                disabled={checkingOut}
-                style={{ width: '100%', marginTop: '1rem', background: COLORS.accentBlue, color: COLORS.white, border: 'none', padding: '0.625rem', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', opacity: checkingOut ? 0.7 : 1 }}
-              >
-                {checkingOut ? 'Checking out…' : 'Send to Requisition'}
-              </button>
-            </>
-          )}
-        </div>
+            ) : (
+              <>
+                <div className="grid gap-3">
+                  {cart.map((entry) => (
+                    <div key={entry.item.id} className="rounded-[22px] border border-border/70 bg-background/70 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="font-medium text-foreground">{entry.item.name}</div>
+                          <div className="text-sm text-muted-foreground">
+                            {entry.quantity} x {formatPrice(entry.item.unitPrice, entry.item.currency)}
+                          </div>
+                        </div>
+                        <Button type="button" size="icon" variant="ghost" onClick={() => updateQty(entry.item.id, 0)}>
+                          ×
+                        </Button>
+                      </div>
+                      <div className="mt-3 flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Line total</span>
+                        <span className="font-semibold text-foreground">
+                          {formatPrice(parseFloat(entry.item.unitPrice) * entry.quantity, entry.item.currency)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between border-t border-border/70 pt-4 text-base font-semibold text-foreground">
+                  <span>Total</span>
+                  <span>{cartTotal.toFixed(2)}</span>
+                </div>
+                <Button type="button" onClick={checkout} disabled={checkingOut} className="w-full gap-2">
+                  <ShoppingCart className="h-4 w-4" />
+                  {checkingOut ? 'Checking out...' : 'Send to Requisition'}
+                </Button>
+              </>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

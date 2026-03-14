@@ -69,6 +69,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Migrated the recurring purchase order workspace onto the new design system, covering schedule inventory, pause/resume and skip-next controls, upcoming run previews, generated PO history, and recurring PO creation.
 - Migrated the vendor portal onto the new design system, covering secure token access, invoice submission, onboarding workflows, catalog pricing proposals, and supplier-side proposal history.
 - Migrated the approval workflow builder onto the new design system, covering saved-rule management, visual condition editing, step sequencing, raw JSON editing, and approval-chain simulation.
+- Migrated the public punchout catalog onto the new design system, covering session validation, search, cart management, and requisition checkout return.
 
 ### Fixed
 
