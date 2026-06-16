@@ -11,6 +11,7 @@ import {
   CreditCard, BarChart2, FileBarChart2, Building2, Star, Leaf, UserPlus,
   ScrollText, KeyRound, Users, FolderTree, Briefcase, Building,
   Zap, History, Settings, ChevronRight, Puzzle,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 import { signOut } from '../lib/auth-client';
@@ -32,6 +33,7 @@ function isGroup(entry: NavEntry): entry is NavGroup {
 
 const NAV_ICONS: Record<string, LucideIcon> = {
   'Dashboard':                LayoutDashboard,
+  'Start Request':            Sparkles,
   'Requisitions':             ClipboardList,
   'Purchase Orders':          ShoppingCart,
   'RFQ / Sourcing':           Megaphone,
@@ -88,6 +90,7 @@ const NAV_CONFIG: NavEntry[] = [
     label: 'Procurement',
     defaultOpen: true,
     children: [
+      { label: 'Start Request', href: '/start' },
       { label: 'Requisitions', href: '/requisitions' },
       { label: 'Purchase Orders', href: '/purchase-orders' },
       { label: 'RFQ / Sourcing', href: '/rfq' },

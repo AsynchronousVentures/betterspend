@@ -48,6 +48,7 @@ import { SoftwareLicensesModule } from './modules/software-licenses/software-lic
 import { EmailIntakeModule } from './modules/email-intake/email-intake.module';
 import { AccountModule } from './modules/account/account.module';
 import { PaymentRunsModule } from './modules/payment-runs/payment-runs.module';
+import { IntakeConciergeModule } from './modules/intake-concierge/intake-concierge.module';
 
 @Module({
   imports: [
@@ -85,6 +86,7 @@ import { PaymentRunsModule } from './modules/payment-runs/payment-runs.module';
     SoftwareLicensesModule,
     PaymentRunsModule,
     EmailIntakeModule,
+    IntakeConciergeModule,
     AuditModule,
     ReportsModule,
     SearchModule,
