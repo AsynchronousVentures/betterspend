@@ -556,12 +556,19 @@ export class PurchaseOrdersService {
         pl.description,
         pl.quantity::numeric                                             AS "orderedQty",
         pl.unit_of_measure                                              AS "uom",
-        COALESCE(SUM(grl.quantity_received::numeric), 0)::numeric       AS "receivedQty",
-        COALESCE(SUM(grl.quantity_rejected::numeric), 0)::numeric       AS "rejectedQty",
-        (pl.quantity::numeric - COALESCE(SUM(grl.quantity_received::numeric), 0))::numeric AS "outstandingQty",
+        COALESCE(SUM(CASE WHEN gr.id IS NOT NULL THEN grl.quantity_received::numeric ELSE 0 END), 0)::numeric AS "receivedQty",
+        COALESCE(SUM(CASE WHEN gr.id IS NOT NULL THEN grl.quantity_rejected::numeric ELSE 0 END), 0)::numeric AS "rejectedQty",
+        (
+          pl.quantity::numeric -
+          COALESCE(SUM(CASE WHEN gr.id IS NOT NULL THEN grl.quantity_received::numeric ELSE 0 END), 0)
+        )::numeric AS "outstandingQty",
         CASE
           WHEN pl.quantity::numeric = 0 THEN 0
-          ELSE ROUND(COALESCE(SUM(grl.quantity_received::numeric), 0) / pl.quantity::numeric * 100, 1)
+          ELSE ROUND(
+            COALESCE(SUM(CASE WHEN gr.id IS NOT NULL THEN grl.quantity_received::numeric ELSE 0 END), 0) /
+            pl.quantity::numeric * 100,
+            1
+          )
         END                                                              AS "receivedPct",
         COUNT(DISTINCT gr.id)::int                                       AS "grnCount"
       FROM po_lines pl
