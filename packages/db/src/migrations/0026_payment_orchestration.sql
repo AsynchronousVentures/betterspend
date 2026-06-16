@@ -2,7 +2,15 @@ ALTER TABLE "payment_runs"
   ADD COLUMN IF NOT EXISTS "entity_id" uuid;
 --> statement-breakpoint
 ALTER TABLE "payment_runs"
-  ADD COLUMN IF NOT EXISTS "status" varchar(30) DEFAULT 'draft' NOT NULL;
+  ADD COLUMN IF NOT EXISTS "status" varchar(30);
+--> statement-breakpoint
+UPDATE "payment_runs"
+  SET "status" = 'completed'
+  WHERE "status" IS NULL;
+--> statement-breakpoint
+ALTER TABLE "payment_runs"
+  ALTER COLUMN "status" SET DEFAULT 'draft',
+  ALTER COLUMN "status" SET NOT NULL;
 --> statement-breakpoint
 ALTER TABLE "payment_runs"
   ADD COLUMN IF NOT EXISTS "scheduled_date" date;
@@ -41,6 +49,19 @@ ALTER TABLE "payment_runs"
 --> statement-breakpoint
 ALTER TABLE "payment_runs"
   ADD COLUMN IF NOT EXISTS "updated_at" timestamp with time zone DEFAULT now() NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "payment_run_invoices"
+  ADD COLUMN IF NOT EXISTS "id" uuid DEFAULT gen_random_uuid() NOT NULL;
+--> statement-breakpoint
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'payment_run_invoices_pkey'
+  ) THEN
+    ALTER TABLE "payment_run_invoices"
+      ADD CONSTRAINT "payment_run_invoices_pkey" PRIMARY KEY ("id");
+  END IF;
+END $$;
 --> statement-breakpoint
 ALTER TABLE "payment_run_invoices"
   ADD COLUMN IF NOT EXISTS "payment_method" varchar(30) DEFAULT 'manual' NOT NULL;
@@ -220,5 +241,16 @@ BEGIN
     ALTER TABLE "vendor_virtual_cards"
       ADD CONSTRAINT "vendor_virtual_cards_invoice_id_invoices_id_fk"
       FOREIGN KEY ("invoice_id") REFERENCES "invoices"("id");
+  END IF;
+END $$;
+--> statement-breakpoint
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'vendor_virtual_cards_created_by_users_id_fk'
+  ) THEN
+    ALTER TABLE "vendor_virtual_cards"
+      ADD CONSTRAINT "vendor_virtual_cards_created_by_users_id_fk"
+      FOREIGN KEY ("created_by") REFERENCES "users"("id");
   END IF;
 END $$;

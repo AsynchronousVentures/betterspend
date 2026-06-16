@@ -27,6 +27,7 @@ export const paymentRuns = pgTable('payment_runs', {
 });
 
 export const paymentRunInvoices = pgTable('payment_run_invoices', {
+  id: uuid('id').primaryKey().defaultRandom(),
   paymentRunId: uuid('payment_run_id').notNull().references(() => paymentRuns.id),
   invoiceId: uuid('invoice_id').notNull().references(() => invoices.id),
   paymentMethod: varchar('payment_method', { length: 30 }).notNull().default('manual'),
