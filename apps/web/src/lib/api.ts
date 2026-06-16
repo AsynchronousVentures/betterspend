@@ -422,6 +422,47 @@ export const api = {
     cashFlowForecast: () => apiFetch<any[]>('/invoices/cash-flow-forecast'),
     earlyPaymentOpportunities: () => apiFetch<any[]>('/invoices/early-payment-opportunities'),
   },
+  paymentRuns: {
+    list: (params?: { status?: string }) =>
+      apiFetch<any[]>(`/payment-runs${params?.status ? `?status=${encodeURIComponent(params.status)}` : ''}`),
+    get: (id: string) => apiFetch<any>(`/payment-runs/${id}`),
+    summary: () => apiFetch<any>('/payment-runs/summary'),
+    eligibleInvoices: () => apiFetch<any[]>('/payment-runs/eligible-invoices'),
+    create: (data: {
+      invoiceIds: string[];
+      paymentMethod?: string;
+      invoiceMethods?: Record<string, string>;
+      scheduledDate?: string;
+      entityId?: string | null;
+      notes?: string;
+    }) =>
+      apiFetch<any>('/payment-runs', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    approve: (id: string) => apiFetch<any>(`/payment-runs/${id}/approve`, { method: 'PATCH' }),
+    submit: (id: string, data?: { providerBatchId?: string; paymentReference?: string }) =>
+      apiFetch<any>(`/payment-runs/${id}/submit`, {
+        method: 'PATCH',
+        body: JSON.stringify(data ?? {}),
+      }),
+    cancel: (id: string, data?: { reason?: string }) =>
+      apiFetch<any>(`/payment-runs/${id}/cancel`, {
+        method: 'PATCH',
+        body: JSON.stringify(data ?? {}),
+      }),
+    vendorAccounts: (vendorId?: string) =>
+      apiFetch<any[]>(
+        `/payment-runs/vendor-accounts${vendorId ? `?vendorId=${encodeURIComponent(vendorId)}` : ''}`,
+      ),
+    createVendorAccount: (data: unknown) =>
+      apiFetch<any>('/payment-runs/vendor-accounts', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    verifyVendorAccount: (id: string) =>
+      apiFetch<any>(`/payment-runs/vendor-accounts/${id}/verify`, { method: 'PATCH' }),
+  },
   approvals: {
     list: () => apiFetch<any[]>('/approvals'),
     get: (id: string) => apiFetch<any>(`/approvals/${id}`),

@@ -22,7 +22,13 @@ import { contracts, contractLines, contractAmendments } from './schema/contracts
 import { systemSettings } from './schema/system-settings';
 import { vendorPortalTokens } from './schema/vendor-portal-tokens';
 import { notifications } from './schema/notifications';
-import { paymentRuns, paymentRunInvoices } from './schema/payment-runs';
+import {
+  paymentRunEvents,
+  paymentRunInvoices,
+  paymentRuns,
+  vendorPaymentAccounts,
+  vendorVirtualCards,
+} from './schema/payment-runs';
 import { taxCodes } from './schema/tax-codes';
 import { exchangeRates } from './schema/exchange-rates';
 import { spendGuardAlerts } from './schema/spend-guard-alerts';
@@ -446,8 +452,12 @@ export const requisitionTemplatesRelations = relations(requisitionTemplates, ({ 
 
 export const paymentRunsRelations = relations(paymentRuns, ({ one, many }) => ({
   organization: one(organizations, { fields: [paymentRuns.orgId], references: [organizations.id] }),
+  entity: one(legalEntities, { fields: [paymentRuns.entityId], references: [legalEntities.id] }),
   createdByUser: one(users, { fields: [paymentRuns.createdBy], references: [users.id] }),
+  approvedByUser: one(users, { fields: [paymentRuns.approvedBy], references: [users.id] }),
   paymentRunInvoices: many(paymentRunInvoices),
+  events: many(paymentRunEvents),
+  virtualCards: many(vendorVirtualCards),
 }));
 
 export const paymentRunInvoicesRelations = relations(paymentRunInvoices, ({ one }) => ({
@@ -456,6 +466,36 @@ export const paymentRunInvoicesRelations = relations(paymentRunInvoices, ({ one 
     references: [paymentRuns.id],
   }),
   invoice: one(invoices, { fields: [paymentRunInvoices.invoiceId], references: [invoices.id] }),
+}));
+
+export const paymentRunEventsRelations = relations(paymentRunEvents, ({ one }) => ({
+  paymentRun: one(paymentRuns, {
+    fields: [paymentRunEvents.paymentRunId],
+    references: [paymentRuns.id],
+  }),
+  createdByUser: one(users, { fields: [paymentRunEvents.createdBy], references: [users.id] }),
+}));
+
+export const vendorPaymentAccountsRelations = relations(vendorPaymentAccounts, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [vendorPaymentAccounts.orgId],
+    references: [organizations.id],
+  }),
+  vendor: one(vendors, { fields: [vendorPaymentAccounts.vendorId], references: [vendors.id] }),
+}));
+
+export const vendorVirtualCardsRelations = relations(vendorVirtualCards, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [vendorVirtualCards.orgId],
+    references: [organizations.id],
+  }),
+  vendor: one(vendors, { fields: [vendorVirtualCards.vendorId], references: [vendors.id] }),
+  paymentRun: one(paymentRuns, {
+    fields: [vendorVirtualCards.paymentRunId],
+    references: [paymentRuns.id],
+  }),
+  invoice: one(invoices, { fields: [vendorVirtualCards.invoiceId], references: [invoices.id] }),
+  createdByUser: one(users, { fields: [vendorVirtualCards.createdBy], references: [users.id] }),
 }));
 
 export const spendGuardAlertsRelations = relations(spendGuardAlerts, ({ one }) => ({
