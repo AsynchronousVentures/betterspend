@@ -888,7 +888,7 @@ export class IntakeConciergeService {
         description: line.description,
         quantity: line.quantity,
         unitOfMeasure: line.unitOfMeasure,
-        targetPrice: line.unitPrice || undefined,
+        targetPrice: line.unitPrice ?? undefined,
       })),
       vendorIds: plan.preferredVendors
         .filter((vendor) => Number(vendor.score ?? 0) > 0)
