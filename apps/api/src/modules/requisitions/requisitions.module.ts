@@ -10,6 +10,6 @@ import { SpendGuardModule } from '../spend-guard/spend-guard.module';
   imports: [ApprovalsModule, BudgetsModule, SpendGuardModule],
   controllers: [RequisitionsController],
   providers: [RequisitionsService, AiRequisitionService],
-  exports: [RequisitionsService],
+  exports: [RequisitionsService, AiRequisitionService],
 })
 export class RequisitionsModule {}
