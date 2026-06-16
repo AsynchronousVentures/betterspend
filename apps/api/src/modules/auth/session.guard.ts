@@ -11,7 +11,7 @@ import { IS_PUBLIC_KEY } from '../../common/decorators/public.decorator';
 import { AUTH_INSTANCE } from './auth.tokens';
 import type { AuthInstance, AuthUser } from '../../auth/auth.instance';
 import { DB_TOKEN } from '../../database/database.module';
-import { and, eq, gt } from 'drizzle-orm';
+import { and, eq, gt, inArray } from 'drizzle-orm';
 import * as schema from '@betterspend/db';
 
 // Extend Express Request to carry our user type
@@ -19,7 +19,15 @@ declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
-      authUser?: AuthUser & { roles: Array<{ role: string; scopeType: string; scopeId: string | null }> };
+      authUser?: AuthUser & {
+        roles: Array<{
+          role: string;
+          scopeType: string;
+          scopeId: string | null;
+          customRoleId?: string | null;
+          customRole?: { id: string; name: string; permissions: string[] } | null;
+        }>;
+      };
     }
   }
 }
@@ -80,7 +88,25 @@ export class SessionGuard implements CanActivate {
       .from(schema.userRoles)
       .where(eq(schema.userRoles.userId, user.id));
 
-    req.authUser = { ...user, roles };
+    const customRoleIds = roles
+      .map((role: any) => role.customRoleId)
+      .filter((id: unknown): id is string => typeof id === 'string');
+
+    const customRoleRows = customRoleIds.length
+      ? await db
+          .select()
+          .from(schema.customRoles)
+          .where(inArray(schema.customRoles.id, customRoleIds))
+      : [];
+
+    const customRolesById = new Map(customRoleRows.map((role: any) => [role.id, role]));
+    req.authUser = {
+      ...user,
+      roles: roles.map((role: any) => ({
+        ...role,
+        customRole: role.customRoleId ? customRolesById.get(role.customRoleId) ?? null : null,
+      })),
+    };
     return true;
   }
 

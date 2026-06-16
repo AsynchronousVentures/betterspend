@@ -218,6 +218,13 @@ export const api = {
       apiFetch<any>('/users', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: unknown) =>
       apiFetch<any>(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    permissions: () => apiFetch<any[]>('/users/roles/permissions'),
+    customRoles: () => apiFetch<any[]>('/users/roles/custom'),
+    createCustomRole: (data: unknown) =>
+      apiFetch<any>('/users/roles/custom', { method: 'POST', body: JSON.stringify(data) }),
+    updateCustomRole: (id: string, data: unknown) =>
+      apiFetch<any>(`/users/roles/custom/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    deleteCustomRole: (id: string) => apiFetch<void>(`/users/roles/custom/${id}`, { method: 'DELETE' }),
     addRole: (id: string, data: unknown) =>
       apiFetch<any>(`/users/${id}/roles`, { method: 'POST', body: JSON.stringify(data) }),
     removeRole: (id: string, roleId: string) =>
