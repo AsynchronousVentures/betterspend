@@ -18,7 +18,14 @@ import { webhookEndpoints, webhookDeliveries } from './schema/webhooks';
 import { glMappings, glExportJobs } from './schema/gl';
 import { ocrJobs } from './schema/ocr';
 import { authSessions, authAccounts } from './schema/auth';
-import { contracts, contractLines, contractAmendments } from './schema/contracts';
+import {
+  contracts,
+  contractLines,
+  contractAmendments,
+  contractClauses,
+  contractExtractions,
+  contractObligations,
+} from './schema/contracts';
 import { systemSettings } from './schema/system-settings';
 import { vendorPortalTokens } from './schema/vendor-portal-tokens';
 import { notifications } from './schema/notifications';
@@ -36,6 +43,7 @@ import { softwareLicenses } from './schema/software-licenses';
 import { catalogPriceProposals } from './schema/catalog-price-proposals';
 import { emailIntakeItems } from './schema/email-intake';
 import { onboardingQuestionnaires, vendorOnboardingSubmissions } from './schema/onboarding-questionnaires';
+import { documents } from './schema/documents';
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   legalEntities: many(legalEntities),
@@ -396,6 +404,9 @@ export const contractsRelations = relations(contracts, ({ one, many }) => ({
   lines: many(contractLines),
   amendments: many(contractAmendments),
   softwareLicenses: many(softwareLicenses),
+  extractions: many(contractExtractions),
+  clauses: many(contractClauses),
+  obligations: many(contractObligations),
 }));
 
 export const softwareLicensesRelations = relations(softwareLicenses, ({ one }) => ({
@@ -439,6 +450,61 @@ export const contractLinesRelations = relations(contractLines, ({ one }) => ({
 export const contractAmendmentsRelations = relations(contractAmendments, ({ one }) => ({
   contract: one(contracts, { fields: [contractAmendments.contractId], references: [contracts.id] }),
   createdByUser: one(users, { fields: [contractAmendments.createdBy], references: [users.id] }),
+}));
+
+export const contractExtractionsRelations = relations(contractExtractions, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [contractExtractions.organizationId],
+    references: [organizations.id],
+  }),
+  contract: one(contracts, { fields: [contractExtractions.contractId], references: [contracts.id] }),
+  document: one(documents, { fields: [contractExtractions.documentId], references: [documents.id] }),
+  createdByUser: one(users, {
+    fields: [contractExtractions.createdBy],
+    references: [users.id],
+    relationName: 'contractExtractionCreatedBy',
+  }),
+  reviewer: one(users, {
+    fields: [contractExtractions.reviewedBy],
+    references: [users.id],
+    relationName: 'contractExtractionReviewer',
+  }),
+  clauses: many(contractClauses),
+}));
+
+export const contractClausesRelations = relations(contractClauses, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [contractClauses.organizationId],
+    references: [organizations.id],
+  }),
+  contract: one(contracts, { fields: [contractClauses.contractId], references: [contracts.id] }),
+  extraction: one(contractExtractions, {
+    fields: [contractClauses.extractionId],
+    references: [contractExtractions.id],
+  }),
+  reviewer: one(users, {
+    fields: [contractClauses.reviewedBy],
+    references: [users.id],
+    relationName: 'contractClauseReviewer',
+  }),
+  obligations: many(contractObligations),
+}));
+
+export const contractObligationsRelations = relations(contractObligations, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [contractObligations.organizationId],
+    references: [organizations.id],
+  }),
+  contract: one(contracts, { fields: [contractObligations.contractId], references: [contracts.id] }),
+  clause: one(contractClauses, {
+    fields: [contractObligations.clauseId],
+    references: [contractClauses.id],
+  }),
+  owner: one(users, {
+    fields: [contractObligations.ownerId],
+    references: [users.id],
+    relationName: 'contractObligationOwner',
+  }),
 }));
 
 export const systemSettingsRelations = relations(systemSettings, ({ one }) => ({

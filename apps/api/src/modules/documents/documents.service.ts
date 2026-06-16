@@ -64,6 +64,20 @@ export class DocumentsService {
     return { url };
   }
 
+  async getTextContent(orgId: string, documentId: string): Promise<string | null> {
+    const doc = await this.db.query.documents.findFirst({
+      where: (d, { and: qand, eq: qeq }) =>
+        qand(qeq(d.id, documentId), qeq(d.organizationId, orgId)),
+    });
+
+    if (!doc) throw new NotFoundException(`Document ${documentId} not found`);
+    const textLike = /^(text\/|application\/(json|xml|csv|x-ndjson))/i.test(doc.contentType);
+    if (!textLike) return null;
+
+    const buffer = await this.storage.getBuffer(doc.storageKey);
+    return buffer.toString('utf8');
+  }
+
   async delete(orgId: string, documentId: string): Promise<void> {
     const doc = await this.db.query.documents.findFirst({
       where: (d, { and: qand, eq: qeq }) =>

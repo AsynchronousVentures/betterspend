@@ -611,6 +611,14 @@ export const api = {
   search: {
     query: (q: string) => apiFetch<any>(`/search?q=${encodeURIComponent(q)}`),
   },
+  documents: {
+    list: (params?: { entityType?: string; entityId?: string }) => {
+      const q = new URLSearchParams();
+      if (params?.entityType) q.set('entityType', params.entityType);
+      if (params?.entityId) q.set('entityId', params.entityId);
+      return apiFetch<any[]>(`/documents${q.toString() ? '?' + q : ''}`);
+    },
+  },
   contracts: {
     list: (params?: { status?: string; vendorId?: string; type?: string }) => {
       const q = new URLSearchParams();
@@ -636,6 +644,30 @@ export const api = {
       apiFetch<any>(`/contracts/${id}/amendments`, { method: 'POST', body: JSON.stringify(data) }),
     expiring: (days?: number) =>
       apiFetch<any[]>(`/contracts/expiring${days ? '?days=' + days : ''}`),
+    extractIntelligence: (id: string, data?: { documentText?: string; documentId?: string; sourceName?: string }) =>
+      apiFetch<any>(`/contracts/${id}/intelligence/extract`, {
+        method: 'POST',
+        body: JSON.stringify(data ?? {}),
+      }),
+    reviewExtraction: (
+      id: string,
+      extractionId: string,
+      data: { decision: 'approved' | 'rejected'; fields?: Record<string, unknown> },
+    ) =>
+      apiFetch<any>(`/contracts/${id}/intelligence/extractions/${extractionId}/review`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateClause: (id: string, clauseId: string, data: unknown) =>
+      apiFetch<any>(`/contracts/${id}/intelligence/clauses/${clauseId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    updateObligation: (id: string, obligationId: string, data: unknown) =>
+      apiFetch<any>(`/contracts/${id}/intelligence/obligations/${obligationId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
   },
   softwareLicenses: {
     list: (params?: { status?: string; vendorId?: string; renewingWithinDays?: number }) => {

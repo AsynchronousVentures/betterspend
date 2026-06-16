@@ -2,7 +2,7 @@ import { Injectable, Inject } from '@nestjs/common';
 import { and, eq, gte, ilike, or, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { contracts, contractLines } from '@betterspend/db';
+import { contractClauses, contracts, contractLines } from '@betterspend/db';
 import { SettingsService } from '../settings/settings.service';
 
 export interface ComplianceResult {
@@ -15,6 +15,10 @@ export interface ComplianceResult {
   deviationAction?: string;
   /** deviation threshold from settings (%) */
   deviationThreshold?: number;
+  /** highest approved contract intelligence risk level found on the matched contract */
+  contractRiskLevel?: 'none' | 'low' | 'medium' | 'high';
+  /** approved contract intelligence warnings to surface before PO issue */
+  intelligenceWarnings?: string[];
 }
 
 @Injectable()
@@ -115,6 +119,23 @@ export class ContractComplianceService {
     const threshold = parseFloat(thresholdStr || '5');
 
     const status = deltaPercent === 0 ? 'compliant' : 'deviation';
+    const approvedRiskClauses = await this.db.query.contractClauses.findMany({
+      where: (clause, { and, eq }) =>
+        and(
+          eq(clause.organizationId, orgId),
+          eq(clause.contractId, matchedContract.id),
+          eq(clause.status, 'approved'),
+        ),
+      orderBy: (clause, { desc }) => desc(clause.updatedAt),
+      limit: 10,
+    });
+    const contractRiskLevel = approvedRiskClauses.some((clause) => clause.riskLevel === 'high')
+      ? 'high'
+      : approvedRiskClauses.some((clause) => clause.riskLevel === 'medium')
+        ? 'medium'
+        : approvedRiskClauses.length > 0
+          ? 'low'
+          : 'none';
 
     return {
       status,
@@ -124,6 +145,11 @@ export class ContractComplianceService {
       contractNumber: matchedContract.contractNumber,
       deviationAction,
       deviationThreshold: threshold,
+      contractRiskLevel,
+      intelligenceWarnings: approvedRiskClauses
+        .filter((clause) => ['high', 'medium'].includes(clause.riskLevel))
+        .map((clause) => `${clause.title}: ${clause.riskReason ?? clause.normalizedSummary}`)
+        .slice(0, 5),
     };
   }
 }
