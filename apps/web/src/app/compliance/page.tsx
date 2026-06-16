@@ -195,13 +195,12 @@ export default function CompliancePage() {
       ]);
       setPreview(nextPreview);
       setUsers(nextUsers);
-      if (!selectedUserId && nextUsers[0]?.id) setSelectedUserId(nextUsers[0].id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load compliance data');
     } finally {
       setLoading(false);
     }
-  }, [framework, from, to, selectedUserId]);
+  }, [framework, from, to]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(CHECKLIST_KEY);
@@ -217,6 +216,12 @@ export default function CompliancePage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!selectedUserId && users.length > 0) {
+      setSelectedUserId(users[0].id);
+    }
+  }, [users, selectedUserId]);
 
   function toggleChecklist(id: string) {
     setChecklistState((current) => {
