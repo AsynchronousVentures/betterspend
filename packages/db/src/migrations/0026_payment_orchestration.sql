@@ -222,3 +222,14 @@ BEGIN
       FOREIGN KEY ("invoice_id") REFERENCES "invoices"("id");
   END IF;
 END $$;
+--> statement-breakpoint
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'vendor_virtual_cards_created_by_users_id_fk'
+  ) THEN
+    ALTER TABLE "vendor_virtual_cards"
+      ADD CONSTRAINT "vendor_virtual_cards_created_by_users_id_fk"
+      FOREIGN KEY ("created_by") REFERENCES "users"("id");
+  END IF;
+END $$;
