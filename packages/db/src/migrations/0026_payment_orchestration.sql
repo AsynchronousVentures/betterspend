@@ -51,6 +51,19 @@ ALTER TABLE "payment_runs"
   ADD COLUMN IF NOT EXISTS "updated_at" timestamp with time zone DEFAULT now() NOT NULL;
 --> statement-breakpoint
 ALTER TABLE "payment_run_invoices"
+  ADD COLUMN IF NOT EXISTS "id" uuid DEFAULT gen_random_uuid() NOT NULL;
+--> statement-breakpoint
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'payment_run_invoices_pkey'
+  ) THEN
+    ALTER TABLE "payment_run_invoices"
+      ADD CONSTRAINT "payment_run_invoices_pkey" PRIMARY KEY ("id");
+  END IF;
+END $$;
+--> statement-breakpoint
+ALTER TABLE "payment_run_invoices"
   ADD COLUMN IF NOT EXISTS "payment_method" varchar(30) DEFAULT 'manual' NOT NULL;
 --> statement-breakpoint
 ALTER TABLE "payment_run_invoices"
