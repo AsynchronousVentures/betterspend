@@ -1,6 +1,6 @@
 import { relations } from 'drizzle-orm';
 import { organizations, legalEntities, departments, projects } from './schema/organizations';
-import { users, userRoles } from './schema/users';
+import { customRoles, users, userRoles } from './schema/users';
 import { requisitionTemplates } from './schema/requisition-templates';
 import { vendors, catalogItems } from './schema/vendors';
 import { requisitions, requisitionLines } from './schema/requisitions';
@@ -41,6 +41,7 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   legalEntities: many(legalEntities),
   departments: many(departments),
   users: many(users),
+  customRoles: many(customRoles),
   vendors: many(vendors),
   requisitions: many(requisitions),
   purchaseOrders: many(purchaseOrders),
@@ -111,6 +112,15 @@ export const emailIntakeItemsRelations = relations(emailIntakeItems, ({ one }) =
 
 export const userRolesRelations = relations(userRoles, ({ one }) => ({
   user: one(users, { fields: [userRoles.userId], references: [users.id] }),
+  customRole: one(customRoles, { fields: [userRoles.customRoleId], references: [customRoles.id] }),
+}));
+
+export const customRolesRelations = relations(customRoles, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [customRoles.organizationId],
+    references: [organizations.id],
+  }),
+  assignments: many(userRoles),
 }));
 
 export const vendorsRelations = relations(vendors, ({ one, many }) => ({

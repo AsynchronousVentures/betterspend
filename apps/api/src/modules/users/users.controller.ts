@@ -4,10 +4,10 @@ import {
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('users')
-@Roles('admin')
+@Permissions('users:manage')
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
@@ -25,6 +25,47 @@ export class UsersController {
     @CurrentOrgId() orgId: string,
   ) {
     return this.usersService.create(orgId, body);
+  }
+
+  @Get('roles/permissions')
+  @ApiOperation({ summary: 'List assignable permission keys for custom roles' })
+  permissionsCatalog() {
+    return this.usersService.permissionsCatalog();
+  }
+
+  @Get('roles/custom')
+  @ApiOperation({ summary: 'List custom roles' })
+  customRoles(@CurrentOrgId() orgId: string) {
+    return this.usersService.listCustomRoles(orgId);
+  }
+
+  @Post('roles/custom')
+  @ApiOperation({ summary: 'Create a custom role' })
+  createCustomRole(
+    @Body() body: { name?: string; description?: string; permissions?: string[] },
+    @CurrentOrgId() orgId: string,
+  ) {
+    return this.usersService.createCustomRole(orgId, body);
+  }
+
+  @Patch('roles/custom/:roleId')
+  @ApiOperation({ summary: 'Update a custom role' })
+  updateCustomRole(
+    @Param('roleId', ParseUUIDPipe) roleId: string,
+    @Body() body: { name?: string; description?: string | null; permissions?: string[] },
+    @CurrentOrgId() orgId: string,
+  ) {
+    return this.usersService.updateCustomRole(roleId, orgId, body);
+  }
+
+  @Delete('roles/custom/:roleId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete a custom role and its assignments' })
+  deleteCustomRole(
+    @Param('roleId', ParseUUIDPipe) roleId: string,
+    @CurrentOrgId() orgId: string,
+  ) {
+    return this.usersService.deleteCustomRole(roleId, orgId);
   }
 
   @Get(':id')
@@ -47,7 +88,7 @@ export class UsersController {
   @ApiOperation({ summary: 'Add a role to a user' })
   addRole(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { role: string; scopeType?: string; scopeId?: string },
+    @Body() body: { role?: string; customRoleId?: string; scopeType?: string; scopeId?: string },
     @CurrentOrgId() orgId: string,
   ) {
     return this.usersService.addRole(id, orgId, body);
