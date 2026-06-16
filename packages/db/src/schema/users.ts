@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, boolean, text, timestamp } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, boolean, text, timestamp, jsonb } from 'drizzle-orm/pg-core';
 import { organizations, departments } from './organizations';
 
 export const users = pgTable('users', {
@@ -14,10 +14,21 @@ export const users = pgTable('users', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const customRoles = pgTable('custom_roles', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+  name: varchar('name', { length: 120 }).notNull(),
+  description: text('description'),
+  permissions: jsonb('permissions').$type<string[]>().notNull().default([]),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const userRoles = pgTable('user_roles', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull().references(() => users.id),
-  role: varchar('role', { length: 50 }).notNull(), // requester|approver|receiver|finance|admin
+  role: varchar('role', { length: 50 }).notNull(), // requester|approver|receiver|finance|admin|custom
+  customRoleId: uuid('custom_role_id').references(() => customRoles.id),
   scopeType: varchar('scope_type', { length: 50 }).notNull().default('global'), // global|department|project|entity
   scopeId: uuid('scope_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
