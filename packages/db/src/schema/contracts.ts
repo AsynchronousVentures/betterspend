@@ -1,7 +1,8 @@
-import { pgTable, uuid, varchar, text, numeric, integer, timestamp, boolean, unique } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, numeric, integer, timestamp, boolean, jsonb } from 'drizzle-orm/pg-core';
 import { organizations } from './organizations';
 import { users } from './users';
 import { vendors } from './vendors';
+import { documents } from './documents';
 
 export const contracts = pgTable('contracts', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -61,4 +62,60 @@ export const contractAmendments = pgTable('contract_amendments', {
   newEndDate: timestamp('new_end_date', { withTimezone: true }),
   createdBy: uuid('created_by').notNull().references(() => users.id),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const contractExtractions = pgTable('contract_extractions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+  contractId: uuid('contract_id').notNull().references(() => contracts.id),
+  documentId: uuid('document_id').references(() => documents.id),
+  sourceType: varchar('source_type', { length: 30 }).notNull().default('terms'),
+  sourceName: varchar('source_name', { length: 255 }),
+  extractedText: text('extracted_text').notNull(),
+  extractedFields: jsonb('extracted_fields').$type<Record<string, unknown>>().notNull().default({}),
+  confidence: numeric('confidence', { precision: 5, scale: 4 }).notNull().default('0'),
+  status: varchar('status', { length: 30 }).notNull().default('pending_review'),
+  reviewedBy: uuid('reviewed_by').references(() => users.id),
+  reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const contractClauses = pgTable('contract_clauses', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+  contractId: uuid('contract_id').notNull().references(() => contracts.id),
+  extractionId: uuid('extraction_id').references(() => contractExtractions.id),
+  clauseType: varchar('clause_type', { length: 60 }).notNull(),
+  title: varchar('title', { length: 255 }).notNull(),
+  extractedText: text('extracted_text').notNull(),
+  normalizedSummary: text('normalized_summary').notNull(),
+  riskLevel: varchar('risk_level', { length: 20 }).notNull().default('low'),
+  riskReason: text('risk_reason'),
+  confidence: numeric('confidence', { precision: 5, scale: 4 }).notNull().default('0'),
+  sourceReference: varchar('source_reference', { length: 255 }),
+  status: varchar('status', { length: 30 }).notNull().default('pending_review'),
+  reviewedBy: uuid('reviewed_by').references(() => users.id),
+  reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const contractObligations = pgTable('contract_obligations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+  contractId: uuid('contract_id').notNull().references(() => contracts.id),
+  clauseId: uuid('clause_id').references(() => contractClauses.id),
+  ownerId: uuid('owner_id').references(() => users.id),
+  obligationType: varchar('obligation_type', { length: 60 }).notNull(),
+  title: varchar('title', { length: 255 }).notNull(),
+  description: text('description'),
+  dueDate: timestamp('due_date', { withTimezone: true }),
+  recurrence: varchar('recurrence', { length: 30 }),
+  status: varchar('status', { length: 30 }).notNull().default('open'),
+  notificationLeadDays: integer('notification_lead_days').notNull().default(30),
+  sourceReference: varchar('source_reference', { length: 255 }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

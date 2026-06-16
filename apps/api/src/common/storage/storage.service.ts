@@ -67,6 +67,21 @@ export class StorageService implements OnModuleInit {
     return getSignedUrl(this.client, command, { expiresIn });
   }
 
+  async getBuffer(key: string): Promise<Buffer> {
+    const response = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    const body = response.Body;
+    if (!body) return Buffer.alloc(0);
+    if ('transformToByteArray' in body && typeof body.transformToByteArray === 'function') {
+      return Buffer.from(await body.transformToByteArray());
+    }
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of body as AsyncIterable<Buffer | Uint8Array | string>) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+  }
+
   async delete(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }

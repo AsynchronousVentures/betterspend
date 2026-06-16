@@ -2,14 +2,16 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, FileSignature, Power, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, Brain, CheckCircle2, ClipboardCheck, Power, ShieldAlert, XCircle } from 'lucide-react';
 import { api } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { DocumentUploader } from '../../../components/document-uploader';
 import { StatusBadge } from '../../../components/status-badge';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
+import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Select } from '../../../components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 import { Textarea } from '../../../components/ui/textarea';
 
@@ -51,6 +53,13 @@ function OverviewField({ label, value }: { label: string; value: string }) {
   );
 }
 
+function riskVariant(risk?: string) {
+  if (risk === 'high') return 'destructive' as const;
+  if (risk === 'medium') return 'warning' as const;
+  if (risk === 'low') return 'success' as const;
+  return 'subtle' as const;
+}
+
 export default function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const [id, setId] = useState('');
   const [contract, setContract] = useState<any>(null);
@@ -60,6 +69,12 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const [showTerminateModal, setShowTerminateModal] = useState(false);
   const [terminateReason, setTerminateReason] = useState('');
   const [terminating, setTerminating] = useState(false);
+  const [intelligenceText, setIntelligenceText] = useState('');
+  const [documents, setDocuments] = useState<any[]>([]);
+  const [selectedDocumentId, setSelectedDocumentId] = useState('');
+  const [extracting, setExtracting] = useState(false);
+  const [reviewingId, setReviewingId] = useState('');
+  const [updatingId, setUpdatingId] = useState('');
 
   useEffect(() => {
     params.then(({ id: resolvedId }) => {
@@ -70,9 +85,14 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    api.contracts
-      .get(id)
-      .then(setContract)
+    Promise.all([
+      api.contracts.get(id),
+      api.documents.list({ entityType: 'contract', entityId: id }).catch(() => []),
+    ])
+      .then(([contract, docs]) => {
+        setContract(contract);
+        setDocuments(docs);
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [id]);
@@ -106,6 +126,63 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
     }
   }
 
+  async function handleExtractIntelligence() {
+    setExtracting(true);
+    setError('');
+    try {
+      const updated = await api.contracts.extractIntelligence(id, {
+        documentText: intelligenceText.trim() || undefined,
+        documentId: selectedDocumentId || undefined,
+        sourceName: intelligenceText.trim() ? 'Pasted contract text' : 'Contract terms',
+      });
+      setContract(updated);
+      setIntelligenceText('');
+    } catch (err: any) {
+      setError(err.message || 'Failed to extract contract intelligence');
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  async function handleReviewExtraction(extractionId: string, decision: 'approved' | 'rejected') {
+    setReviewingId(extractionId);
+    setError('');
+    try {
+      const updated = await api.contracts.reviewExtraction(id, extractionId, { decision });
+      setContract(updated);
+    } catch (err: any) {
+      setError(err.message || 'Failed to review extraction');
+    } finally {
+      setReviewingId('');
+    }
+  }
+
+  async function handleClauseStatus(clauseId: string, status: 'approved' | 'rejected') {
+    setUpdatingId(clauseId);
+    setError('');
+    try {
+      const updated = await api.contracts.updateClause(id, clauseId, { status });
+      setContract(updated);
+    } catch (err: any) {
+      setError(err.message || 'Failed to update clause');
+    } finally {
+      setUpdatingId('');
+    }
+  }
+
+  async function handleCompleteObligation(obligationId: string) {
+    setUpdatingId(obligationId);
+    setError('');
+    try {
+      const updated = await api.contracts.updateObligation(id, obligationId, { status: 'completed' });
+      setContract(updated);
+    } catch (err: any) {
+      setError(err.message || 'Failed to update obligation');
+    } finally {
+      setUpdatingId('');
+    }
+  }
+
   if (loading) return <div className="p-8 text-sm text-muted-foreground">Loading...</div>;
   if (error && !contract) {
     return (
@@ -123,6 +200,10 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const canTerminate = ['active', 'expiring_soon'].includes(contract.status);
   const lines = contract.lines ?? contract.contractLines ?? [];
   const amendments = contract.amendments ?? [];
+  const extractions = contract.extractions ?? [];
+  const clauses = contract.clauses ?? [];
+  const obligations = contract.obligations ?? [];
+  const intelligence = contract.intelligenceSummary ?? {};
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -203,6 +284,233 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Brain className="h-4 w-4" />
+            Contract Intelligence
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="rounded-md border border-border/70 px-4 py-3">
+              <p className="text-xs font-medium uppercase text-muted-foreground">Risk</p>
+              <div className="mt-2">
+                <Badge variant={riskVariant(intelligence.riskLevel)}>
+                  {intelligence.riskLevel === 'none' || !intelligence.riskLevel ? 'Not reviewed' : `${intelligence.riskLevel} risk`}
+                </Badge>
+              </div>
+            </div>
+            <div className="rounded-md border border-border/70 px-4 py-3">
+              <p className="text-xs font-medium uppercase text-muted-foreground">Clauses</p>
+              <p className="mt-1 text-lg font-semibold text-foreground">{intelligence.clauseCount ?? clauses.length}</p>
+            </div>
+            <div className="rounded-md border border-border/70 px-4 py-3">
+              <p className="text-xs font-medium uppercase text-muted-foreground">Pending Review</p>
+              <p className="mt-1 text-lg font-semibold text-foreground">{intelligence.pendingReviewCount ?? 0}</p>
+            </div>
+            <div className="rounded-md border border-border/70 px-4 py-3">
+              <p className="text-xs font-medium uppercase text-muted-foreground">Open Obligations</p>
+              <p className="mt-1 text-lg font-semibold text-foreground">{intelligence.openObligationCount ?? 0}</p>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border/70 p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Run Extraction</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Uses contract terms by default, or pasted source text when provided.
+                </p>
+              </div>
+              <Button type="button" onClick={handleExtractIntelligence} disabled={extracting}>
+                <Brain className="h-4 w-4" />
+                {extracting ? 'Extracting...' : 'Extract Clauses'}
+              </Button>
+            </div>
+            {documents.length > 0 ? (
+              <Select
+                value={selectedDocumentId}
+                onChange={(event) => setSelectedDocumentId(event.target.value)}
+                className="mb-3 max-w-xl"
+              >
+                <option value="">Saved terms or pasted source text</option>
+                {documents.map((document) => (
+                  <option key={document.id} value={document.id}>
+                    {document.filename} ({document.contentType})
+                  </option>
+                ))}
+              </Select>
+            ) : null}
+            <Textarea
+              rows={5}
+              value={intelligenceText}
+              onChange={(event) => setIntelligenceText(event.target.value)}
+              placeholder="Paste contract text, SOW terms, or renewal notice text to extract from it instead of the saved terms."
+            />
+          </div>
+
+          <div className="overflow-hidden rounded-md border border-border/70">
+            <div className="border-b border-border/70 px-4 py-3 text-sm font-semibold text-foreground">
+              Extraction Runs {extractions.length > 0 ? `(${extractions.length})` : ''}
+            </div>
+            {extractions.length === 0 ? (
+              <div className="px-4 py-5 text-sm text-muted-foreground">No extraction runs yet.</div>
+            ) : (
+              <div className="divide-y divide-border/70">
+                {extractions.map((extraction: any) => (
+                  <div key={extraction.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium text-foreground">{extraction.sourceName ?? extraction.sourceType}</p>
+                        <Badge variant={extraction.status === 'approved' ? 'success' : extraction.status === 'rejected' ? 'destructive' : 'warning'}>
+                          {extraction.status.replace(/_/g, ' ')}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Confidence {Math.round(Number(extraction.confidence ?? 0) * 100)}% - {fmtDate(extraction.createdAt)}
+                      </p>
+                    </div>
+                    {extraction.status === 'pending_review' ? (
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => handleReviewExtraction(extraction.id, 'approved')}
+                          disabled={reviewingId === extraction.id}
+                        >
+                          <CheckCircle2 className="h-4 w-4" />
+                          Approve
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleReviewExtraction(extraction.id, 'rejected')}
+                          disabled={reviewingId === extraction.id}
+                        >
+                          <XCircle className="h-4 w-4" />
+                          Reject
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <CardHeader>
+          <CardTitle className="text-base">Clauses & Risk {clauses.length > 0 ? `(${clauses.length})` : ''}</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {clauses.length === 0 ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">No extracted clauses yet.</div>
+          ) : (
+            <div className="divide-y divide-border/70">
+              {clauses.map((clause: any) => (
+                <div key={clause.id} className="px-5 py-4">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-semibold text-foreground">{clause.title}</p>
+                        <Badge variant={riskVariant(clause.riskLevel)}>{clause.riskLevel} risk</Badge>
+                        <Badge variant="outline">{clause.status.replace(/_/g, ' ')}</Badge>
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">{clause.normalizedSummary}</p>
+                      {clause.riskReason ? <p className="mt-1 text-sm text-amber-700">{clause.riskReason}</p> : null}
+                      <p className="mt-2 line-clamp-3 text-xs leading-5 text-muted-foreground">{clause.extractedText}</p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleClauseStatus(clause.id, 'approved')}
+                        disabled={updatingId === clause.id || clause.status === 'approved'}
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        Approve
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleClauseStatus(clause.id, 'rejected')}
+                        disabled={updatingId === clause.id || clause.status === 'rejected'}
+                      >
+                        <XCircle className="h-4 w-4" />
+                        Reject
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ClipboardCheck className="h-4 w-4" />
+            Obligations {obligations.length > 0 ? `(${obligations.length})` : ''}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {obligations.length === 0 ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">No obligations extracted yet.</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Obligation</TableHead>
+                  <TableHead>Owner</TableHead>
+                  <TableHead>Due</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {obligations.map((obligation: any) => (
+                  <TableRow key={obligation.id}>
+                    <TableCell>
+                      <div className="font-medium text-foreground">{obligation.title}</div>
+                      <div className="mt-1 text-sm text-muted-foreground">{obligation.description}</div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{obligation.owner?.name ?? 'Unassigned'}</TableCell>
+                    <TableCell className="text-muted-foreground">{fmtDate(obligation.dueDate)}</TableCell>
+                    <TableCell>
+                      <Badge variant={obligation.status === 'completed' ? 'success' : 'outline'}>{obligation.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {obligation.status !== 'completed' ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleCompleteObligation(obligation.id)}
+                          disabled={updatingId === obligation.id}
+                        >
+                          <CheckCircle2 className="h-4 w-4" />
+                          Complete
+                        </Button>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Done</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
       <Card className="overflow-hidden">
         <CardHeader>
           <CardTitle className="text-base">Contract Lines {lines.length > 0 ? `(${lines.length})` : ''}</CardTitle>
@@ -267,7 +575,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </CardContent>
       </Card>
 
-      {id ? <DocumentUploader entityType="contract" entityId={id} label="Documents" /> : null}
+      {id ? <DocumentUploader entityType="contract" entityId={id} label="Documents" onChange={setDocuments} /> : null}
 
       {showTerminateModal ? (
         <div
