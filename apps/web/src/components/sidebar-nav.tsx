@@ -10,8 +10,7 @@ import {
   PiggyBank, ShieldAlert, Percent, Clock, Link2, Upload,
   CreditCard, BarChart2, FileBarChart2, Building2, Star, Leaf, UserPlus,
   ScrollText, KeyRound, Users, FolderTree, Briefcase, Building,
-  Zap, History, Settings, ChevronRight, Puzzle,
-  Sparkles,
+  Zap, History, Settings, ChevronRight, Puzzle, Sparkles, ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { signOut } from '../lib/auth-client';
@@ -69,6 +68,7 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   'Entities':                 Building,
   'Webhooks':                 Zap,
   'Audit Log':                History,
+  'Compliance':               ShieldCheck,
   'Settings':                 Settings,
   'Workspace Settings':       Settings,
   'Currencies':               ArrowLeftRight,
@@ -158,6 +158,7 @@ const NAV_CONFIG: NavEntry[] = [
       { label: 'Add-ons', href: '/addons' },
       { label: 'Webhooks', href: '/webhooks' },
       { label: 'Audit Log', href: '/audit' },
+      { label: 'Compliance', href: '/compliance' },
       { label: 'Workspace Settings', href: '/workspace-settings' },
     ],
   },
