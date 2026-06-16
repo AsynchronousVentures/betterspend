@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ShieldPlus, UserCog, UserPlus, UserX } from 'lucide-react';
+import { ShieldPlus, Trash2, UserCog, UserPlus, UserX } from 'lucide-react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
 import { StatusBadge } from '../../components/status-badge';
@@ -15,17 +15,24 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 
 const ROLES = ['admin', 'approver', 'requester', 'receiver', 'finance'];
 const EMPTY_FORM = { name: '', email: '', password: '', role: 'requester' };
+const EMPTY_ROLE_FORM = { name: '', description: '', permissions: [] as string[] };
 
 export default function UsersPage() {
   const [users, setUsers] = useState<any[]>([]);
+  const [customRoles, setCustomRoles] = useState<any[]>([]);
+  const [permissions, setPermissions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [addRoleUserId, setAddRoleUserId] = useState<string | null>(null);
   const [newRole, setNewRole] = useState('requester');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [roleForm, setRoleForm] = useState(EMPTY_ROLE_FORM);
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [roleSaving, setRoleSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const [roleError, setRoleError] = useState('');
 
   useEffect(() => {
     load();
@@ -34,7 +41,14 @@ export default function UsersPage() {
   async function load() {
     try {
       setLoading(true);
-      setUsers(await api.users.list());
+      const [nextUsers, nextCustomRoles, nextPermissions] = await Promise.all([
+        api.users.list(),
+        api.users.customRoles(),
+        api.users.permissions(),
+      ]);
+      setUsers(nextUsers);
+      setCustomRoles(nextCustomRoles);
+      setPermissions(nextPermissions);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -83,7 +97,10 @@ export default function UsersPage() {
 
   async function handleAddRole(userId: string) {
     try {
-      await api.users.addRole(userId, { role: newRole, scopeType: 'global' });
+      const payload = newRole.startsWith('custom:')
+        ? { role: 'custom', customRoleId: newRole.slice('custom:'.length), scopeType: 'global' }
+        : { role: newRole, scopeType: 'global' };
+      await api.users.addRole(userId, payload);
       setAddRoleUserId(null);
       setNewRole('requester');
       await load();
@@ -100,6 +117,80 @@ export default function UsersPage() {
     } catch (err: any) {
       setError(err.message);
     }
+  }
+
+  async function handleSaveCustomRole(event: React.FormEvent) {
+    event.preventDefault();
+    if (!roleForm.name.trim()) {
+      setRoleError('Role name is required.');
+      return;
+    }
+
+    setRoleSaving(true);
+    setRoleError('');
+    try {
+      if (editingRoleId) {
+        await api.users.updateCustomRole(editingRoleId, roleForm);
+      } else {
+        await api.users.createCustomRole(roleForm);
+      }
+      setRoleForm(EMPTY_ROLE_FORM);
+      setEditingRoleId(null);
+      await load();
+    } catch (err: any) {
+      setRoleError(err.message);
+    } finally {
+      setRoleSaving(false);
+    }
+  }
+
+  async function handleDeleteCustomRole(roleId: string) {
+    if (!confirm('Delete this custom role and remove it from assigned users?')) return;
+    try {
+      await api.users.deleteCustomRole(roleId);
+      if (editingRoleId === roleId) {
+        setEditingRoleId(null);
+        setRoleForm(EMPTY_ROLE_FORM);
+      }
+      await load();
+    } catch (err: any) {
+      setRoleError(err.message);
+    }
+  }
+
+  function editCustomRole(role: any) {
+    setEditingRoleId(role.id);
+    setRoleError('');
+    setRoleForm({
+      name: role.name ?? '',
+      description: role.description ?? '',
+      permissions: role.permissions ?? [],
+    });
+  }
+
+  function togglePermission(permission: string) {
+    setRoleForm((current) => {
+      const hasPermission = current.permissions.includes(permission);
+      return {
+        ...current,
+        permissions: hasPermission
+          ? current.permissions.filter((item) => item !== permission)
+          : [...current.permissions, permission],
+      };
+    });
+  }
+
+  function groupedPermissions() {
+    return permissions.reduce((groups: Record<string, any[]>, permission) => {
+      const group = permission.group ?? 'Other';
+      groups[group] = [...(groups[group] ?? []), permission];
+      return groups;
+    }, {});
+  }
+
+  function roleLabel(role: any) {
+    if (role.customRole) return role.customRole.name;
+    return role.role;
   }
 
   function setField(key: keyof typeof EMPTY_FORM, value: string) {
@@ -230,7 +321,7 @@ export default function UsersPage() {
                         <div className="flex flex-wrap items-center gap-2">
                           {(user.userRoles || []).map((role: any) => (
                             <Badge key={role.id} variant="outline" className="gap-1 border-sky-200 bg-sky-50 text-sky-700">
-                              {role.role}
+                              {roleLabel(role)}
                               <button
                                 type="button"
                                 onClick={() => handleRemoveRole(user.id, role.id)}
@@ -246,6 +337,14 @@ export default function UsersPage() {
                                 {ROLES.map((role) => (
                                   <option key={role} value={role}>
                                     {role}
+                                  </option>
+                                ))}
+                                {customRoles.length ? (
+                                  <option disabled>Custom roles</option>
+                                ) : null}
+                                {customRoles.map((role) => (
+                                  <option key={role.id} value={`custom:${role.id}`}>
+                                    {role.name}
                                   </option>
                                 ))}
                               </Select>
@@ -278,6 +377,118 @@ export default function UsersPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="rounded-lg">
+        <CardHeader>
+          <CardTitle className="text-xl">Custom roles</CardTitle>
+          <CardDescription>Create reusable permission sets, then assign them from the user directory.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <form onSubmit={handleSaveCustomRole} className="space-y-5">
+            <div className="grid gap-4">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground">Role name</label>
+                <Input
+                  value={roleForm.name}
+                  onChange={(event) => setRoleForm((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="Department buyer"
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-foreground">Description</label>
+                <Input
+                  value={roleForm.description}
+                  onChange={(event) => setRoleForm((current) => ({ ...current, description: event.target.value }))}
+                  placeholder="Can create requisitions and view assigned POs"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              {Object.entries(groupedPermissions()).map(([group, items]) => (
+                <div key={group} className="rounded-lg border border-border/70 p-4">
+                  <div className="mb-3 text-sm font-semibold text-foreground">{group}</div>
+                  <div className="space-y-2">
+                    {(items as any[]).map((permission) => (
+                      <label key={permission.key} className="flex items-start gap-2 text-sm text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={roleForm.permissions.includes(permission.key)}
+                          onChange={() => togglePermission(permission.key)}
+                          className="mt-1"
+                        />
+                        <span>{permission.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {roleError ? (
+              <Alert variant="destructive">
+                <AlertDescription>{roleError}</AlertDescription>
+              </Alert>
+            ) : null}
+
+            <div className="flex flex-wrap gap-3">
+              <Button type="submit" disabled={roleSaving}>
+                <ShieldPlus className="h-4 w-4" />
+                {roleSaving ? 'Saving...' : editingRoleId ? 'Save Role' : 'Create Role'}
+              </Button>
+              {editingRoleId ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setEditingRoleId(null);
+                    setRoleForm(EMPTY_ROLE_FORM);
+                    setRoleError('');
+                  }}
+                >
+                  Cancel
+                </Button>
+              ) : null}
+            </div>
+          </form>
+
+          <div className="space-y-3">
+            {customRoles.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
+                No custom roles yet.
+              </div>
+            ) : (
+              customRoles.map((role) => (
+                <div key={role.id} className="rounded-lg border border-border/70 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="font-medium text-foreground">{role.name}</div>
+                      {role.description ? (
+                        <p className="mt-1 text-sm text-muted-foreground">{role.description}</p>
+                      ) : null}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => editCustomRole(role)}>
+                        Edit
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => handleDeleteCustomRole(role.id)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(role.permissions ?? []).map((permission: string) => (
+                      <Badge key={permission} variant="outline">
+                        {permission}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
