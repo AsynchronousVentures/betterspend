@@ -524,6 +524,29 @@ export const api = {
       return apiFetch<any[]>(`/audit${q.toString() ? '?' + q : ''}`);
     },
   },
+  compliance: {
+    previewAuditPackage: (params?: { framework?: string; from?: string; to?: string }) => {
+      const q = new URLSearchParams();
+      if (params?.framework) q.set('framework', params.framework);
+      if (params?.from) q.set('from', params.from);
+      if (params?.to) q.set('to', params.to);
+      return apiFetch<any>(`/compliance/audit-package/preview${q.toString() ? '?' + q : ''}`);
+    },
+    downloadAuditPackage: (data: { framework?: string; from?: string; to?: string }) => {
+      const token = getCookie('bs_token');
+      return fetch(`${API_BASE}/api/v1/compliance/audit-package`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(data),
+      });
+    },
+    gdprExport: (userId: string) => apiFetch<any>(`/compliance/gdpr/export/${userId}`),
+    gdprDelete: (userId: string) =>
+      apiFetch<any>(`/compliance/gdpr/delete/${userId}`, { method: 'POST' }),
+  },
   reports: {
     download: (type: string, params?: Record<string, string>) => {
       const q = new URLSearchParams(params ?? {});
