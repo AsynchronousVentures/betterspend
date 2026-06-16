@@ -54,20 +54,6 @@ export class ComplianceService {
     actorUserId: string,
     input: AuditPackageInput,
   ) {
-    await this.auditService.log(
-      organizationId,
-      actorUserId,
-      'compliance',
-      organizationId,
-      'audit_package_generated',
-      {},
-      {
-        framework: input.framework ?? 'soc2',
-        from: input.from ?? null,
-        to: input.to ?? null,
-      },
-    );
-
     const packageData = await this.collectAuditPackageData(organizationId, input);
     const files = [
       {
@@ -105,9 +91,25 @@ export class ComplianceService {
     ];
 
     const date = new Date().toISOString().slice(0, 10);
+    const buffer = createStoredZip(files);
+
+    await this.auditService.log(
+      organizationId,
+      actorUserId,
+      'compliance',
+      organizationId,
+      'audit_package_generated',
+      {},
+      {
+        framework: input.framework ?? 'soc2',
+        from: input.from ?? null,
+        to: input.to ?? null,
+      },
+    );
+
     return {
       filename: `betterspend-${packageData.manifest.framework}-audit-package-${date}.zip`,
-      buffer: createStoredZip(files),
+      buffer,
     };
   }
 
