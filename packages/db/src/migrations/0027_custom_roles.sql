@@ -22,7 +22,8 @@ END $$;
 DO $$ BEGIN
   ALTER TABLE "user_roles"
     ADD CONSTRAINT "user_roles_custom_role_id_custom_roles_id_fk"
-    FOREIGN KEY ("custom_role_id") REFERENCES "custom_roles"("id");
+    FOREIGN KEY ("custom_role_id") REFERENCES "custom_roles"("id")
+    ON DELETE SET NULL;
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;
