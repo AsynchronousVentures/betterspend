@@ -47,6 +47,7 @@ import { SpendGuardModule } from './modules/spend-guard/spend-guard.module';
 import { SoftwareLicensesModule } from './modules/software-licenses/software-licenses.module';
 import { EmailIntakeModule } from './modules/email-intake/email-intake.module';
 import { AccountModule } from './modules/account/account.module';
+import { PaymentRunsModule } from './modules/payment-runs/payment-runs.module';
 
 @Module({
   imports: [
@@ -82,6 +83,7 @@ import { AccountModule } from './modules/account/account.module';
     ExchangeRatesModule,
     SpendGuardModule,
     SoftwareLicensesModule,
+    PaymentRunsModule,
     EmailIntakeModule,
     AuditModule,
     ReportsModule,
