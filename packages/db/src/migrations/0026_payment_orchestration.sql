@@ -2,7 +2,15 @@ ALTER TABLE "payment_runs"
   ADD COLUMN IF NOT EXISTS "entity_id" uuid;
 --> statement-breakpoint
 ALTER TABLE "payment_runs"
-  ADD COLUMN IF NOT EXISTS "status" varchar(30) DEFAULT 'draft' NOT NULL;
+  ADD COLUMN IF NOT EXISTS "status" varchar(30);
+--> statement-breakpoint
+UPDATE "payment_runs"
+  SET "status" = 'completed'
+  WHERE "status" IS NULL;
+--> statement-breakpoint
+ALTER TABLE "payment_runs"
+  ALTER COLUMN "status" SET DEFAULT 'draft',
+  ALTER COLUMN "status" SET NOT NULL;
 --> statement-breakpoint
 ALTER TABLE "payment_runs"
   ADD COLUMN IF NOT EXISTS "scheduled_date" date;
