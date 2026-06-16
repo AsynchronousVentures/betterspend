@@ -133,7 +133,7 @@ export class PaymentRunsService {
       throw new BadRequestException('Create separate payment runs for each invoice currency');
     }
 
-    const entities = new Set(selectedInvoices.map((invoice) => invoice.entityId).filter(Boolean));
+    const entities = new Set(selectedInvoices.map((invoice) => invoice.entityId));
     if (input.entityId && !selectedInvoices.every((invoice) => invoice.entityId === input.entityId)) {
       throw new BadRequestException('Selected invoices do not all belong to the requested entity');
     }
