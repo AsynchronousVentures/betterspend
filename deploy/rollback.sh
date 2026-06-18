@@ -38,9 +38,6 @@ if [ -n "$domain" ]; then
   curl --retry 12 --retry-delay 5 --retry-all-errors -fsS "https://$domain/" >/dev/null
 fi
 
-if [ -f .current_image_tag ]; then
-  cp .current_image_tag .previous_image_tag
-fi
 printf '%s\n' "$IMAGE_TAG" > .current_image_tag
 
 echo "Rollback complete. Database migrations are forward-only and were not reverted."

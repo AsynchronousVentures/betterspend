@@ -47,7 +47,7 @@ Repository secrets:
 - `DEPLOY_USER`: SSH user with Docker access.
 - `DEPLOY_SSH_KEY`: private key for that user.
 - `DEPLOY_PORT`: optional SSH port; defaults to `22`.
-- `DEPLOY_KNOWN_HOSTS`: optional pinned SSH known-hosts content. If omitted, CI uses `ssh-keyscan`.
+- `DEPLOY_KNOWN_HOSTS`: pinned SSH known-hosts content for the deploy server. Generate and verify this outside CI before saving it as a secret.
 - `GHCR_USERNAME` and `GHCR_TOKEN`: optional server-side pull credentials if images are private.
 
 ## Deploy Flow

@@ -15,7 +15,7 @@ permissions:
 
 concurrency:
   group: betterspend-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   IMAGE_TAG: sha-${{ github.sha }}
@@ -43,6 +43,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build shared package
+        run: pnpm --filter @betterspend/shared build
 
       - name: Build database package
         run: pnpm --filter @betterspend/db build
@@ -133,6 +136,9 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     environment: production
+    concurrency:
+      group: betterspend-deploy-production
+      cancel-in-progress: false
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -142,10 +148,12 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
           test -n "$DEPLOY_HOST"
           test -n "$DEPLOY_USER"
           test -n "$DEPLOY_SSH_KEY"
+          test -n "$DEPLOY_KNOWN_HOSTS"
 
       - name: Configure SSH
         env:
@@ -159,11 +167,7 @@ jobs:
           install -m 700 -d ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          if [ -n "$DEPLOY_KNOWN_HOSTS" ]; then
-            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          else
-            ssh-keyscan -p "$port" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
-          fi
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
       - name: Install rsync
         run: sudo apt-get update && sudo apt-get install -y rsync
@@ -198,7 +202,10 @@ jobs:
           port="${DEPLOY_PORT:-22}"
           if [ -n "$GHCR_TOKEN" ]; then
             server_ghcr_username="${GHCR_USERNAME:-$GITHUB_ACTOR}"
-            printf '%s' "$GHCR_TOKEN" | ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" "docker login ghcr.io -u '$server_ghcr_username' --password-stdin"
+            {
+              printf '%s\n' "$server_ghcr_username"
+              printf '%s' "$GHCR_TOKEN"
+            } | ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" 'read -r ghcr_username && docker login ghcr.io -u "$ghcr_username" --password-stdin'
           else
             echo "GHCR_TOKEN not set; assuming GHCR images are public or the server is already logged in."
           fi
