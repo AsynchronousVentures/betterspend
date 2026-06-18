@@ -346,6 +346,7 @@ export class ComplianceService {
   }
 
   private async getAuditRows(organizationId: string, range: DateRange): Promise<DataRow[]> {
+    const bounds = toSqlDateRange(range);
     const rows = await this.db.execute(sql`
       SELECT
         id::text                         AS "id",
@@ -358,8 +359,8 @@ export class ComplianceService {
         created_at                       AS "createdAt"
       FROM audit_log
       WHERE organization_id = ${organizationId}
-        AND created_at >= ${range.from}
-        AND created_at <= ${range.to}
+        AND created_at >= ${bounds.from}::timestamptz
+        AND created_at <= ${bounds.to}::timestamptz
       ORDER BY created_at DESC
     `);
     return rows as DataRow[];
@@ -388,6 +389,7 @@ export class ComplianceService {
   }
 
   private async getApprovalEvidence(organizationId: string, range: DateRange): Promise<DataRow[]> {
+    const bounds = toSqlDateRange(range);
     const rows = await this.db.execute(sql`
       SELECT
         ar.id::text                         AS "approvalRequestId",
@@ -421,8 +423,8 @@ export class ComplianceService {
       LEFT JOIN users approver ON approver.id = aa.approver_id
       WHERE COALESCE(rule.organization_id, r.organization_id, po.organization_id, i.organization_id) = ${organizationId}
         AND (
-          ar.created_at BETWEEN ${range.from} AND ${range.to}
-          OR aa.acted_at BETWEEN ${range.from} AND ${range.to}
+          ar.created_at BETWEEN ${bounds.from}::timestamptz AND ${bounds.to}::timestamptz
+          OR aa.acted_at BETWEEN ${bounds.from}::timestamptz AND ${bounds.to}::timestamptz
         )
       ORDER BY ar.created_at DESC, aa.acted_at ASC
     `);
@@ -472,6 +474,7 @@ export class ComplianceService {
   }
 
   private async getAuditBreakdown(organizationId: string, range: DateRange): Promise<DataRow[]> {
+    const bounds = toSqlDateRange(range);
     const rows = await this.db.execute(sql`
       SELECT
         entity_type AS "entityType",
@@ -479,8 +482,8 @@ export class ComplianceService {
         COUNT(*)::int AS "count"
       FROM audit_log
       WHERE organization_id = ${organizationId}
-        AND created_at >= ${range.from}
-        AND created_at <= ${range.to}
+        AND created_at >= ${bounds.from}::timestamptz
+        AND created_at <= ${bounds.to}::timestamptz
       GROUP BY entity_type, action
       ORDER BY count DESC, entity_type ASC, action ASC
     `);
@@ -693,6 +696,13 @@ function parseDate(value: string | undefined, fallback: Date): Date {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) throw new BadRequestException(`Invalid date: ${value}`);
   return parsed;
+}
+
+function toSqlDateRange(range: DateRange): { from: string; to: string } {
+  return {
+    from: range.from.toISOString(),
+    to: range.to.toISOString(),
+  };
 }
 
 function emptyRetentionSummary(): RetentionSummary {
