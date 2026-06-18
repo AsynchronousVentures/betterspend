@@ -202,7 +202,7 @@ export class OcrService {
     if (!text) return null;
 
     // Strip markdown code blocks if present
-    const json = text.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
+    const json = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
     const parsed = JSON.parse(json);
 
     const extracted: OcrExtractedData = {
