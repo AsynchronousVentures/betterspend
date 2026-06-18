@@ -167,7 +167,7 @@ export class IntakeConciergeService {
   ) {
     await this.findPolicy(id, organizationId);
 
-    const [updated] = await this.db
+    const rows = await this.db
       .update(procurementPolicies)
       .set({
         title: input.title?.trim(),
@@ -179,6 +179,9 @@ export class IntakeConciergeService {
       })
       .where(and(eq(procurementPolicies.id, id), eq(procurementPolicies.organizationId, organizationId)))
       .returning();
+
+    if (!rows.length) throw new NotFoundException(`Procurement policy ${id} not found`);
+    const [updated] = rows;
 
     await this.audit
       .log(organizationId, userId, 'procurement_policy', id, 'updated', {
