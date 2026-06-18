@@ -1,0 +1,214 @@
+name: Docker CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: betterspend-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_TAG: sha-${{ github.sha }}
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: asynchronousventures
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build database package
+        run: pnpm --filter @betterspend/db build
+
+      - name: Typecheck API
+        run: pnpm --filter @betterspend/api typecheck
+
+      - name: Typecheck web
+        run: pnpm --filter @betterspend/web exec tsc --noEmit --incremental false
+
+      - name: Build API
+        run: pnpm --filter @betterspend/api build
+
+      - name: Build web
+        run: pnpm --filter @betterspend/web build
+
+      - name: Validate Compose files
+        run: |
+          docker compose config >/dev/null
+          cp .env.production.example deploy/.env.production
+          IMAGE_TAG=sha-ci docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml config >/dev/null
+
+      - name: Build API image
+        run: docker build -f docker/api.Dockerfile -t betterspend-api:ci .
+
+      - name: Build web image
+        run: docker build --build-arg NEXT_PUBLIC_API_URL=https://example.com -f docker/web.Dockerfile -t betterspend-web:ci .
+
+      - name: Build migrator image
+        run: docker build -f docker/migrator.Dockerfile -t betterspend-migrator:ci .
+
+  publish:
+    name: Publish Images
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate deployment domain
+        env:
+          BETTERSPEND_DOMAIN: ${{ vars.BETTERSPEND_DOMAIN }}
+        run: test -n "$BETTERSPEND_DOMAIN"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/api.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/betterspend-api:${{ env.IMAGE_TAG }}
+
+      - name: Build and push web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/web.Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=https://${{ vars.BETTERSPEND_DOMAIN }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/betterspend-web:${{ env.IMAGE_TAG }}
+
+      - name: Build and push migrator image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/migrator.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/betterspend-migrator:${{ env.IMAGE_TAG }}
+
+  deploy:
+    name: Deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: publish
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate deploy secrets
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_SSH_KEY"
+
+      - name: Configure SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          port="${DEPLOY_PORT:-22}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          if [ -n "$DEPLOY_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "$port" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          fi
+
+      - name: Install rsync
+        run: sudo apt-get update && sudo apt-get install -y rsync
+
+      - name: Sync deployment files
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          port="${DEPLOY_PORT:-22}"
+          ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" 'mkdir -p /opt/betterspend'
+          rsync -az --delete \
+            --exclude='.env.production' \
+            --exclude='backups/' \
+            --exclude='.current_image_tag' \
+            --exclude='.previous_image_tag' \
+            -e "ssh -p $port" \
+            deploy/ "$DEPLOY_USER@$DEPLOY_HOST:/opt/betterspend/"
+
+      - name: Log in server to GHCR
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          port="${DEPLOY_PORT:-22}"
+          if [ -n "$GHCR_TOKEN" ]; then
+            server_ghcr_username="${GHCR_USERNAME:-$GITHUB_ACTOR}"
+            printf '%s' "$GHCR_TOKEN" | ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" "docker login ghcr.io -u '$server_ghcr_username' --password-stdin"
+          else
+            echo "GHCR_TOKEN not set; assuming GHCR images are public or the server is already logged in."
+          fi
+
+      - name: Deploy image tag
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          port="${DEPLOY_PORT:-22}"
+          ssh -p "$port" "$DEPLOY_USER@$DEPLOY_HOST" "cd /opt/betterspend && ./deploy.sh '${IMAGE_TAG}'"

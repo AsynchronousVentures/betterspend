@@ -1,4 +1,84 @@
 services:
+  api:
+    profiles: ['app']
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    container_name: betterspend-api
+    environment:
+      NODE_ENV: production
+      API_PORT: 4001
+      DATABASE_URL: postgresql://betterspend:betterspend@postgres:5432/betterspend
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_PUBLIC_ENDPOINT: http://localhost:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: betterspend
+      BETTER_AUTH_SECRET: betterspend-dev-secret-change-in-prod
+      AI_CREDENTIAL_ENCRYPTION_KEY: betterspend-dev-ai-credential-key
+      API_URL: http://localhost:4001
+      WEB_URL: http://localhost:3100
+    ports:
+      - '4001:4001'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'node -e "fetch(''http://127.0.0.1:4001/api/v1/health'').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  web:
+    profiles: ['app']
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4001}
+    container_name: betterspend-web
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4001}
+    ports:
+      - '3100:3000'
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'node -e "fetch(''http://127.0.0.1:3000'').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  migrator:
+    profiles: ['tools']
+    build:
+      context: .
+      dockerfile: docker/migrator.Dockerfile
+    container_name: betterspend-migrator
+    environment:
+      DATABASE_URL: postgresql://betterspend:betterspend@postgres:5432/betterspend
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   postgres:
     image: postgres:16-alpine
     container_name: betterspend-postgres
@@ -9,9 +89,9 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5433:5432"
+      - '5433:5432'
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U betterspend"]
+      test: ['CMD-SHELL', 'pg_isready -U betterspend']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -20,11 +100,11 @@ services:
     image: redis:7-alpine
     container_name: betterspend-redis
     ports:
-      - "6379:6379"
+      - '6379:6379'
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -39,10 +119,10 @@ services:
     volumes:
       - minio_data:/data
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - '9000:9000'
+      - '9001:9001'
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
       interval: 30s
       timeout: 20s
       retries: 3

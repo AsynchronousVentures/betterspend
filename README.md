@@ -32,18 +32,18 @@ Most procurement tools are per-seat SaaS products that cost thousands of dollars
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|------------|
-| Monorepo | Turborepo + pnpm workspaces |
-| Backend | NestJS v10 (TypeScript) |
-| Frontend | Next.js 15 App Router |
-| ORM | Drizzle ORM |
-| Database | PostgreSQL 16 |
-| Auth | better-auth |
-| Queue | BullMQ + Redis |
+| Layer        | Technology                                    |
+| ------------ | --------------------------------------------- |
+| Monorepo     | Turborepo + pnpm workspaces                   |
+| Backend      | NestJS v10 (TypeScript)                       |
+| Frontend     | Next.js 15 App Router                         |
+| ORM          | Drizzle ORM                                   |
+| Database     | PostgreSQL 16                                 |
+| Auth         | better-auth                                   |
+| Queue        | BullMQ + Redis                                |
 | File Storage | S3-compatible (MinIO for dev, S3/R2 for prod) |
-| UI | shadcn/ui + Tailwind CSS |
-| Validation | Zod (shared between API and frontend) |
+| UI           | shadcn/ui + Tailwind CSS                      |
+| Validation   | Zod (shared between API and frontend)         |
 
 ---
 
@@ -86,15 +86,22 @@ pnpm db:seed       # Load demo data (Acme Corp org, departments, vendors)
 pnpm dev
 ```
 
+To run the full app locally in containers instead of pnpm dev:
+
+```bash
+docker compose --profile tools run --rm migrator
+docker compose --profile app up --build
+```
+
 ### 5. Open the app
 
-| Service | URL |
-|---------|-----|
-| Web UI | http://localhost:3100 |
-| API | http://localhost:4001/api/v1 |
-| API Docs (Swagger) | http://localhost:4001/api/docs |
-| Drizzle Studio | http://localhost:4983 (`pnpm db:studio`) |
-| MinIO Console | http://localhost:9001 (minioadmin / minioadmin) |
+| Service            | URL                                             |
+| ------------------ | ----------------------------------------------- |
+| Web UI             | http://localhost:3100                           |
+| API                | http://localhost:4001/api/v1                    |
+| API Docs (Swagger) | http://localhost:4001/api/docs                  |
+| Drizzle Studio     | http://localhost:4983 (`pnpm db:studio`)        |
+| MinIO Console      | http://localhost:9001 (minioadmin / minioadmin) |
 
 ---
 
@@ -117,8 +124,9 @@ betterspend/
 │   ├── shared/            Zod schemas, TypeScript types, constants
 │   ├── ui/                Shared React component library
 │   └── config/            Shared ESLint, TS, Tailwind configs
+├── docker/                App and migrator Dockerfiles
+├── deploy/                Production Compose, Caddy, deploy scripts
 ├── docker-compose.yml
-├── ecosystem.config.js    pm2 process config (production)
 └── turbo.json
 ```
 
@@ -148,10 +156,11 @@ Contributions are welcome. The backlog lives in [GitHub Issues](https://github.c
 **Workflow:** fork → feature branch → pull request against `main`.
 
 **Code conventions:**
+
 - TypeScript strict mode throughout
 - Zod validation at all system boundaries (API request bodies, external responses)
 - Drizzle ORM for all DB access — no raw SQL except migrations
-- See `CLAUDE.md` for dev setup nuances, pm2 process management, and port configuration
+- See `docs/deployment.md` for the Dockerized production deployment workflow
 
 ---
 
