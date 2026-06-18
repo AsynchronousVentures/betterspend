@@ -211,6 +211,13 @@
       "when": 1775600000000,
       "tag": "0029_contract_intelligence",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1775700000000,
+      "tag": "0030_ai_provider_addons",
+      "breakpoints": true
     }
   ]
 }
