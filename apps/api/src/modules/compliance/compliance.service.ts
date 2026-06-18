@@ -31,6 +31,10 @@ interface AuditPackageSectionResult<T> {
   warning?: AuditPackageWarning;
 }
 
+interface AuditPackageSectionOptions {
+  tolerateAnyError?: boolean;
+}
+
 export interface RetentionSummary {
   generatedAt: string;
   policyStatus: string;
@@ -262,6 +266,7 @@ export class ComplianceService {
       ),
       this.collectAuditEvidenceSection('approval chain', [], () =>
         this.getApprovalEvidence(organizationId, range),
+        { tolerateAnyError: true },
       ),
       this.collectAuditEvidenceSection('retention summary', emptyRetentionSummary(), () =>
         this.getRetentionSummary(organizationId),
@@ -323,13 +328,16 @@ export class ComplianceService {
     section: string,
     fallback: T,
     query: () => Promise<T>,
+    options: AuditPackageSectionOptions = {},
   ): Promise<AuditPackageSectionResult<T>> {
     try {
       return { data: await query() };
     } catch (error) {
-      if (!isRecoverableSchemaDriftError(error)) throw error;
+      if (!options.tolerateAnyError && !isRecoverableSchemaDriftError(error)) throw error;
 
-      const warning = createSchemaDriftWarning(section, error);
+      const warning = options.tolerateAnyError
+        ? createEvidenceUnavailableWarning(section, error)
+        : createSchemaDriftWarning(section, error);
       this.logger.warn(
         `Audit package section "${section}" unavailable: ${formatErrorForLog(error)}`,
       );
@@ -711,17 +719,38 @@ function createSchemaDriftWarning(section: string, error: unknown): AuditPackage
   };
 }
 
-function getErrorCode(error: unknown): string | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const { code } = error as { code?: unknown };
-  return typeof code === 'string' ? code : undefined;
+function createEvidenceUnavailableWarning(section: string, error: unknown): AuditPackageWarning {
+  const code = getErrorCode(error);
+  return {
+    section,
+    message:
+      'This evidence section is temporarily unavailable. The audit package was generated with the remaining evidence sections.',
+    ...(code ? { code } : {}),
+  };
 }
 
-function formatErrorForLog(error: unknown): string {
-  if (error instanceof Error) return error.message;
+function getErrorCode(error: unknown, seen = new Set<unknown>()): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  if (seen.has(error)) return undefined;
+  seen.add(error);
+
+  const { cause, code } = error as { cause?: unknown; code?: unknown };
+  if (typeof code === 'string') return code;
+  return getErrorCode(cause, seen);
+}
+
+function formatErrorForLog(error: unknown, seen = new Set<unknown>()): string {
   if (typeof error === 'object' && error !== null) {
-    const { message } = error as { message?: unknown };
-    if (typeof message === 'string') return message;
+    if (seen.has(error)) return '[circular error]';
+    seen.add(error);
+
+    const { cause, message } = error as { cause?: unknown; message?: unknown };
+    const messageText = typeof message === 'string' ? message : undefined;
+    if (cause) {
+      const causeText = formatErrorForLog(cause, seen);
+      return messageText ? `${messageText}: ${causeText}` : causeText;
+    }
+    if (messageText) return messageText;
   }
   return String(error);
 }
