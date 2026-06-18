@@ -231,7 +231,7 @@ export class AiProvidersService {
         and(eq(record.organizationId, organizationId), eq(record.enabled, true)),
       orderBy: (record, { desc }) => desc(record.updatedAt),
     });
-    if (nextDefault) {
+    if (existing.isDefault && nextDefault) {
       await this.clearDefault(organizationId);
       await this.db
         .update(aiProviderConnections)

@@ -54,12 +54,12 @@ export class AiRuntimeService {
 
     try {
       if (connection.provider === 'anthropic') {
-        return this.callAnthropicText(connection, prompt, maxTokens);
+        return await this.callAnthropicText(connection, prompt, maxTokens);
       }
       if (connection.provider === 'openai') {
-        return this.callOpenAiText(connection, prompt, maxTokens);
+        return await this.callOpenAiText(connection, prompt, maxTokens);
       }
-      return this.callOpenRouterText(connection, prompt, maxTokens);
+      return await this.callOpenRouterText(connection, prompt, maxTokens);
     } catch (error) {
       this.logger.warn(`AI text generation failed for ${connection.provider}: ${this.formatError(error)}`);
       return null;
@@ -78,12 +78,12 @@ export class AiRuntimeService {
 
     try {
       if (connection.provider === 'anthropic') {
-        return this.callAnthropicVision(connection, prompt, base64Data, contentType, maxTokens);
+        return await this.callAnthropicVision(connection, prompt, base64Data, contentType, maxTokens);
       }
       if (connection.provider === 'openai') {
-        return this.callOpenAiVision(connection, prompt, base64Data, contentType, maxTokens);
+        return await this.callOpenAiVision(connection, prompt, base64Data, contentType, maxTokens);
       }
-      return this.callOpenRouterVision(connection, prompt, base64Data, contentType, maxTokens);
+      return await this.callOpenRouterVision(connection, prompt, base64Data, contentType, maxTokens);
     } catch (error) {
       this.logger.warn(`AI vision generation failed for ${connection.provider}: ${this.formatError(error)}`);
       return null;

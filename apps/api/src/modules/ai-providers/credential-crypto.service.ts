@@ -22,7 +22,7 @@ export class CredentialCryptoService {
 
   decrypt(payload: string): string {
     const [version, ivText, tagText, encryptedText] = payload.split(':');
-    if (version !== VERSION || !ivText || !tagText || !encryptedText) {
+    if (version !== VERSION || !ivText || !tagText || encryptedText === undefined) {
       throw new InternalServerErrorException('Unsupported encrypted credential format');
     }
 
