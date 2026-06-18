@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { ocrJobs } from '@betterspend/db';
-import Anthropic from '@anthropic-ai/sdk';
+import { AiRuntimeService } from '../ai-providers/ai-runtime.service';
 
 export interface OcrExtractedLine {
   description: string;
@@ -74,18 +74,12 @@ Return ONLY the JSON object with no additional text or markdown.`;
 @Injectable()
 export class OcrService {
   private readonly logger = new Logger(OcrService.name);
-  private readonly anthropic: Anthropic | null;
 
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     @InjectQueue('ocr') private readonly ocrQueue: Queue,
-  ) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    this.anthropic = apiKey ? new Anthropic({ apiKey }) : null;
-    if (!this.anthropic) {
-      this.logger.warn('ANTHROPIC_API_KEY not set — OCR will use stub extraction');
-    }
-  }
+    private readonly aiRuntime: AiRuntimeService,
+  ) {}
 
   async createJob(input: {
     organizationId: string;
@@ -158,26 +152,21 @@ export class OcrService {
       let extracted: OcrExtractedData;
       let confidence: OcrConfidence;
 
-      if (this.anthropic && rawBase64) {
-        const result = await this.runClaudeExtraction(rawBase64, contentType);
-        extracted = result.extracted;
-        confidence = result.confidence;
+      if (job && rawBase64) {
+        const result = await this.runAiExtraction(job.organizationId, rawBase64, contentType);
+        if (result) {
+          extracted = result.extracted;
+          confidence = result.confidence;
+        } else {
+          extracted = this.stubExtractedData();
+          confidence = this.stubConfidence();
+          this.logger.warn(`OCR job ${jobId}: no AI provider configured, using stub`);
+        }
       } else {
         // Stub fallback
-        extracted = {
-          vendorName: null, invoiceNumber: null, invoiceDate: null,
-          dueDate: null, currency: 'USD', subtotal: null,
-          taxAmount: null, totalAmount: null, lines: [],
-        };
-        confidence = {
-          vendorName: 0, invoiceNumber: 0, invoiceDate: 0,
-          dueDate: 0, totalAmount: 0, lines: 0, overall: 0,
-        };
-        if (!this.anthropic) {
-          this.logger.warn(`OCR job ${jobId}: no API key, using stub`);
-        } else {
-          this.logger.warn(`OCR job ${jobId}: no image data provided`);
-        }
+        extracted = this.stubExtractedData();
+        confidence = this.stubConfidence();
+        this.logger.warn(`OCR job ${jobId}: no image data provided`);
       }
 
       await this.db
@@ -198,34 +187,19 @@ export class OcrService {
     }
   }
 
-  private async runClaudeExtraction(
+  private async runAiExtraction(
+    organizationId: string,
     base64Data: string,
     contentType: string,
-  ): Promise<{ extracted: OcrExtractedData; confidence: OcrConfidence }> {
-    const mediaType = (
-      ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(contentType)
-        ? contentType
-        : 'image/jpeg'
-    ) as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
-
-    const response = await this.anthropic!.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 2048,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: { type: 'base64', media_type: mediaType, data: base64Data },
-            },
-            { type: 'text', text: EXTRACTION_PROMPT },
-          ],
-        },
-      ],
-    });
-
-    const text = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '{}';
+  ): Promise<{ extracted: OcrExtractedData; confidence: OcrConfidence } | null> {
+    const text = await this.aiRuntime.generateVision(
+      organizationId,
+      EXTRACTION_PROMPT,
+      base64Data,
+      contentType,
+      2048,
+    );
+    if (!text) return null;
 
     // Strip markdown code blocks if present
     const json = text.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
@@ -261,5 +235,31 @@ export class OcrService {
     };
 
     return { extracted, confidence };
+  }
+
+  private stubExtractedData(): OcrExtractedData {
+    return {
+      vendorName: null,
+      invoiceNumber: null,
+      invoiceDate: null,
+      dueDate: null,
+      currency: 'USD',
+      subtotal: null,
+      taxAmount: null,
+      totalAmount: null,
+      lines: [],
+    };
+  }
+
+  private stubConfidence(): OcrConfidence {
+    return {
+      vendorName: 0,
+      invoiceNumber: 0,
+      invoiceDate: 0,
+      dueDate: 0,
+      totalAmount: 0,
+      lines: 0,
+      overall: 0,
+    };
   }
 }

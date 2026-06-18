@@ -45,6 +45,7 @@ import { emailIntakeItems } from './schema/email-intake';
 import { onboardingQuestionnaires, vendorOnboardingSubmissions } from './schema/onboarding-questionnaires';
 import { documents } from './schema/documents';
 import { intakeConciergeSessions, procurementPolicies } from './schema/procurement-concierge';
+import { aiProviderConnections, aiProviderOauthStates } from './schema/ai-providers';
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   legalEntities: many(legalEntities),
@@ -64,6 +65,34 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   intakeConciergeSessions: many(intakeConciergeSessions),
   onboardingQuestionnaires: many(onboardingQuestionnaires),
   vendorOnboardingSubmissions: many(vendorOnboardingSubmissions),
+  aiProviderConnections: many(aiProviderConnections),
+  aiProviderOauthStates: many(aiProviderOauthStates),
+}));
+
+export const aiProviderConnectionsRelations = relations(aiProviderConnections, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [aiProviderConnections.organizationId],
+    references: [organizations.id],
+  }),
+  creator: one(users, {
+    fields: [aiProviderConnections.createdBy],
+    references: [users.id],
+  }),
+  updater: one(users, {
+    fields: [aiProviderConnections.updatedBy],
+    references: [users.id],
+  }),
+}));
+
+export const aiProviderOauthStatesRelations = relations(aiProviderOauthStates, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [aiProviderOauthStates.organizationId],
+    references: [organizations.id],
+  }),
+  creator: one(users, {
+    fields: [aiProviderOauthStates.createdBy],
+    references: [users.id],
+  }),
 }));
 
 export const exchangeRatesRelations = relations(exchangeRates, ({ one }) => ({

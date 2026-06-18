@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { AiRuntimeService } from '../ai-providers/ai-runtime.service';
 
 export interface AiParsedRequisition {
   title: string;
@@ -18,29 +19,13 @@ export interface AiParsedRequisition {
 
 @Injectable()
 export class AiRequisitionService {
-  async parseFromText(text: string): Promise<AiParsedRequisition> {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+  constructor(private readonly aiRuntime: AiRuntimeService) {}
 
-    if (!apiKey) {
-      // Fallback: simple rule-based parsing when API key not available
-      return this.ruleBasedParse(text);
-    }
-
+  async parseFromText(organizationId: string, text: string): Promise<AiParsedRequisition> {
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 1024,
-          messages: [
-            {
-              role: 'user',
-              content: `You are a procurement assistant. Parse the following purchase request and extract structured data.
+      const content = await this.aiRuntime.generateText(
+        organizationId,
+        `You are a procurement assistant. Parse the following purchase request and extract structured data.
 
 IMPORTANT: Respond with ONLY a valid JSON object, no explanations or markdown.
 
@@ -65,17 +50,9 @@ The JSON must have this exact shape:
 
 Purchase request text:
 ${text}`,
-            },
-          ],
-        }),
-      });
-
-      if (!response.ok) {
-        return this.ruleBasedParse(text);
-      }
-
-      const data = await response.json() as any;
-      const content = data.content?.[0]?.text ?? '';
+        1024,
+      );
+      if (!content) return this.ruleBasedParse(text);
 
       // Extract JSON from response
       const jsonMatch = content.match(/\{[\s\S]*\}/);

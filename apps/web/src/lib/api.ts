@@ -88,6 +88,33 @@ async function apiFetchForm<T>(path: string, options?: RequestInit): Promise<T> 
   return res.json();
 }
 
+export type AiProviderId = 'anthropic' | 'openai' | 'openrouter';
+
+export interface AiProviderStatus {
+  provider: AiProviderId;
+  label: string;
+  connected: boolean;
+  enabled: boolean;
+  isDefault: boolean;
+  supportsOAuth: boolean;
+  authMethod: 'api_key' | 'oauth' | null;
+  defaultModel: string;
+  maskedCredential?: string;
+  status: string;
+  lastValidatedAt?: string;
+  lastError?: string;
+  metadata: Record<string, unknown>;
+  dashboardUrl: string;
+  modelPlaceholder: string;
+  connectedAt?: string;
+  updatedAt?: string;
+}
+
+export interface AiProvidersStatusResponse {
+  defaultProvider: AiProviderId | null;
+  providers: AiProviderStatus[];
+}
+
 export const api = {
   account: {
     me: () =>
@@ -343,6 +370,33 @@ export const api = {
       apiFetch<{ url: string }>(`/gl/oauth/${provider}/connect`),
     oauthDisconnect: (provider: 'qbo' | 'xero') =>
       apiFetch<void>(`/gl/oauth/${provider}`, { method: 'DELETE' }),
+  },
+  aiProviders: {
+    status: () => apiFetch<AiProvidersStatusResponse>('/ai-providers/status'),
+    saveApiKey: (
+      provider: AiProviderId,
+      data: { apiKey: string; defaultModel?: string; organizationId?: string; projectId?: string },
+    ) =>
+      apiFetch<AiProvidersStatusResponse>(`/ai-providers/${provider}/api-key`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    update: (
+      provider: AiProviderId,
+      data: { defaultModel?: string; enabled?: boolean; isDefault?: boolean },
+    ) =>
+      apiFetch<AiProvidersStatusResponse>(`/ai-providers/${provider}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    test: (provider: AiProviderId) =>
+      apiFetch<{ ok: boolean; provider: AiProviderId; checkedAt: string }>(`/ai-providers/${provider}/test`, {
+        method: 'POST',
+      }),
+    openRouterConnect: () =>
+      apiFetch<{ url: string }>('/ai-providers/openrouter/oauth/connect'),
+    disconnect: (provider: AiProviderId) =>
+      apiFetch<AiProvidersStatusResponse>(`/ai-providers/${provider}`, { method: 'DELETE' }),
   },
   taxCodes: {
     list: () => apiFetch<any[]>('/tax-codes'),

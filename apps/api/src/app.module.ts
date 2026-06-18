@@ -50,6 +50,7 @@ import { AccountModule } from './modules/account/account.module';
 import { PaymentRunsModule } from './modules/payment-runs/payment-runs.module';
 import { IntakeConciergeModule } from './modules/intake-concierge/intake-concierge.module';
 import { ComplianceModule } from './modules/compliance/compliance.module';
+import { AiProvidersModule } from './modules/ai-providers/ai-providers.module';
 
 @Module({
   imports: [
@@ -89,6 +90,7 @@ import { ComplianceModule } from './modules/compliance/compliance.module';
     EmailIntakeModule,
     IntakeConciergeModule,
     ComplianceModule,
+    AiProvidersModule,
     AuditModule,
     ReportsModule,
     SearchModule,
