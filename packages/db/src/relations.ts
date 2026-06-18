@@ -36,6 +36,7 @@ import { softwareLicenses } from './schema/software-licenses';
 import { catalogPriceProposals } from './schema/catalog-price-proposals';
 import { emailIntakeItems } from './schema/email-intake';
 import { onboardingQuestionnaires, vendorOnboardingSubmissions } from './schema/onboarding-questionnaires';
+import { intakeConciergeSessions, procurementPolicies } from './schema/procurement-concierge';
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   legalEntities: many(legalEntities),
@@ -51,6 +52,8 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   spendGuardAlerts: many(spendGuardAlerts),
   softwareLicenses: many(softwareLicenses),
   emailIntakeItems: many(emailIntakeItems),
+  procurementPolicies: many(procurementPolicies),
+  intakeConciergeSessions: many(intakeConciergeSessions),
   onboardingQuestionnaires: many(onboardingQuestionnaires),
   vendorOnboardingSubmissions: many(vendorOnboardingSubmissions),
 }));
@@ -107,6 +110,28 @@ export const emailIntakeItemsRelations = relations(emailIntakeItems, ({ one }) =
   organization: one(organizations, {
     fields: [emailIntakeItems.organizationId],
     references: [organizations.id],
+  }),
+}));
+
+export const procurementPoliciesRelations = relations(procurementPolicies, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [procurementPolicies.organizationId],
+    references: [organizations.id],
+  }),
+  creator: one(users, {
+    fields: [procurementPolicies.createdBy],
+    references: [users.id],
+  }),
+}));
+
+export const intakeConciergeSessionsRelations = relations(intakeConciergeSessions, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [intakeConciergeSessions.organizationId],
+    references: [organizations.id],
+  }),
+  requester: one(users, {
+    fields: [intakeConciergeSessions.requesterId],
+    references: [users.id],
   }),
 }));
 
