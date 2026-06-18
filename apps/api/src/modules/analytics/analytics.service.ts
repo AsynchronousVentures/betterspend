@@ -67,25 +67,29 @@ export class AnalyticsService {
   /** Invoice aging (unpaid invoices grouped by age bucket) */
   async invoiceAging(organizationId: string) {
     const rows = await this.db.execute(sql`
-      SELECT
-        CASE
-          WHEN NOW() - i.due_date <= INTERVAL '30 days'  THEN '0-30 days'
-          WHEN NOW() - i.due_date <= INTERVAL '60 days'  THEN '31-60 days'
-          WHEN NOW() - i.due_date <= INTERVAL '90 days'  THEN '61-90 days'
-          ELSE 'Over 90 days'
-        END AS bucket,
-        COUNT(*)::int                                      AS count,
-        SUM(i.total_amount)::numeric                       AS total
-      FROM invoices i
-      WHERE i.organization_id = ${organizationId}
-        AND i.status NOT IN ('approved', 'cancelled')
-        AND i.due_date IS NOT NULL
-      GROUP BY bucket
+      WITH aging AS (
+        SELECT
+          CASE
+            WHEN NOW() - i.due_date <= INTERVAL '30 days' THEN '0-30 days'
+            WHEN NOW() - i.due_date <= INTERVAL '60 days' THEN '31-60 days'
+            WHEN NOW() - i.due_date <= INTERVAL '90 days' THEN '61-90 days'
+            ELSE 'Over 90 days'
+          END AS bucket,
+          COUNT(*)::int AS count,
+          COALESCE(SUM(i.total_amount), 0)::numeric AS total
+        FROM invoices i
+        WHERE i.organization_id = ${organizationId}
+          AND i.status NOT IN ('approved', 'cancelled')
+          AND i.due_date IS NOT NULL
+        GROUP BY 1
+      )
+      SELECT bucket, count, total
+      FROM aging
       ORDER BY
         CASE bucket
-          WHEN '0-30 days'    THEN 1
-          WHEN '31-60 days'   THEN 2
-          WHEN '61-90 days'   THEN 3
+          WHEN '0-30 days' THEN 1
+          WHEN '31-60 days' THEN 2
+          WHEN '61-90 days' THEN 3
           ELSE 4
         END
     `);
@@ -262,8 +266,8 @@ export class AnalyticsService {
         d.name                                                 AS "departmentName",
         p.name                                                 AS "projectName"
       FROM budgets b
-      LEFT JOIN departments d ON d.id = b.department_id
-      LEFT JOIN projects    p ON p.id = b.project_id
+      LEFT JOIN departments d ON b.budget_type = 'department' AND d.id = b.scope_id
+      LEFT JOIN projects p ON b.budget_type = 'project' AND p.id = b.scope_id
       WHERE b.organization_id = ${organizationId}
         AND b.fiscal_year = EXTRACT(YEAR FROM NOW())::int
       ORDER BY "utilizationPct" DESC NULLS LAST

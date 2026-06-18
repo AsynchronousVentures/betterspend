@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Db } from '@betterspend/db';
 import { auditLog, authAccounts, authSessions, users } from '@betterspend/db';
@@ -20,6 +20,24 @@ interface DateRange {
 
 type DataRow = Record<string, unknown>;
 
+export interface AuditPackageWarning {
+  section: string;
+  message: string;
+  code?: string;
+}
+
+interface AuditPackageSectionResult<T> {
+  data: T;
+  warning?: AuditPackageWarning;
+}
+
+export interface RetentionSummary {
+  generatedAt: string;
+  policyStatus: string;
+  recommendedPolicies: Array<{ dataSet: string; recommendation: string }>;
+  dataSets: DataRow[];
+}
+
 const FRAMEWORKS = new Set<ComplianceFramework>(['soc2', 'iso27001', 'custom']);
 
 const AUDIT_PACKAGE_FILES = [
@@ -32,6 +50,8 @@ const AUDIT_PACKAGE_FILES = [
 
 @Injectable()
 export class ComplianceService {
+  private readonly logger = new Logger(ComplianceService.name);
+
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly auditService: AuditService,
@@ -46,6 +66,7 @@ export class ComplianceService {
       userRosterSample: packageData.userRoster.slice(0, 8),
       approvalSample: packageData.approvalEvidence.slice(0, 8),
       retentionSummary: packageData.retentionSummary,
+      warnings: packageData.warnings,
     };
   }
 
@@ -226,18 +247,47 @@ export class ComplianceService {
   private async collectAuditPackageData(organizationId: string, input: AuditPackageInput) {
     const framework = normalizeFramework(input.framework);
     const range = parseDateRange(input);
-    const [auditRows, userRoster, approvalEvidence, retentionSummary, auditBreakdown] =
-      await Promise.all([
+    const [
+      auditRowsResult,
+      userRosterResult,
+      approvalEvidenceResult,
+      retentionSummaryResult,
+      auditBreakdownResult,
+    ] = await Promise.all([
+      this.collectAuditEvidenceSection('audit log', [], () =>
         this.getAuditRows(organizationId, range),
+      ),
+      this.collectAuditEvidenceSection('user roster', [], () =>
         this.getUserRoster(organizationId),
+      ),
+      this.collectAuditEvidenceSection('approval chain', [], () =>
         this.getApprovalEvidence(organizationId, range),
+      ),
+      this.collectAuditEvidenceSection('retention summary', emptyRetentionSummary(), () =>
         this.getRetentionSummary(organizationId),
+      ),
+      this.collectAuditEvidenceSection('audit breakdown', [], () =>
         this.getAuditBreakdown(organizationId, range),
-      ]);
+      ),
+    ]);
+
+    const auditRows = auditRowsResult.data;
+    const userRoster = userRosterResult.data;
+    const approvalEvidence = approvalEvidenceResult.data;
+    const retentionSummary = retentionSummaryResult.data;
+    const auditBreakdown = auditBreakdownResult.data;
+    const warnings = [
+      auditRowsResult.warning,
+      userRosterResult.warning,
+      approvalEvidenceResult.warning,
+      retentionSummaryResult.warning,
+      auditBreakdownResult.warning,
+    ].filter((warning): warning is AuditPackageWarning => Boolean(warning));
 
     const manifest = {
       packageType: 'betterspend.audit_evidence',
       framework,
+      evidenceStatus: warnings.length ? 'partial' : 'complete',
       generatedAt: new Date().toISOString(),
       organizationId,
       period: {
@@ -250,6 +300,7 @@ export class ComplianceService {
         approvalEvidenceRows: approvalEvidence.length,
       },
       auditBreakdown,
+      warnings,
       includedFiles: AUDIT_PACKAGE_FILES,
       notes: [
         'Audit log rows are immutable application events scoped to this organization.',
@@ -264,7 +315,26 @@ export class ComplianceService {
       userRoster,
       approvalEvidence,
       retentionSummary,
+      warnings,
     };
+  }
+
+  private async collectAuditEvidenceSection<T>(
+    section: string,
+    fallback: T,
+    query: () => Promise<T>,
+  ): Promise<AuditPackageSectionResult<T>> {
+    try {
+      return { data: await query() };
+    } catch (error) {
+      if (!isRecoverableSchemaDriftError(error)) throw error;
+
+      const warning = createSchemaDriftWarning(section, error);
+      this.logger.warn(
+        `Audit package section "${section}" unavailable: ${formatErrorForLog(error)}`,
+      );
+      return { data: fallback, warning };
+    }
   }
 
   private async getAuditRows(organizationId: string, range: DateRange): Promise<DataRow[]> {
@@ -295,13 +365,12 @@ export class ComplianceService {
         u.email                                                  AS "email",
         u.email_verified                                         AS "emailVerified",
         u.is_active                                              AS "isActive",
-        COALESCE(string_agg(DISTINCT COALESCE(cr.name, ur.role), ', '), '') AS "roles",
+        COALESCE(string_agg(DISTINCT ur.role, ', '), '')       AS "roles",
         MAX(s.updated_at)                                        AS "lastSessionAt",
         u.created_at                                             AS "createdAt",
         u.updated_at                                             AS "updatedAt"
       FROM users u
       LEFT JOIN user_roles ur ON ur.user_id = u.id
-      LEFT JOIN custom_roles cr ON cr.id = ur.custom_role_id
       LEFT JOIN auth_sessions s ON s.user_id = u.id
       WHERE u.organization_id = ${organizationId}
       GROUP BY u.id
@@ -352,7 +421,7 @@ export class ComplianceService {
     return rows as DataRow[];
   }
 
-  private async getRetentionSummary(organizationId: string) {
+  private async getRetentionSummary(organizationId: string): Promise<RetentionSummary> {
     const rows = await this.db.execute(sql`
       SELECT 'audit_log' AS "dataSet", COUNT(*)::int AS "recordCount", MIN(created_at) AS "oldestRecord", MAX(created_at) AS "newestRecord"
       FROM audit_log WHERE organization_id = ${organizationId}
@@ -390,7 +459,7 @@ export class ComplianceService {
             'Retain requisitions, purchase orders, invoices, and approvals for finance recordkeeping.',
         },
       ],
-      dataSets: rows,
+      dataSets: rows as DataRow[],
     };
   }
 
@@ -616,6 +685,45 @@ function parseDate(value: string | undefined, fallback: Date): Date {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) throw new BadRequestException(`Invalid date: ${value}`);
   return parsed;
+}
+
+function emptyRetentionSummary(): RetentionSummary {
+  return {
+    generatedAt: new Date().toISOString(),
+    policyStatus: 'unavailable',
+    recommendedPolicies: [],
+    dataSets: [],
+  };
+}
+
+function isRecoverableSchemaDriftError(error: unknown): boolean {
+  const code = getErrorCode(error);
+  return code === '42P01' || code === '42703';
+}
+
+function createSchemaDriftWarning(section: string, error: unknown): AuditPackageWarning {
+  const code = getErrorCode(error);
+  return {
+    section,
+    message:
+      'This evidence section is temporarily unavailable because the deployed database schema is missing a table or column. Run pending migrations to restore full evidence.',
+    ...(code ? { code } : {}),
+  };
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const { code } = error as { code?: unknown };
+  return typeof code === 'string' ? code : undefined;
+}
+
+function formatErrorForLog(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object' && error !== null) {
+    const { message } = error as { message?: unknown };
+    if (typeof message === 'string') return message;
+  }
+  return String(error);
 }
 
 function toCsv(rows: DataRow[]): string {
