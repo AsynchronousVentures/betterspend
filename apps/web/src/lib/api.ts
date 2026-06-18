@@ -363,6 +363,38 @@ export const api = {
     submit: (id: string) => apiFetch<any>(`/requisitions/${id}/submit`, { method: 'POST' }),
     cancel: (id: string) => apiFetch<any>(`/requisitions/${id}/cancel`, { method: 'POST' }),
   },
+  concierge: {
+    policies: () => apiFetch<any[]>('/intake/concierge/policies'),
+    createPolicy: (data: unknown) =>
+      apiFetch<any>('/intake/concierge/policies', { method: 'POST', body: JSON.stringify(data) }),
+    updatePolicy: (id: string, data: unknown) =>
+      apiFetch<any>(`/intake/concierge/policies/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    createSession: (text: string) =>
+      apiFetch<any>('/intake/concierge/sessions', {
+        method: 'POST',
+        body: JSON.stringify({ text }),
+      }),
+    getSession: (id: string) => apiFetch<any>(`/intake/concierge/sessions/${id}`),
+    addMessage: (id: string, message: string) =>
+      apiFetch<any>(`/intake/concierge/sessions/${id}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      }),
+    convert: (
+      id: string,
+      data?: {
+        workflow?: 'requisition' | 'rfq' | 'vendor_onboarding' | 'software_license';
+        acceptedValues?: Record<string, unknown>;
+      },
+    ) =>
+      apiFetch<any>(`/intake/concierge/sessions/${id}/convert`, {
+        method: 'POST',
+        body: JSON.stringify(data ?? {}),
+      }),
+  },
   purchaseOrders: {
     list: () => apiFetch<any[]>(appendEntityId('/purchase-orders')),
     get: (id: string) => apiFetch<any>(`/purchase-orders/${id}`),
