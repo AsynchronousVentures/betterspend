@@ -19,9 +19,9 @@ export class RequisitionsController {
   @Post('ai-parse')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Parse plain-language text into a structured requisition draft using AI' })
-  async aiParse(@Body('text') text: string) {
+  async aiParse(@Body('text') text: string, @CurrentOrgId() orgId: string) {
     if (!text?.trim()) return { error: 'text is required' };
-    return this.aiRequisitionService.parseFromText(text.trim());
+    return this.aiRequisitionService.parseFromText(orgId, text.trim());
   }
 
   @Get()

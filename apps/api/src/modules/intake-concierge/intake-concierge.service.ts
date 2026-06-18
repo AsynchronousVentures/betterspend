@@ -198,7 +198,7 @@ export class IntakeConciergeService {
     const sourceText = input.text?.trim();
     if (!sourceText) throw new BadRequestException('text is required');
 
-    const draft = await this.aiRequisitionService.parseFromText(sourceText);
+    const draft = await this.aiRequisitionService.parseFromText(organizationId, sourceText);
     const plan = await this.buildPlan(organizationId, sourceText, draft);
     const transcript = this.newTranscript(sourceText, plan);
 
@@ -275,7 +275,7 @@ export class IntakeConciergeService {
     }
 
     const sourceText = `${session.sourceText}\n${message}`;
-    const draft = await this.aiRequisitionService.parseFromText(sourceText);
+    const draft = await this.aiRequisitionService.parseFromText(organizationId, sourceText);
     const plan = await this.buildPlan(organizationId, sourceText, draft);
     const transcript = [
       ...(session.transcript ?? []),
