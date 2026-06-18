@@ -13,19 +13,31 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
   private readonly client: S3Client;
+  private readonly publicClient: S3Client;
   private readonly bucket: string;
 
   constructor() {
-    const endpoint = process.env.MINIO_ENDPOINT ?? 'http://localhost:9000';
-    const accessKeyId = process.env.MINIO_ACCESS_KEY ?? 'minioadmin';
-    const secretAccessKey = process.env.MINIO_SECRET_KEY ?? 'minioadmin';
-    this.bucket = process.env.MINIO_BUCKET ?? 'betterspend';
+    const endpoint =
+      process.env.MINIO_ENDPOINT ?? process.env.S3_ENDPOINT ?? 'http://localhost:9000';
+    const publicEndpoint =
+      process.env.MINIO_PUBLIC_ENDPOINT ?? process.env.S3_PUBLIC_ENDPOINT ?? endpoint;
+    const accessKeyId = process.env.MINIO_ACCESS_KEY ?? process.env.S3_ACCESS_KEY ?? 'minioadmin';
+    const secretAccessKey =
+      process.env.MINIO_SECRET_KEY ?? process.env.S3_SECRET_KEY ?? 'minioadmin';
+    const region = process.env.MINIO_REGION ?? process.env.S3_REGION ?? 'us-east-1';
+    this.bucket = process.env.MINIO_BUCKET ?? process.env.S3_BUCKET ?? 'betterspend';
 
     this.client = new S3Client({
       endpoint,
-      region: 'us-east-1',
+      region,
       credentials: { accessKeyId, secretAccessKey },
       forcePathStyle: true, // required for MinIO
+    });
+    this.publicClient = new S3Client({
+      endpoint: publicEndpoint,
+      region,
+      credentials: { accessKeyId, secretAccessKey },
+      forcePathStyle: true,
     });
   }
 
@@ -64,11 +76,13 @@ export class StorageService implements OnModuleInit {
 
   async getPresignedUrl(key: string, expiresIn = 3600): Promise<string> {
     const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
-    return getSignedUrl(this.client, command, { expiresIn });
+    return getSignedUrl(this.publicClient, command, { expiresIn });
   }
 
   async getBuffer(key: string): Promise<Buffer> {
-    const response = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    const response = await this.client.send(
+      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+    );
     const body = response.Body;
     if (!body) return Buffer.alloc(0);
     if ('transformToByteArray' in body && typeof body.transformToByteArray === 'function') {

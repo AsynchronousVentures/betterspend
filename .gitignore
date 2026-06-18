@@ -3,7 +3,10 @@ dist
 .next
 .turbo
 .env
+.env.production
 .env.local
+apps/*/.env.production
+apps/*/.env.local
 *.local
 coverage
 *.log
