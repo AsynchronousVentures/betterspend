@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, FileSignature, Plus } from 'lucide-react';
+import { FileSignature, Plus } from 'lucide-react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
 import { StatusBadge } from '../../components/status-badge';
 import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
@@ -48,6 +49,13 @@ const fmtDate = (d: string | null | undefined) => {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
+
+function riskVariant(risk?: string) {
+  if (risk === 'high') return 'destructive' as const;
+  if (risk === 'medium') return 'warning' as const;
+  if (risk === 'low') return 'success' as const;
+  return 'subtle' as const;
+}
 
 export default function ContractsPage() {
   const [contracts, setContracts] = useState<any[]>([]);
@@ -154,6 +162,8 @@ export default function ContractsPage() {
                   <TableHead>Vendor</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Risk</TableHead>
+                  <TableHead>Obligations</TableHead>
                   <TableHead className="text-right">Total Value</TableHead>
                   <TableHead>Start Date</TableHead>
                   <TableHead>End Date</TableHead>
@@ -161,43 +171,65 @@ export default function ContractsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {contracts.map((contract) => (
-                  <TableRow
-                    key={contract.id}
-                    className="cursor-pointer"
-                    onClick={() => {
-                      window.location.href = `/contracts/${contract.id}`;
-                    }}
-                  >
-                    <TableCell className="font-mono text-xs font-semibold text-primary">
-                      {contract.contractNumber || '—'}
-                    </TableCell>
-                    <TableCell className="max-w-[260px] font-semibold text-foreground">
-                      <span className="block truncate">{contract.title}</span>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{contract.vendor?.name ?? contract.vendorId ?? '—'}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {CONTRACT_TYPE_LABELS[contract.type] ?? contract.type ?? '—'}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge value={contract.status} label={STATUS_LABELS[contract.status]} />
-                    </TableCell>
-                    <TableCell className="text-right font-medium text-foreground">
-                      {contract.totalValue != null ? fmt(contract.totalValue, contract.currency ?? 'USD') : '—'}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{fmtDate(contract.startDate)}</TableCell>
-                    <TableCell className={contract.status === 'expiring_soon' ? 'font-medium text-amber-700' : 'text-muted-foreground'}>
-                      {fmtDate(contract.endDate)}
-                    </TableCell>
-                    <TableCell>
-                      {contract.autoRenew ? (
-                        <StatusBadge value="partial_match" label="Auto-Renew" />
-                      ) : (
-                        <span className="text-sm text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {contracts.map((contract) => {
+                  const intelligence = contract.intelligenceSummary ?? {};
+                  const risk = intelligence.riskLevel ?? 'none';
+                  return (
+                    <TableRow
+                      key={contract.id}
+                      className="cursor-pointer"
+                      onClick={() => {
+                        window.location.href = `/contracts/${contract.id}`;
+                      }}
+                    >
+                      <TableCell className="font-mono text-xs font-semibold text-primary">
+                        {contract.contractNumber || '—'}
+                      </TableCell>
+                      <TableCell className="max-w-[260px] font-semibold text-foreground">
+                        <span className="block truncate">{contract.title}</span>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{contract.vendor?.name ?? contract.vendorId ?? '—'}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {CONTRACT_TYPE_LABELS[contract.type] ?? contract.type ?? '—'}
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge value={contract.status} label={STATUS_LABELS[contract.status]} />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant={riskVariant(risk)}>{risk === 'none' ? 'Not reviewed' : `${risk} risk`}</Badge>
+                          {intelligence.pendingReviewCount > 0 ? (
+                            <Badge variant="outline">{intelligence.pendingReviewCount} pending</Badge>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {intelligence.openObligationCount ? (
+                          <span>
+                            {intelligence.openObligationCount} open
+                            {intelligence.nextObligationDueAt ? `, next ${fmtDate(intelligence.nextObligationDueAt)}` : ''}
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-medium text-foreground">
+                        {contract.totalValue != null ? fmt(contract.totalValue, contract.currency ?? 'USD') : '—'}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{fmtDate(contract.startDate)}</TableCell>
+                      <TableCell className={contract.status === 'expiring_soon' ? 'font-medium text-amber-700' : 'text-muted-foreground'}>
+                        {fmtDate(contract.endDate)}
+                      </TableCell>
+                      <TableCell>
+                        {contract.autoRenew ? (
+                          <StatusBadge value="partial_match" label="Auto-Renew" />
+                        ) : (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}

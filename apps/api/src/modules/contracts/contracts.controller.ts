@@ -86,6 +86,66 @@ export class ContractsController {
     return this.contractsService.activate(id, orgId, userId);
   }
 
+  @Post(':id/intelligence/extract')
+  @ApiOperation({ summary: 'Extract contract intelligence from terms or pasted document text' })
+  processIntelligence(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { documentId?: string; documentText?: string; sourceName?: string },
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+  ) {
+    return this.contractsService.processIntelligence(id, orgId, userId, body ?? {});
+  }
+
+  @Post(':id/intelligence/extractions/:extractionId/review')
+  @ApiOperation({ summary: 'Approve or reject an extracted contract intelligence run' })
+  reviewExtraction(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('extractionId', ParseUUIDPipe) extractionId: string,
+    @Body() body: { decision: 'approved' | 'rejected'; fields?: Record<string, unknown> },
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+  ) {
+    return this.contractsService.reviewExtraction(id, orgId, userId, extractionId, body);
+  }
+
+  @Patch(':id/intelligence/clauses/:clauseId')
+  @ApiOperation({ summary: 'Review or override an extracted contract clause' })
+  updateClause(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('clauseId', ParseUUIDPipe) clauseId: string,
+    @Body() body: {
+      status?: string;
+      riskLevel?: 'low' | 'medium' | 'high';
+      riskReason?: string;
+      normalizedSummary?: string;
+      extractedText?: string;
+    },
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+  ) {
+    return this.contractsService.updateClause(id, orgId, userId, clauseId, body);
+  }
+
+  @Patch(':id/intelligence/obligations/:obligationId')
+  @ApiOperation({ summary: 'Update a contract obligation review task' })
+  updateObligation(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('obligationId', ParseUUIDPipe) obligationId: string,
+    @Body() body: {
+      status?: string;
+      ownerId?: string | null;
+      dueDate?: string | null;
+      title?: string;
+      description?: string;
+      notificationLeadDays?: number;
+    },
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+  ) {
+    return this.contractsService.updateObligation(id, orgId, userId, obligationId, body);
+  }
+
   @Post(':id/terminate')
   @ApiOperation({ summary: 'Terminate a contract' })
   terminate(

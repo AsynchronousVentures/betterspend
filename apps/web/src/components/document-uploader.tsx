@@ -44,9 +44,10 @@ interface DocumentUploaderProps {
   entityType: string;
   entityId: string;
   label?: string;
+  onChange?: (documents: Document[]) => void;
 }
 
-export function DocumentUploader({ entityType, entityId, label = 'Documents' }: DocumentUploaderProps) {
+export function DocumentUploader({ entityType, entityId, label = 'Documents', onChange }: DocumentUploaderProps) {
   const [docs, setDocs] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -66,12 +67,13 @@ export function DocumentUploader({ entityType, entityId, label = 'Documents' }: 
       if (!res.ok) throw new Error(`Failed to load documents (${res.status})`);
       const data = await res.json();
       setDocs(data);
+      onChange?.(data);
     } catch (e: any) {
       setError(e.message || 'Failed to load documents');
     } finally {
       setLoading(false);
     }
-  }, [entityId, entityType]);
+  }, [entityId, entityType, onChange]);
 
   useEffect(() => {
     if (entityId) void fetchDocs();
@@ -136,7 +138,11 @@ export function DocumentUploader({ entityType, entityId, label = 'Documents' }: 
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok && res.status !== 204) throw new Error(`Delete failed (${res.status})`);
-      setDocs((prev) => prev.filter((d) => d.id !== doc.id));
+      setDocs((prev) => {
+        const next = prev.filter((d) => d.id !== doc.id);
+        onChange?.(next);
+        return next;
+      });
     } catch (e: any) {
       setError(e.message || 'Delete failed');
     } finally {
