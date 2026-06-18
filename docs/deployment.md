@@ -37,11 +37,15 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
 ## Required GitHub Configuration
 
-Repository variable:
+Production deployment is opt-in. The validation job runs for pull requests and pushes to `main`; image publishing and server deploys run only when deployment is explicitly enabled.
 
-- `BETTERSPEND_DOMAIN`: production domain without protocol, for example `betterspend.example.com`.
+Repository variables:
 
-Repository secrets:
+- `BETTERSPEND_DEPLOY_ENABLED`: set to `true` to publish images and deploy from pushes to `main`. Leave unset or `false` for normal open-source validation only.
+- `BETTERSPEND_DOMAIN`: required only when deployment is enabled; production domain without protocol, for example `betterspend.example.com`.
+- `GHCR_IMAGE_NAMESPACE`: optional image namespace for pushed images. Defaults to the lowercased repository owner.
+
+Repository secrets, required only when deployment is enabled:
 
 - `DEPLOY_HOST`: VPS hostname or IP.
 - `DEPLOY_USER`: SSH user with Docker access.
@@ -54,12 +58,12 @@ Repository secrets:
 
 Pull requests run install, typecheck, builds, compose validation, and Docker image builds. They do not deploy.
 
-Pushes to `main` run the same validation, publish these images to GHCR, then deploy the new immutable tag:
+Pushes to `main` always run the same validation. When `BETTERSPEND_DEPLOY_ENABLED=true`, the workflow publishes these images to GHCR, then deploys the new immutable tag:
 
 ```text
-ghcr.io/asynchronousventures/betterspend-api:sha-<commit>
-ghcr.io/asynchronousventures/betterspend-web:sha-<commit>
-ghcr.io/asynchronousventures/betterspend-migrator:sha-<commit>
+ghcr.io/<namespace>/betterspend-api:sha-<commit>
+ghcr.io/<namespace>/betterspend-web:sha-<commit>
+ghcr.io/<namespace>/betterspend-migrator:sha-<commit>
 ```
 
 The deploy job syncs `deploy/` to `/opt/betterspend`, preserving `.env.production`, backups, and recorded image tags. The server then pulls images, starts stateful services, writes a compressed Postgres backup, runs migrations, starts the stack, and smoke-checks the API health endpoint plus the web root.

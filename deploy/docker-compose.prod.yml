@@ -22,7 +22,7 @@ services:
         condition: service_healthy
 
   api:
-    image: ${API_IMAGE:-ghcr.io/asynchronousventures/betterspend-api}:${IMAGE_TAG:?Set IMAGE_TAG}
+    image: ${API_IMAGE:?Set API_IMAGE}:${IMAGE_TAG:?Set IMAGE_TAG}
     restart: unless-stopped
     env_file:
       - .env.production
@@ -62,7 +62,7 @@ services:
       start_period: 30s
 
   web:
-    image: ${WEB_IMAGE:-ghcr.io/asynchronousventures/betterspend-web}:${IMAGE_TAG:?Set IMAGE_TAG}
+    image: ${WEB_IMAGE:?Set WEB_IMAGE}:${IMAGE_TAG:?Set IMAGE_TAG}
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -86,7 +86,7 @@ services:
       start_period: 30s
 
   migrator:
-    image: ${MIGRATOR_IMAGE:-ghcr.io/asynchronousventures/betterspend-migrator}:${IMAGE_TAG:?Set IMAGE_TAG}
+    image: ${MIGRATOR_IMAGE:?Set MIGRATOR_IMAGE}:${IMAGE_TAG:?Set IMAGE_TAG}
     profiles: ['migrate']
     environment:
       DATABASE_URL: ${DATABASE_URL}
