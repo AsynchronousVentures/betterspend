@@ -199,6 +199,13 @@
       "breakpoints": true
     },
     {
+      "idx": 28,
+      "version": "7",
+      "when": 1775500000000,
+      "tag": "0028_procurement_concierge",
+      "breakpoints": true
+    },
+    {
       "idx": 29,
       "version": "7",
       "when": 1775600000000,
