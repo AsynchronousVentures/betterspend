@@ -37,28 +37,20 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
 ## Required GitHub Configuration
 
-Production deployment is opt-in. The validation job runs for pull requests and pushes to `main`; image publishing and server deploys run only when deployment is explicitly enabled.
+The validation job runs for pull requests and pushes to `main`. Pushes to `main` publish the application images to GHCR after validation succeeds. The workflow does not update, pull, or restart the server.
 
 Repository variables:
 
-- `BETTERSPEND_DEPLOY_ENABLED`: set to `true` to publish images and deploy from pushes to `main`. Leave unset or `false` for normal open-source validation only.
-- `BETTERSPEND_DOMAIN`: required only when deployment is enabled; production domain without protocol, for example `betterspend.example.com`.
 - `GHCR_IMAGE_NAMESPACE`: optional image namespace for pushed images. Defaults to the lowercased repository owner.
+- `NEXT_PUBLIC_API_URL`: optional API base URL baked into the web image. Defaults to `http://localhost:4001`.
 
-Repository secrets, required only when deployment is enabled:
+No repository secrets are required by the publishing workflow. If GHCR packages are private, configure pull credentials on the server or local machine that pulls the images.
 
-- `DEPLOY_HOST`: VPS hostname or IP.
-- `DEPLOY_USER`: SSH user with Docker access.
-- `DEPLOY_SSH_KEY`: private key for that user.
-- `DEPLOY_PORT`: optional SSH port; defaults to `22`.
-- `DEPLOY_KNOWN_HOSTS`: pinned SSH known-hosts content for the deploy server. Generate and verify this outside CI before saving it as a secret.
-- `GHCR_USERNAME` and `GHCR_TOKEN`: optional server-side pull credentials if images are private.
-
-## Deploy Flow
+## Publish Flow
 
 Pull requests run install, typecheck, builds, compose validation, and Docker image builds. They do not deploy.
 
-Pushes to `main` always run the same validation. When `BETTERSPEND_DEPLOY_ENABLED=true`, the workflow publishes these images to GHCR, then deploys the new immutable tag:
+Pushes to `main` always run the same validation, then publish these images to GHCR:
 
 ```text
 ghcr.io/<namespace>/betterspend-api:sha-<commit>
@@ -66,7 +58,7 @@ ghcr.io/<namespace>/betterspend-web:sha-<commit>
 ghcr.io/<namespace>/betterspend-migrator:sha-<commit>
 ```
 
-The deploy job syncs `deploy/` to `/opt/betterspend`, preserving `.env.production`, backups, and recorded image tags. The server then pulls images, starts stateful services, writes a compressed Postgres backup, runs migrations, starts the stack, and smoke-checks the API health endpoint plus the web root.
+Pulling the image tag, restarting services, running migrations, and smoke-checking production are manual operations.
 
 ## Manual Operations
 
