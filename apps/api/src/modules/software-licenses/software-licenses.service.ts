@@ -4,12 +4,26 @@ import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { softwareLicenses } from '@betterspend/db';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RequisitionsService } from '../requisitions/requisitions.service';
+import { RfqService } from '../rfq/rfq.service';
+
+export interface RenewalRef {
+  action: 'renew' | 'renegotiate' | 'cancel';
+  kind: 'requisition' | 'rfq';
+  id: string;
+  number: string;
+  at: string;
+}
+
+type LicenseWithRelations = Awaited<ReturnType<SoftwareLicensesService['findOne']>>;
 
 @Injectable()
 export class SoftwareLicensesService {
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly notificationsService: NotificationsService,
+    private readonly requisitionsService: RequisitionsService,
+    private readonly rfqService: RfqService,
   ) {}
 
   async findAll(
@@ -133,6 +147,7 @@ export class SoftwareLicensesService {
   async applyRenewalAction(
     id: string,
     organizationId: string,
+    userId: string,
     action: 'renew' | 'renegotiate' | 'cancel',
     note?: string,
   ) {
@@ -148,6 +163,8 @@ export class SoftwareLicensesService {
       notes: appendedNote,
     };
 
+    let renewalRef: RenewalRef | null = null;
+
     if (action === 'renew') {
       const currentRenewal = license.renewalDate ? new Date(license.renewalDate) : new Date();
       if (license.billingCycle === 'monthly') {
@@ -157,11 +174,18 @@ export class SoftwareLicensesService {
       }
       updates.renewalDate = currentRenewal;
       updates.status = 'active';
-    } else if (action === 'cancel') {
+      renewalRef = await this.createRenewalRequisition(license, userId, actionNote);
+    } else if (action === 'renegotiate') {
+      updates.status = 'renewal_due';
+      renewalRef = await this.createRenegotiationRfq(license, userId, actionNote);
+    } else {
       updates.autoRenews = false;
       updates.status = 'renewal_due';
-    } else {
-      updates.status = 'renewal_due';
+    }
+
+    if (renewalRef) {
+      const refs = Array.isArray(license.renewalRefs) ? license.renewalRefs : [];
+      updates.renewalRefs = [...refs, renewalRef];
     }
 
     await this.db
@@ -170,18 +194,19 @@ export class SoftwareLicensesService {
       .where(and(eq(softwareLicenses.id, id), eq(softwareLicenses.organizationId, organizationId)));
 
     if (license.ownerUserId) {
+      const refSuffix = renewalRef ? ` Tracked as ${renewalRef.number}.` : '';
       const actionTitle =
         action === 'renew'
-          ? `${license.productName} renewal recorded`
+          ? `${license.productName} renewal requisition created`
           : action === 'cancel'
             ? `${license.productName} marked for cancellation review`
-            : `${license.productName} marked for renegotiation`;
+            : `${license.productName} renegotiation RFQ created`;
       const actionBody =
         action === 'renew'
-          ? `${license.productName} was rolled into the next ${license.billingCycle} term.`
+          ? `A renewal requisition for ${license.productName} was drafted and routed for approval.${refSuffix}`
           : action === 'cancel'
             ? `${license.productName} auto-renew has been disabled and cancellation review is in progress.`
-            : `${license.productName} needs pricing or scope renegotiation before renewal.`;
+            : `An RFQ was issued to gather competing quotes before renewing ${license.productName}.${refSuffix}`;
       await this.notificationsService.create(
         organizationId,
         license.ownerUserId,
@@ -194,6 +219,78 @@ export class SoftwareLicensesService {
     }
 
     return this.findOne(id, organizationId);
+  }
+
+  /** Draft a requisition covering the next billing term so the renewal goes through normal approval. */
+  private async createRenewalRequisition(
+    license: LicenseWithRelations,
+    userId: string,
+    note?: string,
+  ): Promise<RenewalRef> {
+    const unitPrice = Number(license.pricePerSeat);
+    const requisition = await this.requisitionsService.create(license.organizationId, userId, {
+      title: `Software renewal: ${license.productName}`,
+      description: [
+        `Renewal for ${license.productName} (${license.seatCount} seats, ${license.billingCycle} term).`,
+        `Vendor: ${license.vendor?.name ?? license.vendorId}.`,
+        note ? `Owner note: ${note}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      currency: license.currency,
+      neededBy: license.renewalDate ? new Date(license.renewalDate).toISOString() : undefined,
+      priority: 'normal',
+      lines: [
+        {
+          description: `${license.productName} license renewal (${license.billingCycle})`,
+          quantity: license.seatCount,
+          unitOfMeasure: 'seats',
+          unitPrice,
+          vendorId: license.vendorId,
+        },
+      ],
+    });
+    return {
+      action: 'renew',
+      kind: 'requisition',
+      id: requisition.id,
+      number: String(requisition.number),
+      at: new Date().toISOString(),
+    };
+  }
+
+  /** Issue an RFQ to the incumbent vendor so pricing can be challenged before renewal. */
+  private async createRenegotiationRfq(
+    license: LicenseWithRelations,
+    userId: string,
+    note?: string,
+  ): Promise<RenewalRef> {
+    const targetPrice = Number(license.pricePerSeat);
+    const rfq = await this.rfqService.create(license.organizationId, userId, {
+      title: `Renegotiation: ${license.productName} renewal`,
+      description: `Competing quotes requested ahead of the ${license.renewalDate ? new Date(license.renewalDate).toLocaleDateString() : 'upcoming'} renewal of ${license.productName}. Current rate is ${license.currency} ${targetPrice} per seat.`,
+      notes: note,
+      currency: license.currency,
+      dueDate: license.renewalDate
+        ? new Date(new Date(license.renewalDate).getTime() - 7 * 24 * 60 * 60 * 1000).toISOString()
+        : undefined,
+      lines: [
+        {
+          description: `${license.productName} (${license.seatCount} seats, ${license.billingCycle})`,
+          quantity: license.seatCount,
+          unitOfMeasure: 'seats',
+          targetPrice,
+        },
+      ],
+      vendorIds: [license.vendorId],
+    });
+    return {
+      action: 'renegotiate',
+      kind: 'rfq',
+      id: rfq.id,
+      number: String(rfq.number),
+      at: new Date().toISOString(),
+    };
   }
 
   private async notifyIfRenewalDueSoon(license: typeof softwareLicenses.$inferSelect) {

@@ -225,6 +225,13 @@
       "when": 1775700100000,
       "tag": "0031_catalog_price_scheduling",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1775703200000,
+      "tag": "0032_license_renewal_refs",
+      "breakpoints": true
     }
   ]
 }
