@@ -123,30 +123,27 @@ export class RiskScreeningService {
     screenedBy?: string,
     entries?: SanctionEntryRow[],
   ) {
-    const vendor = await this.db.query.vendors.findFirst({
-      where: (v, { and, eq }) => and(eq(v.id, vendorId), eq(v.organizationId, organizationId)),
-    });
-    if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
+    return this.db.transaction(async (tx) => {
+      // Lock the vendor row so a concurrent manual review cannot be silently
+      // overwritten by a screening derived from stale status.
+      const [vendor] = await tx
+        .select()
+        .from(vendors)
+        .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
+        .for('update');
+      if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
 
-    const matches = await this.matchVendorName(vendor.name, entries);
+      // Matching depends only on the vendor's name, which is immutable here;
+      // the status decision always uses the locked row.
+      const manuallyReviewed = vendor.sanctionsStatus === 'manually_reviewed';
+      const vendorMatches = manuallyReviewed ? null : await this.matchVendorName(vendor.name, entries);
+      const nextStatus = manuallyReviewed ? 'manually_reviewed' : vendorMatches!.length > 0 ? 'flagged' : 'clear';
 
-    // Fresh automated hits re-flag an unreviewed vendor. A manual review
-    // decision stands either way; the screening row records what the new run
-    // saw so auditors can revisit the override if data changed.
-    const previousStatus = vendor.sanctionsStatus;
-    const nextStatus =
-      previousStatus === 'manually_reviewed'
-        ? 'manually_reviewed'
-        : matches.length > 0
-          ? 'flagged'
-          : 'clear';
-
-    await this.db.transaction(async (tx) => {
       await tx.insert(sanctionsScreenings).values({
         organizationId,
         vendorId,
-        result: matches.length > 0 ? 'flagged' : 'clear',
-        matchCount: matches,
+        result: vendorMatches && vendorMatches.length > 0 ? 'flagged' : 'clear',
+        matchCount: vendorMatches ?? [],
         screenedBy: screenedBy ?? null,
       });
 
@@ -160,18 +157,20 @@ export class RiskScreeningService {
           updatedAt: new Date(),
         })
         .where(eq(vendors.id, vendorId));
+
+      // Audit is compliance-relevant but must not roll back the screening;
+      // failures are logged for follow-up instead of failing the request.
+      void this.audit
+        .log(organizationId, screenedBy ?? null, 'vendor', vendorId, 'sanctions_screening', {
+          result: nextStatus,
+          matchCount: vendorMatches?.length ?? 0,
+        })
+        .catch((error: unknown) =>
+          this.logger.warn(`Audit log failed for ${vendorId} screening: ${error instanceof Error ? error.message : error}`),
+        );
+
+      return { vendorId, status: nextStatus, matches: vendorMatches ?? [] };
     });
-
-    await this.audit
-      .log(organizationId, screenedBy ?? null, 'vendor', vendorId, 'sanctions_screening', {
-        result: nextStatus,
-        matchCount: matches.length,
-      })
-      .catch((error) =>
-        this.logger.warn(`Audit log failed for ${vendorId} screening: ${error instanceof Error ? error.message : error}`),
-      );
-
-    return { vendorId, status: nextStatus, matches };
   }
 
   /** Admin override after human review of a flagged (or clear) vendor. */

@@ -278,6 +278,24 @@ export class PurchaseOrdersService {
       throw new BadRequestException(`Cannot issue a PO with status "${po.status}"`);
     }
 
+    // Re-check at issuance: the vendor may have been flagged after the draft
+    // was created, and issuance is the moment the commitment becomes real.
+    const issueVendor = await this.db.query.vendors.findFirst({
+      where: (record, { and, eq }) =>
+        and(eq(record.id, po.vendorId), eq(record.organizationId, organizationId)),
+    });
+    if (issueVendor) {
+      const sanctionsWarning = await this.riskScreening.checkVendorForPo(organizationId, issueVendor);
+      if (sanctionsWarning) {
+        this.audit
+          .log(organizationId, issuedBy ?? null, 'vendor', issueVendor.id, 'po_sanctions_warning', {
+            poNumber: po.number,
+            warning: sanctionsWarning,
+          })
+          .catch(() => {});
+      }
+    }
+
     const [updated] = await this.db.update(purchaseOrders)
       .set({ status: 'issued', issuedBy, issuedAt: new Date(), updatedAt: new Date() })
       .where(eq(purchaseOrders.id, id))
