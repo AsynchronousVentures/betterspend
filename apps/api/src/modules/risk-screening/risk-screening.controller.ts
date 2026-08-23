@@ -1,7 +1,6 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Req, UnauthorizedException } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
-import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
+import type { Request } from 'express';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RiskScreeningService } from './risk-screening.service';
 
@@ -10,10 +9,23 @@ import { RiskScreeningService } from './risk-screening.service';
 export class RiskScreeningController {
   constructor(private readonly riskScreeningService: RiskScreeningService) {}
 
+  /**
+   * Screening status is sensitive compliance data. Unlike the demo-friendly
+   * org/user header fallbacks used elsewhere, every route here requires a
+   * real session and derives identity from it.
+   */
+  private requireSession(req: Request): { organizationId: string; userId: string } {
+    if (!req.authUser?.organizationId || !req.authUser.id) {
+      throw new UnauthorizedException('Authentication required');
+    }
+    return { organizationId: req.authUser.organizationId, userId: req.authUser.id };
+  }
+
   @Get()
   @ApiOperation({ summary: 'Sanctions screening status for all vendors' })
-  listStatus(@CurrentOrgId() orgId: string) {
-    return this.riskScreeningService.listStatus(orgId);
+  listStatus(@Req() req: Request) {
+    const { organizationId } = this.requireSession(req);
+    return this.riskScreeningService.listStatus(organizationId);
   }
 
   @Post('vendors/:vendorId/screen')
@@ -21,17 +33,18 @@ export class RiskScreeningController {
   @ApiOperation({ summary: 'Re-screen a single vendor against sanctions entries' })
   screenVendor(
     @Param('vendorId', ParseUUIDPipe) vendorId: string,
-    @CurrentOrgId() orgId: string,
-    @CurrentUserId() userId: string,
+    @Req() req: Request,
   ) {
-    return this.riskScreeningService.screenVendor(orgId, vendorId, userId);
+    const { organizationId, userId } = this.requireSession(req);
+    return this.riskScreeningService.screenVendor(organizationId, vendorId, userId);
   }
 
   @Post('screen-all')
   @Roles('admin', 'approver')
   @ApiOperation({ summary: 'Re-screen every active vendor' })
-  screenAll(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
-    return this.riskScreeningService.screenAllVendors(orgId, userId);
+  screenAll(@Req() req: Request) {
+    const { organizationId, userId } = this.requireSession(req);
+    return this.riskScreeningService.screenAllVendors(organizationId, userId);
   }
 
   @Post('vendors/:vendorId/manual-review')
@@ -40,10 +53,10 @@ export class RiskScreeningController {
   manualReview(
     @Param('vendorId', ParseUUIDPipe) vendorId: string,
     @Body() body: { note?: string },
-    @CurrentOrgId() orgId: string,
-    @CurrentUserId() userId: string,
+    @Req() req: Request,
   ) {
-    return this.riskScreeningService.manualReview(orgId, vendorId, userId, String(body?.note ?? ''));
+    const { organizationId, userId } = this.requireSession(req);
+    return this.riskScreeningService.manualReview(organizationId, vendorId, userId, String(body?.note ?? ''));
   }
 
   @Post('ingest')
@@ -51,11 +64,11 @@ export class RiskScreeningController {
   @ApiOperation({ summary: 'Download and replace the local sanctions list for a source' })
   ingest(
     @Body() body: { source?: string },
-    @CurrentOrgId() orgId: string,
-    @CurrentUserId() userId: string,
+    @Req() req: Request,
   ) {
     // URLs are server-controlled per source; request bodies cannot point the
     // fetch at arbitrary hosts.
-    return this.riskScreeningService.ingest(orgId, userId, body?.source ?? 'ofac_sdn');
+    const { organizationId, userId } = this.requireSession(req);
+    return this.riskScreeningService.ingest(organizationId, userId, body?.source ?? 'ofac_sdn');
   }
 }
