@@ -46,3 +46,5 @@ DO $$ BEGIN
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
+--> statement-breakpoint
+ALTER TABLE "messages" ADD CONSTRAINT "messages_recipient_rfq_buyer_check" CHECK ("recipient_vendor_id" IS NULL OR ("thread_type" = 'rfq' AND "sender_type" = 'user'));

@@ -54,5 +54,9 @@ export const messages = pgTable(
       sql`(${table.senderType} = 'user' AND ${table.senderId} IS NOT NULL AND ${table.vendorId} IS NULL) OR (${table.senderType} = 'vendor' AND ${table.vendorId} IS NOT NULL AND ${table.senderId} IS NULL)`,
     ),
     check('messages_body_check', sql`length(trim(${table.body})) > 0`),
+    check(
+      'messages_recipient_rfq_buyer_check',
+      sql`${table.recipientVendorId} IS NULL OR (${table.threadType} = 'rfq' AND ${table.senderType} = 'user')`,
+    ),
   ],
 );

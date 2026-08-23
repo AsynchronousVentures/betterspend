@@ -91,7 +91,8 @@ export class MessagesService {
   ) {
     const trimmedBody = input.body?.trim();
     if (!trimmedBody) throw new BadRequestException('Message body is required');
-    await this.assertThreadExists(organizationId, threadType, threadId);
+    const threadContext = await this.getThreadContext(organizationId, threadType, threadId);
+    if (!threadContext) throw new NotFoundException(`Thread ${threadType}/${threadId} not found`);
     const user = await this.db.query.users.findFirst({ where: (u, { eq }) => eq(u.id, userId) });
     if (!user) throw new NotFoundException(`User ${userId} not found`);
 
@@ -136,16 +137,37 @@ export class MessagesService {
         this.logger.warn(`Audit log failed for message ${message.id}: ${error instanceof Error ? error.message : error}`),
       );
 
-    // Email the addressed vendor on RFQ threads; other threads have a single
+    // Email the addressed vendor on addressed RFQ messages; broadcast RFQ
+    // messages go to every invited vendor. Other threads have a single
     // supplier counterpart resolved inside.
-    await this.emailVendorContact(
-      organizationId,
-      threadType,
-      threadId,
-      user.name,
-      message.body,
-      recipientVendorId ?? undefined,
-    );
+    if (threadType === 'rfq' && recipientVendorId === null) {
+      const invitations = await this.db.query.rfqInvitations.findMany({
+        where: (inv, { eq }) => eq(inv.rfqId, threadId),
+      });
+      const invitedVendorIds = new Set(invitations.map((inv) => inv.vendorId));
+      if (threadContext.vendorId) {
+        invitedVendorIds.add(threadContext.vendorId);
+      }
+      for (const vendorIdToNotify of invitedVendorIds) {
+        await this.emailVendorContact(
+          organizationId,
+          threadType,
+          threadId,
+          user.name,
+          message.body,
+          vendorIdToNotify,
+        );
+      }
+    } else {
+      await this.emailVendorContact(
+        organizationId,
+        threadType,
+        threadId,
+        user.name,
+        message.body,
+        recipientVendorId ?? undefined,
+      );
+    }
     return message;
   }
 
