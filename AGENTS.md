@@ -48,7 +48,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml logs -f api
 
 GitHub Actions publishes immutable `sha-<commit>` images on every merge to `main`. Pushing a `v*` tag is a release: it validates, republishes that commit's images, and (once deploy secrets are configured) deploys to production via the protected `production` environment (requires `DEPLOY_SSH_HOST`, `DEPLOY_SSH_USER`, `DEPLOY_SSH_KEY`, and pinned-host `DEPLOY_SSH_KNOWN_HOSTS` secrets; without them the deploy job is skipped). Server secrets stay in `/opt/betterspend/.env.production`; CI only syncs files from `deploy/` and passes the image tag.
 
-To roll back a bad release, run `./rollback.sh` on the server (or re-tag an earlier commit).
+To roll back a bad release, run `./rollback.sh` on the server to switch the application image only; it does not roll back database migrations or restore the pre-migration backup, so restore the database separately when required (or re-tag an earlier commit).
 
 ### Development (local)
 
