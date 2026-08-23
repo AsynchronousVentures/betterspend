@@ -346,8 +346,16 @@ export class VendorPortalService {
       })
       .returning();
 
-    // Small changes may be pre-approved by org policy instead of queueing for review.
-    await this.catalogService.considerAutoApproval(proposal.id, orgId);
+    // Small changes may be pre-approved by org policy instead of queueing for
+    // review. The proposal is already committed, so an auto-approval failure
+    // must not fail the submission (clients would retry and duplicate rows).
+    try {
+      await this.catalogService.considerAutoApproval(proposal.id, orgId);
+    } catch (error) {
+      this.logger.warn(
+        `Auto-approval check failed for proposal ${proposal.id}: ${error instanceof Error ? error.message : error}`,
+      );
+    }
 
     return this.db.query.catalogPriceProposals.findFirst({
       where: (p, { eq }) => eq(p.id, proposal.id),
@@ -402,7 +410,13 @@ export class VendorPortalService {
           })
           .returning();
 
-        await this.catalogService.considerAutoApproval(inserted.id, orgId);
+        try {
+          await this.catalogService.considerAutoApproval(inserted.id, orgId);
+        } catch (autoError) {
+          this.logger.warn(
+            `Auto-approval check failed for proposal ${inserted.id}: ${autoError instanceof Error ? autoError.message : autoError}`,
+          );
+        }
 
         results.push({
           row: index + 1,

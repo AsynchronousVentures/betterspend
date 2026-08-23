@@ -303,7 +303,11 @@ export default function CatalogItemDetailPage({ params }: { params: Promise<{ id
                     Effective:{' '}
                     {proposal.effectiveDate ? new Date(proposal.effectiveDate).toLocaleDateString() : 'Immediate'}
                   </div>
-                  <div>Reviewed by: {proposal.reviewer?.name ?? 'Pending review'}</div>
+                  <div>
+                    Reviewed by:{' '}
+                    {proposal.reviewer?.name ??
+                      (proposal.status === 'approved' ? 'Auto-approved (policy)' : 'Pending review')}
+                  </div>
                   {proposal.status === 'approved' ? (
                     proposal.appliedAt ? (
                       <div>Applied: {new Date(proposal.appliedAt).toLocaleDateString()}</div>

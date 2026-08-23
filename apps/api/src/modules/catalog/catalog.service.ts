@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { eq, and, ilike, or, desc } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
@@ -172,6 +172,8 @@ export class CatalogService {
     });
     if (!proposal) throw new NotFoundException(`Catalog price proposal ${proposalId} not found`);
 
+    // Guard on pending state so a second review cannot re-apply an old price
+    // or clobber the original application metadata.
     const [updated] = await this.db
       .update(catalogPriceProposals)
       .set({
@@ -180,8 +182,17 @@ export class CatalogService {
         reviewedAt: new Date(),
         reviewNote: input.reviewNote ?? null,
       })
-      .where(and(eq(catalogPriceProposals.id, proposalId), eq(catalogPriceProposals.organizationId, organizationId)))
+      .where(
+        and(
+          eq(catalogPriceProposals.id, proposalId),
+          eq(catalogPriceProposals.organizationId, organizationId),
+          eq(catalogPriceProposals.status, 'pending'),
+        ),
+      )
       .returning();
+    if (!updated) {
+      throw new BadRequestException(`Catalog price proposal ${proposalId} was already reviewed`);
+    }
 
     // Approved proposals take effect immediately unless the supplier set a
     // future effective date; those are applied by applyDueApprovedProposals.
@@ -279,14 +290,18 @@ export class CatalogService {
     const due = !proposal.effectiveDate || proposal.effectiveDate.getTime() <= Date.now();
     if (!due) return false;
 
-    await this.db
-      .update(catalogItems)
-      .set({ unitPrice: String(proposal.proposedPrice), updatedAt: new Date() })
-      .where(eq(catalogItems.id, proposal.itemId));
-    await this.db
-      .update(catalogPriceProposals)
-      .set({ appliedAt: new Date() })
-      .where(eq(catalogPriceProposals.id, proposal.id));
+    // Single transaction so a crash between the two writes cannot leave the
+    // item repriced with appliedAt still null (which would re-apply later).
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(catalogItems)
+        .set({ unitPrice: String(proposal.proposedPrice), updatedAt: new Date() })
+        .where(eq(catalogItems.id, proposal.itemId));
+      await tx
+        .update(catalogPriceProposals)
+        .set({ appliedAt: new Date() })
+        .where(eq(catalogPriceProposals.id, proposal.id));
+    });
     return true;
   }
 
@@ -314,7 +329,10 @@ export class CatalogService {
         this.logger.log(`SMTP not configured; skipping vendor notification for proposal ${proposal.id}`);
         return;
       }
-      const appName = settings['app_name'] || 'BetterSpend';
+      const appName = escapeHtml(settings['app_name'] || 'BetterSpend');
+      const vendorName = escapeHtml(vendor.name);
+      const statusLabel = status === 'approved' ? 'Approved' : 'Rejected';
+      const escapedNote = reviewNote ? escapeHtml(reviewNote) : null;
       const sent = await this.mailService.sendMail(
         {
           host: smtpHost,
@@ -326,18 +344,18 @@ export class CatalogService {
         },
         {
           to: email,
-          subject: `[${appName}] Catalog Price Proposal ${status}`,
+          subject: `[${appName}] Catalog Price Proposal ${statusLabel}`,
           html: `
             <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-              <h2 style="color:#0f172a">Catalog Price Proposal ${status}</h2>
-              <p>Dear ${vendor.name},</p>
-              <p>Your price proposal for <strong>${proposal.currentPrice} &rarr; ${proposal.proposedPrice}</strong> has been <strong>${status}</strong>.</p>
-              ${reviewNote ? `<p><strong>Note from the buyer:</strong> ${reviewNote}</p>` : ''}
+              <h2 style="color:#0f172a">Catalog Price Proposal ${statusLabel}</h2>
+              <p>Dear ${vendorName},</p>
+              <p>Your price proposal for <strong>${escapeHtml(proposal.currentPrice)} &rarr; ${escapeHtml(proposal.proposedPrice)}</strong> has been <strong>${statusLabel}</strong>.</p>
+              ${escapedNote ? `<p><strong>Note from the buyer:</strong> ${escapedNote}</p>` : ''}
               <hr style="margin:24px 0;border:none;border-top:1px solid #e2e8f0">
               <p style="color:#94a3b8;font-size:12px">This is an automated notification from ${appName}.</p>
             </div>
           `,
-          text: `Your price proposal (${proposal.currentPrice} -> ${proposal.proposedPrice}) has been ${status}.${reviewNote ? `\n\nBuyer note: ${reviewNote}` : ''}`,
+          text: `Your price proposal (${proposal.currentPrice} -> ${proposal.proposedPrice}) has been ${statusLabel}.${reviewNote ? `\n\nBuyer note: ${reviewNote}` : ''}`,
         },
       );
       if (sent) {
@@ -356,4 +374,13 @@ function extractContactEmail(contactInfo: unknown): string | undefined {
   if (!contactInfo || typeof contactInfo !== 'object') return undefined;
   const email = (contactInfo as Record<string, unknown>)['email'];
   return typeof email === 'string' && email.includes('@') ? email : undefined;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
