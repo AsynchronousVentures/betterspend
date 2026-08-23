@@ -471,12 +471,14 @@ export class RfqService {
       .where(eq(rfqLines.rfqId, rfqId));
     const lineMap = Object.fromEntries(rfqLinesList.map((l) => [l.id, l]));
 
-    // Response totals are quantity-aware: unitPrice alone understates
-    // multi-seat/multi-unit quotes and flows into awarded PO totals.
-    const totalAmount = dto.lines.reduce(
-      (sum, l) => sum + l.unitPrice * (lineMap[l.rfqLineId] ? Number(lineMap[l.rfqLineId].quantity) : 1),
-      0,
-    );
+    // Response totals are quantity-aware and rounded per line to match the
+    // numeric(14,2) line persistence, so the response total always equals
+    // the sum of its persisted lines (and any awarded PO's header total).
+    const totalAmount = dto.lines.reduce((sum, l) => {
+      const qty = lineMap[l.rfqLineId] ? Number(lineMap[l.rfqLineId].quantity) : 1;
+      const lineTotal = Math.round(l.unitPrice * qty * 100) / 100;
+      return sum + lineTotal;
+    }, 0);
 
     const [response] = await this.db
       .insert(rfqResponses)
@@ -494,11 +496,12 @@ export class RfqService {
         dto.lines.map((l) => {
           const rfqLine = lineMap[l.rfqLineId];
           const qty = rfqLine ? Number(rfqLine.quantity) : 1;
+          const lineTotal = Math.round(l.unitPrice * qty * 100) / 100;
           return {
             responseId: response.id,
             rfqLineId: l.rfqLineId,
             unitPrice: String(l.unitPrice),
-            totalPrice: String(l.unitPrice * qty),
+            totalPrice: String(lineTotal),
             leadTimeDays: l.leadTimeDays,
             notes: l.notes,
           };
