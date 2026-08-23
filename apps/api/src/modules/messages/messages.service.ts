@@ -42,16 +42,33 @@ export class MessagesService {
 
   async list(organizationId: string, threadType: ThreadType, threadId: string) {
     await this.assertThreadExists(organizationId, threadType, threadId);
-    return this.db.query.messages.findMany({
+    // Latest window of the thread, returned in ascending order for rendering.
+    const rows = await this.db.query.messages.findMany({
       where: (m, { and, eq }) =>
         and(
           eq(m.organizationId, organizationId),
           eq(m.threadType, threadType),
           eq(m.threadId, threadId),
         ),
-      orderBy: (m, { asc }) => asc(m.createdAt),
+      orderBy: (m, { desc }) => desc(m.createdAt),
       limit: 500,
     });
+    return rows.reverse();
+  }
+
+  /**
+   * Vendor-facing read path for the portal. Enforces the same access rules as
+   * posting and hides competing vendors' messages on RFQ threads: a vendor
+   * sees its own messages plus the buyer's replies, never other vendors'.
+   */
+  async listAsVendor(organizationId: string, vendorId: string, threadType: ThreadType, threadId: string) {
+    const context = await this.getThreadContext(organizationId, threadType, threadId);
+    if (!context) throw new NotFoundException('Thread not found');
+    await this.assertVendorAccess(organizationId, vendorId, threadType, threadId, context);
+
+    const all = await this.list(organizationId, threadType, threadId);
+    if (threadType !== 'rfq') return all;
+    return all.filter((message) => message.senderType === 'user' || message.vendorId === vendorId);
   }
 
   /** Post a message as the signed-in internal user and email the supplier contact. */
@@ -62,6 +79,8 @@ export class MessagesService {
     threadId: string,
     input: PostMessageInput,
   ) {
+    const trimmedBody = input.body?.trim();
+    if (!trimmedBody) throw new BadRequestException('Message body is required');
     await this.assertThreadExists(organizationId, threadType, threadId);
     const user = await this.db.query.users.findFirst({ where: (u, { eq }) => eq(u.id, userId) });
     if (!user) throw new NotFoundException(`User ${userId} not found`);
@@ -75,15 +94,22 @@ export class MessagesService {
         senderType: 'user',
         senderId: userId,
         authorName: user.name,
-        body: input.body.trim(),
+        body: trimmedBody,
         attachments: input.attachments ?? [],
       })
       .returning();
 
-    await this.audit.log(organizationId, userId, 'message', message.id, 'created', {
-      threadType,
-      threadId,
-    });
+    // Side effects after persistence are best-effort: the message exists once
+    // committed, so failures here must not turn a successful post into an
+    // error that invites client retries and duplicate messages.
+    this.audit
+      .log(organizationId, userId, 'message', message.id, 'created', {
+        threadType,
+        threadId,
+      })
+      .catch((error) =>
+        this.logger.warn(`Audit log failed for message ${message.id}: ${error instanceof Error ? error.message : error}`),
+      );
 
     await this.emailVendorContact(organizationId, threadType, threadId, user.name, message.body);
     return message;
@@ -101,6 +127,8 @@ export class MessagesService {
     threadId: string,
     input: PostMessageInput,
   ) {
+    const trimmedBody = input.body?.trim();
+    if (!trimmedBody) throw new BadRequestException('Message body is required');
     const context = await this.getThreadContext(organizationId, threadType, threadId);
     if (!context) throw new NotFoundException('Thread not found');
     await this.assertVendorAccess(organizationId, vendorId, threadType, threadId, context);
@@ -119,29 +147,39 @@ export class MessagesService {
         senderType: 'vendor',
         vendorId,
         authorName: vendor.name,
-        body: input.body.trim(),
+        body: trimmedBody,
         attachments: input.attachments ?? [],
       })
       .returning();
 
-    // Append-only: messages are never updated or removed.
-    await this.audit.log(organizationId, null, 'message', message.id, 'created', {
-      threadType,
-      threadId,
-      senderType: 'vendor',
-      vendorId,
-    });
-
-    if (context.internalUserId) {
-      await this.notificationsService.create(
-        organizationId,
-        context.internalUserId,
-        'new_message',
-        `New message from ${vendor.name}`,
-        message.body.length > 140 ? `${message.body.slice(0, 140)}...` : message.body,
+    // Append-only: messages are never updated or removed. Post-persist side
+    // effects are best-effort so a failure cannot imply a lost message and
+    // trigger duplicate retries.
+    this.audit
+      .log(organizationId, null, 'message', message.id, 'created', {
         threadType,
         threadId,
+        senderType: 'vendor',
+        vendorId,
+      })
+      .catch((error) =>
+        this.logger.warn(`Audit log failed for message ${message.id}: ${error instanceof Error ? error.message : error}`),
       );
+
+    if (context.internalUserId) {
+      this.notificationsService
+        .create(
+          organizationId,
+          context.internalUserId,
+          'new_message',
+          `New message from ${vendor.name}`,
+          message.body.length > 140 ? `${message.body.slice(0, 140)}...` : message.body,
+          threadType,
+          threadId,
+        )
+        .catch((error) =>
+          this.logger.warn(`Notification failed for message ${message.id}: ${error instanceof Error ? error.message : error}`),
+        );
     }
     return message;
   }
@@ -174,7 +212,7 @@ export class MessagesService {
           where: (i, { and, eq }) =>
             and(eq(i.id, threadId), eq(i.organizationId, organizationId)),
         });
-        return invoice ? { vendorId: invoice.vendorId, internalUserId: null } : null;
+        return invoice ? { vendorId: invoice.vendorId, internalUserId: invoice.approvedBy } : null;
       }
       case 'rfq': {
         const rfq = await this.db.query.rfqRequests.findFirst({
@@ -248,11 +286,10 @@ export class MessagesService {
       const settings = await this.settingsService.getAll(organizationId);
       const smtpHost = settings['smtp_host'] || '';
       if (!smtpHost) return;
-      const appName = settings['app_name'] || 'BetterSpend';
-      const escapedBody = messageBody
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
+      const appName = escapeHtml(settings['app_name'] || 'BetterSpend');
+      const escapedAuthor = escapeHtml(authorName);
+      const escapedVendorName = escapeHtml(vendor.name);
+      const escapedBody = escapeHtml(messageBody);
 
       await this.mailService.sendMail(
         {
@@ -269,8 +306,8 @@ export class MessagesService {
           html: `
             <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
               <h2 style="color:#0f172a">New Message</h2>
-              <p>Dear ${vendor.name},</p>
-              <p>${authorName} sent you a message on your ${threadType.toUpperCase()} record:</p>
+              <p>Dear ${escapedVendorName},</p>
+              <p>${escapedAuthor} sent you a message on your ${threadType.toUpperCase()} record:</p>
               <blockquote style="border-left:3px solid #e2e8f0;margin:16px 0;padding:4px 16px;color:#334155">${escapedBody}</blockquote>
               <p>Log in to the vendor portal to read the full thread and reply.</p>
               <hr style="margin:24px 0;border:none;border-top:1px solid #e2e8f0">
@@ -286,4 +323,13 @@ export class MessagesService {
       );
     }
   }
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

@@ -31,3 +31,11 @@ EXCEPTION
 END $$;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "messages_thread_idx" ON "messages" USING btree ("thread_type","thread_id","created_at");
+--> statement-breakpoint
+ALTER TABLE "messages" ADD CONSTRAINT "messages_thread_type_check" CHECK ("messages"."thread_type" IN ('po', 'rfq', 'grn', 'invoice'));
+--> statement-breakpoint
+ALTER TABLE "messages" ADD CONSTRAINT "messages_sender_type_check" CHECK ("messages"."sender_type" IN ('user', 'vendor'));
+--> statement-breakpoint
+ALTER TABLE "messages" ADD CONSTRAINT "messages_sender_exclusive_check" CHECK (("messages"."sender_type" = 'user' AND "messages"."sender_id" IS NOT NULL AND "messages"."vendor_id" IS NULL) OR ("messages"."sender_type" = 'vendor' AND "messages"."vendor_id" IS NOT NULL AND "messages"."sender_id" IS NULL));
+--> statement-breakpoint
+ALTER TABLE "messages" ADD CONSTRAINT "messages_body_check" CHECK (length(trim("messages"."body")) > 0);

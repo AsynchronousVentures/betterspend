@@ -32,19 +32,25 @@ export function MessageThread({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const loadVersion = useRef(0);
 
   const load = useCallback(async () => {
+    const version = ++loadVersion.current;
     try {
       const data = portalToken
         ? await api.vendorPortal.listMessages(portalToken, threadType, threadId)
         : await api.messages.list(threadType, threadId);
-      setMessages(data);
+      if (version === loadVersion.current) setMessages(data);
     } catch {
-      setError('Failed to load messages.');
+      if (version === loadVersion.current) setError('Failed to load messages.');
     }
   }, [portalToken, threadType, threadId]);
 
   useEffect(() => {
+    // Drop the previous conversation immediately so a slow or failed request
+    // for the new thread never shows messages from another thread.
+    setMessages(null);
+    setError('');
     load();
     const interval = setInterval(load, 30_000);
     return () => clearInterval(interval);

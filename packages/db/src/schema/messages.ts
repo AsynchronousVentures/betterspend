@@ -6,7 +6,9 @@ import {
   jsonb,
   timestamp,
   index,
+  check,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { organizations } from './organizations';
 import { users } from './users';
 import { vendors } from './vendors';
@@ -36,5 +38,17 @@ export const messages = pgTable(
     attachments: jsonb('attachments').notNull().default([]),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('messages_thread_idx').on(table.threadType, table.threadId, table.createdAt)],
+  (table) => [
+    index('messages_thread_idx').on(table.threadType, table.threadId, table.createdAt),
+    check(
+      'messages_thread_type_check',
+      sql`${table.threadType} IN ('po', 'rfq', 'grn', 'invoice')`,
+    ),
+    check('messages_sender_type_check', sql`${table.senderType} IN ('user', 'vendor')`),
+    check(
+      'messages_sender_exclusive_check',
+      sql`(${table.senderType} = 'user' AND ${table.senderId} IS NOT NULL AND ${table.vendorId} IS NULL) OR (${table.senderType} = 'vendor' AND ${table.vendorId} IS NOT NULL AND ${table.senderId} IS NULL)`,
+    ),
+    check('messages_body_check', sql`length(trim(${table.body})) > 0`),
+  ],
 );

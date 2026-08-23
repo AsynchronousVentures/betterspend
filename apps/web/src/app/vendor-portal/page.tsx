@@ -498,7 +498,9 @@ function VendorPortalContent() {
 
   useEffect(() => {
     const pos = data?.purchaseOrders ?? [];
-    if (!messagePoId && pos.length > 0) {
+    if (pos.length === 0) {
+      setMessagePoId('');
+    } else if (!pos.some((po: any) => po.id === messagePoId)) {
       setMessagePoId(pos[0].id);
     }
   }, [data, messagePoId]);

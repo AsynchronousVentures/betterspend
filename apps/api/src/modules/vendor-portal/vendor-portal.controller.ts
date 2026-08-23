@@ -115,7 +115,12 @@ export class VendorPortalController {
   ) {
     if (!token) throw new UnauthorizedException('Token is required');
     const vendorId = await this.vendorPortalService.validateToken(token);
-    return this.messagesService.list(DEMO_ORG_ID, parseThreadType(threadType), threadId);
+    return this.messagesService.listAsVendor(
+      DEMO_ORG_ID,
+      vendorId,
+      parseThreadType(threadType),
+      threadId,
+    );
   }
 
   @Post('messages/:threadType/:threadId')

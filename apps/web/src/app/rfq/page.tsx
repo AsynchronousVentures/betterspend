@@ -395,7 +395,7 @@ export default function RfqPage() {
                         </div>
                       </div>
                     </div>
-                  ) : (
+                  ) : detailTab === 'responses' ? (
                     <div className="space-y-4">
                       <div className="flex items-center justify-between gap-3">
                         <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -534,7 +534,7 @@ export default function RfqPage() {
                         })
                       )}
                     </div>
-                  )}
+                  ) : null}
                 </>
               ) : null}
             </CardContent>
