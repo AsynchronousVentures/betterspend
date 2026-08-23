@@ -184,8 +184,9 @@ export class SoftwareLicensesService {
     }
 
     if (renewalRef) {
-      const refs = Array.isArray(license.renewalRefs) ? license.renewalRefs : [];
-      updates.renewalRefs = [...refs, renewalRef];
+      // Append atomically in SQL so concurrent actions cannot overwrite each
+      // other's reference via a stale in-memory snapshot.
+      updates.renewalRefs = sql`COALESCE(${softwareLicenses.renewalRefs}, '[]'::jsonb) || ${JSON.stringify([renewalRef])}::jsonb` as unknown as RenewalRef[];
     }
 
     await this.db
@@ -228,28 +229,32 @@ export class SoftwareLicensesService {
     note?: string,
   ): Promise<RenewalRef> {
     const unitPrice = Number(license.pricePerSeat);
-    const requisition = await this.requisitionsService.create(license.organizationId, userId, {
-      title: `Software renewal: ${license.productName}`,
-      description: [
-        `Renewal for ${license.productName} (${license.seatCount} seats, ${license.billingCycle} term).`,
-        `Vendor: ${license.vendor?.name ?? license.vendorId}.`,
-        note ? `Owner note: ${note}` : null,
-      ]
-        .filter(Boolean)
-        .join('\n'),
-      currency: license.currency,
-      neededBy: license.renewalDate ? new Date(license.renewalDate).toISOString() : undefined,
-      priority: 'normal',
-      lines: [
-        {
-          description: `${license.productName} license renewal (${license.billingCycle})`,
-          quantity: license.seatCount,
-          unitOfMeasure: 'seats',
-          unitPrice,
-          vendorId: license.vendorId,
-        },
-      ],
-    });
+    const requisition = await this.requisitionsService.create(
+      license.organizationId,
+      license.ownerUserId ?? userId,
+      {
+        title: `Software renewal: ${license.productName}`,
+        description: [
+          `Renewal for ${license.productName} (${license.seatCount} seats, ${license.billingCycle} term).`,
+          `Vendor: ${license.vendor?.name ?? license.vendorId}.`,
+          note ? `Owner note: ${note}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        currency: license.currency,
+        neededBy: license.renewalDate ? new Date(license.renewalDate).toISOString() : undefined,
+        priority: 'normal',
+        lines: [
+          {
+            description: `${license.productName} license renewal (${license.billingCycle})`,
+            quantity: license.seatCount,
+            unitOfMeasure: 'seats',
+            unitPrice,
+            vendorId: license.vendorId,
+          },
+        ],
+      },
+    );
     return {
       action: 'renew',
       kind: 'requisition',
@@ -284,6 +289,9 @@ export class SoftwareLicensesService {
       ],
       vendorIds: [license.vendorId],
     });
+    // Vendors can only respond to open RFQs; a renegotiation RFQ is issued to
+    // be answered, so move it out of draft immediately.
+    await this.rfqService.open(license.organizationId, rfq.id);
     return {
       action: 'renegotiate',
       kind: 'rfq',
