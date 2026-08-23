@@ -46,7 +46,9 @@ docker compose --env-file .env.production -f docker-compose.prod.yml logs -f api
 ./rollback.sh                             # roll back to the previous recorded image tag
 ```
 
-GitHub Actions deploys automatically after a successful push to `main`. Server secrets stay in `/opt/betterspend/.env.production`; CI only syncs files from `deploy/` and passes the image tag.
+GitHub Actions publishes immutable `sha-<commit>` images on every merge to `main`. Pushing a `v*` tag is a release: it validates, republishes that commit's images, and deploys to production via the protected `production` environment (requires `DEPLOY_SSH_HOST`, `DEPLOY_SSH_USER`, and `DEPLOY_SSH_KEY` secrets). Server secrets stay in `/opt/betterspend/.env.production`; CI only syncs files from `deploy/` and passes the image tag.
+
+To roll back a bad release, run `./rollback.sh` on the server (or re-tag an earlier commit).
 
 ### Development (local)
 
