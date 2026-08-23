@@ -70,15 +70,14 @@ export class MessagesService {
 
     const all = await this.list(organizationId, threadType, threadId);
     if (threadType !== 'rfq') return all;
-    // Vendors see their own messages plus buyer messages that are either
-    // broadcast to every invited vendor or addressed specifically to them.
+    // Vendors see their own messages plus buyer messages that are broadcast
+    // (no recipient) or addressed specifically to them. Buyer messages
+    // addressed to a different vendor are excluded.
     return all.filter(
       (message) =>
-        message.senderType === 'user' ||
         message.vendorId === vendorId ||
-        message.recipientVendorId === null ||
-        message.recipientVendorId === undefined ||
-        message.recipientVendorId === vendorId,
+        (message.senderType === 'user' &&
+          (message.recipientVendorId == null || message.recipientVendorId === vendorId)),
     );
   }
 
