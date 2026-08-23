@@ -4,6 +4,7 @@ import {
   Get,
   Body,
   Param,
+  ParseUUIDPipe,
   Query,
   HttpCode,
   HttpStatus,
@@ -16,6 +17,7 @@ import {
   SubmitCatalogPriceProposalInput,
   BulkCatalogPriceProposalRow,
 } from './vendor-portal.service';
+import { MessagesService, parseThreadType } from '../messages/messages.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 
@@ -24,7 +26,10 @@ const DEMO_ORG_ID = '00000000-0000-0000-0000-000000000001';
 @ApiTags('vendor-portal')
 @Controller('vendor-portal')
 export class VendorPortalController {
-  constructor(private readonly vendorPortalService: VendorPortalService) {}
+  constructor(
+    private readonly vendorPortalService: VendorPortalService,
+    private readonly messagesService: MessagesService,
+  ) {}
 
   /** Admin: send portal access link to a vendor (requires auth) */
   @Post('access')
@@ -98,6 +103,43 @@ export class VendorPortalController {
     if (!token) throw new UnauthorizedException('Token is required');
     const vendorId = await this.vendorPortalService.validateToken(token);
     return this.vendorPortalService.getVendorOnboarding(vendorId, DEMO_ORG_ID);
+  }
+
+  @Get('messages/:threadType/:threadId')
+  @Public()
+  @ApiOperation({ summary: 'List messages on a thread via portal token' })
+  async listMessages(
+    @Param('threadType') threadType: string,
+    @Param('threadId', ParseUUIDPipe) threadId: string,
+    @Query('token') token: string,
+  ) {
+    if (!token) throw new UnauthorizedException('Token is required');
+    const vendorId = await this.vendorPortalService.validateToken(token);
+    return this.messagesService.list(DEMO_ORG_ID, parseThreadType(threadType), threadId);
+  }
+
+  @Post('messages/:threadType/:threadId')
+  @Public()
+  @ApiOperation({ summary: 'Post a message to a thread as the vendor via portal token' })
+  @HttpCode(HttpStatus.CREATED)
+  async postMessage(
+    @Param('threadType') threadType: string,
+    @Param('threadId', ParseUUIDPipe) threadId: string,
+    @Query('token') token: string,
+    @Body() body: { body?: string; attachments?: unknown },
+  ) {
+    if (!token) throw new UnauthorizedException('Token is required');
+    const vendorId = await this.vendorPortalService.validateToken(token);
+    return this.messagesService.postAsVendor(
+      DEMO_ORG_ID,
+      vendorId,
+      parseThreadType(threadType),
+      threadId,
+      {
+        body: String(body?.body ?? ''),
+        attachments: Array.isArray(body?.attachments) ? body.attachments : [],
+      },
+    );
   }
 
   @Post('onboarding')

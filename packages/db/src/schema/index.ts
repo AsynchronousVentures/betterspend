@@ -35,3 +35,4 @@ export * from './email-intake';
 export * from './onboarding-questionnaires';
 export * from './procurement-concierge';
 export * from './ai-providers';
+export * from './messages';

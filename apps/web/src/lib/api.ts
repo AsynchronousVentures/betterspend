@@ -800,6 +800,15 @@ export const api = {
       apiFetch<any[]>(`/software-licenses/renewal-calendar${days ? `?days=${days}` : ''}`),
     utilization: () => apiFetch<any[]>('/software-licenses/utilization'),
   },
+  messages: {
+    list: (threadType: string, threadId: string) =>
+      apiFetch<any[]>(`/messages/${threadType}/${threadId}`),
+    post: (threadType: string, threadId: string, body: string) =>
+      apiFetch<any>(`/messages/${threadType}/${threadId}`, {
+        method: 'POST',
+        body: JSON.stringify({ body }),
+      }),
+  },
   passwordReset: {
     request: (email: string) =>
       apiFetch<{ success: boolean }>('/password-reset/request', {
@@ -851,6 +860,15 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ rows }),
       }),
+    listMessages: (token: string, threadType: string, threadId: string) =>
+      apiFetch<any[]>(
+        `/vendor-portal/messages/${threadType}/${threadId}?token=${encodeURIComponent(token)}`,
+      ),
+    postMessage: (token: string, threadType: string, threadId: string, body: string) =>
+      apiFetch<any>(
+        `/vendor-portal/messages/${threadType}/${threadId}?token=${encodeURIComponent(token)}`,
+        { method: 'POST', body: JSON.stringify({ body }) },
+      ),
   },
   notifications: {
     list: (params?: {

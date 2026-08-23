@@ -16,6 +16,7 @@ import {
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { StatusBadge } from '../../components/status-badge';
+import { MessageThread } from '../../components/message-thread';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -38,7 +39,7 @@ import {
 } from '../../components/ui/table';
 import { Textarea } from '../../components/ui/textarea';
 
-type PortalTab = 'overview' | 'pos' | 'invoices' | 'onboarding' | 'catalog';
+type PortalTab = 'overview' | 'pos' | 'invoices' | 'messages' | 'onboarding' | 'catalog';
 
 interface InvoiceLine {
   lineNumber: number;
@@ -467,6 +468,7 @@ function VendorPortalContent() {
   });
   const [proposalSaving, setProposalSaving] = useState(false);
   const [bulkUploadMessage, setBulkUploadMessage] = useState('');
+  const [messagePoId, setMessagePoId] = useState('');
 
   useEffect(() => {
     if (!token) return;
@@ -493,6 +495,13 @@ function VendorPortalContent() {
       })
       .catch(() => {});
   }, [token, submitSuccess]);
+
+  useEffect(() => {
+    const pos = data?.purchaseOrders ?? [];
+    if (!messagePoId && pos.length > 0) {
+      setMessagePoId(pos[0].id);
+    }
+  }, [data, messagePoId]);
 
   async function reloadDashboard() {
     if (!token) return;
@@ -549,6 +558,7 @@ function VendorPortalContent() {
     { key: 'overview', label: 'Overview' },
     { key: 'pos', label: `Purchase Orders (${purchaseOrders.length})` },
     { key: 'invoices', label: `Invoices (${invoiceList.length})` },
+    { key: 'messages', label: 'Messages' },
     { key: 'onboarding', label: 'Onboarding' },
     { key: 'catalog', label: `Catalog & Pricing (${catalogData?.items.length ?? 0})` },
   ];
@@ -777,6 +787,42 @@ function VendorPortalContent() {
                     ))}
                   </TableBody>
                 </Table>
+              )}
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {activeTab === 'messages' ? (
+          <Card className="rounded-[28px]">
+            <CardHeader>
+              <CardTitle className="text-xl">Messages</CardTitle>
+              <CardDescription>
+                Talk directly with your buyer about a purchase order. The full conversation is kept on
+                the order record.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {purchaseOrders.length === 0 ? (
+                <div className="px-6 py-14 text-center text-sm text-muted-foreground">
+                  No purchase orders yet; messages open once you have an order.
+                </div>
+              ) : (
+                <>
+                  <Select
+                    value={messagePoId}
+                    onChange={(event) => setMessagePoId(event.target.value)}
+                    className="max-w-sm"
+                  >
+                    {purchaseOrders.map((po: any) => (
+                      <option key={po.id} value={po.id}>
+                        {po.internalNumber}
+                      </option>
+                    ))}
+                  </Select>
+                  {messagePoId ? (
+                    <MessageThread threadType="po" threadId={messagePoId} portalToken={token} />
+                  ) : null}
+                </>
               )}
             </CardContent>
           </Card>

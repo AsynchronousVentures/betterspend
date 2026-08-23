@@ -18,6 +18,7 @@ import {
 import { Input } from '../../../components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 import { Textarea } from '../../../components/ui/textarea';
+import { MessageThread } from '../../../components/message-thread';
 
 interface POLine {
   id: string;
@@ -603,6 +604,19 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
           </CardContent>
         </Card>
       ) : null}
+
+      <Card className="rounded-lg">
+        <CardHeader>
+          <CardTitle className="text-xl">Messages</CardTitle>
+          <CardDescription>
+            Threaded conversation with {po.vendor?.name ?? 'the supplier'}. Messages are permanent and
+            visible to both sides in the vendor portal.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <MessageThread threadType="po" threadId={id} />
+        </CardContent>
+      </Card>
 
       <div className="flex flex-wrap gap-3">
         {canIssue ? (

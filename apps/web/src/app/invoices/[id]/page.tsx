@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { api } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { DocumentUploader } from '../../../components/document-uploader';
+import { MessageThread } from '../../../components/message-thread';
 import { PageHeader } from '../../../components/page-header';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge } from '../../../components/ui/badge';
@@ -414,6 +415,21 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         <div className="pt-2">
           <DocumentUploader entityType="invoice" entityId={id} label="Documents" />
         </div>
+      ) : null}
+
+      {id ? (
+        <Card className="rounded-lg">
+          <CardHeader>
+            <CardTitle className="text-xl">Messages</CardTitle>
+            <CardDescription>
+              Threaded conversation with the supplier. Messages are permanent and visible to both
+              sides.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <MessageThread threadType="invoice" threadId={id} />
+          </CardContent>
+        </Card>
       ) : null}
     </div>
   );

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
+import { MessageThread } from '../../components/message-thread';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -57,7 +58,7 @@ export default function RfqPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailTab, setDetailTab] = useState<'overview' | 'responses'>('overview');
+  const [detailTab, setDetailTab] = useState<'overview' | 'responses' | 'messages'>('overview');
   const [responseSort, setResponseSort] = useState<'price' | 'supplier' | 'delivery'>('price');
   const [rejectDrafts, setRejectDrafts] = useState<Record<string, string>>({});
   const [awardingId, setAwardingId] = useState<string | null>(null);
@@ -338,18 +339,25 @@ export default function RfqPage() {
                     {[
                       { key: 'overview', label: 'Overview' },
                       { key: 'responses', label: `Responses (${detail.responses?.length ?? 0})` },
+                      { key: 'messages', label: 'Messages' },
                     ].map((tab) => (
                       <Button
                         key={tab.key}
                         type="button"
                         size="sm"
                         variant={detailTab === tab.key ? 'default' : 'outline'}
-                        onClick={() => setDetailTab(tab.key as 'overview' | 'responses')}
+                        onClick={() => setDetailTab(tab.key as 'overview' | 'responses' | 'messages')}
                       >
                         {tab.label}
                       </Button>
                     ))}
                   </div>
+
+                  {detailTab === 'messages' ? (
+                    <div>
+                      <MessageThread threadType="rfq" threadId={detail.id} />
+                    </div>
+                  ) : null}
 
                   {detailTab === 'overview' ? (
                     <div className="space-y-5">
