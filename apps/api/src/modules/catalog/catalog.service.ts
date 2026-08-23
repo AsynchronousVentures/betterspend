@@ -1,9 +1,10 @@
-import { Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, Logger } from '@nestjs/common';
 import { eq, and, ilike, or, desc } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { catalogItems, catalogPriceProposals } from '@betterspend/db';
-import { NotificationsService } from '../notifications/notifications.service';
+import { MailService } from '../../common/mail/mail.service';
+import { SettingsService } from '../settings/settings.service';
 
 export interface CreateCatalogItemInput {
   vendorId?: string;
@@ -32,9 +33,12 @@ export interface UpdateCatalogItemInput {
 
 @Injectable()
 export class CatalogService {
+  private readonly logger = new Logger(CatalogService.name);
+
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
-    private readonly notificationsService: NotificationsService,
+    private readonly mailService: MailService,
+    private readonly settingsService: SettingsService,
   ) {}
 
   async findAll(organizationId: string, filters?: { vendorId?: string; category?: string; activeOnly?: boolean }) {
@@ -136,6 +140,7 @@ export class CatalogService {
   }
 
   async listPriceProposals(organizationId: string, status?: string) {
+    await this.applyDueApprovedProposals(organizationId);
     return this.db.query.catalogPriceProposals.findMany({
       where: (p, { and, eq }) =>
         and(
@@ -177,36 +182,13 @@ export class CatalogService {
       .where(and(eq(catalogPriceProposals.id, proposalId), eq(catalogPriceProposals.organizationId, organizationId)))
       .returning();
 
+    // Approved proposals take effect immediately unless the supplier set a
+    // future effective date; those are applied by applyDueApprovedProposals.
     if (input.status === 'approved') {
-      await this.db
-        .update(catalogItems)
-        .set({
-          unitPrice: String(updated.proposedPrice),
-          updatedAt: new Date(),
-        })
-        .where(eq(catalogItems.id, proposal.itemId));
+      await this.applyProposalIfDue(updated);
     }
 
-    if (proposal.item?.vendorId) {
-      const vendor = await this.db.query.vendors.findFirst({
-        where: (v, { and, eq }) =>
-          and(eq(v.id, proposal.vendorId), eq(v.organizationId, organizationId)),
-      });
-      if (vendor) {
-        const vendorOwnerId = null;
-        if (vendorOwnerId) {
-          await this.notificationsService.create(
-            organizationId,
-            vendorOwnerId,
-            'catalog_price_proposal_reviewed',
-            `${proposal.item.name} price proposal ${input.status}`,
-            input.reviewNote ?? undefined,
-            'catalog_price_proposal',
-            proposalId,
-          );
-        }
-      }
-    }
+    await this.notifyVendorOfDecision(updated, input.status, input.reviewNote);
 
     return this.db.query.catalogPriceProposals.findFirst({
       where: (p, { eq }) => eq(p.id, proposalId),
@@ -217,4 +199,152 @@ export class CatalogService {
       },
     });
   }
+
+  /**
+   * Auto-approve a just-submitted proposal when the org allows price changes
+   * within `catalog_auto_approve_price_change_pct` percent through without
+   * manual review. Called by the vendor portal right after insertion; a no-op
+   * when the setting is disabled or the change exceeds the threshold.
+   */
+  async considerAutoApproval(proposalId: string, organizationId: string): Promise<boolean> {
+    const thresholdPct = Number(
+      await this.settingsService.get(organizationId, 'catalog_auto_approve_price_change_pct'),
+    );
+    if (!Number.isFinite(thresholdPct) || thresholdPct <= 0) return false;
+
+    const proposal = await this.db.query.catalogPriceProposals.findFirst({
+      where: (p, { and, eq }) =>
+        and(eq(p.id, proposalId), eq(p.organizationId, organizationId), eq(p.status, 'pending')),
+    });
+    if (!proposal) return false;
+
+    const currentPrice = Number(proposal.currentPrice);
+    const proposedPrice = Number(proposal.proposedPrice);
+    if (!(currentPrice > 0)) return false;
+
+    const changePct = Math.abs((proposedPrice - currentPrice) / currentPrice) * 100;
+    if (changePct > thresholdPct) return false;
+
+    const [approved] = await this.db
+      .update(catalogPriceProposals)
+      .set({
+        status: 'approved',
+        reviewedAt: new Date(),
+        reviewNote: `Auto-approved: ${changePct.toFixed(1)}% change is within the ${thresholdPct}% threshold`,
+      })
+      .where(and(eq(catalogPriceProposals.id, proposal.id), eq(catalogPriceProposals.status, 'pending')))
+      .returning();
+
+    await this.applyProposalIfDue(approved);
+    await this.notifyVendorOfDecision(approved, 'approved', approved.reviewNote);
+    this.logger.log(
+      `Auto-approved catalog price proposal ${approved.id} (${changePct.toFixed(1)}% <= ${thresholdPct}%)`,
+    );
+    return true;
+  }
+
+  /** Apply approved proposals whose effective date has arrived. Idempotent; runs lazily on buyer reads. */
+  async applyDueApprovedProposals(organizationId: string): Promise<void> {
+    const due = await this.db.query.catalogPriceProposals.findMany({
+      where: (p, { and, eq, isNull, lte }) =>
+        and(
+          eq(p.organizationId, organizationId),
+          eq(p.status, 'approved'),
+          isNull(p.appliedAt),
+          or(isNull(p.effectiveDate), lte(p.effectiveDate, new Date())),
+        ),
+      orderBy: (p, { asc }) => [asc(p.reviewedAt)],
+    });
+
+    for (const proposal of due) {
+      try {
+        await this.applyProposalIfDue(proposal);
+      } catch (error) {
+        this.logger.warn(`Failed to apply price proposal ${proposal.id}: ${error instanceof Error ? error.message : error}`);
+      }
+    }
+  }
+
+  /** Write the proposed price to the catalog item once its effective date has arrived. */
+  private async applyProposalIfDue(proposal: typeof catalogPriceProposals.$inferSelect): Promise<boolean> {
+    const due = !proposal.effectiveDate || proposal.effectiveDate.getTime() <= Date.now();
+    if (!due) return false;
+
+    await this.db
+      .update(catalogItems)
+      .set({ unitPrice: String(proposal.proposedPrice), updatedAt: new Date() })
+      .where(eq(catalogItems.id, proposal.itemId));
+    await this.db
+      .update(catalogPriceProposals)
+      .set({ appliedAt: new Date() })
+      .where(eq(catalogPriceProposals.id, proposal.id));
+    return true;
+  }
+
+  /**
+   * Email the vendor contact about an approve/reject outcome and record it in
+   * notified_vendor so buyers can see delivery happened. Vendors are not app
+   * users; email plus the portal's proposal history is the channel.
+   */
+  private async notifyVendorOfDecision(
+    proposal: typeof catalogPriceProposals.$inferSelect,
+    status: 'approved' | 'rejected',
+    reviewNote?: string | null,
+  ): Promise<void> {
+    try {
+      const vendor = await this.db.query.vendors.findFirst({
+        where: (v, { and, eq }) =>
+          and(eq(v.id, proposal.vendorId), eq(v.organizationId, proposal.organizationId)),
+      });
+      const email = extractContactEmail(vendor?.contactInfo);
+      if (!vendor || !email) return;
+
+      const settings = await this.settingsService.getAll(proposal.organizationId);
+      const smtpHost = settings['smtp_host'] || '';
+      if (!smtpHost) {
+        this.logger.log(`SMTP not configured; skipping vendor notification for proposal ${proposal.id}`);
+        return;
+      }
+      const appName = settings['app_name'] || 'BetterSpend';
+      const sent = await this.mailService.sendMail(
+        {
+          host: smtpHost,
+          port: parseInt(settings['smtp_port'] || '587', 10),
+          secure: settings['smtp_secure'] === 'true',
+          user: settings['smtp_user'] || '',
+          pass: settings['smtp_pass'] || '',
+          from: settings['smtp_from'] || `noreply@${smtpHost}`,
+        },
+        {
+          to: email,
+          subject: `[${appName}] Catalog Price Proposal ${status}`,
+          html: `
+            <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+              <h2 style="color:#0f172a">Catalog Price Proposal ${status}</h2>
+              <p>Dear ${vendor.name},</p>
+              <p>Your price proposal for <strong>${proposal.currentPrice} &rarr; ${proposal.proposedPrice}</strong> has been <strong>${status}</strong>.</p>
+              ${reviewNote ? `<p><strong>Note from the buyer:</strong> ${reviewNote}</p>` : ''}
+              <hr style="margin:24px 0;border:none;border-top:1px solid #e2e8f0">
+              <p style="color:#94a3b8;font-size:12px">This is an automated notification from ${appName}.</p>
+            </div>
+          `,
+          text: `Your price proposal (${proposal.currentPrice} -> ${proposal.proposedPrice}) has been ${status}.${reviewNote ? `\n\nBuyer note: ${reviewNote}` : ''}`,
+        },
+      );
+      if (sent) {
+        await this.db
+          .update(catalogPriceProposals)
+          .set({ notifiedVendor: true })
+          .where(eq(catalogPriceProposals.id, proposal.id));
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to notify vendor for proposal ${proposal.id}: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+}
+
+function extractContactEmail(contactInfo: unknown): string | undefined {
+  if (!contactInfo || typeof contactInfo !== 'object') return undefined;
+  const email = (contactInfo as Record<string, unknown>)['email'];
+  return typeof email === 'string' && email.includes('@') ? email : undefined;
 }

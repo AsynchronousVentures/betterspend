@@ -162,10 +162,20 @@ export default function CatalogPage() {
   }
 
   async function reviewProposal(itemId: string, proposalId: string, status: 'approved' | 'rejected') {
-    await api.catalog.reviewPriceProposal(itemId, proposalId, {
-      status,
-      reviewNote: reviewNotes[proposalId],
-    });
+    const result = await api.catalog
+      .reviewPriceProposal(itemId, proposalId, {
+        status,
+        reviewNote: reviewNotes[proposalId],
+      })
+      .catch(() => null);
+    if (result && status === 'approved' && !result.appliedAt) {
+      const effective = result.effectiveDate ? new Date(result.effectiveDate).toLocaleDateString() : null;
+      window.alert(
+        effective
+          ? `Proposal approved. The price takes effect on ${effective}.`
+          : 'Proposal approved. The price will apply on the next catalog refresh.',
+      );
+    }
     await load();
   }
 

@@ -304,6 +304,19 @@ export default function CatalogItemDetailPage({ params }: { params: Promise<{ id
                     {proposal.effectiveDate ? new Date(proposal.effectiveDate).toLocaleDateString() : 'Immediate'}
                   </div>
                   <div>Reviewed by: {proposal.reviewer?.name ?? 'Pending review'}</div>
+                  {proposal.status === 'approved' ? (
+                    proposal.appliedAt ? (
+                      <div>Applied: {new Date(proposal.appliedAt).toLocaleDateString()}</div>
+                    ) : (
+                      <div>
+                        Scheduled:{' '}
+                        takes effect{' '}
+                        {proposal.effectiveDate
+                          ? new Date(proposal.effectiveDate).toLocaleDateString()
+                          : 'on next catalog refresh'}
+                      </div>
+                    )
+                  ) : null}
                 </div>
                 {proposal.note ? (
                   <div className="mt-3 text-sm text-muted-foreground">Supplier note: {proposal.note}</div>

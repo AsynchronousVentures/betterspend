@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { CatalogService } from './catalog.service';
 import { CatalogController } from './catalog.controller';
-import { NotificationsModule } from '../notifications/notifications.module';
+import { SettingsModule } from '../settings/settings.module';
 
 @Module({
-  imports: [NotificationsModule],
+  imports: [SettingsModule],
   controllers: [CatalogController],
   providers: [CatalogService],
   exports: [CatalogService],

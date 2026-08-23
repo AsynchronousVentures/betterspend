@@ -24,6 +24,7 @@ import { SettingsService } from '../settings/settings.service';
 import { SequenceService } from '../../common/services/sequence.service';
 import { MatchingService } from '../invoices/matching.service';
 import { VendorsService } from '../vendors/vendors.service';
+import { CatalogService } from '../catalog/catalog.service';
 
 export interface SubmitInvoiceInput {
   purchaseOrderId: string;
@@ -66,6 +67,7 @@ export class VendorPortalService {
     private readonly sequenceService: SequenceService,
     private readonly matchingService: MatchingService,
     private readonly vendorsService: VendorsService,
+    private readonly catalogService: CatalogService,
   ) {}
 
   async sendAccessLink(vendorId: string, orgId: string): Promise<{ success: boolean }> {
@@ -344,7 +346,12 @@ export class VendorPortalService {
       })
       .returning();
 
-    return proposal;
+    // Small changes may be pre-approved by org policy instead of queueing for review.
+    await this.catalogService.considerAutoApproval(proposal.id, orgId);
+
+    return this.db.query.catalogPriceProposals.findFirst({
+      where: (p, { eq }) => eq(p.id, proposal.id),
+    });
   }
 
   async submitBulkCatalogPriceProposals(
@@ -382,7 +389,7 @@ export class VendorPortalService {
           continue;
         }
 
-        await this.db
+        const [inserted] = await this.db
           .insert(catalogPriceProposals)
           .values({
             organizationId: orgId,
@@ -392,7 +399,10 @@ export class VendorPortalService {
             currentPrice: item.unitPrice,
             effectiveDate: row.effectiveDate ? new Date(row.effectiveDate) : null,
             note: row.note ?? null,
-          });
+          })
+          .returning();
+
+        await this.catalogService.considerAutoApproval(inserted.id, orgId);
 
         results.push({
           row: index + 1,
