@@ -39,6 +39,7 @@ export default function VendorDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { toast } = useToast();
   const [vendor, setVendor] = useState<any>(null);
+  const [screeningBusy, setScreeningBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -140,6 +141,28 @@ export default function VendorDetailPage() {
       setPortalMsg(`Error: ${err.message || 'Failed to review onboarding'}`);
     } finally {
       setReviewSaving(false);
+    }
+  }
+
+  async function rescreenVendor() {
+    setScreeningBusy(true);
+    try {
+      const result = await api.riskScreening.screenVendor(id);
+      setVendor((current: any) => ({
+        ...current,
+        sanctionsStatus: result.status,
+        sanctionsCheckedAt: new Date().toISOString(),
+      }));
+      toast(
+        result.status === 'flagged'
+          ? `Flagged with ${result.matches.length} potential match(es)`
+          : 'Screening clear',
+        result.status === 'flagged' ? 'error' : 'success',
+      );
+    } catch (err: any) {
+      setPortalMsg(`Error: ${err.message || 'Screening failed'}`);
+    } finally {
+      setScreeningBusy(false);
     }
   }
 
@@ -259,6 +282,35 @@ export default function VendorDetailPage() {
             <Field label="Email" value={vendor.contactInfo?.email || '—'} />
             <Field label="Phone" value={vendor.contactInfo?.phone || '—'} />
           </Section>
+
+          <Card>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardTitle className="text-base">Risk Screening</CardTitle>
+              <StatusBadge value={vendor.sanctionsStatus || 'untested'} />
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                <Field
+                  label="Last Checked"
+                  value={
+                    vendor.sanctionsCheckedAt
+                      ? new Date(vendor.sanctionsCheckedAt).toLocaleString()
+                      : 'Never'
+                  }
+                />
+                <Field label="Note" value={vendor.sanctionsNote || '—'} />
+                <div />
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button variant="outline" onClick={rescreenVendor} disabled={screeningBusy}>
+                  {screeningBusy ? 'Screening...' : 'Screen Against Sanctions Lists'}
+                </Button>
+                <Button asChild variant="ghost">
+                  <Link href="/risk-screening">Open Risk Screening</Link>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
           <Section title="Address">
             <Field label="Street" value={vendor.address?.street || '—'} />

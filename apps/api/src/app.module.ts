@@ -52,6 +52,7 @@ import { IntakeConciergeModule } from './modules/intake-concierge/intake-concier
 import { ComplianceModule } from './modules/compliance/compliance.module';
 import { AiProvidersModule } from './modules/ai-providers/ai-providers.module';
 import { MessagesModule } from './modules/messages/messages.module';
+import { RiskScreeningModule } from './modules/risk-screening/risk-screening.module';
 
 @Module({
   imports: [
@@ -93,6 +94,7 @@ import { MessagesModule } from './modules/messages/messages.module';
     ComplianceModule,
     AiProvidersModule,
     MessagesModule,
+    RiskScreeningModule,
     AuditModule,
     ReportsModule,
     SearchModule,

@@ -26,6 +26,10 @@ export const vendors = pgTable('vendors', {
   sustainabilityCertifications: jsonb('sustainability_certifications').default([]), // ['iso14001', 'b_corp', 'fair_trade', 'fsc']
   esgNotes: text('esg_notes'),
   diversityVerifiedAt: timestamp('diversity_verified_at', { withTimezone: true }),
+  // Sanctions / adverse-media screening: untested | clear | flagged | manually_reviewed
+  sanctionsStatus: varchar('sanctions_status', { length: 20 }).notNull().default('untested'),
+  sanctionsCheckedAt: timestamp('sanctions_checked_at', { withTimezone: true }),
+  sanctionsNote: text('sanctions_note'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

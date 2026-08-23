@@ -21,6 +21,7 @@ export const SETTING_KEYS = [
   'catalog_auto_approve_price_change_pct',
   'contract_price_deviation_threshold',
   'contract_price_deviation_action',
+  'block_pos_for_flagged_vendors',
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];
@@ -46,6 +47,7 @@ export const DEFAULT_SETTINGS: Record<SettingKey, string> = {
   catalog_auto_approve_price_change_pct: '0',
   contract_price_deviation_threshold: '5',
   contract_price_deviation_action: 'warn',
+  block_pos_for_flagged_vendors: 'false',
 };
 
 export const brandingSettingsSchema = z.object({
@@ -84,4 +86,10 @@ export const approvalPolicySettingsSchema = z.object({
 export const contractComplianceSettingsSchema = z.object({
   contract_price_deviation_threshold: z.string().regex(/^\d+(\.\d+)?$/).optional(),
   contract_price_deviation_action: z.enum(['warn', 'block']).optional(),
+});
+
+export const riskScreeningSettingsSchema = z.object({
+  // When true, PO creation is rejected for vendors with sanctions_status
+  // 'flagged'. Default warn-only.
+  block_pos_for_flagged_vendors: z.enum(['true', 'false']).optional(),
 });

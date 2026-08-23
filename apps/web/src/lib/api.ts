@@ -902,8 +902,23 @@ export const api = {
         { method: 'POST', body: JSON.stringify({ body }) },
       ).then((value) => messageSchema.parse(value)),
   },
-  notifications: {
-    list: (params?: {
+  riskScreening: {
+    list: () => apiFetch<any[]>('/risk-screening'),
+    screenVendor: (vendorId: string) =>
+      apiFetch<any>(`/risk-screening/vendors/${vendorId}/screen`, { method: 'POST' }),
+    screenAll: () => apiFetch<{ screened: number; flagged: number }>('/risk-screening/screen-all', { method: 'POST' }),
+    manualReview: (vendorId: string, note: string) =>
+      apiFetch<any>(`/risk-screening/vendors/${vendorId}/manual-review`, {
+        method: 'POST',
+        body: JSON.stringify({ note }),
+      }),
+    ingest: (source?: string) =>
+      apiFetch<{ count: number; source: string }>('/risk-screening/ingest', {
+        method: 'POST',
+        body: JSON.stringify(source ? { source } : {}),
+      }),
+  },
+  notifications: {    list: (params?: {
       unreadOnly?: boolean;
       limit?: number;
       offset?: number;

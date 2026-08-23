@@ -239,6 +239,13 @@
       "when": 1775703300000,
       "tag": "0033_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1775703400000,
+      "tag": "0033_sanctions_screening",
+      "breakpoints": true
     }
   ]
 }

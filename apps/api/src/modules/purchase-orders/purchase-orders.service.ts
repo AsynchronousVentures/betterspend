@@ -8,6 +8,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { ContractComplianceService } from './contract-compliance.service';
 import { EntitiesService } from '../entities/entities.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
+import { RiskScreeningService } from '../risk-screening/risk-screening.service';
 import type { Db } from '@betterspend/db';
 import { purchaseOrders, poLines, poVersions, blanketReleases, requisitions } from '@betterspend/db';
 
@@ -81,6 +82,7 @@ export class PurchaseOrdersService {
     @Optional() private readonly contractCompliance: ContractComplianceService,
     private readonly entitiesService: EntitiesService,
     private readonly exchangeRatesService: ExchangeRatesService,
+    private readonly riskScreening: RiskScreeningService,
   ) {}
 
   private calculateLineTax(quantity: number, unitPrice: number, ratePercent: number, taxInclusive: boolean): LineTaxSnapshot {
@@ -152,6 +154,7 @@ export class PurchaseOrdersService {
         `Vendor onboarding is ${vendor.onboardingStatus.replace(/_/g, ' ')} and must be approved before a PO can be created`,
       );
     }
+    await this.riskScreening.checkVendorForPo(organizationId, vendor);
     const currency = input.currency ?? 'USD';
     const taxCodeMap = await this.getTaxCodeMap(
       organizationId,
