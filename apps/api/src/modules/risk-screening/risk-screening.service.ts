@@ -224,11 +224,17 @@ export class RiskScreeningService {
   }
 
   /**
-   * PO gate. Throws when the org blocks POs for flagged vendors; returns a
-   * warning string when flagged but only warning-level enforcement is set.
+   * PO gate. Re-reads the vendor's current screening status at decision time
+   * rather than trusting the caller's snapshot. Throws when the org blocks
+   * POs for flagged vendors; returns a warning string when flagged but only
+   * warning-level enforcement is set.
    */
   async checkVendorForPo(organizationId: string, vendor: { id: string; name: string; sanctionsStatus?: string | null }): Promise<string | null> {
-    if (vendor.sanctionsStatus !== 'flagged') return null;
+    const [current] = await this.db
+      .select({ sanctionsStatus: vendors.sanctionsStatus })
+      .from(vendors)
+      .where(eq(vendors.id, vendor.id));
+    if ((current?.sanctionsStatus ?? 'untested') !== 'flagged') return null;
     const blocking =
       (await this.settingsService.get(organizationId, 'block_pos_for_flagged_vendors')) === 'true';
     if (blocking) {
