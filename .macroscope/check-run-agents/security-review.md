@@ -37,8 +37,8 @@ API keys, tokens, passwords, and private keys must never be committed. Flag any 
 
 ### Validate and sanitize untrusted input
 
-Untrusted input (user-supplied data, webhook payloads, queue messages, imported files, and third-party API responses) that reaches a query, shell command, file path, or HTML sink must be validated or parameterized. Flag string-concatenated SQL, unescaped HTML rendering, and unsanitized path joins.
+Untrusted input (user-supplied data, webhook payloads, queue messages, imported files, and third-party API responses) must be handled with controls specific to the sink it reaches. Require parameterized queries or prepared statements for SQL, argument arrays with no shell interpolation for commands, canonicalized paths confined to an allow-listed base directory for file access, and auto-escaping templates or contextual escaping for HTML. Flag string-concatenated SQL, unescaped HTML rendering, and unsanitized path joins.
 
 ### Avoid unsafe deserialization and SSRF
 
-Flag deserialization of untrusted data into rich objects. For outbound requests built from user-controlled URLs, an allow-list alone is not sufficient: require URL normalization before checks, HTTP(S) only with restricted ports, validation of the resolved IP addresses (reject private, link-local, loopback, and cloud metadata ranges), and revalidation after redirects or redirects disabled entirely.
+Flag deserialization of untrusted data into rich objects. For outbound requests built from user-controlled URLs, an allow-list alone is not sufficient: require URL normalization before checks, HTTP(S) only with restricted ports, validation of the resolved IP addresses (reject private, link-local, loopback, and cloud metadata ranges), connecting to the same validated address that passed the check (pin the resolved IP for the connection so DNS cannot change between validation and request), and revalidation after redirects or redirects disabled entirely.
