@@ -465,7 +465,18 @@ export class RfqService {
     const rfq = await this.findOne(orgId, rfqId);
     if (rfq.status !== 'open') throw new BadRequestException('RFQ is not open for responses');
 
-    const totalAmount = dto.lines.reduce((sum, l) => sum + l.unitPrice, 0);
+    const rfqLinesList = await this.db
+      .select()
+      .from(rfqLines)
+      .where(eq(rfqLines.rfqId, rfqId));
+    const lineMap = Object.fromEntries(rfqLinesList.map((l) => [l.id, l]));
+
+    // Response totals are quantity-aware: unitPrice alone understates
+    // multi-seat/multi-unit quotes and flows into awarded PO totals.
+    const totalAmount = dto.lines.reduce(
+      (sum, l) => sum + l.unitPrice * (lineMap[l.rfqLineId] ? Number(lineMap[l.rfqLineId].quantity) : 1),
+      0,
+    );
 
     const [response] = await this.db
       .insert(rfqResponses)
@@ -477,13 +488,6 @@ export class RfqService {
         validUntil: dto.validUntil ? new Date(dto.validUntil) : undefined,
       })
       .returning();
-
-    // Get rfq lines to compute total price
-    const rfqLinesList = await this.db
-      .select()
-      .from(rfqLines)
-      .where(eq(rfqLines.rfqId, rfqId));
-    const lineMap = Object.fromEntries(rfqLinesList.map((l) => [l.id, l]));
 
     if (dto.lines.length) {
       await this.db.insert(rfqResponseLines).values(
