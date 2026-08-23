@@ -471,11 +471,20 @@ export class RfqService {
       .where(eq(rfqLines.rfqId, rfqId));
     const lineMap = Object.fromEntries(rfqLinesList.map((l) => [l.id, l]));
 
+    // A response may only quote lines that belong to this RFQ; otherwise an
+    // award could copy a foreign line's description and quantity into a PO.
+    const unknownLineIds = dto.lines.filter((l) => !lineMap[l.rfqLineId]);
+    if (unknownLineIds.length > 0) {
+      throw new BadRequestException(
+        `Response lines reference items outside this RFQ: ${unknownLineIds.map((l) => l.rfqLineId).join(', ')}`,
+      );
+    }
+
     // Response totals are quantity-aware and rounded per line to match the
     // numeric(14,2) line persistence, so the response total always equals
     // the sum of its persisted lines (and any awarded PO's header total).
     const totalAmount = dto.lines.reduce((sum, l) => {
-      const qty = lineMap[l.rfqLineId] ? Number(lineMap[l.rfqLineId].quantity) : 1;
+      const qty = Number(lineMap[l.rfqLineId].quantity);
       const lineTotal = Math.round(l.unitPrice * qty * 100) / 100;
       return sum + lineTotal;
     }, 0);
@@ -494,8 +503,7 @@ export class RfqService {
     if (dto.lines.length) {
       await this.db.insert(rfqResponseLines).values(
         dto.lines.map((l) => {
-          const rfqLine = lineMap[l.rfqLineId];
-          const qty = rfqLine ? Number(rfqLine.quantity) : 1;
+          const qty = Number(lineMap[l.rfqLineId].quantity);
           const lineTotal = Math.round(l.unitPrice * qty * 100) / 100;
           return {
             responseId: response.id,
