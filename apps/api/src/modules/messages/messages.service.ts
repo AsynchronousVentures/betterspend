@@ -2,7 +2,7 @@ import { Injectable, Inject, NotFoundException, ForbiddenException, BadRequestEx
 import { and, asc, eq } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { messages, purchaseOrders, invoices, rfqRequests, goodsReceipts } from '@betterspend/db';
+import { messages, purchaseOrders, invoices, rfqRequests, goodsReceipts, rfqInvitations } from '@betterspend/db';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MailService } from '../../common/mail/mail.service';
@@ -21,6 +21,8 @@ export function parseThreadType(threadType: string): ThreadType {
 export interface PostMessageInput {
   body: string;
   attachments?: Array<{ documentId?: string; url?: string; name?: string }>;
+  /** RFQ threads only: address the message to one invited vendor. */
+  recipientVendorId?: string;
 }
 
 interface ThreadContext {
@@ -68,7 +70,16 @@ export class MessagesService {
 
     const all = await this.list(organizationId, threadType, threadId);
     if (threadType !== 'rfq') return all;
-    return all.filter((message) => message.senderType === 'user' || message.vendorId === vendorId);
+    // Vendors see their own messages plus buyer messages that are either
+    // broadcast to every invited vendor or addressed specifically to them.
+    return all.filter(
+      (message) =>
+        message.senderType === 'user' ||
+        message.vendorId === vendorId ||
+        message.recipientVendorId === null ||
+        message.recipientVendorId === undefined ||
+        message.recipientVendorId === vendorId,
+    );
   }
 
   /** Post a message as the signed-in internal user and email the supplier contact. */
@@ -85,6 +96,20 @@ export class MessagesService {
     const user = await this.db.query.users.findFirst({ where: (u, { eq }) => eq(u.id, userId) });
     if (!user) throw new NotFoundException(`User ${userId} not found`);
 
+    // RFQ threads can address a message to a single invited vendor; anything
+    // else is broadcast. Recipient must hold an invitation to receive one.
+    let recipientVendorId: string | null = null;
+    if (threadType === 'rfq' && input.recipientVendorId) {
+      const invitation = await this.db.query.rfqInvitations.findFirst({
+        where: (inv, { and, eq }) =>
+          and(eq(inv.rfqId, threadId), eq(inv.vendorId, input.recipientVendorId!)),
+      });
+      if (!invitation) {
+        throw new BadRequestException('Recipient vendor is not invited to this RFQ');
+      }
+      recipientVendorId = input.recipientVendorId;
+    }
+
     const [message] = await this.db
       .insert(messages)
       .values({
@@ -93,6 +118,7 @@ export class MessagesService {
         threadId,
         senderType: 'user',
         senderId: userId,
+        recipientVendorId,
         authorName: user.name,
         body: trimmedBody,
         attachments: input.attachments ?? [],
@@ -111,7 +137,16 @@ export class MessagesService {
         this.logger.warn(`Audit log failed for message ${message.id}: ${error instanceof Error ? error.message : error}`),
       );
 
-    await this.emailVendorContact(organizationId, threadType, threadId, user.name, message.body);
+    // Email the addressed vendor on RFQ threads; other threads have a single
+    // supplier counterpart resolved inside.
+    await this.emailVendorContact(
+      organizationId,
+      threadType,
+      threadId,
+      user.name,
+      message.body,
+      recipientVendorId ?? undefined,
+    );
     return message;
   }
 
@@ -267,10 +302,12 @@ export class MessagesService {
     threadId: string,
     authorName: string,
     messageBody: string,
+    recipientVendorOverride?: string,
   ) {
     try {
       const context = await this.getThreadContext(organizationId, threadType, threadId);
-      const vendorIdForThread = context?.vendorId ?? null;
+      const vendorIdForThread =
+        recipientVendorOverride ?? (context?.vendorId ?? null);
       if (!vendorIdForThread) return;
 
       const vendor = await this.db.query.vendors.findFirst({

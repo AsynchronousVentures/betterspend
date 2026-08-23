@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS "messages" (
   "sender_type" varchar(10) NOT NULL,
   "sender_id" uuid,
   "vendor_id" uuid,
+  "recipient_vendor_id" uuid,
   "author_name" varchar(255) NOT NULL,
   "body" text NOT NULL,
   "attachments" jsonb DEFAULT '[]'::jsonb NOT NULL,
@@ -32,10 +33,16 @@ END $$;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "messages_thread_idx" ON "messages" USING btree ("thread_type","thread_id","created_at");
 --> statement-breakpoint
-ALTER TABLE "messages" ADD CONSTRAINT "messages_thread_type_check" CHECK ("messages"."thread_type" IN ('po', 'rfq', 'grn', 'invoice'));
+ALTER TABLE "messages" ADD CONSTRAINT "messages_thread_type_check" CHECK ("thread_type" IN ('po', 'rfq', 'grn', 'invoice'));
 --> statement-breakpoint
-ALTER TABLE "messages" ADD CONSTRAINT "messages_sender_type_check" CHECK ("messages"."sender_type" IN ('user', 'vendor'));
+ALTER TABLE "messages" ADD CONSTRAINT "messages_sender_type_check" CHECK ("sender_type" IN ('user', 'vendor'));
 --> statement-breakpoint
-ALTER TABLE "messages" ADD CONSTRAINT "messages_sender_exclusive_check" CHECK (("messages"."sender_type" = 'user' AND "messages"."sender_id" IS NOT NULL AND "messages"."vendor_id" IS NULL) OR ("messages"."sender_type" = 'vendor' AND "messages"."vendor_id" IS NOT NULL AND "messages"."sender_id" IS NULL));
+ALTER TABLE "messages" ADD CONSTRAINT "messages_sender_exclusive_check" CHECK (("sender_type" = 'user' AND "sender_id" IS NOT NULL AND "vendor_id" IS NULL) OR ("sender_type" = 'vendor' AND "vendor_id" IS NOT NULL AND "sender_id" IS NULL));
 --> statement-breakpoint
-ALTER TABLE "messages" ADD CONSTRAINT "messages_body_check" CHECK (length(trim("messages"."body")) > 0);
+ALTER TABLE "messages" ADD CONSTRAINT "messages_body_check" CHECK (length(trim("body")) > 0);
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "messages" ADD CONSTRAINT "messages_recipient_vendor_id_vendors_id_fk" FOREIGN KEY ("recipient_vendor_id") REFERENCES "public"."vendors"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;

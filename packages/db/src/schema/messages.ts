@@ -32,6 +32,10 @@ export const messages = pgTable(
     senderType: varchar('sender_type', { length: 10 }).notNull(), // user|vendor
     senderId: uuid('sender_id').references(() => users.id),
     vendorId: uuid('vendor_id').references(() => vendors.id),
+    // On RFQ threads, the invited vendor a buyer message is addressed to.
+    // Null on buyer messages means visible to every invited vendor; vendor
+    // messages never set it (they are inherently their own).
+    recipientVendorId: uuid('recipient_vendor_id').references(() => vendors.id),
     authorName: varchar('author_name', { length: 255 }).notNull(),
     body: text('body').notNull(),
     // Metadata for attached files (document ids/urls); upload wiring is separate.

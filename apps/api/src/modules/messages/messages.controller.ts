@@ -37,7 +37,11 @@ export class MessagesController {
       userId,
       parseThreadType(threadType),
       threadId,
-      { body: String(body?.body ?? ''), attachments: body?.attachments },
+      {
+        body: String(body?.body ?? ''),
+        attachments: body?.attachments,
+        recipientVendorId: body?.recipientVendorId,
+      },
     );
   }
 }
