@@ -159,3 +159,9 @@ Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `
 ### Domain docs
 
 Single-context: one root `CONTEXT.md` plus `docs/adr/`. See `docs/agents/domain.md`.
+
+## PR review etiquette
+
+- Every review comment on a PR you opened must receive a reply before merge. Each reply either states the commit that addressed it, or states that it is being ignored and why.
+- Never merge a PR while any bot review has `CHANGES_REQUESTED` outstanding, even if required checks are green. Resolve or explicitly dismiss each thread first, and surface unresolved feedback to Tyler before merging rather than after.
+- Use `@coderabbitai resolve` (or resolve threads via the API) once a CodeRabbit comment has been addressed.
