@@ -255,6 +255,9 @@ export class SoftwareLicensesService {
         ],
       },
     );
+    // Submit so the renewal actually routes through the approval engine; a
+    // draft would sit untouched while the notification claims otherwise.
+    await this.requisitionsService.submit(requisition.id, license.organizationId);
     return {
       action: 'renew',
       kind: 'requisition',
