@@ -57,6 +57,7 @@ export class CatalogService {
   }
 
   async search(organizationId: string, q: string) {
+    await this.applyDueApprovedProposals(organizationId);
     const term = `%${q}%`;
     return this.db.query.catalogItems.findMany({
       where: (c, { and, eq, or, ilike }) =>
@@ -72,6 +73,7 @@ export class CatalogService {
   }
 
   async findOne(id: string, organizationId: string) {
+    await this.applyDueApprovedProposals(organizationId);
     const item = await this.db.query.catalogItems.findFirst({
       where: (c, { and, eq }) => and(eq(c.id, id), eq(c.organizationId, organizationId)),
       with: { vendor: true },
