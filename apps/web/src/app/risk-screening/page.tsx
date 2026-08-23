@@ -89,7 +89,13 @@ export default function RiskScreeningPage() {
       const result = await api.riskScreening.ingest();
       setMessage(`Imported ${result.count} ${result.source} entries.`);
     } catch (runError) {
-      setError(runError instanceof Error ? runError.message : 'Sanctions list import failed');
+      setError(
+        runError instanceof Error && runError.message.includes('403')
+          ? 'Importing sanctions lists requires an admin.'
+          : runError instanceof Error
+            ? runError.message
+            : 'Sanctions list import failed',
+      );
     } finally {
       setIngestBusy(false);
     }
@@ -125,7 +131,13 @@ export default function RiskScreeningPage() {
       setReviewNote('');
       await load();
     } catch (runError) {
-      setError(runError instanceof Error ? runError.message : 'Manual review failed');
+      setError(
+        runError instanceof Error && runError.message.includes('403')
+          ? 'Manual review decisions require an admin.'
+          : runError instanceof Error
+            ? runError.message
+            : 'Manual review failed',
+      );
     } finally {
       setBusyVendorId(null);
     }
@@ -272,6 +284,7 @@ export default function RiskScreeningPage() {
                           size="sm"
                           variant="ghost"
                           onClick={() => setReviewVendor(vendor)}
+                          disabled={busyVendorId === vendor.id}
                         >
                           Manual Review
                         </Button>

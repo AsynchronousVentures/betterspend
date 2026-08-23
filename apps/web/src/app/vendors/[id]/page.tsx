@@ -148,19 +148,20 @@ export default function VendorDetailPage() {
     setScreeningBusy(true);
     try {
       const result = await api.riskScreening.screenVendor(id);
-      setVendor((current: any) => ({
-        ...current,
-        sanctionsStatus: result.status,
-        sanctionsCheckedAt: new Date().toISOString(),
-      }));
+      setVendor(await api.vendors.get(id));
       toast(
         result.status === 'flagged'
           ? `Flagged with ${result.matches.length} potential match(es)`
-          : 'Screening clear',
+          : result.status === 'manually_reviewed'
+            ? 'Screening complete; manual review status preserved'
+            : 'Screening clear',
         result.status === 'flagged' ? 'error' : 'success',
       );
     } catch (err: any) {
-      setPortalMsg(`Error: ${err.message || 'Screening failed'}`);
+      const message = err?.status === 403 || err?.message?.includes('403')
+        ? 'Screening requires an admin or approver role.'
+        : err.message || 'Screening failed';
+      toast(message, 'error');
     } finally {
       setScreeningBusy(false);
     }

@@ -50,12 +50,12 @@ export class RiskScreeningController {
   @Roles('admin')
   @ApiOperation({ summary: 'Download and replace the local sanctions list for a source' })
   ingest(
-    @Body() body: { source?: string; url?: string },
+    @Body() body: { source?: string },
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
   ) {
-    void orgId;
-    void userId;
-    return this.riskScreeningService.ingest(body?.source, body?.url);
+    // URLs are server-controlled per source; request bodies cannot point the
+    // fetch at arbitrary hosts.
+    return this.riskScreeningService.ingest(orgId, userId, body?.source ?? 'ofac_sdn');
   }
 }

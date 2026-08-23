@@ -48,6 +48,7 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   'Delegations':              ArrowLeftRight,
   'Budgets':                  PiggyBank,
   'Spend Guard':              ShieldAlert,
+  'Risk Screening':           ShieldCheck,
   'Tax Codes':                Percent,
   'AP Aging':                 Clock,
   'Payment Runs':             CreditCard,

@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, Logger } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { sanctionsEntries, sanctionsScreenings, vendors } from '@betterspend/db';
@@ -29,19 +29,33 @@ export class RiskScreeningService {
   ) {}
 
   /**
-   * Download a public sanctions list (OFAC SDN CSV by default) and replace the
-   * local copy for that source. Network failures surface to the caller so an
-   * admin can retry; existing entries are kept when the fetch fails.
+   * Download a public sanctions list and replace the local copy for that
+   * source. URLs are server-controlled (per-source allowlist, optional
+   * operator env override), never caller-supplied, so ingest cannot be turned
+   * into an SSRF primitive or a tenant-controlled data swap.
    */
-  async ingest(source = 'ofac_sdn', url?: string): Promise<{ count: number; source: string }> {
+  private static readonly INGEST_SOURCES: Record<string, string> = {
+    ofac_sdn: 'https://www.treasury.gov/ofac/downloads/sdn.csv',
+  };
+  private static readonly INGEST_TIMEOUT_MS = 30_000;
+
+  async ingest(
+    organizationId: string,
+    userId: string,
+    source = 'ofac_sdn',
+  ): Promise<{ count: number; source: string }> {
     const listUrl =
-      url ||
-      process.env['SANCTIONS_LIST_URL'] ||
-      'https://www.treasury.gov/ofac/downloads/sdn.csv';
+      RiskScreeningService.INGEST_SOURCES[source] ?? process.env['SANCTIONS_LIST_URL'] ?? '';
+    if (!listUrl) {
+      throw new BadRequestException(`Unsupported sanctions source "${source}"`);
+    }
 
     let response: Response;
     try {
-      response = await fetch(listUrl, { redirect: 'follow' });
+      response = await fetch(listUrl, {
+        redirect: 'follow',
+        signal: AbortSignal.timeout(RiskScreeningService.INGEST_TIMEOUT_MS),
+      });
     } catch (error) {
       throw new Error(
         `Failed to download sanctions list from ${listUrl}: ${error instanceof Error ? error.message : error}`,
@@ -73,48 +87,18 @@ export class RiskScreeningService {
       }
     });
 
+    await this.audit.log(organizationId, userId, 'sanctions_registry', source, 'ingest', {
+      url: listUrl,
+      count: rows.length,
+    });
+
     this.logger.log(`Ingested ${rows.length} ${source} entries from ${listUrl}`);
     return { count: rows.length, source };
   }
 
   /** Fuzzy-match one vendor against local sanctions entries and persist the outcome. */
   async screenVendor(organizationId: string, vendorId: string, screenedBy?: string) {
-    const vendor = await this.db.query.vendors.findFirst({
-      where: (v, { and, eq }) => and(eq(v.id, vendorId), eq(v.organizationId, organizationId)),
-    });
-    if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
-
-    const matches = await this.matchVendorName(vendor.name);
-
-    // Manual review decisions stand until explicitly re-reviewed.
-    const previousStatus = vendor.sanctionsStatus;
-    const nextStatus =
-      previousStatus === 'manually_reviewed' && matches.length === 0 ? 'manually_reviewed' : matches.length > 0 ? 'flagged' : 'clear';
-
-    await this.db.insert(sanctionsScreenings).values({
-      organizationId,
-      vendorId,
-      result: matches.length > 0 ? 'flagged' : 'clear',
-      matchCount: matches,
-      screenedBy: screenedBy ?? null,
-    });
-
-    await this.db
-      .update(vendors)
-      .set({
-        sanctionsStatus: nextStatus,
-        sanctionsCheckedAt: new Date(),
-        sanctionsNote: nextStatus === 'manually_reviewed' ? vendor.sanctionsNote : null,
-        updatedAt: new Date(),
-      })
-      .where(eq(vendors.id, vendorId));
-
-    await this.audit.log(organizationId, screenedBy ?? null, 'vendor', vendorId, 'sanctions_screening', {
-      result: nextStatus,
-      matchCount: matches.length,
-    });
-
-    return { vendorId, status: nextStatus, matches };
+    return this.screenVendorWithEntries(organizationId, vendorId, screenedBy);
   }
 
   async screenAllVendors(organizationId: string, screenedBy?: string) {
@@ -122,16 +106,80 @@ export class RiskScreeningService {
       where: (v, { and, eq }) => and(eq(v.organizationId, organizationId), eq(v.status, 'active')),
       columns: { id: true },
     });
+    // One pass over the registry shared by every vendor instead of a full
+    // table scan per vendor.
+    const entries = await this.loadEntries();
     let flagged = 0;
     for (const vendor of orgVendors) {
-      const result = await this.screenVendor(organizationId, vendor.id, screenedBy);
+      const result = await this.screenVendorWithEntries(organizationId, vendor.id, screenedBy, entries);
       if (result.status === 'flagged') flagged += 1;
     }
     return { screened: orgVendors.length, flagged };
   }
 
+  private async screenVendorWithEntries(
+    organizationId: string,
+    vendorId: string,
+    screenedBy?: string,
+    entries?: SanctionEntryRow[],
+  ) {
+    const vendor = await this.db.query.vendors.findFirst({
+      where: (v, { and, eq }) => and(eq(v.id, vendorId), eq(v.organizationId, organizationId)),
+    });
+    if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
+
+    const matches = await this.matchVendorName(vendor.name, entries);
+
+    // Fresh automated hits re-flag an unreviewed vendor. A manual review
+    // decision stands either way; the screening row records what the new run
+    // saw so auditors can revisit the override if data changed.
+    const previousStatus = vendor.sanctionsStatus;
+    const nextStatus =
+      previousStatus === 'manually_reviewed'
+        ? 'manually_reviewed'
+        : matches.length > 0
+          ? 'flagged'
+          : 'clear';
+
+    await this.db.transaction(async (tx) => {
+      await tx.insert(sanctionsScreenings).values({
+        organizationId,
+        vendorId,
+        result: matches.length > 0 ? 'flagged' : 'clear',
+        matchCount: matches,
+        screenedBy: screenedBy ?? null,
+      });
+
+      await tx
+        .update(vendors)
+        .set({
+          sanctionsStatus: nextStatus,
+          sanctionsCheckedAt: new Date(),
+          sanctionsNote:
+            nextStatus === 'manually_reviewed' ? (vendor.sanctionsNote ?? null) : null,
+          updatedAt: new Date(),
+        })
+        .where(eq(vendors.id, vendorId));
+    });
+
+    await this.audit
+      .log(organizationId, screenedBy ?? null, 'vendor', vendorId, 'sanctions_screening', {
+        result: nextStatus,
+        matchCount: matches.length,
+      })
+      .catch((error) =>
+        this.logger.warn(`Audit log failed for ${vendorId} screening: ${error instanceof Error ? error.message : error}`),
+      );
+
+    return { vendorId, status: nextStatus, matches };
+  }
+
   /** Admin override after human review of a flagged (or clear) vendor. */
   async manualReview(organizationId: string, vendorId: string, userId: string, note: string) {
+    const trimmedNote = note.trim();
+    if (!trimmedNote) {
+      throw new BadRequestException('A justification note is required for manual review');
+    }
     const vendor = await this.db.query.vendors.findFirst({
       where: (v, { and, eq }) => and(eq(v.id, vendorId), eq(v.organizationId, organizationId)),
     });
@@ -141,14 +189,14 @@ export class RiskScreeningService {
       .update(vendors)
       .set({
         sanctionsStatus: 'manually_reviewed',
-        sanctionsNote: note,
+        sanctionsNote: trimmedNote,
         sanctionsCheckedAt: new Date(),
         updatedAt: new Date(),
       })
       .where(eq(vendors.id, vendorId));
 
     await this.audit.log(organizationId, userId, 'vendor', vendorId, 'sanctions_manual_review', {
-      note,
+      note: trimmedNote,
       previousStatus: vendor.sanctionsStatus,
     });
 
@@ -188,46 +236,50 @@ export class RiskScreeningService {
     return `Vendor "${vendor.name}" is flagged by sanctions screening; review before issuing this PO`;
   }
 
-  private async matchVendorName(name: string): Promise<SanctionMatch[]> {
+  private async loadEntries(): Promise<SanctionEntryRow[]> {
+    return this.db
+      .select({
+        id: sanctionsEntries.id,
+        source: sanctionsEntries.source,
+        entityName: sanctionsEntries.entityName,
+        country: sanctionsEntries.country,
+      })
+      .from(sanctionsEntries);
+  }
+
+  private async matchVendorName(
+    name: string,
+    entries?: SanctionEntryRow[],
+  ): Promise<SanctionMatch[]> {
     const normalizedTarget = normalize(name);
     if (!normalizedTarget) return [];
 
+    const rows = entries ?? (await this.loadEntries());
     const matches: SanctionMatch[] = [];
-    const batchSize = 2000;
-    let offset = 0;
-    let batch: Array<{ id: string; source: string; entityName: string; country: string | null }> = [];
 
-    do {
-      batch = await this.db
-        .select({
-          id: sanctionsEntries.id,
-          source: sanctionsEntries.source,
-          entityName: sanctionsEntries.entityName,
-          country: sanctionsEntries.country,
-        })
-        .from(sanctionsEntries)
-        .orderBy(sql`${sanctionsEntries.id}`)
-        .limit(batchSize)
-        .offset(offset);
-
-      for (const entry of batch) {
-        const score = similarity(normalizedTarget, normalize(entry.entityName));
-        if (score >= MATCH_THRESHOLD) {
-          matches.push({
-            entryId: entry.id,
-            source: entry.source,
-            entityName: entry.entityName,
-            country: entry.country,
-            matchedOn: entry.entityName,
-            score: Number(score.toFixed(3)),
-          });
-        }
+    for (const entry of rows) {
+      const score = similarity(normalizedTarget, normalize(entry.entityName));
+      if (score >= MATCH_THRESHOLD) {
+        matches.push({
+          entryId: entry.id,
+          source: entry.source,
+          entityName: entry.entityName,
+          country: entry.country,
+          matchedOn: entry.entityName,
+          score: Number(score.toFixed(3)),
+        });
       }
-      offset += batchSize;
-    } while (batch.length === batchSize);
+    }
 
     return matches.sort((a, b) => b.score - a.score).slice(0, 25);
   }
+}
+
+interface SanctionEntryRow {
+  id: string;
+  source: string;
+  entityName: string;
+  country: string | null;
 }
 
 function normalize(value: string): string {

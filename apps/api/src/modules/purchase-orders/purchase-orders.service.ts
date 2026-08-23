@@ -154,7 +154,7 @@ export class PurchaseOrdersService {
         `Vendor onboarding is ${vendor.onboardingStatus.replace(/_/g, ' ')} and must be approved before a PO can be created`,
       );
     }
-    await this.riskScreening.checkVendorForPo(organizationId, vendor);
+    const sanctionsWarning = await this.riskScreening.checkVendorForPo(organizationId, vendor);
     const currency = input.currency ?? 'USD';
     const taxCodeMap = await this.getTaxCodeMap(
       organizationId,
@@ -260,8 +260,16 @@ export class PurchaseOrdersService {
     });
 
     const created = await this.findOne(createdId, organizationId);
+    if (sanctionsWarning) {
+      await this.audit
+        .log(organizationId, issuedBy, 'vendor', vendor.id, 'po_sanctions_warning', {
+          poNumber: created.number,
+          warning: sanctionsWarning,
+        })
+        .catch(() => {});
+    }
     this.audit.log(organizationId, null, 'purchase_order', createdId, 'created', { internalNumber: (created as any).internalNumber, totalAmount: (created as any).totalAmount }).catch(() => {});
-    return created;
+    return sanctionsWarning ? { ...created, sanctionsWarning } : created;
   }
 
   async issue(id: string, organizationId: string, issuedBy: string) {
