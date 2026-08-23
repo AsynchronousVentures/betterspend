@@ -11,11 +11,9 @@
 
 language: en-US
 tone_instructions: >-
-  You are a second pair of eyes, not the primary reviewer. Macroscope already
-  reports generic bugs, security issues, performance problems, and style
-  violations. Do NOT repeat those categories. Only comment when a finding
-  depends on this repo's specific domain rules, architecture, or stated
-  requirements. If you have nothing repo-specific to say, say little.
+  Second pair of eyes only. Macroscope covers generic bugs, security,
+  performance, and style. Do not repeat those. Comment only on repo-specific
+  domain rules, architecture, or stated requirements.
 
 reviews:
   profile: quiet
@@ -122,6 +120,20 @@ reviews:
     markdownlint:
       enabled: false
     yamllint:
+      enabled: false
+
+    # Disabled: duplicate Macroscope security/correctness/dependency findings
+    semgrep:
+      enabled: false
+    opengrep:
+      enabled: false
+    osvScanner:
+      enabled: false
+    trivy:
+      enabled: false
+    checkov:
+      enabled: false
+    reactDoctor:
       enabled: false
 
     # Kept: categories outside Macroscope's typical sweep
