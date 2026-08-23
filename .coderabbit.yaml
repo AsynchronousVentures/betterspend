@@ -1,0 +1,154 @@
+# CodeRabbit is configured as SUPPLEMENTAL to Macroscope.
+# Macroscope is the primary reviewer for generic correctness, security,
+# style, and performance findings. CodeRabbit stays quiet on anything
+# Macroscope would plausibly catch and only comments on findings that
+# require repository-specific context:
+#   - BetterSpend domain invariants (audit immutability, approval chains,
+#     gap-free sequences, multi-tenant scoping, 3-way match)
+#   - Spec/description vs. diff alignment
+#   - Postgres migration safety
+#   - GitHub Actions workflow hygiene and secret leakage
+
+language: en-US
+tone_instructions: >-
+  Second pair of eyes only. Macroscope covers generic bugs, security,
+  performance, and style. Do not repeat those. Comment only on repo-specific
+  domain rules, architecture, or stated requirements.
+
+reviews:
+  profile: quiet
+  request_changes_workflow: false
+  high_level_summary: true
+  changed_files_summary: true
+  sequence_diagrams: false
+  estimate_code_review_effort: true
+  assess_linked_issues: true
+  related_issues: false
+  related_prs: false
+  suggested_labels: true
+  auto_apply_labels: false
+  suggested_reviewers: true
+  auto_assign_reviewers: false
+  poem: false
+  in_progress_fortune: false
+  collapse_walkthrough: true
+
+  path_filters:
+    - "!**/pnpm-lock.yaml"
+    - "!**/package.json"
+    - "!**/*.md"
+
+  path_instructions:
+    - path: "packages/db/src/schema/**"
+      instructions: >-
+        Check domain-model integrity rather than syntax. Audit tables must be
+        append-only (no updatable paths). New foreign keys must be scoped to
+        organization_id for tenant isolation. Status enums must stay aligned
+        with packages/shared constants (PO_STATUS, ROLES). Flag any column
+        addition without a nullable/default strategy since this DB holds
+        production data.
+    - path: "packages/db/src/migrations/**, packages/db/drizzle/**"
+      instructions: >-
+        Review for migration safety only (Macroscope does not assess Postgres
+        operational risk): locking behavior on large tables, backfill strategy,
+        destructive changes without a two-step plan, index creation without
+        CONCURRENTLY where relevant.
+    - path: "apps/api/src/modules/approvals/**"
+      instructions: >-
+        Verify approval-engine invariants: rules evaluated strictly in priority
+        order with first-match-wins, sequential step chains cannot be advanced
+        out of order, every action writes an immutable row to approval_actions,
+        and state transitions are idempotent under concurrent approvals.
+    - path: "apps/api/src/modules/{sequences,receiving,invoices}/**"
+      instructions: >-
+        Sequence generation must use SELECT ... FOR UPDATE inside a transaction
+        to stay gap-free. Invoice matching must enforce all three legs of the
+        3-way match (PO, GRN, invoice) before AP approval can proceed; flag any
+        code path that relaxes a leg silently.
+    - path: "apps/api/src/modules/auth/**, apps/api/src/guards/**"
+      instructions: >-
+        Focus on authorization gaps Macroscope cannot infer: endpoints missing
+        role guards, role-scoping (global/department/project) not enforced in
+        queries, or org-scoping omitted from any data fetch. Do not comment on
+        general security hardening.
+    - path: "apps/web/src/**"
+      instructions: >-
+        Only flag mismatches between the frontend and API contracts (shared Zod
+        schemas in packages/shared), stale status/role constants duplicated
+        instead of imported from shared, and flows that bypass server-side
+        validation assuming client checks. Skip styling and component-design
+        feedback entirely.
+
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+
+  pre_merge_checks:
+    title:
+      mode: warning
+      requirements: >-
+        Title should follow the repo convention: concise, conventional-commit
+        style if used elsewhere in history, e.g. "fix(api): ..."
+    description:
+      mode: warning
+    issue_assessment:
+      mode: warning
+    docstrings:
+      mode: off
+
+  finishing_touches:
+    docstrings:
+      enabled: true
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    autofix:
+      enabled: true
+
+  tools:
+    # Disabled: redundant with pnpm lint / typecheck CI and Macroscope coverage
+    eslint:
+      enabled: false
+    oxc:
+      enabled: false
+    biome:
+      enabled: false
+    languagetool:
+      enabled: false
+    markdownlint:
+      enabled: false
+    yamllint:
+      enabled: false
+
+    # Disabled: duplicate Macroscope security/correctness/dependency findings
+    semgrep:
+      enabled: false
+    opengrep:
+      enabled: false
+    osvScanner:
+      enabled: false
+    trivy:
+      enabled: false
+    checkov:
+      enabled: false
+    reactDoctor:
+      enabled: false
+
+    # Kept: categories outside Macroscope's typical sweep
+    shellcheck:
+      enabled: true
+    hadolint:
+      enabled: true
+    actionlint:
+      enabled: true
+    zizmor:
+      enabled: true
+    gitleaks:
+      enabled: true
+    squawk:
+      enabled: true
+
+chat:
+  auto_reply: true
