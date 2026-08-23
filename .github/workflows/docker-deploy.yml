@@ -157,17 +157,40 @@ jobs:
           push: true
           tags: ${{ steps.image_settings.outputs.migrator_tag }}
 
+  deploy-preflight:
+    name: Deploy Preflight
+    # secrets context is unavailable in job-level `if`, so probe it here and
+    # publish the result. Skips the whole deploy path until DEPLOY_SSH_*
+    # secrets are configured, so tagging still releases images before
+    # automated deployment exists.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+        run: |
+          missing=0
+          for var in DEPLOY_SSH_HOST DEPLOY_SSH_USER DEPLOY_SSH_KEY DEPLOY_SSH_KNOWN_HOSTS; do
+            if [ -z "${!var}" ]; then
+              echo "::warning::Secret ${var} is not set; production deploy will be skipped."
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 0 ]; then printf 'ready=true\n'; else printf 'ready=false\n'; fi >> "$GITHUB_OUTPUT"
+
   deploy:
     name: Deploy Production
-    # Self-gating: skipped until DEPLOY_SSH_* secrets are configured, so
-    # tagging still releases images before automated deployment exists.
     if: >-
       github.event_name == 'push'
       && startsWith(github.ref, 'refs/tags/')
-      && secrets.DEPLOY_SSH_HOST != ''
-      && secrets.DEPLOY_SSH_USER != ''
-      && secrets.DEPLOY_SSH_KEY != ''
-    needs: publish
+      && needs.deploy-preflight.outputs.ready == 'true'
+    needs: [publish, deploy-preflight]
     runs-on: ubuntu-latest
     # Protect this environment in repo settings (required reviewers, or none
     # for fully automatic deploys). Only tag pushes reach production here.
@@ -184,14 +207,21 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
 
+      - name: Pin production host key
+        env:
+          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+        run: |
+          # Pinned fingerprint from a secret; never trust-on-first-use.
+          printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+
       - name: Sync deploy files
         env:
           DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
         run: |
-          ssh-keyscan -H "$DEPLOY_SSH_HOST" >> ~/.ssh/known_hosts
+          ssh_options="-o StrictHostKeyChecking=yes"
           # Explicit file list, no --delete: never risk touching .env.production
-          rsync -av \
+          rsync -av -e "ssh $ssh_options" \
             deploy/deploy.sh \
             deploy/rollback.sh \
             deploy/docker-compose.prod.yml \
@@ -203,5 +233,7 @@ jobs:
           DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
         run: |
-          ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            'cd /opt/betterspend && ./deploy.sh "$IMAGE_TAG"'
+          # Expand IMAGE_TAG locally (hex-only sha, safe to interpolate);
+          # single quotes keep the remote shell from touching anything else.
+          ssh -o StrictHostKeyChecking=yes "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            "cd /opt/betterspend && ./deploy.sh '$IMAGE_TAG'"
