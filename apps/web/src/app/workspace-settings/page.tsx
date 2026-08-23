@@ -485,6 +485,7 @@ function SettingsContent() {
                 <Input
                   type="number"
                   min="0"
+                  max="100"
                   step="0.01"
                   value={approvalPolicy.catalog_auto_approve_price_change_pct}
                   onChange={(event) =>

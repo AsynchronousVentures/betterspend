@@ -74,7 +74,11 @@ export const approvalPolicySettingsSchema = z.object({
   auto_approve_notify_manager: z.enum(['true', 'false']).optional(),
   // Percentage (0-100). Supplier catalog price changes within this percent are
   // approved without review. '0' disables the automation.
-  catalog_auto_approve_price_change_pct: z.string().regex(/^\d+(\.\d{1,2})?$/, 'Must be a valid percentage').optional(),
+  catalog_auto_approve_price_change_pct: z
+    .string()
+    .regex(/^\d+(\.\d{1,2})?$/, 'Must be a valid percentage')
+    .refine((value) => Number(value) <= 100, 'Must be between 0 and 100')
+    .optional(),
 });
 
 export const contractComplianceSettingsSchema = z.object({

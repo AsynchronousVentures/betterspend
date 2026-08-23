@@ -42,6 +42,7 @@ export class CatalogService {
   ) {}
 
   async findAll(organizationId: string, filters?: { vendorId?: string; category?: string; activeOnly?: boolean }) {
+    await this.applyDueApprovedProposals(organizationId);
     return this.db.query.catalogItems.findMany({
       where: (c, { and, eq }) => {
         const conditions = [eq(c.organizationId, organizationId)];
@@ -234,6 +235,7 @@ export class CatalogService {
       })
       .where(and(eq(catalogPriceProposals.id, proposal.id), eq(catalogPriceProposals.status, 'pending')))
       .returning();
+    if (!approved) return false;
 
     await this.applyProposalIfDue(approved);
     await this.notifyVendorOfDecision(approved, 'approved', approved.reviewNote);
@@ -253,7 +255,14 @@ export class CatalogService {
           isNull(p.appliedAt),
           or(isNull(p.effectiveDate), lte(p.effectiveDate, new Date())),
         ),
-      orderBy: (p, { asc }) => [asc(p.reviewedAt)],
+      // Apply in effective-date order so the chronologically latest due
+      // proposal ends up as the item's final price.
+      orderBy: (p, { asc, sql: orderBySql }) =>
+        [
+          orderBySql`${p.effectiveDate} asc nulls first`,
+          asc(p.reviewedAt),
+          asc(p.id),
+        ],
     });
 
     for (const proposal of due) {

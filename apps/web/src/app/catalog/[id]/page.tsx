@@ -312,7 +312,7 @@ export default function CatalogItemDetailPage({ params }: { params: Promise<{ id
                         Scheduled:{' '}
                         takes effect{' '}
                         {proposal.effectiveDate
-                          ? new Date(proposal.effectiveDate).toLocaleDateString()
+                          ? new Date(proposal.effectiveDate).toLocaleDateString(undefined, { timeZone: 'UTC' })
                           : 'on next catalog refresh'}
                       </div>
                     )
