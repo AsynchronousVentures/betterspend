@@ -181,6 +181,9 @@ jobs:
 
       - name: Setup Blacksmith Builder
         uses: useblacksmith/setup-docker-builder@v2
+        with:
+          cache-key: betterspend/application-images
+          nofallback: true
 
       - name: Build API image
         uses: useblacksmith/build-push-action@v2
@@ -270,6 +273,9 @@ jobs:
 
       - name: Setup Blacksmith Builder
         uses: useblacksmith/setup-docker-builder@v2
+        with:
+          cache-key: betterspend/application-images
+          nofallback: true
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
