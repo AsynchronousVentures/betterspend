@@ -14,6 +14,7 @@ import {
   approvalRequests,
   approvalActions,
 } from './schema/approvals';
+import { workflowDefinitions, workflowDefinitionVersions } from './schema/workflow-definitions';
 import { webhookEndpoints, webhookDeliveries } from './schema/webhooks';
 import { glMappings, glExportJobs } from './schema/gl';
 import { integrationConnections, syncRecords } from './schema/integrations';
@@ -74,6 +75,8 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   aiProviderOauthStates: many(aiProviderOauthStates),
   integrationConnections: many(integrationConnections),
   syncRecords: many(syncRecords),
+  workflowDefinitions: many(workflowDefinitions),
+  workflowDefinitionVersions: many(workflowDefinitionVersions),
 }));
 
 export const aiProviderConnectionsRelations = relations(aiProviderConnections, ({ one }) => ({
@@ -119,6 +122,7 @@ export const legalEntitiesRelations = relations(legalEntities, ({ one, many }) =
   invoices: many(invoices),
   budgets: many(budgets),
   approvalRules: many(approvalRules),
+  workflowDefinitions: many(workflowDefinitions),
 }));
 
 export const departmentsRelations = relations(departments, ({ one, many }) => ({
@@ -325,6 +329,10 @@ export const approvalRequestsRelations = relations(approvalRequests, ({ one, man
     fields: [approvalRequests.approvalRuleId],
     references: [approvalRules.id],
   }),
+  definitionVersion: one(workflowDefinitionVersions, {
+    fields: [approvalRequests.definitionVersionId],
+    references: [workflowDefinitionVersions.id],
+  }),
   actions: many(approvalActions),
 }));
 
@@ -334,6 +342,58 @@ export const approvalActionsRelations = relations(approvalActions, ({ one }) => 
     references: [approvalRequests.id],
   }),
 }));
+
+export const workflowDefinitionsRelations = relations(workflowDefinitions, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [workflowDefinitions.organizationId],
+    references: [organizations.id],
+  }),
+  entity: one(legalEntities, {
+    fields: [workflowDefinitions.entityId, workflowDefinitions.organizationId],
+    references: [legalEntities.id, legalEntities.organizationId],
+  }),
+  creator: one(users, {
+    fields: [workflowDefinitions.createdBy, workflowDefinitions.organizationId],
+    references: [users.id, users.organizationId],
+    relationName: 'workflowDefinitionCreator',
+  }),
+  updater: one(users, {
+    fields: [workflowDefinitions.updatedBy, workflowDefinitions.organizationId],
+    references: [users.id, users.organizationId],
+    relationName: 'workflowDefinitionUpdater',
+  }),
+  publishedVersion: one(workflowDefinitionVersions, {
+    fields: [workflowDefinitions.publishedVersionId, workflowDefinitions.organizationId],
+    references: [workflowDefinitionVersions.id, workflowDefinitionVersions.organizationId],
+    relationName: 'publishedWorkflowDefinitionVersion',
+  }),
+  versions: many(workflowDefinitionVersions, {
+    relationName: 'workflowDefinitionVersions',
+  }),
+}));
+
+export const workflowDefinitionVersionsRelations = relations(
+  workflowDefinitionVersions,
+  ({ one, many }) => ({
+    definition: one(workflowDefinitions, {
+      fields: [workflowDefinitionVersions.definitionId, workflowDefinitionVersions.organizationId],
+      references: [workflowDefinitions.id, workflowDefinitions.organizationId],
+      relationName: 'workflowDefinitionVersions',
+    }),
+    publishedByUser: one(users, {
+      fields: [workflowDefinitionVersions.publishedBy, workflowDefinitionVersions.organizationId],
+      references: [users.id, users.organizationId],
+    }),
+    organization: one(organizations, {
+      fields: [workflowDefinitionVersions.organizationId],
+      references: [organizations.id],
+    }),
+    publishedDefinition: many(workflowDefinitions, {
+      relationName: 'publishedWorkflowDefinitionVersion',
+    }),
+    approvalRequests: many(approvalRequests),
+  }),
+);
 
 export const goodsReceiptsRelations = relations(goodsReceipts, ({ one, many }) => ({
   organization: one(organizations, {

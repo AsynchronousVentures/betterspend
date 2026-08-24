@@ -1,6 +1,16 @@
-import { pgTable, uuid, varchar, text, integer, boolean, timestamp } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  foreignKey,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+  varchar,
+} from 'drizzle-orm/pg-core';
 import { organizations, legalEntities } from './organizations';
 import { users } from './users';
+import { workflowDefinitionVersions } from './workflow-definitions';
 
 export const approvalRules = pgTable('approval_rules', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -31,20 +41,33 @@ export const approvalRuleSteps = pgTable('approval_rule_steps', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const approvalRequests = pgTable('approval_requests', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  approvableType: varchar('approvable_type', { length: 50 }).notNull(),
-  approvableId: uuid('approvable_id').notNull(),
-  approvalRuleId: uuid('approval_rule_id').references(() => approvalRules.id),
-  currentStep: integer('current_step').notNull().default(1),
-  status: varchar('status', { length: 20 }).notNull().default('pending'),
-  requiredApproverId: uuid('required_approver_id').references(() => users.id),
-  requiredApprovalStep: integer('required_approval_step'),
-  requiredApprovalReason: text('required_approval_reason'),
-  requiredApprovalKey: varchar('required_approval_key', { length: 255 }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const approvalRequests = pgTable(
+  'approval_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    approvableType: varchar('approvable_type', { length: 50 }).notNull(),
+    approvableId: uuid('approvable_id').notNull(),
+    approvalRuleId: uuid('approval_rule_id').references(() => approvalRules.id),
+    definitionVersionId: uuid('definition_version_id'),
+    currentNodeId: varchar('current_node_id', { length: 100 }),
+    attempt: integer('attempt').notNull().default(1),
+    currentStep: integer('current_step').notNull().default(1),
+    status: varchar('status', { length: 20 }).notNull().default('pending'),
+    requiredApproverId: uuid('required_approver_id').references(() => users.id),
+    requiredApprovalStep: integer('required_approval_step'),
+    requiredApprovalReason: text('required_approval_reason'),
+    requiredApprovalKey: varchar('required_approval_key', { length: 255 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.definitionVersionId],
+      foreignColumns: [workflowDefinitionVersions.id],
+      name: 'approval_requests_definition_version_fk',
+    }),
+  ],
+);
 
 export const approvalActions = pgTable('approval_actions', {
   id: uuid('id').primaryKey().defaultRandom(),

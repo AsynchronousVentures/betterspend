@@ -12,11 +12,16 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ApprovalEngineService } from './approval-engine.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { WorkflowDefinitionsService } from '../workflow-definitions/workflow-definitions.service';
 
 @ApiTags('approvals')
 @Controller('approvals')
 export class ApprovalsController {
-  constructor(private readonly approvalEngineService: ApprovalEngineService) {}
+  constructor(
+    private readonly approvalEngineService: ApprovalEngineService,
+    private readonly workflowDefinitions: WorkflowDefinitionsService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List pending approval requests' })
@@ -58,5 +63,17 @@ export class ApprovalsController {
     @CurrentOrgId() orgId: string,
   ) {
     return this.approvalEngineService.processAction(id, userId, 'reject', body?.comment, orgId);
+  }
+
+  @Post(':id/restart-on-latest')
+  @Roles('admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Cancel a versioned workflow instance and restart it on latest' })
+  restartOnLatest(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUserId() userId: string,
+    @CurrentOrgId() orgId: string,
+  ) {
+    return this.workflowDefinitions.restartInstanceOnLatest(id, orgId, userId);
   }
 }

@@ -6,6 +6,8 @@ export const WORKFLOW_GRAPH_LIMITS = {
   edges: 2_000,
 } as const;
 
+export const workflowDomainSchema = z.enum(['requisition', 'invoice', 'po_change']);
+
 export const workflowEdgeSchema = z.object({
   id: workflowNodeIdSchema,
   sourceNodeId: workflowNodeIdSchema,
@@ -19,11 +21,12 @@ export const workflowEdgeSchema = z.object({
 
 export const workflowGraphSchema = z.object({
   schemaVersion: z.literal(1),
-  domain: z.enum(['requisition', 'invoice', 'po_change']),
+  domain: workflowDomainSchema,
   entryNodeId: workflowNodeIdSchema,
   nodes: z.array(workflowNodeSchema).min(1).max(WORKFLOW_GRAPH_LIMITS.nodes),
   edges: z.array(workflowEdgeSchema).max(WORKFLOW_GRAPH_LIMITS.edges),
 });
 
 export type WorkflowEdge = z.infer<typeof workflowEdgeSchema>;
+export type WorkflowDomain = z.infer<typeof workflowDomainSchema>;
 export type WorkflowGraph = z.infer<typeof workflowGraphSchema>;
