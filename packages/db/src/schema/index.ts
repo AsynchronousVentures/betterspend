@@ -37,3 +37,4 @@ export * from './procurement-concierge';
 export * from './ai-providers';
 export * from './messages';
 export * from './sanctions';
+export * from './integrations';

@@ -1,0 +1,146 @@
+import axios from 'axios';
+import type { Db } from '@betterspend/db';
+import { CredentialCryptoService } from '../ai-providers/credential-crypto.service';
+import { OAuthService } from './oauth.service';
+import type { OAuthStateBinding } from './oauth-redis.service';
+
+jest.mock('axios');
+
+class FakeOAuthRedis {
+  private readonly states = new Map<string, OAuthStateBinding>();
+  private lockTail = Promise.resolve();
+
+  async createState(binding: OAuthStateBinding): Promise<string> {
+    const state = 'opaque-state-value';
+    this.states.set(state, binding);
+    return state;
+  }
+
+  async consumeState(state: string): Promise<OAuthStateBinding | null> {
+    const binding = this.states.get(state) ?? null;
+    this.states.delete(state);
+    return binding;
+  }
+
+  async withLock<T>(_key: string, callback: () => Promise<T>): Promise<T> {
+    const result = this.lockTail.then(callback);
+    this.lockTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+}
+
+function insertCapturingDb(captured: Array<Record<string, unknown>>): Db {
+  return {
+    insert: jest.fn(() => ({
+      values: jest.fn((values: Record<string, unknown>) => {
+        captured.push(values);
+        return {
+          onConflictDoUpdate: jest.fn(async () => undefined),
+        };
+      }),
+    })),
+  } as unknown as Db;
+}
+
+describe('OAuthService', () => {
+  const organizationId = '00000000-0000-0000-0000-000000000001';
+  const userId = '00000000-0000-0000-0000-000000000002';
+  const sessionId = 'session-1';
+  const crypto = new CredentialCryptoService();
+  const mockedAxios = axios as jest.Mocked<typeof axios>;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.QBO_CLIENT_ID = 'client-id';
+    process.env.QBO_CLIENT_SECRET = 'client-secret';
+    delete process.env.QBO_REDIRECT_URI;
+  });
+
+  it('uses opaque server-side state and consumes it exactly once', async () => {
+    const captured: Array<Record<string, unknown>> = [];
+    const stateStore = new FakeOAuthRedis();
+    const service = new OAuthService(insertCapturingDb(captured), crypto, stateStore as never);
+    mockedAxios.post.mockResolvedValue({
+      data: {
+        access_token: 'plain-access-token',
+        refresh_token: 'plain-refresh-token',
+        expires_in: 3600,
+      },
+    });
+
+    const url = new URL(await service.getQboAuthUrl(organizationId, userId, sessionId));
+    const state = url.searchParams.get('state');
+    expect(state).toBe('opaque-state-value');
+    expect(state).not.toContain(organizationId);
+
+    await service.completeQboOAuth(state!, 'authorization-code', 'realm-1');
+    await expect(service.completeQboOAuth(state!, 'authorization-code', 'realm-1')).rejects.toThrow(
+      'Invalid or expired OAuth state',
+    );
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0].accessTokenEncrypted).not.toBe('plain-access-token');
+    expect(captured[0].refreshTokenEncrypted).not.toBe('plain-refresh-token');
+    expect(crypto.decrypt(String(captured[0].accessTokenEncrypted))).toBe('plain-access-token');
+    expect(crypto.decrypt(String(captured[0].refreshTokenEncrypted))).toBe('plain-refresh-token');
+  });
+
+  it('rejects unknown state before exchanging a code', async () => {
+    const service = new OAuthService(insertCapturingDb([]), crypto, new FakeOAuthRedis() as never);
+
+    await expect(
+      service.completeQboOAuth('unknown', 'authorization-code', 'realm-1'),
+    ).rejects.toThrow('Invalid or expired OAuth state');
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+
+  it('single-flights concurrent refreshes and lets waiters read the rotated token', async () => {
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
+      entityId: null,
+      provider: 'qbo',
+      realmId: 'realm-1',
+      realmName: null,
+      accessTokenEncrypted: crypto.encrypt('expired-access'),
+      refreshTokenEncrypted: crypto.encrypt('refresh-token'),
+      accessExpiresAt: new Date(0),
+      status: 'active',
+      scopes: 'com.intuit.quickbooks.accounting',
+      connectedByUserId: userId,
+      lastSyncAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const db = {
+      query: {
+        integrationConnections: {
+          findFirst: jest.fn(async () => ({ ...connection })),
+        },
+      },
+      update: jest.fn(() => ({
+        set: jest.fn((values: Record<string, unknown>) => ({
+          where: jest.fn(async () => {
+            Object.assign(connection, values);
+          }),
+        })),
+      })),
+    } as unknown as Db;
+    mockedAxios.post.mockResolvedValue({
+      data: { access_token: 'rotated-access', refresh_token: 'rotated-refresh', expires_in: 3600 },
+    });
+    const service = new OAuthService(db, crypto, new FakeOAuthRedis() as never);
+
+    const [first, second] = await Promise.all([
+      service.getQboToken(organizationId),
+      service.getQboToken(organizationId),
+    ]);
+
+    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+    expect(first?.accessToken).toBe('rotated-access');
+    expect(second?.accessToken).toBe('rotated-access');
+  });
+});

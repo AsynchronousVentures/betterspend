@@ -19,6 +19,7 @@ declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
+      authSessionId?: string;
       authUser?: AuthUser & {
         roles: Array<{
           role: string;
@@ -107,6 +108,7 @@ export class SessionGuard implements CanActivate {
         customRole: role.customRoleId ? customRolesById.get(role.customRoleId) ?? null : null,
       })),
     };
+    req.authSessionId = session.id;
     return true;
   }
 

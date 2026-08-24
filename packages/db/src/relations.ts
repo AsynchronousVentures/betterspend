@@ -16,6 +16,7 @@ import {
 } from './schema/approvals';
 import { webhookEndpoints, webhookDeliveries } from './schema/webhooks';
 import { glMappings, glExportJobs } from './schema/gl';
+import { integrationConnections, syncRecords } from './schema/integrations';
 import { ocrJobs } from './schema/ocr';
 import { authSessions, authAccounts } from './schema/auth';
 import {
@@ -422,6 +423,37 @@ export const glExportJobsRelations = relations(glExportJobs, ({ one }) => ({
     references: [organizations.id],
   }),
   invoice: one(invoices, { fields: [glExportJobs.invoiceId], references: [invoices.id] }),
+}));
+
+export const integrationConnectionsRelations = relations(
+  integrationConnections,
+  ({ one, many }) => ({
+    organization: one(organizations, {
+      fields: [integrationConnections.organizationId],
+      references: [organizations.id],
+    }),
+    entity: one(legalEntities, {
+      fields: [integrationConnections.entityId],
+      references: [legalEntities.id],
+    }),
+    connectedBy: one(users, {
+      fields: [integrationConnections.connectedByUserId],
+      references: [users.id],
+    }),
+    syncRecords: many(syncRecords),
+  }),
+);
+
+export const syncRecordsRelations = relations(syncRecords, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [syncRecords.organizationId],
+    references: [organizations.id],
+  }),
+  connection: one(integrationConnections, {
+    fields: [syncRecords.connectionId],
+    references: [integrationConnections.id],
+  }),
+  invoice: one(invoices, { fields: [syncRecords.localId], references: [invoices.id] }),
 }));
 
 export const ocrJobsRelations = relations(ocrJobs, ({ one }) => ({

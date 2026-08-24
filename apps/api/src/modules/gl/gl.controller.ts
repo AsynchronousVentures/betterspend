@@ -1,5 +1,6 @@
 import {
   Controller, Get, Post, Patch, Delete, Param, Body, Query, HttpCode, HttpStatus, Res,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { Response } from 'express';
@@ -7,10 +8,10 @@ import { GlMappingsService, CreateGlMappingInput, UpdateGlMappingInput } from '.
 import { GlExportService } from './gl-export.service';
 import { OAuthService } from './oauth.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
+import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
+import { CurrentSessionId } from '../../common/decorators/current-session-id.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Public } from '../../common/decorators/public.decorator';
-
-const DEMO_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
 @ApiTags('gl')
 @Roles('finance', 'admin')
@@ -101,8 +102,13 @@ export class GlController {
 
   @Get('oauth/qbo/connect')
   @ApiOperation({ summary: 'Get QBO OAuth authorize URL using the platform-managed app' })
-  getQboConnectUrl(@CurrentOrgId() orgId: string) {
-    const url = this.oauthService.getQboAuthUrl(orgId);
+  async getQboConnectUrl(
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+    @CurrentSessionId() sessionId?: string,
+  ) {
+    if (!sessionId) throw new UnauthorizedException('An authenticated session is required to connect QBO');
+    const url = await this.oauthService.getQboAuthUrl(orgId, userId, sessionId);
     return { url };
   }
 
@@ -117,14 +123,7 @@ export class GlController {
   ) {
     const webUrl = process.env.WEB_URL || 'http://localhost:3100';
     try {
-      let organizationId = DEMO_ORG_ID;
-      try {
-        const parsed = JSON.parse(Buffer.from(state, 'base64').toString('utf8')) as { organizationId?: string };
-        if (parsed.organizationId) organizationId = parsed.organizationId;
-      } catch {
-        // state parse failure — fall back to demo org
-      }
-      await this.oauthService.exchangeQboCode(organizationId, code, realmId);
+      await this.oauthService.completeQboOAuth(state, code, realmId);
       res.redirect(`${webUrl}/addons?connected=qbo`);
     } catch (err) {
       const message = encodeURIComponent(String(err));
@@ -143,8 +142,13 @@ export class GlController {
 
   @Get('oauth/xero/connect')
   @ApiOperation({ summary: 'Get Xero OAuth authorize URL using the platform-managed app' })
-  getXeroConnectUrl(@CurrentOrgId() orgId: string) {
-    const url = this.oauthService.getXeroAuthUrl(orgId);
+  async getXeroConnectUrl(
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+    @CurrentSessionId() sessionId?: string,
+  ) {
+    if (!sessionId) throw new UnauthorizedException('An authenticated session is required to connect Xero');
+    const url = await this.oauthService.getXeroAuthUrl(orgId, userId, sessionId);
     return { url };
   }
 
@@ -158,14 +162,7 @@ export class GlController {
   ) {
     const webUrl = process.env.WEB_URL || 'http://localhost:3100';
     try {
-      let organizationId = DEMO_ORG_ID;
-      try {
-        const parsed = JSON.parse(Buffer.from(state, 'base64').toString('utf8')) as { organizationId?: string };
-        if (parsed.organizationId) organizationId = parsed.organizationId;
-      } catch {
-        // state parse failure — fall back to demo org
-      }
-      await this.oauthService.exchangeXeroCode(organizationId, code);
+      await this.oauthService.completeXeroOAuth(state, code);
       res.redirect(`${webUrl}/addons?connected=xero`);
     } catch (err) {
       const message = encodeURIComponent(String(err));
