@@ -34,7 +34,7 @@ const headers = {
   'x-github-api-version': '2022-11-28',
 };
 
-async function githubRequest(path, init = {}) {
+async function githubResponse(path, init = {}) {
   const response = await fetch(`https://api.github.com${path}`, {
     ...init,
     headers: { ...headers, ...init.headers },
@@ -44,7 +44,38 @@ async function githubRequest(path, init = {}) {
     throw new Error(`GitHub API ${response.status} for ${path}: ${await response.text()}`);
   }
 
-  return response.json();
+  return response;
+}
+
+async function githubRequest(path, init = {}) {
+  return (await githubResponse(path, init)).json();
+}
+
+function getNextPagePath(linkHeader) {
+  if (!linkHeader) return null;
+
+  for (const link of linkHeader.split(',')) {
+    const match = link.match(/<([^>]+)>;\s*rel="next"/);
+    if (match) {
+      const url = new URL(match[1]);
+      return `${url.pathname}${url.search}`;
+    }
+  }
+
+  return null;
+}
+
+async function githubPaginatedRequest(path, getItems) {
+  const items = [];
+  let nextPath = path;
+
+  while (nextPath) {
+    const response = await githubResponse(nextPath);
+    items.push(...getItems(await response.json()));
+    nextPath = getNextPagePath(response.headers.get('link'));
+  }
+
+  return items;
 }
 
 async function graphql(query, variables) {
@@ -127,15 +158,19 @@ function latestByName(items, getName) {
 }
 
 async function getGateState() {
-  const [checkRunsResponse, statusResponse] = await Promise.all([
-    githubRequest(
+  const [checkRunItems, statusItems] = await Promise.all([
+    githubPaginatedRequest(
       `/repos/${owner}/${repository}/commits/${headSha}/check-runs?filter=latest&per_page=100`,
+      (response) => response.check_runs,
     ),
-    githubRequest(`/repos/${owner}/${repository}/commits/${headSha}/status`),
+    githubPaginatedRequest(
+      `/repos/${owner}/${repository}/commits/${headSha}/status?per_page=100`,
+      (response) => response.statuses,
+    ),
   ]);
 
-  const checkRuns = latestByName(checkRunsResponse.check_runs, (checkRun) => checkRun.name);
-  const statuses = latestByName(statusResponse.statuses, (status) => status.context);
+  const checkRuns = latestByName(checkRunItems, (checkRun) => checkRun.name);
+  const statuses = latestByName(statusItems, (status) => status.context);
 
   const blockers = [];
   const pending = [];
