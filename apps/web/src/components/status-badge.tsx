@@ -4,6 +4,7 @@ const VARIANT_MAP: Record<string, NonNullable<BadgeProps['variant']>> = {
   active: 'success',
   approved: 'success',
   matched: 'success',
+  clear: 'success',
   full_match: 'success',
   issued: 'default',
   partial_match: 'default',
@@ -12,6 +13,7 @@ const VARIANT_MAP: Record<string, NonNullable<BadgeProps['variant']>> = {
   pending: 'warning',
   pending_match: 'warning',
   pending_approval: 'warning',
+  manually_reviewed: 'warning',
   draft: 'secondary',
   inactive: 'secondary',
   cancelled: 'secondary',
@@ -19,9 +21,11 @@ const VARIANT_MAP: Record<string, NonNullable<BadgeProps['variant']>> = {
   paid: 'secondary',
   blocked: 'destructive',
   rejected: 'destructive',
+  flagged: 'destructive',
   exception: 'destructive',
   unmatched: 'outline',
   invoiced: 'warning',
+  untested: 'outline',
 };
 
 function humanize(value: string) {

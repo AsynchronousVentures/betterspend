@@ -10,7 +10,7 @@ import { EntitiesService } from '../entities/entities.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { RiskScreeningService } from '../risk-screening/risk-screening.service';
 import type { Db } from '@betterspend/db';
-import { purchaseOrders, poLines, poVersions, blanketReleases, requisitions } from '@betterspend/db';
+import { auditLog, purchaseOrders, poLines, poVersions, blanketReleases, requisitions } from '@betterspend/db';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 import { z } from 'zod';
@@ -256,19 +256,29 @@ export class PurchaseOrdersService {
           .where(eq(requisitions.id, input.requisitionId));
       }
 
+      if (sanctionsWarning) {
+        await tx.insert(auditLog).values({
+          organizationId,
+          userId: issuedBy,
+          entityType: 'vendor',
+          entityId: vendor.id,
+          action: 'po_sanctions_warning',
+          changes: { poNumber: number, warning: sanctionsWarning },
+        });
+      }
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: issuedBy,
+        entityType: 'purchase_order',
+        entityId: po.id,
+        action: 'created',
+        changes: { number, totalAmount: po.totalAmount },
+      });
+
       return po.id;
     });
 
     const created = await this.findOne(createdId, organizationId);
-    if (sanctionsWarning) {
-      await this.audit
-        .log(organizationId, issuedBy, 'vendor', vendor.id, 'po_sanctions_warning', {
-          poNumber: created.number,
-          warning: sanctionsWarning,
-        })
-        .catch(() => {});
-    }
-    this.audit.log(organizationId, null, 'purchase_order', createdId, 'created', { internalNumber: (created as any).internalNumber, totalAmount: (created as any).totalAmount }).catch(() => {});
     return sanctionsWarning ? { ...created, sanctionsWarning } : created;
   }
 
@@ -284,24 +294,36 @@ export class PurchaseOrdersService {
       where: (record, { and, eq }) =>
         and(eq(record.id, po.vendorId), eq(record.organizationId, organizationId)),
     });
-    if (issueVendor) {
-      const sanctionsWarning = await this.riskScreening.checkVendorForPo(organizationId, issueVendor);
-      if (sanctionsWarning) {
-        this.audit
-          .log(organizationId, issuedBy ?? null, 'vendor', issueVendor.id, 'po_sanctions_warning', {
-            poNumber: po.number,
-            warning: sanctionsWarning,
-          })
-          .catch(() => {});
+    const sanctionsWarning = issueVendor
+      ? await this.riskScreening.checkVendorForPo(organizationId, issueVendor)
+      : null;
+    const updated = await this.db.transaction(async (tx) => {
+      const [issued] = await tx
+        .update(purchaseOrders)
+        .set({ status: 'issued', issuedBy, issuedAt: new Date(), updatedAt: new Date() })
+        .where(eq(purchaseOrders.id, id))
+        .returning();
+      if (sanctionsWarning && issueVendor) {
+        await tx.insert(auditLog).values({
+          organizationId,
+          userId: issuedBy,
+          entityType: 'vendor',
+          entityId: issueVendor.id,
+          action: 'po_sanctions_warning',
+          changes: { poNumber: po.number, warning: sanctionsWarning },
+        });
       }
-    }
-
-    const [updated] = await this.db.update(purchaseOrders)
-      .set({ status: 'issued', issuedBy, issuedAt: new Date(), updatedAt: new Date() })
-      .where(eq(purchaseOrders.id, id))
-      .returning();
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: issuedBy,
+        entityType: 'purchase_order',
+        entityId: id,
+        action: 'issued',
+        changes: { totalAmount: issued.totalAmount },
+      });
+      return issued;
+    });
     this.webhookEvents.emit(organizationId, 'po.issued', { purchaseOrder: updated });
-    this.audit.log(organizationId, issuedBy ?? null, 'purchase_order', id, 'issued', { totalAmount: updated.totalAmount }).catch(() => {});
     if (this.notifications) {
       this.notifications.create(
         organizationId,

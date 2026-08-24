@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { SettingsService } from './settings.service';
 import { brandingSettingsSchema, smtpSettingsSchema, approvalPolicySettingsSchema, contractComplianceSettingsSchema, riskScreeningSettingsSchema } from '@betterspend/shared';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
+import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 
@@ -59,8 +60,17 @@ export class SettingsController {
   @Put('risk-screening')
   @Roles('admin')
   @ApiOperation({ summary: 'Update supplier risk screening policy' })
-  updateRiskScreening(@Body() body: unknown, @CurrentOrgId() orgId: string) {
+  updateRiskScreening(
+    @Body() body: unknown,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+  ) {
     const parsed = riskScreeningSettingsSchema.parse(body);
-    return this.settingsService.updateMany(orgId, parsed as Record<string, string>);
+    return this.settingsService.updateManyWithAudit(
+      orgId,
+      userId,
+      parsed as Record<string, string>,
+      'risk_screening_policy_updated',
+    );
   }
 }

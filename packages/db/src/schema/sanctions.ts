@@ -45,7 +45,7 @@ export const sanctionsScreenings = pgTable(
       .notNull()
       .references(() => organizations.id),
     vendorId: uuid('vendor_id').notNull().references(() => vendors.id),
-    result: varchar('result', { length: 20 }).notNull(), // clear | flagged
+    result: varchar('result', { length: 20 }).notNull(), // clear | flagged | manually_reviewed
     matchCount: jsonb('match_count'),
     screenedBy: uuid('screened_by').references(() => users.id), // null = automated
     note: text('note'),

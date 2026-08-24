@@ -2,7 +2,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException, Logger } fr
 import { and, eq } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { sanctionsEntries, sanctionsScreenings, vendors } from '@betterspend/db';
+import { auditLog, sanctionsEntries, sanctionsScreenings, vendors } from '@betterspend/db';
 import { sanctionsImportRowSchema } from '@betterspend/shared';
 import { AuditService } from '../audit/audit.service';
 import { SettingsService } from '../settings/settings.service';
@@ -54,7 +54,7 @@ export class RiskScreeningService {
     let response: Response;
     try {
       response = await fetch(listUrl, {
-        redirect: 'follow',
+        redirect: 'error',
         signal: AbortSignal.timeout(RiskScreeningService.INGEST_TIMEOUT_MS),
       });
     } catch (error) {
@@ -153,7 +153,7 @@ export class RiskScreeningService {
       await tx.insert(sanctionsScreenings).values({
         organizationId,
         vendorId,
-        result: vendorMatches.length > 0 ? 'flagged' : 'clear',
+        result: nextStatus,
         matchCount: vendorMatches,
         screenedBy: screenedBy ?? null,
       });
@@ -168,18 +168,17 @@ export class RiskScreeningService {
         })
         .where(eq(vendors.id, vendorId));
 
-      // Audit is compliance-relevant but must not roll back the screening;
-      // failures are logged for follow-up instead of failing the request.
-      void this.audit
-        .log(organizationId, screenedBy ?? null, 'vendor', vendorId, 'sanctions_screening', {
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: screenedBy ?? null,
+        entityType: 'vendor',
+        entityId: vendorId,
+        action: 'sanctions_screening',
+        changes: {
           result: nextStatus,
           matchCount: vendorMatches.length,
-        })
-        .catch((error: unknown) =>
-          this.logger.warn(
-            `Audit log failed for ${vendorId} screening: ${error instanceof Error ? error.message : error}`,
-          ),
-        );
+        },
+      });
 
       return { vendorId, status: nextStatus, matches: vendorMatches };
     });
@@ -191,24 +190,31 @@ export class RiskScreeningService {
     if (!trimmedNote) {
       throw new BadRequestException('A justification note is required for manual review');
     }
-    const vendor = await this.db.query.vendors.findFirst({
-      where: (v, { and, eq }) => and(eq(v.id, vendorId), eq(v.organizationId, organizationId)),
-    });
-    if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
+    await this.db.transaction(async (tx) => {
+      const [vendor] = await tx
+        .select()
+        .from(vendors)
+        .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
+        .for('update');
+      if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
 
-    await this.db
-      .update(vendors)
-      .set({
-        sanctionsStatus: 'manually_reviewed',
-        sanctionsNote: trimmedNote,
-        sanctionsCheckedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(vendors.id, vendorId));
-
-    await this.audit.log(organizationId, userId, 'vendor', vendorId, 'sanctions_manual_review', {
-      note: trimmedNote,
-      previousStatus: vendor.sanctionsStatus,
+      await tx
+        .update(vendors)
+        .set({
+          sanctionsStatus: 'manually_reviewed',
+          sanctionsNote: trimmedNote,
+          sanctionsCheckedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(vendors.id, vendorId));
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId,
+        entityType: 'vendor',
+        entityId: vendorId,
+        action: 'sanctions_manual_review',
+        changes: { note: trimmedNote, previousStatus: vendor.sanctionsStatus },
+      });
     });
 
     return this.db.query.vendors.findFirst({ where: (v, { eq }) => eq(v.id, vendorId) });

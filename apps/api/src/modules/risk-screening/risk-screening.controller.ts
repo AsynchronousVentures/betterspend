@@ -32,6 +32,7 @@ export class RiskScreeningController {
   }
 
   @Get()
+  @Roles('admin', 'approver', 'finance')
   @ApiOperation({ summary: 'Sanctions screening status for all vendors' })
   listStatus(@Req() req: Request) {
     const { organizationId } = this.requireSession(req);
