@@ -33,6 +33,9 @@ export function MessageThread({
   const [error, setError] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const loadVersion = useRef(0);
+  const threadKey = `${portalToken ?? 'buyer'}:${threadType}:${threadId}`;
+  const activeThreadKey = useRef(threadKey);
+  activeThreadKey.current = threadKey;
 
   const load = useCallback(async () => {
     const version = ++loadVersion.current;
@@ -51,6 +54,7 @@ export function MessageThread({
     // for the new thread never shows messages from another thread.
     setMessages(null);
     setError('');
+    setSending(false);
     load();
     const interval = setInterval(load, 30_000);
     return () => clearInterval(interval);
@@ -63,6 +67,7 @@ export function MessageThread({
   async function send() {
     const body = draft.trim();
     if (!body || sending) return;
+    const sendingThreadKey = threadKey;
     setSending(true);
     setError('');
     try {
@@ -71,12 +76,17 @@ export function MessageThread({
       } else {
         await api.messages.post(threadType, threadId, body);
       }
+      if (activeThreadKey.current !== sendingThreadKey) return;
       setDraft('');
       await load();
     } catch {
-      setError('Failed to send message.');
+      if (activeThreadKey.current === sendingThreadKey) {
+        setError('Failed to send message.');
+      }
     } finally {
-      setSending(false);
+      if (activeThreadKey.current === sendingThreadKey) {
+        setSending(false);
+      }
     }
   }
 
