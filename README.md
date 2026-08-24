@@ -38,7 +38,7 @@ Most procurement tools are per-seat SaaS products that cost thousands of dollars
 | Backend      | NestJS v10 (TypeScript)                       |
 | Frontend     | Next.js 15 App Router                         |
 | ORM          | Drizzle ORM                                   |
-| Database     | PostgreSQL 16                                 |
+| Database     | PostgreSQL 18                                 |
 | Auth         | better-auth                                   |
 | Queue        | BullMQ + Redis                                |
 | File Storage | S3-compatible (MinIO for dev, S3/R2 for prod) |
@@ -68,7 +68,7 @@ pnpm install
 
 ```bash
 docker compose up -d
-# Starts: PostgreSQL 16, Redis 7, MinIO
+# Starts: PostgreSQL 18, Redis 7, MinIO
 ```
 
 ### 3. Set up the database

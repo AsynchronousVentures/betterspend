@@ -90,7 +90,7 @@ pnpm format                   # format with Prettier
 | Backend      | NestJS v10 (TypeScript)               |
 | Frontend     | Next.js 15 App Router                 |
 | ORM          | Drizzle ORM                           |
-| Database     | PostgreSQL 16                         |
+| Database     | PostgreSQL 18                         |
 | Auth         | better-auth                           |
 | Queue        | BullMQ + Redis                        |
 | File Storage | S3-compatible (MinIO dev, S3/R2 prod) |
