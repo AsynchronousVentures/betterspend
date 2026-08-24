@@ -130,6 +130,7 @@ async function main(): Promise<void> {
   let connection: postgres.ReservedSql | undefined;
   let migrationLockAcquired = false;
   try {
+    // Advisory locks are session-scoped, so all migration work must use this connection.
     connection = await client.reserve();
     await connection`SELECT pg_advisory_lock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
     migrationLockAcquired = true;
