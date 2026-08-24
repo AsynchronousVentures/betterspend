@@ -26,7 +26,7 @@ interface EvaluateBudgetPolicyInput {
 export interface BudgetEnforcementDecision {
   action: BudgetEnforcementAction;
   withinBudget: boolean;
-  reason: 'no_budget' | 'within_budget' | 'overrun' | 'owner_missing';
+  reason: 'no_department' | 'no_budget' | 'within_budget' | 'overrun' | 'owner_missing';
   budgetId?: string;
   budgetName?: string;
   currency?: string;
@@ -114,6 +114,15 @@ export function noBudgetDecision(): BudgetEnforcementDecision {
     withinBudget: true,
     reason: 'no_budget',
     message: 'No matching department budget is configured',
+  };
+}
+
+export function noDepartmentDecision(): BudgetEnforcementDecision {
+  return {
+    action: 'allow',
+    withinBudget: true,
+    reason: 'no_department',
+    message: 'Department budget enforcement was skipped because no department is assigned',
   };
 }
 

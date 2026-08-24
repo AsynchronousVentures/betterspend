@@ -16,6 +16,7 @@ import {
   isBudgetEnforcementMode,
   isPendingRequisitionPolicy,
   noBudgetDecision,
+  noDepartmentDecision,
   type BudgetEnforcementDecision,
   type BudgetEnforcementMode,
   type PendingRequisitionPolicy,
@@ -345,7 +346,7 @@ export class BudgetsService {
    * Callers only need to act on allow, block, or require_approval.
    */
   async evaluateEnforcement(input: EnforcementInput): Promise<BudgetEnforcementDecision> {
-    if (!input.departmentId) return noBudgetDecision();
+    if (!input.departmentId) return noDepartmentDecision();
 
     const budget = await this.db.query.budgets.findFirst({
       where: (record, { and, eq }) =>
@@ -368,7 +369,7 @@ export class BudgetsService {
     apply: (tx: DbTransaction, decision: BudgetEnforcementDecision) => Promise<T>,
   ): Promise<T> {
     if (!input.departmentId) {
-      return this.db.transaction((tx) => apply(tx, noBudgetDecision()));
+      return this.db.transaction((tx) => apply(tx, noDepartmentDecision()));
     }
     const departmentId = input.departmentId;
     const context = await this.loadEnforcementContext(input);
@@ -446,7 +447,7 @@ export class BudgetsService {
     executor: Db | DbTransaction,
     context: EnforcementContext,
   ): Promise<BudgetEnforcementDecision> {
-    if (!input.departmentId) return noBudgetDecision();
+    if (!input.departmentId) return noDepartmentDecision();
 
     const mode = isBudgetEnforcementMode(budget.enforcementMode)
       ? budget.enforcementMode

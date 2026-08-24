@@ -592,6 +592,12 @@ export class ApprovalEngineService {
       const currentRuleStep = atRequiredApproval
         ? undefined
         : sortedSteps.find((step) => step.stepOrder === approvalReq.currentStep);
+      if (!atRequiredApproval && !currentRuleStep) {
+        throw new BadRequestException('The current approval step is no longer configured');
+      }
+      if (currentRuleStep && !currentRuleStep.approverId) {
+        throw new BadRequestException('The current approval step has no assigned approver');
+      }
       if (currentRuleStep?.approverId && currentRuleStep.approverId !== actorId) {
         const delegatee =
           this.delegations && organizationId

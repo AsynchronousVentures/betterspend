@@ -5,6 +5,7 @@ import {
   convertMoneyFromBase,
   evaluateBudgetPolicy,
   noBudgetDecision,
+  noDepartmentDecision,
 } from './budget-enforcement';
 
 const budget = {
@@ -27,6 +28,14 @@ describe('evaluateBudgetPolicy', () => {
 
     assert.equal(decision.action, 'allow');
     assert.equal(decision.reason, 'no_budget');
+  });
+
+  it('distinguishes missing department scope from a missing budget', () => {
+    const decision = noDepartmentDecision();
+
+    assert.equal(decision.action, 'allow');
+    assert.equal(decision.reason, 'no_department');
+    assert.match(decision.message, /no department is assigned/);
   });
 
   it('allows a request that remains within available budget', () => {

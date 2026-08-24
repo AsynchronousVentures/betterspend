@@ -183,7 +183,10 @@ describe('ApprovalEngineService required approvals', () => {
 
   it('advances the final rule step into the required owner step', async () => {
     const { approvalActionValues, service, updateValues } = createService(
-      [{ stepOrder: 2 }, { stepOrder: 4 }],
+      [
+        { stepOrder: 2, approverId: 'first-approver' },
+        { stepOrder: 4, approverId: 'rule-approver' },
+      ],
       {
         id: 'approval-request-1',
         approvableType: 'requisition',
@@ -221,6 +224,43 @@ describe('ApprovalEngineService required approvals', () => {
       service.processAction('approval-request-1', 'different-user', 'approve'),
       /assigned to another approver/,
     );
+  });
+
+  it('rejects an approval request whose current rule step was removed', async () => {
+    const { approvalActionValues, service } = createService(
+      [{ stepOrder: 4, approverId: 'assigned-approver' }],
+      {
+        id: 'approval-request-1',
+        approvableType: 'requisition',
+        approvableId: 'requisition-1',
+        status: 'pending',
+        approvalRuleId: 'rule-1',
+        currentStep: 3,
+      },
+    );
+
+    await assert.rejects(
+      service.processAction('approval-request-1', 'assigned-approver', 'approve'),
+      /no longer configured/,
+    );
+    assert.equal(approvalActionValues.length, 0);
+  });
+
+  it('rejects a rule step without a concrete approver', async () => {
+    const { approvalActionValues, service } = createService([{ stepOrder: 4 }], {
+      id: 'approval-request-1',
+      approvableType: 'requisition',
+      approvableId: 'requisition-1',
+      status: 'pending',
+      approvalRuleId: 'rule-1',
+      currentStep: 4,
+    });
+
+    await assert.rejects(
+      service.processAction('approval-request-1', 'arbitrary-user', 'approve'),
+      /no assigned approver/,
+    );
+    assert.equal(approvalActionValues.length, 0);
   });
 
   it('finalizes when the assigned owner approves the required step', async () => {

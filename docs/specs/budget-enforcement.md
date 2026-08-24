@@ -17,6 +17,10 @@ This first slice enforces department budgets. It adds:
 - the same check when a linked PO is issued
 - structured decision details for callers, audit entries, and future UI surfaces
 
+Purchase orders without a linked requisition have no department field in the current model. They
+remain allowed in this slice, with an explicit `no_department` decision recorded in the issuance
+audit entry. Department scope for PO-first orders remains part of the later scope-resolution work.
+
 Project and GL-account scope resolution, durable encumbrance records, release and reversal events, and requester-facing budget UI remain in #118 and #119.
 
 ## Module interface
