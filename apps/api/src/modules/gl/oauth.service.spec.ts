@@ -121,6 +121,16 @@ describe('OAuthService', () => {
     expect(crypto.decrypt(encrypted)).toBe('existing-token');
   });
 
+  it('reads legacy ciphertext while a replacement credential key is configured', () => {
+    delete process.env.CREDENTIAL_ENCRYPTION_KEY;
+    process.env.AI_CREDENTIAL_ENCRYPTION_KEY = 'existing-deployment-passphrase';
+    const encrypted = crypto.encrypt('existing-token');
+
+    process.env.CREDENTIAL_ENCRYPTION_KEY = 'replacement-deployment-passphrase';
+
+    expect(crypto.decrypt(encrypted)).toBe('existing-token');
+  });
+
   it('rejects a callback from a different authenticated session before exchanging the code', async () => {
     const stateStore = new FakeOAuthRedis();
     const service = new OAuthService(insertCapturingDb([]), crypto, stateStore as never);

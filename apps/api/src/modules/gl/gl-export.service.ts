@@ -427,18 +427,16 @@ export class GlExportService {
     attemptId: string,
     values: Partial<typeof syncRecords.$inferInsert>,
   ): Promise<void> {
-    const attemptCondition =
-      values.status === 'synced'
-        ? eq(syncRecords.id, id)
-        : and(
-            eq(syncRecords.id, id),
-            eq(syncRecords.attemptId, attemptId),
-            ne(syncRecords.status, 'synced'),
-          );
     await this.db
       .update(syncRecords)
       .set({ ...values, updatedAt: new Date() })
-      .where(attemptCondition);
+      .where(
+        and(
+          eq(syncRecords.id, id),
+          eq(syncRecords.attemptId, attemptId),
+          ne(syncRecords.status, 'synced'),
+        ),
+      );
   }
 
   private requestId(organizationId: string, invoiceId: string, provider: GlTargetSystem): string {
@@ -451,8 +449,9 @@ export class GlExportService {
   private toLegacyApiShape<T extends { provider: string; localId: string; syncedAt: Date | null }>(
     record: T,
   ) {
+    const { payload: _payload, ...publicRecord } = record as T & { payload?: unknown };
     return {
-      ...record,
+      ...publicRecord,
       invoiceId: record.localId,
       targetSystem: record.provider,
       exportedAt: record.syncedAt,

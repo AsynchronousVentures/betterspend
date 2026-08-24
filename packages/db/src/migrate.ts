@@ -55,13 +55,14 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
         if (!hasLegacySettings) continue;
 
         const realmKey = provider === 'qbo' ? 'qbo_realm_id' : 'xero_tenant_id';
-        const realmId = settings[realmKey] || 'legacy-unresolved';
+        const resolvedRealmId = settings[realmKey];
+        const realmId = resolvedRealmId || 'legacy-unresolved';
         const wasConnected = settings[`${provider}_connected`] === 'true';
-        const status = wasConnected
-          ? accessToken || refreshToken
+        const status = !wasConnected
+          ? 'revoked'
+          : resolvedRealmId && (accessToken || refreshToken)
             ? 'active'
-            : 'reconnect_required'
-          : 'revoked';
+            : 'reconnect_required';
         const accessTokenEncrypted =
           status === 'active' && accessToken ? encryptCredential(accessToken) : null;
         const refreshTokenEncrypted =

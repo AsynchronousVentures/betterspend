@@ -111,7 +111,18 @@ SELECT
 FROM (
 	SELECT DISTINCT ON (j0."organization_id", j0."target_system", j0."invoice_id") j0.*
 	FROM "gl_export_jobs" j0
-	ORDER BY j0."organization_id", j0."target_system", j0."invoice_id", j0."updated_at" DESC, j0."id" DESC
+	ORDER BY
+		j0."organization_id",
+		j0."target_system",
+		j0."invoice_id",
+		(
+			j0."status" = 'exported'
+			AND j0."external_id" IS NOT NULL
+			AND j0."external_id" NOT LIKE '%-PENDING-%'
+			AND j0."external_id" NOT LIKE '%-SKIPPED-%'
+		) DESC,
+		j0."updated_at" DESC,
+		j0."id" DESC
 ) j
 JOIN "invoices" i ON i."id" = j."invoice_id"
 ON CONFLICT ("organization_id", "provider", "direction", "local_entity", "local_id") DO NOTHING;

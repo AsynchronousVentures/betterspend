@@ -71,7 +71,7 @@ export class SessionGuard implements CanActivate {
         else if (value !== undefined) headers.set(name, value);
       }
       const cookieSession = await this.auth.api.getSession({ headers });
-      if (!cookieSession) return true;
+      if (!cookieSession) throw new UnauthorizedException('Authentication required');
       session = cookieSession.session;
       user = cookieSession.user;
     }

@@ -1,4 +1,5 @@
 import type { Db } from '@betterspend/db';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { GlExportService } from './gl-export.service';
 
 describe('GlExportService', () => {
@@ -142,6 +143,53 @@ describe('GlExportService', () => {
     await service.findJobsForInvoice('invoice-1', 'organization-1');
 
     expect(predicate).toEqual(expect.arrayContaining([['eq', 'organizationId', 'organization-1']]));
+  });
+
+  it('does not expose the internal export payload through journal list endpoints', async () => {
+    const db = {
+      query: {
+        syncRecords: {
+          findMany: jest.fn(async () => [
+            {
+              id: 'record-1',
+              provider: 'qbo',
+              localId: 'invoice-1',
+              syncedAt: null,
+              payload: { vendorName: 'Private vendor' },
+            },
+          ]),
+        },
+      },
+    } as unknown as Db;
+    const service = new GlExportService(db, {} as never, {} as never, {} as never);
+
+    const [record] = await service.findJobsForInvoice('invoice-1', 'organization-1');
+
+    expect(record).not.toHaveProperty('payload');
+  });
+
+  it('lets only the active attempt record a successful delivery', async () => {
+    let predicate: unknown;
+    const db = {
+      update: jest.fn(() => ({
+        set: jest.fn(() => ({
+          where: jest.fn((condition: unknown) => {
+            predicate = condition;
+          }),
+        })),
+      })),
+    } as unknown as Db;
+    const service = new GlExportService(db, {} as never, {} as never, {} as never);
+
+    await (
+      service as unknown as {
+        markRecord: (id: string, attemptId: string, values: { status: 'synced' }) => Promise<void>;
+      }
+    ).markRecord('record-1', '00000000-0000-0000-0000-000000000001', { status: 'synced' });
+
+    const query = new PgDialect().sqlToQuery(predicate as never);
+    expect(query.sql).toContain('"attempt_id" =');
+    expect(query.sql).toContain('"status" <>');
   });
 
   it('does not let a stale delivery move a synced record back into an active state', async () => {
