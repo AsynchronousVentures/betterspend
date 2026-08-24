@@ -63,9 +63,8 @@ export class ReceivingService {
       throw new BadRequestException(`PO must be in approved/issued/partially_received status to receive against`);
     }
 
-    const number = await this.sequenceService.next(organizationId, 'goods_receipt');
-
     const grnId = await this.db.transaction(async (tx) => {
+      const number = await this.sequenceService.next(organizationId, 'goods_receipt', tx);
       const [grn] = await tx.insert(goodsReceipts).values({
         organizationId,
         purchaseOrderId: input.purchaseOrderId,
