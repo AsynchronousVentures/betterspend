@@ -340,7 +340,8 @@ export class MessagesService {
       if (!vendorIdForThread) return;
 
       const vendor = await this.db.query.vendors.findFirst({
-        where: (v, { eq }) => eq(v.id, vendorIdForThread),
+        where: (v, { and, eq }) =>
+          and(eq(v.id, vendorIdForThread), eq(v.organizationId, organizationId)),
       });
       const contactInfo = vendor?.contactInfo as Record<string, unknown> | null | undefined;
       const email =

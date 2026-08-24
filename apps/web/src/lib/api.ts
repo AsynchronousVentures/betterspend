@@ -1,4 +1,4 @@
-import { messageSchema } from '@betterspend/shared';
+import { messageSchema, type MessageThreadType } from '@betterspend/shared';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001';
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
@@ -817,14 +817,19 @@ export const api = {
     utilization: () => apiFetch<any[]>('/software-licenses/utilization'),
   },
   messages: {
-    list: (threadType: string, threadId: string) =>
+    list: (threadType: MessageThreadType, threadId: string) =>
       apiFetch<unknown>(`/messages/${threadType}/${threadId}`).then((value) =>
         messageSchema.array().parse(value),
       ),
-    post: (threadType: string, threadId: string, body: string) =>
+    post: (
+      threadType: MessageThreadType,
+      threadId: string,
+      body: string,
+      recipientVendorId?: string,
+    ) =>
       apiFetch<unknown>(`/messages/${threadType}/${threadId}`, {
         method: 'POST',
-        body: JSON.stringify({ body }),
+        body: JSON.stringify({ body, ...(recipientVendorId ? { recipientVendorId } : {}) }),
       }).then((value) => messageSchema.parse(value)),
   },
   passwordReset: {
@@ -887,11 +892,16 @@ export const api = {
           body: JSON.stringify({ rows }),
         },
       ),
-    listMessages: (token: string, threadType: string, threadId: string) =>
+    listMessages: (token: string, threadType: MessageThreadType, threadId: string) =>
       apiFetch<unknown>(
         `/vendor-portal/messages/${threadType}/${threadId}?token=${encodeURIComponent(token)}`,
       ).then((value) => messageSchema.array().parse(value)),
-    postMessage: (token: string, threadType: string, threadId: string, body: string) =>
+    postMessage: (
+      token: string,
+      threadType: MessageThreadType,
+      threadId: string,
+      body: string,
+    ) =>
       apiFetch<unknown>(
         `/vendor-portal/messages/${threadType}/${threadId}?token=${encodeURIComponent(token)}`,
         { method: 'POST', body: JSON.stringify({ body }) },

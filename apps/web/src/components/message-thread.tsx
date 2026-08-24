@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { api } from '../lib/api';
+import type { MessageThreadType } from '@betterspend/shared';
 
 interface Message {
   id: string;
@@ -22,10 +23,12 @@ export function MessageThread({
   threadType,
   threadId,
   portalToken,
+  recipientVendorId,
 }: {
-  threadType: string;
+  threadType: MessageThreadType;
   threadId: string;
   portalToken?: string;
+  recipientVendorId?: string;
 }) {
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [draft, setDraft] = useState('');
@@ -33,7 +36,7 @@ export function MessageThread({
   const [error, setError] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const loadVersion = useRef(0);
-  const threadKey = `${portalToken ?? 'buyer'}:${threadType}:${threadId}`;
+  const threadKey = `${portalToken ?? 'buyer'}:${threadType}:${threadId}:${recipientVendorId ?? 'broadcast'}`;
   const activeThreadKey = useRef(threadKey);
   activeThreadKey.current = threadKey;
 
@@ -53,12 +56,13 @@ export function MessageThread({
     // Drop the previous conversation immediately so a slow or failed request
     // for the new thread never shows messages from another thread.
     setMessages(null);
+    setDraft('');
     setError('');
     setSending(false);
     load();
     const interval = setInterval(load, 30_000);
     return () => clearInterval(interval);
-  }, [load]);
+  }, [load, recipientVendorId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'nearest' });
@@ -74,7 +78,7 @@ export function MessageThread({
       if (portalToken) {
         await api.vendorPortal.postMessage(portalToken, threadType, threadId, body);
       } else {
-        await api.messages.post(threadType, threadId, body);
+        await api.messages.post(threadType, threadId, body, recipientVendorId);
       }
       if (activeThreadKey.current !== sendingThreadKey) return;
       setDraft('');

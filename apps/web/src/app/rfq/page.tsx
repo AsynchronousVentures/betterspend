@@ -59,6 +59,7 @@ export default function RfqPage() {
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'responses' | 'messages'>('overview');
+  const [messageRecipientVendorId, setMessageRecipientVendorId] = useState('');
   const [responseSort, setResponseSort] = useState<'price' | 'supplier' | 'delivery'>('price');
   const [rejectDrafts, setRejectDrafts] = useState<Record<string, string>>({});
   const [awardingId, setAwardingId] = useState<string | null>(null);
@@ -97,6 +98,7 @@ export default function RfqPage() {
 
   async function loadDetail(id: string) {
     setSelected(id);
+    setMessageRecipientVendorId('');
     setDetailLoading(true);
     setDetailTab('overview');
     try {
@@ -354,8 +356,26 @@ export default function RfqPage() {
                   </div>
 
                   {detailTab === 'messages' ? (
-                    <div>
-                      <MessageThread threadType="rfq" threadId={detail.id} />
+                    <div className="space-y-3">
+                      <label className="block space-y-1 text-sm">
+                        <span className="font-medium text-foreground">Recipient</span>
+                        <Select
+                          value={messageRecipientVendorId}
+                          onChange={(event) => setMessageRecipientVendorId(event.target.value)}
+                        >
+                          <option value="">All invited vendors</option>
+                          {detail.invitations?.map((invitation: any) => (
+                            <option key={invitation.vendorId} value={invitation.vendorId}>
+                              {invitation.vendor?.name ?? invitation.vendorId}
+                            </option>
+                          ))}
+                        </Select>
+                      </label>
+                      <MessageThread
+                        threadType="rfq"
+                        threadId={detail.id}
+                        recipientVendorId={messageRecipientVendorId || undefined}
+                      />
                     </div>
                   ) : null}
 
