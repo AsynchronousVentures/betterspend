@@ -99,12 +99,11 @@ class Semaphore {
 
 /** Enforces Intuit's per-realm minute quota and concurrent-request ceiling. */
 class RealmLimiter {
-  private tokens = REQUESTS_PER_MINUTE;
-  private lastRefillAt = Date.now();
+  private readonly requestTimes: number[] = [];
   private readonly semaphore = new Semaphore(MAX_CONCURRENT_REQUESTS);
 
   async run<T>(operation: () => Promise<T>): Promise<T> {
-    await this.takeToken();
+    await this.takeQuotaSlot();
     const release = await this.semaphore.acquire();
     try {
       return await operation();
@@ -113,20 +112,19 @@ class RealmLimiter {
     }
   }
 
-  private async takeToken(): Promise<void> {
+  private async takeQuotaSlot(): Promise<void> {
     while (true) {
       const now = Date.now();
-      const elapsed = now - this.lastRefillAt;
-      this.tokens = Math.min(
-        REQUESTS_PER_MINUTE,
-        this.tokens + (elapsed * REQUESTS_PER_MINUTE) / 60_000,
-      );
-      this.lastRefillAt = now;
-      if (this.tokens >= 1) {
-        this.tokens -= 1;
+      while (this.requestTimes[0] !== undefined && this.requestTimes[0] <= now - 60_000) {
+        this.requestTimes.shift();
+      }
+      if (this.requestTimes.length < REQUESTS_PER_MINUTE) {
+        this.requestTimes.push(now);
         return;
       }
-      await sleep(Math.ceil((60_000 * (1 - this.tokens)) / REQUESTS_PER_MINUTE));
+      const oldestRequest = this.requestTimes[0];
+      if (oldestRequest === undefined) continue;
+      await sleep(oldestRequest + 60_000 - now);
     }
   }
 }
@@ -171,7 +169,7 @@ export class QboClientService {
         const status = responseStatus(error);
         if (status === 401) {
           if (refreshed) {
-            await this.oauthService.markQboReconnectRequired(token.connectionId);
+            await this.oauthService.markQboReconnectRequired(token.connectionId, token.accessToken);
             throw this.toQboError(error);
           }
           const rotated = await this.oauthService.refreshQboToken(

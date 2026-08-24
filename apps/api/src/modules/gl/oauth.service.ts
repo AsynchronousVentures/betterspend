@@ -122,7 +122,17 @@ export class OAuthService {
     return this.toQboToken(await this.findConnectionById(connection.id));
   }
 
-  async markQboReconnectRequired(connectionId: string): Promise<void> {
+  async markQboReconnectRequired(connectionId: string, rejectedAccessToken: string): Promise<void> {
+    const connection = await this.findConnectionById(connectionId);
+    if (
+      !connection?.accessTokenEncrypted ||
+      connection.provider !== 'qbo' ||
+      connection.status !== INTEGRATION_CONNECTION_STATUS.ACTIVE ||
+      this.crypto.decrypt(connection.accessTokenEncrypted) !== rejectedAccessToken
+    ) {
+      return;
+    }
+
     await this.db
       .update(integrationConnections)
       .set({ status: INTEGRATION_CONNECTION_STATUS.RECONNECT_REQUIRED, updatedAt: new Date() })
@@ -130,6 +140,8 @@ export class OAuthService {
         and(
           eq(integrationConnections.id, connectionId),
           eq(integrationConnections.provider, 'qbo'),
+          eq(integrationConnections.status, INTEGRATION_CONNECTION_STATUS.ACTIVE),
+          eq(integrationConnections.accessTokenEncrypted, connection.accessTokenEncrypted),
         ),
       );
   }

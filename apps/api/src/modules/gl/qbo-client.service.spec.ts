@@ -140,6 +140,29 @@ describe('QboClientService', () => {
     expect(maximum).toBe(10);
   });
 
+  it('allows no more than 500 requests in a rolling minute for one realm', async () => {
+    jest.useFakeTimers({ now: 0 });
+    const request = jest.spyOn(axios, 'request').mockResolvedValue({ data: { ok: true } });
+    const client = new QboClientService(oauth());
+
+    const results = Array.from({ length: 501 }, () =>
+      client.request({
+        organizationId: 'organization-1',
+        method: 'GET',
+        path: 'companyinfo/realm-1',
+      }),
+    );
+    await jest.advanceTimersByTimeAsync(0);
+    expect(request).toHaveBeenCalledTimes(500);
+
+    await jest.advanceTimersByTimeAsync(59_999);
+    expect(request).toHaveBeenCalledTimes(500);
+
+    await jest.advanceTimersByTimeAsync(1);
+    await Promise.all(results);
+    expect(request).toHaveBeenCalledTimes(501);
+  });
+
   it('refreshes once after a 401 and retries with the rotated token', async () => {
     const auth = oauth();
     const request = jest
@@ -180,7 +203,7 @@ describe('QboClientService', () => {
     ).rejects.toThrow('HTTP 401');
 
     expect(auth.refreshQboToken).toHaveBeenCalledTimes(1);
-    expect(auth.markQboReconnectRequired).toHaveBeenCalledWith('connection-1');
+    expect(auth.markQboReconnectRequired).toHaveBeenCalledWith('connection-1', 'rotated-token');
   });
 
   it('parses Intuit validation faults into typed errors with stable codes', async () => {

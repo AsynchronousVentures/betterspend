@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type { Db } from '@betterspend/db';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { CredentialCryptoService } from '../ai-providers/credential-crypto.service';
 import { OAuthService } from './oauth.service';
 import type { OAuthStateBinding } from './oauth-redis.service';
@@ -238,6 +239,53 @@ describe('OAuthService', () => {
     expect(mockedAxios.post).toHaveBeenCalledTimes(1);
     expect(first?.accessToken).toBe('rotated-access');
     expect(second?.accessToken).toBe('rotated-access');
+  });
+
+  it('does not disable credentials that changed after the rejected request began', async () => {
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      provider: 'qbo',
+      accessTokenEncrypted: crypto.encrypt('newly-connected-access'),
+      status: 'active',
+    };
+    const db = {
+      query: { integrationConnections: { findFirst: jest.fn(async () => connection) } },
+      update: jest.fn(),
+    } as unknown as Db;
+    const service = new OAuthService(db, crypto, new FakeOAuthRedis() as never);
+
+    await service.markQboReconnectRequired(connection.id, 'stale-rejected-access');
+
+    expect((db as unknown as { update: jest.Mock }).update).not.toHaveBeenCalled();
+  });
+
+  it('makes the reconnect update conditional on the rejected credential version', async () => {
+    let predicate: unknown;
+    const encryptedAccessToken = crypto.encrypt('rejected-access');
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      provider: 'qbo',
+      accessTokenEncrypted: encryptedAccessToken,
+      status: 'active',
+    };
+    const db = {
+      query: { integrationConnections: { findFirst: jest.fn(async () => connection) } },
+      update: jest.fn(() => ({
+        set: jest.fn(() => ({
+          where: jest.fn((condition: unknown) => {
+            predicate = condition;
+          }),
+        })),
+      })),
+    } as unknown as Db;
+    const service = new OAuthService(db, crypto, new FakeOAuthRedis() as never);
+
+    await service.markQboReconnectRequired(connection.id, 'rejected-access');
+
+    const query = new PgDialect().sqlToQuery(predicate as never);
+    expect(query.sql).toContain('"access_token_enc" =');
+    expect(query.sql).toContain('"status" =');
+    expect(query.params).toContain(encryptedAccessToken);
   });
 
   it('keeps an active connection retryable after a transient refresh failure', async () => {
