@@ -129,7 +129,7 @@ jobs:
 
       - name: Validate Compose files
         run: |
-          docker compose --profile app --profile tools config >/dev/null
+          CREDENTIAL_ENCRYPTION_KEY="$(openssl rand -base64 32)" docker compose --profile app --profile tools config >/dev/null
           PRODUCTION_ENV_FILE=.env.production.example IMAGE_TAG=sha-ci \
             docker compose --profile migrate --env-file .env.production.example -f compose.yaml -f compose.prod.yaml config >/dev/null
 
