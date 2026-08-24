@@ -142,11 +142,21 @@ jobs:
             tag_variable="${image}_TAG"
             tag="${!tag_variable}"
             output_name="$(printf '%s' "$image" | tr '[:upper:]' '[:lower:]')_exists"
-            if docker buildx imagetools inspect "$tag" >/dev/null 2>&1; then
-              printf '%s=true\n' "$output_name" >> "$GITHUB_OUTPUT"
-            else
-              printf '%s=false\n' "$output_name" >> "$GITHUB_OUTPUT"
-            fi
+            for attempt in 1 2 3; do
+              if inspect_output="$(docker buildx imagetools inspect "$tag" 2>&1)"; then
+                printf '%s=true\n' "$output_name" >> "$GITHUB_OUTPUT"
+                break
+              fi
+              if printf '%s' "$inspect_output" | grep -Eqi 'manifest unknown|name unknown|not found'; then
+                printf '%s=false\n' "$output_name" >> "$GITHUB_OUTPUT"
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                printf 'Unable to determine whether %s exists:\n%s\n' "$tag" "$inspect_output" >&2
+                exit 1
+              fi
+              sleep $((attempt * 5))
+            done
           done
 
       - name: Build and push API image
