@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "db:generate": "drizzle-kit generate",
+    "db:validate-history": "tsx src/validate-migration-history.ts",
     "db:migrate": "tsx src/migrate.ts",
     "db:verify-migrations": "tsx src/verify-migrations.ts",
     "db:studio": "drizzle-kit studio",
