@@ -28,6 +28,7 @@ type RiskScreeningTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 /** Match threshold: token-overlap (jaccard) or levenshtein similarity must exceed this. */
 const MATCH_THRESHOLD = 0.82;
+const MAX_LEVENSHTEIN_CELLS_PER_SCREENING = 10_000_000;
 
 @Injectable()
 export class RiskScreeningService {
@@ -134,6 +135,7 @@ export class RiskScreeningService {
       // Hold a shared registry-version lock for the whole batch. Ingestion's
       // version update waits until every result from this snapshot commits.
       const entries = await this.lockAndLoadEntries(tx);
+      const matchBudget = createMatchWorkBudget();
       const orgVendors = await tx
         .select({ id: vendors.id })
         .from(vendors)
@@ -146,6 +148,7 @@ export class RiskScreeningService {
           vendor.id,
           screenedBy,
           entries,
+          matchBudget,
         );
         if (result.status === 'flagged') flagged += 1;
       }
@@ -160,7 +163,14 @@ export class RiskScreeningService {
   ) {
     return this.db.transaction(async (tx) => {
       const entries = await this.lockAndLoadEntries(tx);
-      return this.screenVendorInTransaction(tx, organizationId, vendorId, screenedBy, entries);
+      return this.screenVendorInTransaction(
+        tx,
+        organizationId,
+        vendorId,
+        screenedBy,
+        entries,
+        createMatchWorkBudget(),
+      );
     });
   }
 
@@ -185,6 +195,7 @@ export class RiskScreeningService {
     vendorId: string,
     screenedBy: string | undefined,
     entries: SanctionEntryRow[],
+    matchBudget: MatchWorkBudget,
   ) {
     const [vendor] = await tx
       .select()
@@ -193,7 +204,7 @@ export class RiskScreeningService {
       .for('update');
     if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
 
-    const vendorMatches = await this.matchVendorName(vendor.name, entries);
+    const vendorMatches = await this.matchVendorName(vendor.name, entries, matchBudget);
     const nextStatus =
       vendorMatches.length > 0
         ? 'flagged'
@@ -322,6 +333,7 @@ export class RiskScreeningService {
   private async matchVendorName(
     name: string,
     entries: SanctionEntryRow[],
+    matchBudget: MatchWorkBudget,
   ): Promise<SanctionMatch[]> {
     const normalizedTarget = normalize(name);
     if (!normalizedTarget) return [];
@@ -329,7 +341,7 @@ export class RiskScreeningService {
     const matches: SanctionMatch[] = [];
 
     for (const entry of entries) {
-      const score = similarity(normalizedTarget, normalize(entry.entityName));
+      const score = similarity(normalizedTarget, normalize(entry.entityName), matchBudget);
       if (score >= MATCH_THRESHOLD) {
         matches.push({
           entryId: entry.id,
@@ -353,6 +365,14 @@ interface SanctionEntryRow {
   country: string | null;
 }
 
+interface MatchWorkBudget {
+  remainingCells: number;
+}
+
+function createMatchWorkBudget(): MatchWorkBudget {
+  return { remainingCells: MAX_LEVENSHTEIN_CELLS_PER_SCREENING };
+}
+
 function normalize(value: string): string {
   return value
     .toLowerCase()
@@ -362,7 +382,7 @@ function normalize(value: string): string {
     .trim();
 }
 
-function similarity(a: string, b: string): number {
+function similarity(a: string, b: string, workBudget: MatchWorkBudget): number {
   if (!a || !b) return 0;
   if (a === b) return 1;
   const tokensA = new Set(a.split(' '));
@@ -370,6 +390,19 @@ function similarity(a: string, b: string): number {
   const intersection = [...tokensA].filter((token) => tokensB.has(token)).length;
   const union = new Set([...tokensA, ...tokensB]).size;
   const jaccard = union > 0 ? intersection / union : 0;
+  if (jaccard >= MATCH_THRESHOLD) return jaccard;
+
+  const maxLength = Math.max(a.length, b.length);
+  const minLength = Math.min(a.length, b.length);
+  if (minLength / maxLength < MATCH_THRESHOLD) return jaccard;
+
+  const requiredCells = a.length * b.length;
+  if (requiredCells > workBudget.remainingCells) {
+    throw new BadRequestException(
+      'Sanctions registry exceeds the safe fuzzy-matching work limit; narrow or partition the registry',
+    );
+  }
+  workBudget.remainingCells -= requiredCells;
   const levenshtein = 1 - levenshteinDistance(a, b) / Math.max(a.length, b.length);
   return Math.max(jaccard, levenshtein);
 }
