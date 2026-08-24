@@ -2,6 +2,8 @@
 include:
   - "packages/db/src/schema/**"
   - "packages/shared/src/**"
+  - "apps/api/**"
+  - "apps/web/**"
 exclude:
   - "**/*.test.ts"
   - "**/*.spec.ts"

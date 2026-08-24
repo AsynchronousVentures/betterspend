@@ -2,8 +2,8 @@
 include:
   - "packages/db/src/schema/audit.ts"
   - "packages/db/src/schema/sequences.ts"
-  - "apps/api/src/modules/audit/**"
-  - "apps/api/src/modules/export/**"
+  - "apps/api/src/common/services/sequence.service.ts"
+  - "apps/api/src/modules/**"
 ---
 
 **Audit and sequence invariants.**

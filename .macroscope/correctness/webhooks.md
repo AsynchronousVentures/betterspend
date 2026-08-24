@@ -1,6 +1,6 @@
 ---
 include:
-  - "apps/api/src/modules/webhooks/**"
+  - "apps/api/src/modules/**"
   - "packages/db/src/schema/webhooks.ts"
 ---
 
