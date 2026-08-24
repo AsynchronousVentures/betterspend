@@ -7,7 +7,7 @@ import { requisitions, requisitionLines } from './schema/requisitions';
 import { purchaseOrders, poLines, poVersions, blanketReleases } from './schema/purchase-orders';
 import { goodsReceipts, goodsReceiptLines } from './schema/receiving';
 import { invoices, invoiceLines, matchResults } from './schema/invoices';
-import { budgets, budgetPeriods } from './schema/budgets';
+import { budgets, budgetCommitmentEvents, budgetPeriods } from './schema/budgets';
 import {
   approvalRules,
   approvalRuleSteps,
@@ -406,10 +406,34 @@ export const budgetsRelations = relations(budgets, ({ one, many }) => ({
   }),
   entity: one(legalEntities, { fields: [budgets.entityId], references: [legalEntities.id] }),
   periods: many(budgetPeriods),
+  commitmentEvents: many(budgetCommitmentEvents),
 }));
 
 export const budgetPeriodsRelations = relations(budgetPeriods, ({ one }) => ({
   budget: one(budgets, { fields: [budgetPeriods.budgetId], references: [budgets.id] }),
+}));
+
+export const budgetCommitmentEventsRelations = relations(budgetCommitmentEvents, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [budgetCommitmentEvents.organizationId],
+    references: [organizations.id],
+  }),
+  budget: one(budgets, {
+    fields: [budgetCommitmentEvents.budgetId],
+    references: [budgets.id],
+  }),
+  requisition: one(requisitions, {
+    fields: [budgetCommitmentEvents.requisitionId],
+    references: [requisitions.id],
+  }),
+  purchaseOrder: one(purchaseOrders, {
+    fields: [budgetCommitmentEvents.purchaseOrderId],
+    references: [purchaseOrders.id],
+  }),
+  invoice: one(invoices, {
+    fields: [budgetCommitmentEvents.invoiceId],
+    references: [invoices.id],
+  }),
 }));
 
 export const webhookEndpointsRelations = relations(webhookEndpoints, ({ one, many }) => ({

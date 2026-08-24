@@ -1,11 +1,24 @@
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, and, sql, gte, inArray, lt, ne } from 'drizzle-orm';
+import { asc, eq, and, sql, gte, inArray, isNotNull, isNull, lt, ne, or } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
-import { auditLog, budgets, budgetPeriods, requisitions } from '@betterspend/db';
+import {
+  auditLog,
+  budgetCommitmentEvents,
+  budgets,
+  budgetPeriods,
+  invoices,
+  purchaseOrders,
+  requisitions,
+} from '@betterspend/db';
 import { EntitiesService } from '../entities/entities.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { SettingsService } from '../settings/settings.service';
+import {
+  BUDGET_COMMITMENT_EVENT_TYPE,
+  budgetCommitmentEventKey,
+  type BudgetCommitmentEventType,
+} from '@betterspend/shared';
 import {
   evaluateBudgetPolicy,
   addMoney,
@@ -21,6 +34,14 @@ import {
   type BudgetEnforcementMode,
   type PendingRequisitionPolicy,
 } from './budget-enforcement';
+import {
+  commitmentDeltas,
+  committedPurchaseOrderBalance,
+  reducedPurchaseOrderBalance,
+  releasedPurchaseOrderBalance,
+  type CommitmentBalance,
+  type PurchaseOrderCommitmentBalance,
+} from './budget-commitments';
 
 export interface CreateBudgetInput {
   name: string;
@@ -49,6 +70,7 @@ interface EnforcementInput {
   currency: string;
   fiscalYear: number;
   excludeRequisitionId?: string | null;
+  excludePurchaseOrderId?: string | null;
 }
 
 interface EnforcementContext {
@@ -57,6 +79,12 @@ interface EnforcementContext {
   rates: Map<string, string>;
   ownerUserId: string | null;
 }
+
+const departmentBudgetOrder = (record: Pick<typeof budgets, 'entityId' | 'createdAt' | 'id'>) => [
+  sql`${record.entityId} nulls first`,
+  asc(record.createdAt),
+  asc(record.id),
+];
 
 @Injectable()
 export class BudgetsService {
@@ -211,6 +239,7 @@ export class BudgetsService {
           eq(b.scopeId, departmentId),
           eq(b.fiscalYear, fiscalYear),
         ),
+      orderBy: (record) => departmentBudgetOrder(record),
     });
 
     if (!budget) {
@@ -356,6 +385,7 @@ export class BudgetsService {
           eq(record.scopeId, input.departmentId!),
           eq(record.fiscalYear, input.fiscalYear),
         ),
+      orderBy: (record) => departmentBudgetOrder(record),
     });
     if (!budget) return noBudgetDecision();
 
@@ -385,6 +415,7 @@ export class BudgetsService {
             eq(budgets.fiscalYear, input.fiscalYear),
           ),
         )
+        .orderBy(...departmentBudgetOrder(budgets))
         .for('update');
       if (!budget) return apply(tx, noBudgetDecision());
 
@@ -460,10 +491,6 @@ export class BudgetsService {
         ? context.settings.budget_pending_requisition_policy
         : 'approved_only';
 
-    const statuses =
-      pendingPolicy === 'include_pending'
-        ? ['submitted', 'pending_approval', 'approved']
-        : ['approved'];
     const start = new Date(Date.UTC(input.fiscalYear, 0, 1));
     const end = new Date(Date.UTC(input.fiscalYear + 1, 0, 1));
     const baseConditions = [
@@ -476,43 +503,50 @@ export class BudgetsService {
       baseConditions.push(ne(requisitions.id, input.excludeRequisitionId));
     }
 
-    const [commitmentGroups, convertedRequisitions] = await Promise.all([
-      executor
-        .select({
-          currency: requisitions.currency,
-          amount: sql<string>`coalesce(sum(${requisitions.totalAmount}), 0)`,
-        })
-        .from(requisitions)
-        .where(and(...baseConditions, inArray(requisitions.status, statuses)))
-        .groupBy(requisitions.currency),
-      executor
-        .select({
-          currency: requisitions.currency,
-          amount: requisitions.totalAmount,
-          approvedInvoiceBaseAmount: sql<string>`coalesce((
-            select sum(i.base_total_amount)
-            from purchase_orders po
-            inner join invoices i on i.purchase_order_id = po.id
-            where po.requisition_id = ${requisitions.id}
-              and i.status in ('approved', 'paid')
-          ), 0)`,
-        })
-        .from(requisitions)
-        .where(and(...baseConditions, eq(requisitions.status, 'converted'))),
-    ]);
-
-    const convertedCommitments = await Promise.all(
-      commitmentGroups.map((group) =>
-        convertMoney(group.amount, this.getContextRate(context, group.currency)),
-      ),
+    const ledgerConditions = [eq(budgetCommitmentEvents.budgetId, budget.id)];
+    if (input.excludeRequisitionId) {
+      ledgerConditions.push(
+        or(
+          isNull(budgetCommitmentEvents.requisitionId),
+          ne(budgetCommitmentEvents.requisitionId, input.excludeRequisitionId),
+          isNotNull(budgetCommitmentEvents.purchaseOrderId),
+        )!,
+      );
+    }
+    if (input.excludePurchaseOrderId) {
+      ledgerConditions.push(
+        or(
+          isNull(budgetCommitmentEvents.purchaseOrderId),
+          ne(budgetCommitmentEvents.purchaseOrderId, input.excludePurchaseOrderId),
+        )!,
+      );
+    }
+    const [ledger] = await executor
+      .select({
+        amount: sql<string>`coalesce(sum(${budgetCommitmentEvents.baseReservedDelta} + ${budgetCommitmentEvents.baseCommittedDelta}), 0)`,
+      })
+      .from(budgetCommitmentEvents)
+      .where(and(...ledgerConditions));
+    const pendingGroups =
+      pendingPolicy === 'include_pending'
+        ? await executor
+            .select({
+              currency: requisitions.currency,
+              amount: sql<string>`coalesce(sum(${requisitions.totalAmount}), 0)`,
+            })
+            .from(requisitions)
+            .where(
+              and(
+                ...baseConditions,
+                inArray(requisitions.status, ['submitted', 'pending_approval']),
+              ),
+            )
+            .groupBy(requisitions.currency)
+        : [];
+    const pendingCommitments = pendingGroups.map((group) =>
+      convertMoney(group.amount, this.getContextRate(context, group.currency)),
     );
-    const convertedRemaining = convertedRequisitions.map((requisition) =>
-      subtractMoneyFloorZero(
-        convertMoney(requisition.amount, this.getContextRate(context, requisition.currency)),
-        requisition.approvedInvoiceBaseAmount,
-      ),
-    );
-    const committedAmount = addMoney([...convertedCommitments, ...convertedRemaining]);
+    const committedAmount = addMoney([ledger?.amount ?? '0', ...pendingCommitments]);
     const requestedRate = this.getContextRate(context, input.currency);
     const requestedAmount = convertMoney(input.requestedAmount, requestedRate);
 
@@ -788,6 +822,7 @@ export class BudgetsService {
           eq(b.scopeId, departmentId),
           eq(b.fiscalYear, fiscalYear),
         ),
+      orderBy: (record) => departmentBudgetOrder(record),
     });
 
     if (!budget) return { updated: false, message: 'No budget configured' };
@@ -819,5 +854,388 @@ export class BudgetsService {
       );
 
     return { updated: true, budgetId: budget.id };
+  }
+
+  async recordRequisitionApproval(
+    executor: DbTransaction,
+    organizationId: string,
+    requisitionId: string,
+  ): Promise<void> {
+    const context = await this.getRequisitionCommitmentContext(
+      executor,
+      organizationId,
+      requisitionId,
+    );
+    if (!context) return;
+    await this.lockRequisitionCommitments(executor, organizationId, requisitionId);
+    const current = await this.getCommitmentBalance(executor, context.budget.id, requisitionId);
+    await this.appendCommitmentEvent(executor, context, {
+      eventKey: budgetCommitmentEventKey.requisitionApproved(
+        requisitionId,
+        context.requisition.updatedAt,
+      ),
+      eventType: BUDGET_COMMITMENT_EVENT_TYPE.REQUISITION_RESERVED,
+      reason: 'Approved requisition reserved budget',
+      desired: { ...current, reserved: context.baseAmount, committed: '0' },
+    });
+  }
+
+  async releaseRequisition(
+    executor: DbTransaction,
+    organizationId: string,
+    requisitionId: string,
+    reason: 'cancelled' | 'rejected',
+  ): Promise<void> {
+    const context = await this.getRequisitionCommitmentContext(
+      executor,
+      organizationId,
+      requisitionId,
+    );
+    if (!context) return;
+    await this.lockRequisitionCommitments(executor, organizationId, requisitionId);
+    const current = await this.getCommitmentBalance(executor, context.budget.id, requisitionId);
+    await this.appendCommitmentEvent(executor, context, {
+      eventKey: budgetCommitmentEventKey.requisitionReleased(
+        requisitionId,
+        reason,
+        context.requisition.updatedAt,
+      ),
+      eventType: BUDGET_COMMITMENT_EVENT_TYPE.REQUISITION_RELEASED,
+      reason: `Requisition ${reason}`,
+      desired: { reserved: '0', committed: current.committed, expended: current.expended },
+    });
+  }
+
+  async commitPurchaseOrder(
+    executor: DbTransaction,
+    organizationId: string,
+    purchaseOrderId: string,
+  ): Promise<void> {
+    const context = await this.getPurchaseOrderCommitmentContext(
+      executor,
+      organizationId,
+      purchaseOrderId,
+    );
+    if (!context) return;
+    await this.lockRequisitionCommitments(executor, organizationId, context.requisition.id);
+    const current = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisition.id,
+    );
+    const currentPurchaseOrder = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisition.id,
+      purchaseOrderId,
+    );
+    await this.appendCommitmentEvent(executor, context, {
+      eventKey: budgetCommitmentEventKey.purchaseOrderIssued(
+        purchaseOrderId,
+        context.purchaseOrder.version,
+      ),
+      eventType: BUDGET_COMMITMENT_EVENT_TYPE.PURCHASE_ORDER_COMMITTED,
+      reason: 'Issued purchase order converted reservation to commitment',
+      desired: committedPurchaseOrderBalance(
+        current,
+        currentPurchaseOrder,
+        context.budgetBaseTotalAmount,
+      ),
+    });
+  }
+
+  async reducePurchaseOrderCommitment(
+    executor: DbTransaction,
+    organizationId: string,
+    purchaseOrderId: string,
+  ): Promise<void> {
+    const context = await this.getPurchaseOrderCommitmentContext(
+      executor,
+      organizationId,
+      purchaseOrderId,
+    );
+    if (!context) return;
+    await this.lockRequisitionCommitments(executor, organizationId, context.requisition.id);
+    const current = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisition.id,
+    );
+    const currentPurchaseOrder = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisition.id,
+      purchaseOrderId,
+    );
+    await this.appendCommitmentEvent(executor, context, {
+      eventKey: budgetCommitmentEventKey.purchaseOrderChanged(
+        purchaseOrderId,
+        context.purchaseOrder.version,
+      ),
+      eventType: BUDGET_COMMITMENT_EVENT_TYPE.PURCHASE_ORDER_REDUCED,
+      reason: 'Change order released reduced commitment',
+      desired: reducedPurchaseOrderBalance(
+        current,
+        currentPurchaseOrder,
+        context.budgetBaseTotalAmount,
+      ),
+    });
+  }
+
+  async releasePurchaseOrder(
+    executor: DbTransaction,
+    organizationId: string,
+    purchaseOrderId: string,
+    reason: 'cancelled' | 'rejected',
+  ): Promise<void> {
+    const context = await this.getPurchaseOrderCommitmentContext(
+      executor,
+      organizationId,
+      purchaseOrderId,
+    );
+    if (!context) return;
+    await this.lockRequisitionCommitments(executor, organizationId, context.requisition.id);
+    const current = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisition.id,
+    );
+    const currentPurchaseOrder = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisition.id,
+      purchaseOrderId,
+    );
+    await this.appendCommitmentEvent(executor, context, {
+      eventKey: budgetCommitmentEventKey.purchaseOrderReleased(
+        purchaseOrderId,
+        reason,
+        context.purchaseOrder.updatedAt,
+      ),
+      eventType: BUDGET_COMMITMENT_EVENT_TYPE.PURCHASE_ORDER_RELEASED,
+      reason: `Purchase order ${reason}`,
+      desired: releasedPurchaseOrderBalance(
+        current,
+        currentPurchaseOrder,
+        context.budgetBaseTotalAmount,
+      ),
+    });
+  }
+
+  async expenseInvoice(
+    executor: DbTransaction,
+    organizationId: string,
+    invoiceId: string,
+    baseExpenseAmount: string,
+    baseCommitmentReleaseAmount: string,
+  ): Promise<void> {
+    const invoice = await executor.query.invoices.findFirst({
+      where: (record, { and, eq }) =>
+        and(eq(record.id, invoiceId), eq(record.organizationId, organizationId)),
+    });
+    if (!invoice?.purchaseOrderId) return;
+    const context = await this.getPurchaseOrderCommitmentContext(
+      executor,
+      organizationId,
+      invoice.purchaseOrderId,
+    );
+    if (!context) return;
+    await this.lockRequisitionCommitments(executor, organizationId, context.requisition.id);
+    await this.recordSpend(
+      organizationId,
+      context.requisition.departmentId!,
+      baseExpenseAmount,
+      context.requisition.createdAt.getUTCFullYear(),
+      executor,
+    );
+    const current = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisition.id,
+    );
+    const currentPurchaseOrder = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisition.id,
+      invoice.purchaseOrderId,
+    );
+    const releasedCommitment = subtractMoneyFloorZero(
+      currentPurchaseOrder.committed,
+      subtractMoneyFloorZero(currentPurchaseOrder.committed, baseCommitmentReleaseAmount),
+    );
+    await this.appendCommitmentEvent(
+      executor,
+      { ...context, invoiceId },
+      {
+        eventKey: budgetCommitmentEventKey.invoiceApproved(invoiceId),
+        eventType: BUDGET_COMMITMENT_EVENT_TYPE.INVOICE_EXPENDED,
+        reason: 'Approved invoice converted commitment to spend',
+        desired: {
+          reserved: current.reserved,
+          committed: subtractMoneyFloorZero(current.committed, releasedCommitment),
+          expended: addMoney([current.expended, baseExpenseAmount]),
+        },
+      },
+    );
+  }
+
+  private async getRequisitionCommitmentContext(
+    executor: DbTransaction,
+    organizationId: string,
+    requisitionId: string,
+  ) {
+    const requisition = await executor.query.requisitions.findFirst({
+      where: (record, { and, eq }) =>
+        and(eq(record.id, requisitionId), eq(record.organizationId, organizationId)),
+    });
+    if (!requisition?.departmentId) return null;
+    const budget = await executor.query.budgets.findFirst({
+      where: (record, { and, eq }) =>
+        and(
+          eq(record.organizationId, requisition.organizationId),
+          eq(record.budgetType, 'department'),
+          eq(record.scopeId, requisition.departmentId!),
+          eq(record.fiscalYear, requisition.createdAt.getUTCFullYear()),
+        ),
+      orderBy: (record) => departmentBudgetOrder(record),
+    });
+    if (!budget) return null;
+    const rate = await this.exchangeRatesService.getRateDecimal(
+      requisition.organizationId,
+      requisition.currency,
+      budget.baseCurrency,
+      undefined,
+      executor,
+    );
+    return {
+      organizationId: requisition.organizationId,
+      budget,
+      requisition,
+      requisitionId,
+      purchaseOrderId: null as string | null,
+      invoiceId: null as string | null,
+      baseAmount: convertMoney(requisition.totalAmount, rate),
+    };
+  }
+
+  private async lockRequisitionCommitments(
+    executor: DbTransaction,
+    organizationId: string,
+    requisitionId: string,
+  ): Promise<void> {
+    await executor
+      .select({ id: requisitions.id })
+      .from(requisitions)
+      .where(
+        and(eq(requisitions.id, requisitionId), eq(requisitions.organizationId, organizationId)),
+      )
+      .for('update');
+  }
+
+  private async getPurchaseOrderCommitmentContext(
+    executor: DbTransaction,
+    organizationId: string,
+    purchaseOrderId: string,
+  ) {
+    const purchaseOrder = await executor.query.purchaseOrders.findFirst({
+      where: (record, { and, eq }) =>
+        and(eq(record.id, purchaseOrderId), eq(record.organizationId, organizationId)),
+    });
+    if (!purchaseOrder?.requisitionId) return null;
+    const requisitionContext = await this.getRequisitionCommitmentContext(
+      executor,
+      organizationId,
+      purchaseOrder.requisitionId,
+    );
+    if (!requisitionContext) return null;
+    const rate = await this.exchangeRatesService.getRateDecimal(
+      organizationId,
+      purchaseOrder.baseCurrency,
+      requisitionContext.budget.baseCurrency,
+      undefined,
+      executor,
+    );
+    return {
+      ...requisitionContext,
+      purchaseOrder,
+      purchaseOrderId,
+      budgetBaseTotalAmount: convertMoney(purchaseOrder.baseTotalAmount, rate),
+    };
+  }
+
+  private async getCommitmentBalance(
+    executor: Db | DbTransaction,
+    budgetId: string,
+    requisitionId: string,
+    purchaseOrderId?: string,
+  ): Promise<PurchaseOrderCommitmentBalance> {
+    const conditions = [
+      eq(budgetCommitmentEvents.budgetId, budgetId),
+      eq(budgetCommitmentEvents.requisitionId, requisitionId),
+    ];
+    if (purchaseOrderId) {
+      conditions.push(eq(budgetCommitmentEvents.purchaseOrderId, purchaseOrderId));
+    }
+    const [balance] = await executor
+      .select({
+        reserved: sql<string>`coalesce(sum(${budgetCommitmentEvents.baseReservedDelta}), 0)`,
+        committed: sql<string>`coalesce(sum(${budgetCommitmentEvents.baseCommittedDelta}), 0)`,
+        expended: sql<string>`coalesce(sum(${budgetCommitmentEvents.baseExpendedDelta}), 0)`,
+        invoiced: sql<string>`coalesce(sum(CASE
+          WHEN ${budgetCommitmentEvents.eventType} = ${BUDGET_COMMITMENT_EVENT_TYPE.INVOICE_EXPENDED}
+            AND ${budgetCommitmentEvents.baseCommittedDelta} < 0
+          THEN -${budgetCommitmentEvents.baseCommittedDelta}
+          ELSE 0
+        END), 0)`,
+      })
+      .from(budgetCommitmentEvents)
+      .where(and(...conditions));
+    return {
+      reserved: balance?.reserved ?? '0',
+      committed: balance?.committed ?? '0',
+      expended: balance?.expended ?? '0',
+      invoiced: balance?.invoiced ?? '0',
+    };
+  }
+
+  private async appendCommitmentEvent(
+    executor: DbTransaction,
+    context: {
+      organizationId: string;
+      budget: { id: string };
+      requisitionId: string;
+      purchaseOrderId: string | null;
+      invoiceId: string | null;
+    },
+    event: {
+      eventKey: string;
+      eventType: BudgetCommitmentEventType;
+      reason: string;
+      desired: CommitmentBalance;
+    },
+  ): Promise<void> {
+    const current = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisitionId,
+    );
+    const deltas = commitmentDeltas(current, event.desired);
+    if (Object.values(deltas).every(isZeroMoney)) return;
+    await executor
+      .insert(budgetCommitmentEvents)
+      .values({
+        organizationId: context.organizationId,
+        budgetId: context.budget.id,
+        requisitionId: context.requisitionId,
+        purchaseOrderId: context.purchaseOrderId,
+        invoiceId: context.invoiceId,
+        eventKey: event.eventKey,
+        eventType: event.eventType,
+        baseReservedDelta: deltas.reserved,
+        baseCommittedDelta: deltas.committed,
+        baseExpendedDelta: deltas.expended,
+        reason: event.reason,
+      })
+      .onConflictDoNothing();
   }
 }

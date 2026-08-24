@@ -15,7 +15,7 @@ import type { MatchingService } from './matching.service';
 import { InvoicesService } from './invoices.service';
 
 function createService(
-  recordSpend: BudgetsService['recordSpend'],
+  expenseInvoice: BudgetsService['expenseInvoice'] = async () => {},
   matchStatus = 'full_match',
   options: {
     createdBy?: string | null;
@@ -32,7 +32,8 @@ function createService(
     status: 'approved',
     matchStatus,
     totalAmount: '125.00',
-    exchangeRate: '1',
+    baseTotalAmount: '250.00',
+    exchangeRate: '2',
     internalNumber: 'INV-2026-0001',
     createdBy: options.createdBy === undefined ? 'maker-1' : options.createdBy,
     submissionSource: options.submissionSource ?? 'internal',
@@ -102,7 +103,7 @@ function createService(
   } as unknown as Db;
   const webhookEvents = { emit() {} } as unknown as WebhookEventService;
   const glExport = { enqueue() {} } as unknown as GlExportService;
-  const budgets = { recordSpend } as unknown as BudgetsService;
+  const budgets = { expenseInvoice } as unknown as BudgetsService;
   const audit = {
     log: async (
       _organizationId: string,
@@ -139,16 +140,15 @@ function createService(
 }
 
 describe('InvoicesService approval budget accounting', () => {
-  it('propagates spend failures from the invoice approval transaction', async () => {
+  it('propagates budget accounting failures from the invoice approval transaction', async () => {
     let receivedTransaction: DbTransaction | undefined;
-    let receivedBaseAmount: string | undefined;
+    let receivedAmounts: { expense: string; release: string } | undefined;
     const { service, transaction } = createService(
-      async (organizationId, departmentId, baseAmount, fiscalYear, executor) => {
+      async (executor, organizationId, invoiceId, expense, release) => {
         assert.equal(organizationId, 'organization-1');
-        assert.equal(departmentId, 'department-1');
-        assert.equal(fiscalYear, 2026);
-        receivedBaseAmount = baseAmount;
-        receivedTransaction = executor as DbTransaction;
+        assert.equal(invoiceId, 'invoice-1');
+        receivedAmounts = { expense, release };
+        receivedTransaction = executor;
         throw new Error('budget update failed');
       },
     );
@@ -157,7 +157,7 @@ describe('InvoicesService approval budget accounting', () => {
       service.approve('invoice-1', 'organization-1', 'approver-1'),
       /budget update failed/,
     );
-    assert.equal(receivedBaseAmount, '100.00');
+    assert.deepEqual(receivedAmounts, { expense: '200.00', release: '250.00' });
     assert.equal(receivedTransaction, transaction);
   });
 
@@ -165,7 +165,6 @@ describe('InvoicesService approval budget accounting', () => {
     let spendRecorded = false;
     const { service } = createService(async () => {
       spendRecorded = true;
-      return { updated: true, budgetId: 'budget-1' };
     }, 'partial_match');
 
     await assert.rejects(
@@ -175,12 +174,44 @@ describe('InvoicesService approval budget accounting', () => {
     assert.equal(spendRecorded, false);
   });
 
+  it('moves persisted base spend out of the PO commitment in the same transaction', async () => {
+    let expensed:
+      | {
+          organizationId: string;
+          invoiceId: string;
+          expenseAmount: string;
+          commitmentReleaseAmount: string;
+          executor: DbTransaction;
+        }
+      | undefined;
+    const { service, transaction } = createService(
+      async (executor, organizationId, invoiceId, expenseAmount, commitmentReleaseAmount) => {
+        expensed = {
+          executor,
+          organizationId,
+          invoiceId,
+          expenseAmount,
+          commitmentReleaseAmount,
+        };
+      },
+    );
+
+    await service.approve('invoice-1', 'organization-1', 'approver-1');
+
+    assert.deepEqual(expensed, {
+      executor: transaction,
+      organizationId: 'organization-1',
+      invoiceId: 'invoice-1',
+      expenseAmount: '200.00',
+      commitmentReleaseAmount: '250.00',
+    });
+  });
+
   it('blocks the invoice maker and records the independent fallback', async () => {
     let spendRecorded = false;
     const { service, auditActions } = createService(
       async () => {
         spendRecorded = true;
-        return { updated: true, budgetId: 'budget-1' };
       },
       'full_match',
       { createdBy: 'maker-1' },
@@ -209,7 +240,6 @@ describe('InvoicesService approval budget accounting', () => {
     const { service } = createService(
       async () => {
         spendRecorded = true;
-        return { updated: true, budgetId: 'budget-1' };
       },
       'full_match',
       { createdBy: 'maker-1', makerCheckerEnabled: false },
@@ -225,7 +255,6 @@ describe('InvoicesService approval budget accounting', () => {
     const { service, auditActions } = createService(
       async () => {
         spendRecorded = true;
-        return { updated: true, budgetId: 'budget-1' };
       },
       'full_match',
       { createdBy: null, submissionSource: 'legacy' },
@@ -254,7 +283,6 @@ describe('InvoicesService approval budget accounting', () => {
     const { service } = createService(
       async () => {
         spendRecorded = true;
-        return { updated: true, budgetId: 'budget-1' };
       },
       'full_match',
       { createdBy: null, submissionSource: 'vendor_portal' },
@@ -266,11 +294,10 @@ describe('InvoicesService approval budget accounting', () => {
   });
 
   it('propagates blocked-approval audit failures', async () => {
-    const { service } = createService(
-      async () => ({ updated: true, budgetId: 'budget-1' }),
-      'full_match',
-      { createdBy: 'maker-1', blockedAuditFails: true },
-    );
+    const { service } = createService(async () => {}, 'full_match', {
+      createdBy: 'maker-1',
+      blockedAuditFails: true,
+    });
 
     await assert.rejects(
       service.approve('invoice-1', 'organization-1', 'maker-1'),

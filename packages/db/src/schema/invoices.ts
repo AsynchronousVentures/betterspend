@@ -1,4 +1,15 @@
-import { pgTable, uuid, varchar, numeric, boolean, timestamp, jsonb, date, foreignKey } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  varchar,
+  numeric,
+  boolean,
+  timestamp,
+  jsonb,
+  date,
+  uniqueIndex,
+  foreignKey,
+} from 'drizzle-orm/pg-core';
 import { organizations, legalEntities } from './organizations';
 import { vendors } from './vendors';
 import { users } from './users';
@@ -10,17 +21,24 @@ export const invoices = pgTable(
   'invoices',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id),
     entityId: uuid('entity_id').references(() => legalEntities.id),
     purchaseOrderId: uuid('purchase_order_id').references(() => purchaseOrders.id),
-    vendorId: uuid('vendor_id').notNull().references(() => vendors.id),
+    vendorId: uuid('vendor_id')
+      .notNull()
+      .references(() => vendors.id),
     invoiceNumber: varchar('invoice_number', { length: 100 }).notNull(),
     internalNumber: varchar('internal_number', { length: 50 }).notNull().unique(),
     status: varchar('status', { length: 30 }).notNull().default('draft'),
     invoiceDate: timestamp('invoice_date', { withTimezone: true }).notNull(),
     dueDate: timestamp('due_date', { withTimezone: true }),
     paymentTerms: varchar('payment_terms', { length: 20 }),
-    earlyPaymentDiscountPercent: numeric('early_payment_discount_percent', { precision: 5, scale: 2 }),
+    earlyPaymentDiscountPercent: numeric('early_payment_discount_percent', {
+      precision: 5,
+      scale: 2,
+    }),
     earlyPaymentDiscountBy: date('early_payment_discount_by'),
     paidAt: timestamp('paid_at', { withTimezone: true }),
     paymentReference: varchar('payment_reference', { length: 255 }),
@@ -32,7 +50,9 @@ export const invoices = pgTable(
     exchangeRate: numeric('exchange_rate', { precision: 18, scale: 8 }).notNull().default('1'),
     baseSubtotal: numeric('base_subtotal', { precision: 14, scale: 2 }).notNull().default('0'),
     baseTaxAmount: numeric('base_tax_amount', { precision: 14, scale: 2 }).notNull().default('0'),
-    baseTotalAmount: numeric('base_total_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    baseTotalAmount: numeric('base_total_amount', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
     documentId: uuid('document_id'),
     matchStatus: varchar('match_status', { length: 20 }).notNull().default('unmatched'),
     matchDetails: jsonb('match_details').default({}),
@@ -44,6 +64,10 @@ export const invoices = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    idOrganization: uniqueIndex('invoices_id_organization_id_unique').on(
+      table.id,
+      table.organizationId,
+    ),
     createdByOrganizationFk: foreignKey({
       columns: [table.createdBy, table.organizationId],
       foreignColumns: [users.id, users.organizationId],
@@ -54,7 +78,9 @@ export const invoices = pgTable(
 
 export const invoiceLines = pgTable('invoice_lines', {
   id: uuid('id').primaryKey().defaultRandom(),
-  invoiceId: uuid('invoice_id').notNull().references(() => invoices.id),
+  invoiceId: uuid('invoice_id')
+    .notNull()
+    .references(() => invoices.id),
   poLineId: uuid('po_line_id').references(() => poLines.id),
   lineNumber: numeric('line_number').notNull(),
   taxCodeId: uuid('tax_code_id').references(() => taxCodes.id),
@@ -74,13 +100,19 @@ export const invoiceLines = pgTable('invoice_lines', {
 
 export const matchResults = pgTable('match_results', {
   id: uuid('id').primaryKey().defaultRandom(),
-  invoiceLineId: uuid('invoice_line_id').notNull().references(() => invoiceLines.id),
-  poLineId: uuid('po_line_id').notNull().references(() => poLines.id),
+  invoiceLineId: uuid('invoice_line_id')
+    .notNull()
+    .references(() => invoiceLines.id),
+  poLineId: uuid('po_line_id')
+    .notNull()
+    .references(() => poLines.id),
   grnLineId: uuid('grn_line_id').references(() => goodsReceiptLines.id),
   priceMatch: boolean('price_match').notNull().default(false),
   quantityMatch: boolean('quantity_match').notNull().default(false),
   priceVariance: numeric('price_variance', { precision: 14, scale: 2 }).notNull().default('0'),
-  quantityVariance: numeric('quantity_variance', { precision: 10, scale: 2 }).notNull().default('0'),
+  quantityVariance: numeric('quantity_variance', { precision: 10, scale: 2 })
+    .notNull()
+    .default('0'),
   variancePct: numeric('variance_pct', { precision: 5, scale: 2 }).notNull().default('0'),
   status: varchar('status', { length: 20 }).notNull().default('exception'), // match|within_tolerance|exception
   toleranceApplied: numeric('tolerance_applied', { precision: 5, scale: 2 }),

@@ -5,8 +5,25 @@ import type { Db } from '@betterspend/db';
 import { invoices, invoiceLines, matchResults } from '@betterspend/db';
 
 // Configurable tolerances
-const PRICE_TOLERANCE_PCT = 2;   // 2% price variance allowed
-const QTY_TOLERANCE_PCT = 5;     // 5% quantity variance allowed
+const PRICE_TOLERANCE_PCT = 2; // 2% price variance allowed
+const QTY_TOLERANCE_PCT = 5; // 5% quantity variance allowed
+
+interface OverallLineMatch {
+  status: string;
+  grnLineId: string | null;
+  invoicedQuantity: number;
+}
+
+export function overallInvoiceMatchStatus(lineResults: OverallLineMatch[]): string {
+  const hasException = lineResults.some((result) => result.status === 'exception');
+  const allMatch =
+    lineResults.length > 0 &&
+    lineResults.every(
+      (result) =>
+        result.status === 'match' && result.grnLineId !== null && result.invoicedQuantity > 0,
+    );
+  return allMatch ? 'full_match' : hasException ? 'exception' : 'partial_match';
+}
 
 @Injectable()
 export class MatchingService {
@@ -32,7 +49,8 @@ export class MatchingService {
 
     if (!invoice || !invoice.purchaseOrder) {
       // No PO linked — mark as unmatched
-      await this.db.update(invoices)
+      await this.db
+        .update(invoices)
         .set({ matchStatus: 'unmatched', updatedAt: new Date() })
         .where(eq(invoices.id, invoiceId));
       return { matchStatus: 'unmatched', lineResults: [] };
@@ -53,6 +71,7 @@ export class MatchingService {
       quantityVariance: number;
       variancePct: number;
       grnLineId: string | null;
+      invoicedQuantity: number;
     }> = [];
 
     for (const invLine of invoice.lines as any[]) {
@@ -68,6 +87,7 @@ export class MatchingService {
           quantityVariance: 0,
           variancePct: 0,
           grnLineId: null,
+          invoicedQuantity: parseFloat(invLine.quantity),
         });
         continue;
       }
@@ -86,15 +106,19 @@ export class MatchingService {
 
       const invoicedQty = parseFloat(invLine.quantity);
       const qtyVariance = Math.abs(invoicedQty - totalReceived);
-      const qtyVariancePct = totalReceived > 0 ? (qtyVariance / totalReceived) * 100 : invoicedQty > 0 ? 100 : 0;
+      const qtyVariancePct =
+        totalReceived > 0 ? (qtyVariance / totalReceived) * 100 : invoicedQty > 0 ? 100 : 0;
       const quantityMatch = qtyVariancePct <= QTY_TOLERANCE_PCT;
 
       // Find the GRN line (use first matching one for FK reference)
       const grnLine = allGrnLines.find((gl: any) => gl.poLineId === poLine.id) ?? null;
 
-      const status = priceMatch && quantityMatch ? 'match'
-        : (priceVariancePct <= PRICE_TOLERANCE_PCT * 3 && qtyVariancePct <= QTY_TOLERANCE_PCT * 3) ? 'within_tolerance'
-        : 'exception';
+      const status =
+        priceMatch && quantityMatch
+          ? 'match'
+          : priceVariancePct <= PRICE_TOLERANCE_PCT * 3 && qtyVariancePct <= QTY_TOLERANCE_PCT * 3
+            ? 'within_tolerance'
+            : 'exception';
 
       lineResults.push({
         invoiceLineId: invLine.id,
@@ -106,6 +130,7 @@ export class MatchingService {
         quantityVariance: qtyVariance,
         variancePct: Math.max(priceVariancePct, qtyVariancePct),
         grnLineId: grnLine?.id ?? null,
+        invoicedQuantity: invoicedQty,
       });
     }
 
@@ -131,9 +156,7 @@ export class MatchingService {
     }
 
     // Overall invoice match status
-    const hasException = lineResults.some((r) => r.status === 'exception');
-    const allMatch = lineResults.every((r) => r.status === 'match');
-    const matchStatus = allMatch ? 'full_match' : hasException ? 'exception' : 'partial_match';
+    const matchStatus = overallInvoiceMatchStatus(lineResults);
 
     const matchDetails = {
       priceTolerance: PRICE_TOLERANCE_PCT,
@@ -146,7 +169,8 @@ export class MatchingService {
       })),
     };
 
-    await this.db.update(invoices)
+    await this.db
+      .update(invoices)
       .set({ matchStatus, matchDetails, updatedAt: new Date() })
       .where(eq(invoices.id, invoiceId));
 

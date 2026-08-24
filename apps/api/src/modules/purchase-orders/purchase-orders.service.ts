@@ -358,6 +358,7 @@ export class PurchaseOrdersService {
       currency: po.currency,
       fiscalYear: linkedRequisition?.createdAt.getUTCFullYear() ?? po.createdAt.getUTCFullYear(),
       excludeRequisitionId: linkedRequisition?.id,
+      excludePurchaseOrderId: po.id,
     };
     const outcome = await this.budgets.withEnforcementLock(
       enforcementInput,
@@ -409,6 +410,7 @@ export class PurchaseOrdersService {
           )
           .returning();
         if (!issued) throw new BadRequestException('Purchase order status changed before issuance');
+        await this.budgets.commitPurchaseOrder(tx, organizationId, id);
         if (sanctionsWarning) {
           await tx.insert(auditLog).values({
             organizationId,
@@ -511,7 +513,7 @@ export class PurchaseOrdersService {
       throw new BadRequestException(`Cannot create change order for ${po.status} PO`);
     }
 
-    return this.db.transaction(async (tx) => {
+    await this.db.transaction(async (tx) => {
       // Snapshot current state before modifying
       await tx.insert(poVersions).values({
         purchaseOrderId: id,
@@ -631,6 +633,7 @@ export class PurchaseOrdersService {
           })
           .where(eq(purchaseOrders.id, id));
       }
+      await this.budgets.reducePurchaseOrderCommitment(tx, organizationId, id);
     });
 
     return this.findOne(id, organizationId);
@@ -641,11 +644,15 @@ export class PurchaseOrdersService {
     if (['closed', 'cancelled', 'received', 'invoiced'].includes(po.status)) {
       throw new BadRequestException(`Cannot cancel a ${po.status} PO`);
     }
-    const [updated] = await this.db
-      .update(purchaseOrders)
-      .set({ status: 'cancelled', updatedAt: new Date() })
-      .where(eq(purchaseOrders.id, id))
-      .returning();
+    const updated = await this.db.transaction(async (tx) => {
+      const [transitioned] = await tx
+        .update(purchaseOrders)
+        .set({ status: 'cancelled', updatedAt: new Date() })
+        .where(and(eq(purchaseOrders.id, id), eq(purchaseOrders.organizationId, organizationId)))
+        .returning();
+      await this.budgets.releasePurchaseOrder(tx, organizationId, id, 'cancelled');
+      return transitioned;
+    });
     this.webhookEvents.emit(organizationId, 'po.cancelled', { purchaseOrderId: id });
     this.audit.log(organizationId, null, 'purchase_order', id, 'cancelled').catch(() => {});
     return updated;

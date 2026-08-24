@@ -6,6 +6,7 @@ import type { WebhookEventService } from '../webhooks/webhook-event.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { ApprovalDelegationsService } from '../approval-delegations/approval-delegations.service';
 import type { SettingsService } from '../settings/settings.service';
+import type { BudgetsService } from '../budgets/budgets.service';
 import { ApprovalEngineService } from './approval-engine.service';
 
 function createService(
@@ -24,11 +25,14 @@ function createService(
   const approvalActionValues: Array<Record<string, unknown>> = [];
   const updateValues: Array<Record<string, unknown>> = [];
   const emitted: Array<Record<string, unknown>> = [];
+  const commitmentActions: string[] = [];
   const transaction = {
     query: {
       approvalRules: {
         findFirst: async () => (ruleSteps.length > 0 ? { steps: ruleSteps } : null),
       },
+      requisitions: { findFirst: async () => ({ id: 'requisition-1' }) },
+      purchaseOrders: { findFirst: async () => ({ id: 'purchase-order-1' }) },
       users: {
         findFirst: async () => ({ id: 'role-approver', userRoles: actorRoles }),
       },
@@ -60,7 +64,9 @@ function createService(
       return {
         set(values: Record<string, unknown>) {
           updateValues.push(values);
-          return { where: async () => [] };
+          return {
+            where: () => ({ returning: async () => [{ id: 'transitioned-entity' }] }),
+          };
         },
       };
     },
@@ -104,6 +110,11 @@ function createService(
         getActiveDelegatee: async () => delegatedApproverId,
       } as unknown as ApprovalDelegationsService)
     : (undefined as unknown as ApprovalDelegationsService);
+  const budgets = {
+    recordRequisitionApproval: async () => commitmentActions.push('reserved'),
+    releaseRequisition: async () => commitmentActions.push('released'),
+    releasePurchaseOrder: async () => commitmentActions.push('po_released'),
+  } as unknown as BudgetsService;
 
   return {
     approvalRequestValues,
@@ -116,7 +127,9 @@ function createService(
       undefined as unknown as NotificationsService,
       delegations,
       settings,
+      budgets,
     ),
+    commitmentActions,
   };
 }
 
@@ -208,6 +221,8 @@ describe('ApprovalEngineService required approvals', () => {
   it('rejects actions from anyone except the owner at the required step', async () => {
     const { service } = createService([], {
       id: 'approval-request-1',
+      approvableType: 'requisition',
+      approvableId: 'requisition-1',
       status: 'pending',
       approvalRuleId: null,
       currentStep: 1,
@@ -216,13 +231,19 @@ describe('ApprovalEngineService required approvals', () => {
     });
 
     await assert.rejects(
-      service.processAction('approval-request-1', 'different-user', 'approve'),
+      service.processAction(
+        'approval-request-1',
+        'different-user',
+        'approve',
+        undefined,
+        'organization-1',
+      ),
       /assigned to the budget owner/,
     );
   });
 
   it('allows an active delegate to act at the required owner step', async () => {
-    const { service, updateValues } = createService(
+    const { commitmentActions, service, updateValues } = createService(
       [],
       {
         id: 'approval-request-1',
@@ -249,6 +270,31 @@ describe('ApprovalEngineService required approvals', () => {
 
     assert.deepEqual(result, { status: 'approved' });
     assert.ok(updateValues.some((values) => values.status === 'approved'));
+    assert.deepEqual(commitmentActions, ['reserved']);
+  });
+
+  it('releases the linked budget commitment when a purchase order is rejected', async () => {
+    const { commitmentActions, service } = createService([], {
+      id: 'approval-request-1',
+      approvableType: 'purchase_order',
+      approvableId: 'purchase-order-1',
+      status: 'pending',
+      approvalRuleId: null,
+      currentStep: 1,
+      requiredApprovalStep: 1,
+      requiredApproverId: 'owner-1',
+    });
+
+    const result = await service.processAction(
+      'approval-request-1',
+      'owner-1',
+      'reject',
+      undefined,
+      'organization-1',
+    );
+
+    assert.deepEqual(result, { status: 'rejected' });
+    assert.deepEqual(commitmentActions, ['po_released']);
   });
 
   it('advances the final rule step into the required owner step', async () => {
@@ -269,7 +315,13 @@ describe('ApprovalEngineService required approvals', () => {
       },
     );
 
-    const result = await service.processAction('approval-request-1', 'rule-approver', 'approve');
+    const result = await service.processAction(
+      'approval-request-1',
+      'rule-approver',
+      'approve',
+      undefined,
+      'organization-1',
+    );
 
     assert.deepEqual(result, { status: 'pending', advancedToStep: 5 });
     assert.ok(updateValues.some((values) => values.currentStep === 5));
@@ -291,7 +343,13 @@ describe('ApprovalEngineService required approvals', () => {
     });
 
     await assert.rejects(
-      service.processAction('approval-request-1', 'different-user', 'approve'),
+      service.processAction(
+        'approval-request-1',
+        'different-user',
+        'approve',
+        undefined,
+        'organization-1',
+      ),
       /assigned to another approver/,
     );
   });
@@ -310,7 +368,13 @@ describe('ApprovalEngineService required approvals', () => {
     );
 
     await assert.rejects(
-      service.processAction('approval-request-1', 'assigned-approver', 'approve'),
+      service.processAction(
+        'approval-request-1',
+        'assigned-approver',
+        'approve',
+        undefined,
+        'organization-1',
+      ),
       /no longer configured/,
     );
     assert.equal(approvalActionValues.length, 0);
@@ -327,7 +391,13 @@ describe('ApprovalEngineService required approvals', () => {
     });
 
     await assert.rejects(
-      service.processAction('approval-request-1', 'arbitrary-user', 'approve'),
+      service.processAction(
+        'approval-request-1',
+        'arbitrary-user',
+        'approve',
+        undefined,
+        'organization-1',
+      ),
       /no assigned approver/,
     );
     assert.equal(approvalActionValues.length, 0);
@@ -372,7 +442,13 @@ describe('ApprovalEngineService required approvals', () => {
       requiredApproverId: 'owner-1',
     });
 
-    const result = await service.processAction('approval-request-1', 'owner-1', 'approve');
+    const result = await service.processAction(
+      'approval-request-1',
+      'owner-1',
+      'approve',
+      undefined,
+      'organization-1',
+    );
 
     assert.deepEqual(result, { status: 'approved' });
     assert.ok(updateValues.some((values) => values.status === 'approved'));

@@ -1,5 +1,12 @@
 import {
-  Controller, Get, Post, Param, Body, ParseUUIDPipe, HttpCode, HttpStatus,
+  Controller,
+  Get,
+  Post,
+  Param,
+  Body,
+  ParseUUIDPipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ApprovalEngineService } from './approval-engine.service';
@@ -25,8 +32,8 @@ export class ApprovalsController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get approval request detail' })
-  getRequest(@Param('id', ParseUUIDPipe) id: string) {
-    return this.approvalEngineService.getRequest(id);
+  getRequest(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
+    return this.approvalEngineService.getRequest(id, orgId);
   }
 
   @Post(':id/approve')

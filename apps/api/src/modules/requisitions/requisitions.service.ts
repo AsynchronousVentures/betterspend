@@ -1,5 +1,5 @@
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import { SequenceService } from '../../common/services/sequence.service';
 import { ApprovalEngineService } from '../approvals/approval-engine.service';
@@ -232,11 +232,25 @@ export class RequisitionsService {
       throw new BadRequestException(`Cannot cancel a ${req.status} requisition`);
     }
 
-    const [updated] = await this.db
-      .update(requisitions)
-      .set({ status: 'cancelled', updatedAt: new Date() })
-      .where(eq(requisitions.id, id))
-      .returning();
+    const updated = await this.db.transaction(async (tx) => {
+      const [transitioned] = await tx
+        .update(requisitions)
+        .set({ status: 'cancelled', updatedAt: new Date() })
+        .where(
+          and(
+            eq(requisitions.id, id),
+            eq(requisitions.organizationId, organizationId),
+            ne(requisitions.status, 'cancelled'),
+            ne(requisitions.status, 'converted'),
+          ),
+        )
+        .returning();
+      if (!transitioned) {
+        throw new BadRequestException('Requisition status changed before cancellation');
+      }
+      await this.budgets.releaseRequisition(tx, organizationId, id, 'cancelled');
+      return transitioned;
+    });
     this.audit.log(organizationId, null, 'requisition', id, 'cancelled').catch(() => {});
     return updated;
   }
