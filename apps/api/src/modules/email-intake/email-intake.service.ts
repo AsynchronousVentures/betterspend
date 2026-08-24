@@ -30,6 +30,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { SettingsService } from '../settings/settings.service';
 import {
   assessSenderRisk,
+  allowsAttachmentPromotion,
+  allowsAutomaticReply,
   classifySender,
   decideAttachment,
   emailDomain,
@@ -166,25 +168,33 @@ export class EmailIntakeService implements OnModuleInit {
     } catch (error: unknown) {
       throw new BadRequestException(error instanceof Error ? error.message : 'Invalid SES receipt');
     }
-    if (!receipt.rawStorageKey.startsWith(this.rawStoragePrefix())) {
-      throw new BadRequestException('rawStorageKey is outside the configured SES prefix');
-    }
+    this.assertRawStorageKey(receipt);
 
     const organizationId = await this.resolveReceiptOrganization(receipt.recipients);
-
-    const existing = await this.db.query.emailIntakeMessages.findFirst({
-      where: (message, { and, eq }) =>
-        and(
-          eq(message.organizationId, organizationId),
-          eq(message.sesMessageId, receipt.messageId),
-        ),
-      columns: { id: true },
-    });
-    if (existing) return { accepted: true, duplicate: true, messageId: existing.id };
-
     const jobId = createHash('sha256')
       .update(`${organizationId}:${receipt.messageId}`)
       .digest('hex');
+
+    const [existing, priorJob] = await Promise.all([
+      this.db.query.emailIntakeMessages.findFirst({
+        where: (message, { and, eq }) =>
+          and(
+            eq(message.organizationId, organizationId),
+            eq(message.sesMessageId, receipt.messageId),
+          ),
+        columns: { id: true },
+      }),
+      this.intakeQueue.getJob(jobId),
+    ]);
+    const priorState = priorJob ? await priorJob.getState() : 'unknown';
+    const restartTerminalJob =
+      priorJob !== undefined &&
+      (priorState === 'failed' || (priorState === 'completed' && !existing));
+    if (restartTerminalJob) await priorJob.remove();
+    if (existing && !restartTerminalJob) {
+      return { accepted: true, duplicate: true, messageId: existing.id };
+    }
+
     await this.intakeQueue.add(
       'process-ses-receipt',
       { receipt },
@@ -196,15 +206,13 @@ export class EmailIntakeService implements OnModuleInit {
         removeOnFail: { age: 30 * 24 * 60 * 60 },
       },
     );
-    return { accepted: true, duplicate: false, jobId };
+    return { accepted: true, duplicate: existing !== undefined, jobId };
   }
 
   async processSesReceipt(jobData: EmailIntakeJobData): Promise<void> {
     // Redis is a transport, not an authority. Revalidate and re-resolve the tenant at the sink.
     const receipt = normalizeSesReceipt(jobData.receipt);
-    if (!receipt.rawStorageKey.startsWith(this.rawStoragePrefix())) {
-      throw new BadRequestException('rawStorageKey is outside the configured SES prefix');
-    }
+    this.assertRawStorageKey(receipt);
     const organizationId = await this.resolveReceiptOrganization(receipt.recipients);
     const messageId = this.stableUuid('message', organizationId, receipt.messageId);
 
@@ -219,6 +227,7 @@ export class EmailIntakeService implements OnModuleInit {
         sourceEmail: true,
         envelopeSource: true,
         subject: true,
+        authVerdicts: true,
       },
     });
 
@@ -233,12 +242,17 @@ export class EmailIntakeService implements OnModuleInit {
     ).slice(0, 255);
     const subject = (persisted?.subject || parsed.subject || receipt.subject).trim().slice(0, 500);
     const envelopeSource = persisted?.envelopeSource ?? receipt.source;
+    const verdicts = persisted?.authVerdicts ?? receipt.verdicts;
     const body = this.messageBody(parsed.text).slice(0, 100_000);
+    const allowAutomaticReply = allowsAutomaticReply(
+      verdicts.dmarc,
+      parsed.headers.get('auto-submitted'),
+    );
 
     let topLevelIndex = 0;
     const attachments: PreparedAttachment[] = [];
     for (const attachment of parsed.attachments) {
-      const decision = decideAttachment(
+      let decision = decideAttachment(
         {
           filename: attachment.filename,
           contentType: attachment.contentType,
@@ -249,6 +263,14 @@ export class EmailIntakeService implements OnModuleInit {
         topLevelIndex,
       );
       if (decision.status === 'ignored') continue;
+      if (decision.status === 'accepted' && !allowsAttachmentPromotion(verdicts)) {
+        decision = {
+          status: 'rejected',
+          reason: 'virus_scan_not_passed',
+          filename: decision.filename,
+          contentType: decision.contentType,
+        };
+      }
       const attachmentIndex = topLevelIndex;
       topLevelIndex += 1;
       attachments.push({
@@ -278,7 +300,10 @@ export class EmailIntakeService implements OnModuleInit {
         attachment.invoiceNumberHint !== null &&
         normalizedInvoiceNumbers.has(normalizeInvoiceNumber(attachment.invoiceNumberHint)),
     );
-    const initialRisk = assessSenderRisk(classification, receipt.verdicts, fuzzyDuplicate);
+    const initialRisk = assessSenderRisk(classification, verdicts, fuzzyDuplicate);
+    if (verdicts.virus !== 'PASS') {
+      initialRisk.signals.push(`attachments:virus_${verdicts.virus.toLowerCase()}`);
+    }
     if (attachments.length === 0) initialRisk.signals.push('attachments:none');
 
     const result = await this.db.transaction(async (tx) => {
@@ -421,7 +446,7 @@ export class EmailIntakeService implements OnModuleInit {
         recipients: receipt.recipients,
         subject,
         receivedAt: new Date(receipt.receivedAt),
-        authVerdicts: receipt.verdicts,
+        authVerdicts: verdicts,
         senderClassification: classification,
         vendorId,
         riskScore: initialRisk.score,
@@ -534,7 +559,9 @@ export class EmailIntakeService implements OnModuleInit {
       result.status,
       result.riskScore,
     );
-    await this.replyToRejectedAttachments(organizationId, envelopeSource, subject, result.outcomes);
+    if (allowAutomaticReply) {
+      await this.replyToRejectedAttachments(organizationId, sourceEmail, subject, result.outcomes);
+    }
   }
 
   async create(organizationId: string, input: CreateEmailIntakeInput) {
@@ -613,6 +640,12 @@ export class EmailIntakeService implements OnModuleInit {
       throw new ServiceUnavailableException('EMAIL_INTAKE_RAW_PREFIX is too long');
     }
     return prefix;
+  }
+
+  private assertRawStorageKey(receipt: NormalizedSesReceipt): void {
+    if (receipt.rawStorageKey !== `${this.rawStoragePrefix()}${receipt.messageId}`) {
+      throw new BadRequestException('rawStorageKey must match the configured SES message key');
+    }
   }
 
   private intakeDomain(): string {

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   MAX_EMAIL_ATTACHMENT_BYTES,
+  allowsAttachmentPromotion,
+  allowsAutomaticReply,
   assessSenderRisk,
   classifySender,
   decideAttachment,
@@ -21,7 +23,7 @@ describe('email intake policy', () => {
         source: 'billing@vendor.test',
         destination: ['opaque@inbound.test'],
         timestamp: '2026-08-24T12:00:00Z',
-        commonHeaders: { subject: 'Invoice 123' },
+        commonHeaders: { from: ['attacker@spoofed.test'], subject: 'Invoice 123' },
       },
       receipt: {
         recipients: ['opaque@inbound.test'],
@@ -35,6 +37,7 @@ describe('email intake policy', () => {
     });
 
     assert.equal(receipt.messageId, 'ses-123');
+    assert.equal(receipt.source, 'billing@vendor.test');
     assert.equal(receipt.rawStorageKey, 'email-intake/raw/ses-123');
     assert.deepEqual(receipt.recipients, ['opaque@inbound.test']);
     assert.equal(receipt.verdicts.spf, 'FAIL');
@@ -94,6 +97,20 @@ describe('email intake policy', () => {
       'dmarc:gray',
       'duplicate:vendor_invoice_number',
     ]);
+  });
+
+  it('requires a passing virus verdict before promoting attachments', () => {
+    assert.equal(allowsAttachmentPromotion(passVerdicts), true);
+    assert.equal(allowsAttachmentPromotion({ ...passVerdicts, virus: 'FAIL' }), false);
+    assert.equal(allowsAttachmentPromotion({ ...passVerdicts, virus: 'UNKNOWN' }), false);
+  });
+
+  it('allows automatic replies only for DMARC-aligned human mail', () => {
+    assert.equal(allowsAutomaticReply('PASS', undefined), true);
+    assert.equal(allowsAutomaticReply('PASS', 'no'), true);
+    assert.equal(allowsAutomaticReply('FAIL', undefined), false);
+    assert.equal(allowsAutomaticReply('PASS', 'auto-replied'), false);
+    assert.equal(allowsAutomaticReply('PASS', {}), false);
   });
 
   it('accepts allowed document bytes and ignores inline images', () => {

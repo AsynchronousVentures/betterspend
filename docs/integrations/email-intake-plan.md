@@ -24,7 +24,7 @@ Use this receipt-rule order:
 
 The `email-intake` worker parses raw MIME and considers non-inline attachments only. It accepts PDF, PNG, JPG, and WebP bytes, regardless of a misleading declared content type. It rejects archives, encrypted PDFs, files over 25 MB, and attachments after the first 10. Archive and encrypted-PDF rejections produce a sender reply when organization SMTP is configured.
 
-SES spam, virus, SPF, DKIM, and DMARC verdicts are stored as risk signals. Authentication failures raise risk but do not reject the message. Sender trust is ranked as known vendor domain, employee domain, then unknown domain.
+SES spam, virus, SPF, DKIM, and DMARC verdicts are stored as risk signals. Authentication failures raise risk but do not reject the message. Attachments are promoted only after a `PASS` virus verdict; otherwise the raw message remains quarantined and its attachment outcomes are rejected. Sender trust is ranked as known vendor domain, employee domain, then unknown domain.
 
 Accepted file hashes are deduplicated exactly within the organization. A normalized vendor and invoice-number match against existing invoices is recorded as a fuzzy duplicate risk signal and remains in human review.
 

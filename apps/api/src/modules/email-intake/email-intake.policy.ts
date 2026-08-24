@@ -125,7 +125,7 @@ export function normalizeSesReceipt(payload: unknown): NormalizedSesReceipt {
   return {
     messageId: requiredString(root.messageId ?? mail?.messageId, 'messageId', 255),
     source: requiredString(
-      root.source ?? root.sourceEmail ?? fromHeader ?? mail?.source,
+      root.source ?? root.sourceEmail ?? mail?.source ?? fromHeader,
       'source',
       255,
     ),
@@ -203,6 +203,20 @@ export function assessSenderRisk(
   }
 
   return { score: Math.min(score, 100), signals };
+}
+
+export function allowsAttachmentPromotion(verdicts: SesAuthVerdicts): boolean {
+  return verdicts.virus === 'PASS';
+}
+
+export function allowsAutomaticReply(dmarcVerdict: string, autoSubmitted: unknown): boolean {
+  if (dmarcVerdict !== 'PASS') return false;
+  if (autoSubmitted === undefined) return true;
+  const values = Array.isArray(autoSubmitted) ? autoSubmitted : [autoSubmitted];
+  return (
+    values.length > 0 &&
+    values.every((value) => typeof value === 'string' && value.trim().toLowerCase() === 'no')
+  );
 }
 
 function archiveMagic(content: Buffer): boolean {
