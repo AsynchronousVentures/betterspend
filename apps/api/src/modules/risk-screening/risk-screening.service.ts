@@ -74,10 +74,7 @@ export class RiskScreeningService {
     if (!response.ok) {
       throw new Error(`Sanctions list download failed with HTTP ${response.status}`);
     }
-    const csv = await readResponseTextWithLimit(
-      response,
-      RiskScreeningService.MAX_INGEST_BYTES,
-    );
+    const csv = await readResponseTextWithLimit(response, RiskScreeningService.MAX_INGEST_BYTES);
     const { entries: rows, skipped } = parseSdnCsv(csv);
     if (
       rows.length < RiskScreeningService.MIN_INGEST_ENTRIES ||
@@ -163,19 +160,11 @@ export class RiskScreeningService {
   ) {
     return this.db.transaction(async (tx) => {
       const entries = await this.lockAndLoadEntries(tx);
-      return this.screenVendorInTransaction(
-        tx,
-        organizationId,
-        vendorId,
-        screenedBy,
-        entries,
-      );
+      return this.screenVendorInTransaction(tx, organizationId, vendorId, screenedBy, entries);
     });
   }
 
-  private async lockAndLoadEntries(
-    tx: RiskScreeningTransaction,
-  ): Promise<SanctionEntryRow[]> {
+  private async lockAndLoadEntries(tx: RiskScreeningTransaction): Promise<SanctionEntryRow[]> {
     const registry = await tx.select().from(sanctionsRegistryState).for('share');
     if (registry.length === 0) {
       throw new BadRequestException('Sanctions registry has not been ingested');
@@ -450,8 +439,9 @@ function parseSdnCsv(csv: string): {
   for (const line of lines) {
     const cells = splitCsvLine(line);
     const candidate = cells[1]?.trim() ?? '';
-    // Header row or malformed line: names are non-empty alphabetic-ish values
-    // and never the literal header token.
+    const isHeader = /^ent_num$/i.test(cells[0]?.trim() ?? '') && /^sdn_name$/i.test(candidate);
+    if (isHeader) continue;
+    // Malformed data rows are counted so ingestion cannot silently discard them.
     const looksLikeName =
       candidate.length > 1 &&
       /[A-Za-z\u00C0-\u024F]/.test(candidate) &&

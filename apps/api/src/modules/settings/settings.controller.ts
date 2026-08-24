@@ -1,7 +1,14 @@
-import { Controller, Get, Put, Body } from '@nestjs/common';
+import { Body, Controller, Get, Put, Req, UnauthorizedException } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import type { Request } from 'express';
 import { SettingsService } from './settings.service';
-import { brandingSettingsSchema, smtpSettingsSchema, approvalPolicySettingsSchema, contractComplianceSettingsSchema, riskScreeningSettingsSchema } from '@betterspend/shared';
+import {
+  brandingSettingsSchema,
+  smtpSettingsSchema,
+  approvalPolicySettingsSchema,
+  contractComplianceSettingsSchema,
+  riskScreeningSettingsSchema,
+} from '@betterspend/shared';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { Public } from '../../common/decorators/public.decorator';
@@ -64,7 +71,11 @@ export class SettingsController {
     @Body() body: unknown,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
+    @Req() request: Request,
   ) {
+    if (!request.authUser) {
+      throw new UnauthorizedException('Authentication is required');
+    }
     const parsed = riskScreeningSettingsSchema.parse(body);
     return this.settingsService.updateManyWithAudit(
       orgId,

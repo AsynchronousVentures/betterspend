@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
+import { manualSanctionsReviewSchema } from '@betterspend/shared';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
 import { Alert, AlertDescription } from '../../components/ui/alert';
@@ -50,15 +51,22 @@ export default function RiskScreeningPage() {
   const [reviewNote, setReviewNote] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const loadRequestId = useRef(0);
 
   async function load() {
+    const requestId = ++loadRequestId.current;
     setLoading(true);
     try {
-      setVendors(await api.riskScreening.list());
+      const nextVendors = await api.riskScreening.list();
+      if (requestId === loadRequestId.current) setVendors(nextVendors);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Failed to load screening status');
+      if (requestId === loadRequestId.current) {
+        setError(
+          loadError instanceof Error ? loadError.message : 'Failed to load screening status',
+        );
+      }
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestId.current) setLoading(false);
     }
   }
 
@@ -121,11 +129,12 @@ export default function RiskScreeningPage() {
   }
 
   async function submitManualReview() {
-    if (!reviewVendor || !reviewNote.trim()) return;
+    const parsedReview = manualSanctionsReviewSchema.safeParse({ note: reviewNote.trim() });
+    if (!reviewVendor || !parsedReview.success) return;
     setBusyVendorId(reviewVendor.id);
     setError('');
     try {
-      await api.riskScreening.manualReview(reviewVendor.id, reviewNote.trim());
+      await api.riskScreening.manualReview(reviewVendor.id, parsedReview.data.note);
       setMessage(`${reviewVendor.name} marked as manually reviewed.`);
       setReviewVendor(null);
       setReviewNote('');
@@ -144,6 +153,9 @@ export default function RiskScreeningPage() {
   }
 
   const flaggedCount = vendors.filter((v) => v.sanctionsStatus === 'flagged').length;
+  const reviewNoteIsValid = manualSanctionsReviewSchema.safeParse({
+    note: reviewNote.trim(),
+  }).success;
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -186,13 +198,17 @@ export default function RiskScreeningPage() {
       <div className="grid gap-4 md:grid-cols-3">
         <Card className="rounded-lg">
           <CardContent className="p-5">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Flagged vendors</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              Flagged vendors
+            </div>
             <div className="mt-2 text-3xl font-semibold text-foreground">{flaggedCount}</div>
           </CardContent>
         </Card>
         <Card className="rounded-lg">
           <CardContent className="p-5">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Untested vendors</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              Untested vendors
+            </div>
             <div className="mt-2 text-3xl font-semibold text-foreground">
               {vendors.filter((v) => v.sanctionsStatus === 'untested').length}
             </div>
@@ -200,13 +216,13 @@ export default function RiskScreeningPage() {
         </Card>
         <Card className="rounded-lg">
           <CardContent className="p-5 space-y-3">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">PO policy</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              PO policy
+            </div>
             <p className="text-sm text-muted-foreground">
-              Flagged vendors are blocked from new POs when
-              {' '}
-              <span className="font-mono text-xs">block_pos_for_flagged_vendors</span>
-              {' '}
-              is enabled in settings; otherwise POs warn only.
+              Flagged vendors are blocked from new POs when{' '}
+              <span className="font-mono text-xs">block_pos_for_flagged_vendors</span> is enabled in
+              settings; otherwise POs warn only.
             </p>
           </CardContent>
         </Card>
@@ -217,24 +233,33 @@ export default function RiskScreeningPage() {
           <CardHeader>
             <CardTitle className="text-xl">Manual review: {reviewVendor.name}</CardTitle>
             <CardDescription>
-              Record why this vendor is cleared despite screening results. The decision is audit logged.
+              Record why this vendor is cleared despite screening results. The decision is audit
+              logged.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <Textarea
               value={reviewNote}
               onChange={(event) => setReviewNote(event.target.value)}
+              maxLength={5000}
               rows={3}
               placeholder="Required justification for clearing this vendor"
             />
             <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => { setReviewVendor(null); setReviewNote(''); }}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setReviewVendor(null);
+                  setReviewNote('');
+                }}
+              >
                 Cancel
               </Button>
               <Button
                 type="button"
                 onClick={submitManualReview}
-                disabled={!reviewNote.trim() || busyVendorId === reviewVendor.id}
+                disabled={!reviewNoteIsValid || busyVendorId === reviewVendor.id}
               >
                 {busyVendorId === reviewVendor.id ? 'Saving...' : 'Save Decision'}
               </Button>
@@ -246,13 +271,17 @@ export default function RiskScreeningPage() {
       <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Vendor Screening Status</CardTitle>
-          <CardDescription>Current sanctions status per vendor across the organization.</CardDescription>
+          <CardDescription>
+            Current sanctions status per vendor across the organization.
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
             <div className="px-6 py-14 text-center text-sm text-muted-foreground">Loading...</div>
           ) : vendors.length === 0 ? (
-            <div className="px-6 py-14 text-center text-sm text-muted-foreground">No vendors found.</div>
+            <div className="px-6 py-14 text-center text-sm text-muted-foreground">
+              No vendors found.
+            </div>
           ) : (
             <Table>
               <TableHeader>
