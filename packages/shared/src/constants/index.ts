@@ -61,3 +61,38 @@ export const SYNC_RECORD_STATUS = {
 } as const;
 
 export type SyncRecordStatus = (typeof SYNC_RECORD_STATUS)[keyof typeof SYNC_RECORD_STATUS];
+
+export const BUDGET_COMMITMENT_EVENT_TYPE = {
+  REQUISITION_RESERVED: 'requisition_reserved',
+  REQUISITION_RELEASED: 'requisition_released',
+  PURCHASE_ORDER_COMMITTED: 'purchase_order_committed',
+  PURCHASE_ORDER_REDUCED: 'purchase_order_reduced',
+  PURCHASE_ORDER_RELEASED: 'purchase_order_released',
+  INVOICE_EXPENDED: 'invoice_expended',
+  LEGACY_COMMITMENT_BACKFILL: 'legacy_commitment_backfill',
+  LEGACY_RESERVATION_BACKFILL: 'legacy_reservation_backfill',
+} as const;
+
+export type BudgetCommitmentEventType =
+  (typeof BUDGET_COMMITMENT_EVENT_TYPE)[keyof typeof BUDGET_COMMITMENT_EVENT_TYPE];
+
+/** Stable idempotency namespaces for runtime budget commitment transitions. */
+export const budgetCommitmentEventKey = {
+  requisitionApproved: (requisitionId: string, transitionedAt: Date) =>
+    `requisition:${requisitionId}:approved:${transitionedAt.getTime()}`,
+  requisitionReleased: (
+    requisitionId: string,
+    reason: 'cancelled' | 'rejected',
+    transitionedAt: Date,
+  ) => `requisition:${requisitionId}:${reason}:${transitionedAt.getTime()}`,
+  purchaseOrderIssued: (purchaseOrderId: string, version: number) =>
+    `purchase_order:${purchaseOrderId}:issued:${version}`,
+  purchaseOrderChanged: (purchaseOrderId: string, version: number) =>
+    `purchase_order:${purchaseOrderId}:change_order:${version}`,
+  purchaseOrderReleased: (
+    purchaseOrderId: string,
+    reason: 'cancelled' | 'rejected',
+    transitionedAt: Date,
+  ) => `purchase_order:${purchaseOrderId}:${reason}:${transitionedAt.getTime()}`,
+  invoiceApproved: (invoiceId: string) => `invoice:${invoiceId}:approved`,
+} as const;

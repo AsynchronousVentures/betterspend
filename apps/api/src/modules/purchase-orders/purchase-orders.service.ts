@@ -410,7 +410,7 @@ export class PurchaseOrdersService {
           )
           .returning();
         if (!issued) throw new BadRequestException('Purchase order status changed before issuance');
-        await this.budgets.commitPurchaseOrder(tx, id);
+        await this.budgets.commitPurchaseOrder(tx, organizationId, id);
         if (sanctionsWarning) {
           await tx.insert(auditLog).values({
             organizationId,
@@ -633,7 +633,7 @@ export class PurchaseOrdersService {
           })
           .where(eq(purchaseOrders.id, id));
       }
-      await this.budgets.reducePurchaseOrderCommitment(tx, id);
+      await this.budgets.reducePurchaseOrderCommitment(tx, organizationId, id);
     });
 
     return this.findOne(id, organizationId);
@@ -650,7 +650,7 @@ export class PurchaseOrdersService {
         .set({ status: 'cancelled', updatedAt: new Date() })
         .where(and(eq(purchaseOrders.id, id), eq(purchaseOrders.organizationId, organizationId)))
         .returning();
-      await this.budgets.releasePurchaseOrder(tx, id, 'cancelled');
+      await this.budgets.releasePurchaseOrder(tx, organizationId, id, 'cancelled');
       return transitioned;
     });
     this.webhookEvents.emit(organizationId, 'po.cancelled', { purchaseOrderId: id });

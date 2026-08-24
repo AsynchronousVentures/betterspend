@@ -158,12 +158,12 @@ export class ApprovalEngineService {
     if (entityType === 'requisition') {
       entity =
         (await executor.query.requisitions.findFirst({
-          where: (r, { eq }) => eq(r.id, entityId),
+          where: (r, { and, eq }) => and(eq(r.id, entityId), eq(r.organizationId, organizationId)),
         })) ?? null;
     } else {
       entity =
         (await executor.query.purchaseOrders.findFirst({
-          where: (p, { eq }) => eq(p.id, entityId),
+          where: (p, { and, eq }) => and(eq(p.id, entityId), eq(p.organizationId, organizationId)),
         })) ?? null;
     }
     if (!entity) throw new NotFoundException(`Entity ${entityId} not found`);
@@ -217,13 +217,20 @@ export class ApprovalEngineService {
           await tx
             .update(requisitions)
             .set({ status: 'approved', updatedAt: new Date() })
-            .where(eq(requisitions.id, entityId));
-          await this.budgets?.recordRequisitionApproval(tx, entityId);
+            .where(
+              and(eq(requisitions.id, entityId), eq(requisitions.organizationId, organizationId)),
+            );
+          await this.budgets?.recordRequisitionApproval(tx, organizationId, entityId);
         } else {
           await tx
             .update(purchaseOrders)
             .set({ status: 'approved', updatedAt: new Date() })
-            .where(eq(purchaseOrders.id, entityId));
+            .where(
+              and(
+                eq(purchaseOrders.id, entityId),
+                eq(purchaseOrders.organizationId, organizationId),
+              ),
+            );
         }
       });
       if (entityType === 'requisition') {
@@ -540,8 +547,8 @@ export class ApprovalEngineService {
       await tx
         .update(requisitions)
         .set({ status: 'approved', updatedAt: new Date() })
-        .where(eq(requisitions.id, entityId));
-      await this.budgets?.recordRequisitionApproval(tx, entityId);
+        .where(and(eq(requisitions.id, entityId), eq(requisitions.organizationId, organizationId)));
+      await this.budgets?.recordRequisitionApproval(tx, organizationId, entityId);
 
       return req.id;
     });
@@ -634,7 +641,7 @@ export class ApprovalEngineService {
   }
 
   // Get approval request with actions and rule steps
-  async getRequest(id: string) {
+  async getRequest(id: string, organizationId: string) {
     const req = await this.db.query.approvalRequests.findFirst({
       where: (r, { eq }) => eq(r.id, id),
       with: {
@@ -643,6 +650,7 @@ export class ApprovalEngineService {
       },
     });
     if (!req) throw new NotFoundException(`Approval request ${id} not found`);
+    await this.assertApprovalRequestOrganization(this.db, req, organizationId);
     const [enriched] = await this.enrichWithEntityInfo([req]);
     return enriched;
   }
@@ -650,7 +658,23 @@ export class ApprovalEngineService {
   // List all pending requests for an organization (filtered by approvable entity org)
   async listPending(organizationId: string) {
     const rows = await this.db.query.approvalRequests.findMany({
-      where: (r, { eq }) => eq(r.status, 'pending'),
+      where: (record, { and, eq }) =>
+        and(
+          eq(record.status, 'pending'),
+          sql`(
+            (${record.approvableType} = 'requisition' AND EXISTS (
+              SELECT 1 FROM ${requisitions}
+              WHERE ${requisitions.id} = ${record.approvableId}
+                AND ${requisitions.organizationId} = ${organizationId}
+            ))
+            OR
+            (${record.approvableType} = 'purchase_order' AND EXISTS (
+              SELECT 1 FROM ${purchaseOrders}
+              WHERE ${purchaseOrders.id} = ${record.approvableId}
+                AND ${purchaseOrders.organizationId} = ${organizationId}
+            ))
+          )`,
+        ),
       with: {
         rule: true,
         actions: { orderBy: (a, { desc }) => desc(a.actedAt) },
@@ -665,8 +689,8 @@ export class ApprovalEngineService {
     requestId: string,
     actorId: string,
     action: 'approve' | 'reject',
-    comment?: string,
-    organizationId?: string,
+    comment: string | undefined,
+    organizationId: string,
   ) {
     const outcome = await this.db.transaction(async (tx) => {
       const [approvalReq] = await tx
@@ -675,13 +699,18 @@ export class ApprovalEngineService {
         .where(eq(approvalRequests.id, requestId))
         .for('update');
       if (!approvalReq) throw new NotFoundException(`Approval request ${requestId} not found`);
+      await this.assertApprovalRequestOrganization(tx, approvalReq, organizationId);
       if (approvalReq.status !== 'pending') {
         throw new BadRequestException(`Request is already ${approvalReq.status}`);
       }
 
       const rule = approvalReq.approvalRuleId
         ? await tx.query.approvalRules.findFirst({
-            where: (record, { eq }) => eq(record.id, approvalReq.approvalRuleId!),
+            where: (record, { and, eq }) =>
+              and(
+                eq(record.id, approvalReq.approvalRuleId!),
+                eq(record.organizationId, organizationId),
+              ),
             with: { steps: true },
           })
         : null;
@@ -758,6 +787,7 @@ export class ApprovalEngineService {
           .where(eq(approvalRequests.id, requestId));
         await this.updateEntityStatus(
           tx,
+          organizationId,
           approvalReq.approvableType,
           approvalReq.approvableId,
           'rejected',
@@ -795,6 +825,7 @@ export class ApprovalEngineService {
         .where(eq(approvalRequests.id, requestId));
       await this.updateEntityStatus(
         tx,
+        organizationId,
         approvalReq.approvableType,
         approvalReq.approvableId,
         'approved',
@@ -838,27 +869,59 @@ export class ApprovalEngineService {
 
   private async updateEntityStatus(
     tx: DbTransaction,
+    organizationId: string,
     entityType: string,
     entityId: string,
     status: 'approved' | 'rejected',
     updatedAt: Date,
   ) {
     if (entityType === 'requisition') {
-      await tx.update(requisitions).set({ status, updatedAt }).where(eq(requisitions.id, entityId));
+      await tx
+        .update(requisitions)
+        .set({ status, updatedAt })
+        .where(and(eq(requisitions.id, entityId), eq(requisitions.organizationId, organizationId)));
       if (status === 'approved') {
-        await this.budgets?.recordRequisitionApproval(tx, entityId);
+        await this.budgets?.recordRequisitionApproval(tx, organizationId, entityId);
       } else {
-        await this.budgets?.releaseRequisition(tx, entityId, 'rejected');
+        await this.budgets?.releaseRequisition(tx, organizationId, entityId, 'rejected');
       }
     } else if (entityType === 'purchase_order') {
       await tx
         .update(purchaseOrders)
         .set({ status, updatedAt })
-        .where(eq(purchaseOrders.id, entityId));
+        .where(
+          and(eq(purchaseOrders.id, entityId), eq(purchaseOrders.organizationId, organizationId)),
+        );
       if (status === 'rejected') {
-        await this.budgets?.releasePurchaseOrder(tx, entityId, 'rejected');
+        await this.budgets?.releasePurchaseOrder(tx, organizationId, entityId, 'rejected');
       }
     }
+  }
+
+  private async assertApprovalRequestOrganization(
+    executor: Db | DbTransaction,
+    approvalReq: typeof approvalRequests.$inferSelect,
+    organizationId: string,
+  ): Promise<void> {
+    const entity =
+      approvalReq.approvableType === 'requisition'
+        ? await executor.query.requisitions.findFirst({
+            where: (record, { and, eq }) =>
+              and(
+                eq(record.id, approvalReq.approvableId),
+                eq(record.organizationId, organizationId),
+              ),
+          })
+        : approvalReq.approvableType === 'purchase_order'
+          ? await executor.query.purchaseOrders.findFirst({
+              where: (record, { and, eq }) =>
+                and(
+                  eq(record.id, approvalReq.approvableId),
+                  eq(record.organizationId, organizationId),
+                ),
+            })
+          : null;
+    if (!entity) throw new NotFoundException(`Approval request ${approvalReq.id} not found`);
   }
 
   private emitEntityStatusEvents(

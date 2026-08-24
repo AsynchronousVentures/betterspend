@@ -14,9 +14,8 @@ import type { MatchingService } from './matching.service';
 import { InvoicesService } from './invoices.service';
 
 function createService(
-  recordSpend: BudgetsService['recordSpend'],
-  matchStatus = 'full_match',
   expenseInvoice: BudgetsService['expenseInvoice'] = async () => {},
+  matchStatus = 'full_match',
 ) {
   const approved = {
     id: 'invoice-1',
@@ -72,7 +71,7 @@ function createService(
   } as unknown as Db;
   const webhookEvents = { emit() {} } as unknown as WebhookEventService;
   const glExport = { enqueue() {} } as unknown as GlExportService;
-  const budgets = { recordSpend, expenseInvoice } as unknown as BudgetsService;
+  const budgets = { expenseInvoice } as unknown as BudgetsService;
   const audit = { log: async () => {} } as unknown as AuditService;
 
   return {
@@ -94,16 +93,15 @@ function createService(
 }
 
 describe('InvoicesService approval budget accounting', () => {
-  it('propagates spend failures from the invoice approval transaction', async () => {
+  it('propagates budget accounting failures from the invoice approval transaction', async () => {
     let receivedTransaction: DbTransaction | undefined;
-    let receivedBaseAmount: string | undefined;
+    let receivedAmounts: { expense: string; release: string } | undefined;
     const { service, transaction } = createService(
-      async (organizationId, departmentId, baseAmount, fiscalYear, executor) => {
+      async (executor, organizationId, invoiceId, expense, release) => {
         assert.equal(organizationId, 'organization-1');
-        assert.equal(departmentId, 'department-1');
-        assert.equal(fiscalYear, 2026);
-        receivedBaseAmount = baseAmount;
-        receivedTransaction = executor as DbTransaction;
+        assert.equal(invoiceId, 'invoice-1');
+        receivedAmounts = { expense, release };
+        receivedTransaction = executor;
         throw new Error('budget update failed');
       },
     );
@@ -112,7 +110,7 @@ describe('InvoicesService approval budget accounting', () => {
       service.approve('invoice-1', 'organization-1', 'approver-1'),
       /budget update failed/,
     );
-    assert.equal(receivedBaseAmount, '100.00');
+    assert.deepEqual(receivedAmounts, { expense: '100.00', release: '125.00' });
     assert.equal(receivedTransaction, transaction);
   });
 
@@ -120,7 +118,6 @@ describe('InvoicesService approval budget accounting', () => {
     let spendRecorded = false;
     const { service } = createService(async () => {
       spendRecorded = true;
-      return { updated: true, budgetId: 'budget-1' };
     }, 'partial_match');
 
     await assert.rejects(
@@ -131,12 +128,24 @@ describe('InvoicesService approval budget accounting', () => {
   });
 
   it('moves approved invoice spend out of the PO commitment in the same transaction', async () => {
-    let expensed: { invoiceId: string; baseAmount: string; executor: DbTransaction } | undefined;
+    let expensed:
+      | {
+          organizationId: string;
+          invoiceId: string;
+          expenseAmount: string;
+          commitmentReleaseAmount: string;
+          executor: DbTransaction;
+        }
+      | undefined;
     const { service, transaction } = createService(
-      async () => ({ updated: true, budgetId: 'budget-1' }),
-      'full_match',
-      async (executor, invoiceId, baseAmount) => {
-        expensed = { executor, invoiceId, baseAmount };
+      async (executor, organizationId, invoiceId, expenseAmount, commitmentReleaseAmount) => {
+        expensed = {
+          executor,
+          organizationId,
+          invoiceId,
+          expenseAmount,
+          commitmentReleaseAmount,
+        };
       },
     );
 
@@ -144,8 +153,10 @@ describe('InvoicesService approval budget accounting', () => {
 
     assert.deepEqual(expensed, {
       executor: transaction,
+      organizationId: 'organization-1',
       invoiceId: 'invoice-1',
-      baseAmount: '100.00',
+      expenseAmount: '100.00',
+      commitmentReleaseAmount: '125.00',
     });
   });
 });

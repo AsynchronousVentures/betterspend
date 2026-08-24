@@ -31,6 +31,8 @@ function createService(
       approvalRules: {
         findFirst: async () => (ruleSteps.length > 0 ? { steps: ruleSteps } : null),
       },
+      requisitions: { findFirst: async () => ({ id: 'requisition-1' }) },
+      purchaseOrders: { findFirst: async () => ({ id: 'purchase-order-1' }) },
       users: {
         findFirst: async () => ({ id: 'role-approver', userRoles: actorRoles }),
       },
@@ -217,6 +219,8 @@ describe('ApprovalEngineService required approvals', () => {
   it('rejects actions from anyone except the owner at the required step', async () => {
     const { service } = createService([], {
       id: 'approval-request-1',
+      approvableType: 'requisition',
+      approvableId: 'requisition-1',
       status: 'pending',
       approvalRuleId: null,
       currentStep: 1,
@@ -225,7 +229,13 @@ describe('ApprovalEngineService required approvals', () => {
     });
 
     await assert.rejects(
-      service.processAction('approval-request-1', 'different-user', 'approve'),
+      service.processAction(
+        'approval-request-1',
+        'different-user',
+        'approve',
+        undefined,
+        'organization-1',
+      ),
       /assigned to the budget owner/,
     );
   });
@@ -303,7 +313,13 @@ describe('ApprovalEngineService required approvals', () => {
       },
     );
 
-    const result = await service.processAction('approval-request-1', 'rule-approver', 'approve');
+    const result = await service.processAction(
+      'approval-request-1',
+      'rule-approver',
+      'approve',
+      undefined,
+      'organization-1',
+    );
 
     assert.deepEqual(result, { status: 'pending', advancedToStep: 5 });
     assert.ok(updateValues.some((values) => values.currentStep === 5));
@@ -325,7 +341,13 @@ describe('ApprovalEngineService required approvals', () => {
     });
 
     await assert.rejects(
-      service.processAction('approval-request-1', 'different-user', 'approve'),
+      service.processAction(
+        'approval-request-1',
+        'different-user',
+        'approve',
+        undefined,
+        'organization-1',
+      ),
       /assigned to another approver/,
     );
   });
@@ -344,7 +366,13 @@ describe('ApprovalEngineService required approvals', () => {
     );
 
     await assert.rejects(
-      service.processAction('approval-request-1', 'assigned-approver', 'approve'),
+      service.processAction(
+        'approval-request-1',
+        'assigned-approver',
+        'approve',
+        undefined,
+        'organization-1',
+      ),
       /no longer configured/,
     );
     assert.equal(approvalActionValues.length, 0);
@@ -361,7 +389,13 @@ describe('ApprovalEngineService required approvals', () => {
     });
 
     await assert.rejects(
-      service.processAction('approval-request-1', 'arbitrary-user', 'approve'),
+      service.processAction(
+        'approval-request-1',
+        'arbitrary-user',
+        'approve',
+        undefined,
+        'organization-1',
+      ),
       /no assigned approver/,
     );
     assert.equal(approvalActionValues.length, 0);
@@ -406,7 +440,13 @@ describe('ApprovalEngineService required approvals', () => {
       requiredApproverId: 'owner-1',
     });
 
-    const result = await service.processAction('approval-request-1', 'owner-1', 'approve');
+    const result = await service.processAction(
+      'approval-request-1',
+      'owner-1',
+      'approve',
+      undefined,
+      'organization-1',
+    );
 
     assert.deepEqual(result, { status: 'approved' });
     assert.ok(updateValues.some((values) => values.status === 'approved'));

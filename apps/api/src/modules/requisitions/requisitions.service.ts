@@ -238,7 +238,7 @@ export class RequisitionsService {
         .set({ status: 'cancelled', updatedAt: new Date() })
         .where(and(eq(requisitions.id, id), eq(requisitions.organizationId, organizationId)))
         .returning();
-      await this.budgets.releaseRequisition(tx, id, 'cancelled');
+      await this.budgets.releaseRequisition(tx, organizationId, id, 'cancelled');
       return transitioned;
     });
     this.audit.log(organizationId, null, 'requisition', id, 'cancelled').catch(() => {});

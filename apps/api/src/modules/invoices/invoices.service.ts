@@ -14,7 +14,8 @@ import { MatchingService } from './matching.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { GlExportService } from '../gl/gl-export.service';
 import { BudgetsService } from '../budgets/budgets.service';
-import { addMoney, convertMoney } from '../budgets/budget-enforcement';
+import { addMoney } from '../budgets/budget-enforcement';
+import { invoiceCommitmentAmounts } from '../budgets/budget-commitments';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EntitiesService } from '../entities/entities.service';
@@ -566,39 +567,22 @@ export class InvoicesService {
 
       // Record spend in the approval transaction so budget accounting cannot lag invoice state.
       if (approved.purchaseOrderId) {
-        const po = await tx.query.purchaseOrders.findFirst({
-          where: (p, { and, eq }) =>
-            and(eq(p.id, approved.purchaseOrderId!), eq(p.organizationId, organizationId)),
-        });
-        if (po?.requisitionId) {
-          const req = await tx.query.requisitions.findFirst({
-            where: (r, { and, eq }) =>
-              and(eq(r.id, po.requisitionId!), eq(r.organizationId, organizationId)),
-          });
-          if (req?.departmentId) {
-            const recoverableTaxAmount = addMoney(
-              approved.lines
-                .filter((line) => line.taxCode?.isRecoverable)
-                .map((line) => String(line.taxAmount ?? '0')),
-            );
-            const spendAmount = addMoney([
-              String(approved.totalAmount ?? '0'),
-              `-${recoverableTaxAmount}`,
-            ]);
-            await this.budgets.recordSpend(
-              organizationId,
-              req.departmentId,
-              convertMoney(spendAmount, String(approved.exchangeRate ?? '1')),
-              req.createdAt.getUTCFullYear(),
-              tx,
-            );
-            await this.budgets.expenseInvoice(
-              tx,
-              id,
-              convertMoney(spendAmount, String(approved.exchangeRate ?? '1')),
-            );
-          }
-        }
+        const recoverableTaxAmount = addMoney(
+          approved.lines
+            .filter((line) => line.taxCode?.isRecoverable)
+            .map((line) => String(line.taxAmount ?? '0')),
+        );
+        const amounts = invoiceCommitmentAmounts(
+          String(approved.totalAmount ?? '0'),
+          recoverableTaxAmount,
+        );
+        await this.budgets.expenseInvoice(
+          tx,
+          organizationId,
+          id,
+          amounts.expense,
+          amounts.commitmentRelease,
+        );
       }
 
       return { approved, transitioned: true };
