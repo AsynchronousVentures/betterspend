@@ -360,23 +360,23 @@ export function validateWorkflowGraph(input: unknown): WorkflowValidationResult 
 
   for (const node of graph.nodes) {
     const outgoing = outgoingEdges.get(node.id) ?? [];
-    if (!node.disabled) {
-      const declaredOutputs = WORKFLOW_NODE_PORTS[node.type].outputs as readonly string[];
-      if (declaredOutputs.length > 1) {
-        for (const output of declaredOutputs) {
-          if (!outgoing.some((edge) => edge.sourceHandle === output)) {
-            issues.push({
-              code: 'unwired_branch',
-              message: `Node ${node.id} has no edge for output ${output}`,
-              path: ['nodes', node.id],
-              nodeIds: [node.id],
-            });
-          }
+    if (node.disabled) continue;
+
+    const declaredOutputs = WORKFLOW_NODE_PORTS[node.type].outputs as readonly string[];
+    if (declaredOutputs.length > 1) {
+      for (const output of declaredOutputs) {
+        if (!outgoing.some((edge) => edge.sourceHandle === output)) {
+          issues.push({
+            code: 'unwired_branch',
+            message: `Node ${node.id} has no edge for output ${output}`,
+            path: ['nodes', node.id],
+            nodeIds: [node.id],
+          });
         }
       }
     }
 
-    if (node.type === 'condition' && !node.disabled) {
+    if (node.type === 'condition') {
       const defaultEdges = outgoing.filter((edge) => edge.sourceHandle === 'default');
       const mismatchedDefaultEdges = outgoing.filter(
         (edge) => edge.isDefault !== (edge.sourceHandle === 'default'),
@@ -503,7 +503,6 @@ export function validateWorkflowGraph(input: unknown): WorkflowValidationResult 
       }
     }
 
-    if (node.disabled) continue;
     const terminal = (TERMINAL_NODE_TYPES as readonly string[]).includes(node.type);
     if (terminal && outgoing.length > 0) {
       issues.push({

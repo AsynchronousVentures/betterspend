@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { workflowGraphSchema } from './graph';
+import { WORKFLOW_GRAPH_LIMITS, workflowGraphSchema } from './graph';
 import { validateWorkflowGraph } from './validate';
 
 const PRIMARY_APPROVER_ID = '00000000-0000-4000-8000-000000000001';
@@ -143,6 +143,60 @@ describe('validateWorkflowGraph', () => {
       'approved',
       'rejected',
     ]);
+  });
+
+  it('skips node-specific validation for disabled approval placeholders', () => {
+    const graph = validGraph();
+    graph.nodes.push({
+      id: 'disabled-approval',
+      name: 'Disabled approval',
+      type: 'resolver',
+      disabled: true,
+      config: {
+        resolvers: [],
+        separationOfDuties: {
+          enabled: true,
+          exclude: ['invoice_creator'],
+          fallbackResolvers: [],
+        },
+      },
+    });
+    const financeEdge = graph.edges.find((edge) => edge.id === 'finance-to-approved');
+    if (!financeEdge) throw new Error('Expected finance edge fixture');
+    financeEdge.targetNodeId = 'disabled-approval';
+    graph.edges.push({
+      id: 'disabled-to-approved',
+      sourceNodeId: 'disabled-approval',
+      sourceHandle: 'out',
+      targetNodeId: 'approved',
+      targetHandle: 'in',
+      isDefault: false,
+    });
+
+    const result = validateWorkflowGraph(graph);
+
+    assert.equal(result.valid, true);
+    assert.deepEqual(result.issues, []);
+  });
+
+  it('rejects graphs larger than the v1 validation limits', () => {
+    const graph = validGraph();
+    const tooManyNodes = Array.from({ length: WORKFLOW_GRAPH_LIMITS.nodes + 1 }, (_, index) => ({
+      ...graph.nodes[0],
+      id: `node-${index}`,
+    }));
+    const tooManyEdges = Array.from({ length: WORKFLOW_GRAPH_LIMITS.edges + 1 }, (_, index) => ({
+      ...graph.edges[0],
+      id: `edge-${index}`,
+    }));
+
+    const nodeIssue = validateWorkflowGraph({ ...graph, nodes: tooManyNodes }).issues[0];
+    const edgeIssue = validateWorkflowGraph({ ...graph, edges: tooManyEdges }).issues[0];
+
+    assert.equal(nodeIssue?.code, 'invalid_graph');
+    assert.deepEqual(nodeIssue?.path, ['nodes']);
+    assert.equal(edgeIssue?.code, 'invalid_graph');
+    assert.deepEqual(edgeIssue?.path, ['edges']);
   });
 
   it('reports invalid node config paths from the shared Zod schema', () => {
