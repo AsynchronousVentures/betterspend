@@ -164,7 +164,13 @@ describe('QboClientService', () => {
   });
 
   it('refreshes once after a 401 and retries with the rotated token', async () => {
-    const auth = oauth();
+    const auth = oauth({
+      refreshQboToken: jest.fn(async () => ({
+        ...token,
+        accessToken: 'rotated-token',
+        realmId: 'realm-2',
+      })),
+    } as Partial<OAuthService>);
     const request = jest
       .spyOn(axios, 'request')
       .mockRejectedValueOnce(axiosError(401))
@@ -173,8 +179,9 @@ describe('QboClientService', () => {
 
     await client.request({
       organizationId: 'organization-1',
-      method: 'GET',
-      path: 'companyinfo/realm-1',
+      method: 'POST',
+      path: 'bill',
+      data: { DocNumber: 'INV-1' },
     });
 
     expect(auth.refreshQboToken).toHaveBeenCalledWith('organization-1', 'access-token');
@@ -184,6 +191,11 @@ describe('QboClientService', () => {
     expect(request.mock.calls[1]?.[0].headers).toEqual(
       expect.objectContaining({ Authorization: 'Bearer rotated-token' }),
     );
+    const firstUrl = new URL(String(request.mock.calls[0]?.[0].url));
+    const secondUrl = new URL(String(request.mock.calls[1]?.[0].url));
+    expect(firstUrl.pathname).toBe('/v3/company/realm-1/bill');
+    expect(secondUrl.pathname).toBe('/v3/company/realm-2/bill');
+    expect(secondUrl.searchParams.get('requestid')).toBe(firstUrl.searchParams.get('requestid'));
   });
 
   it('marks the connection for reconnection after the retried request also returns 401', async () => {

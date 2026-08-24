@@ -103,9 +103,9 @@ class RealmLimiter {
   private readonly semaphore = new Semaphore(MAX_CONCURRENT_REQUESTS);
 
   async run<T>(operation: () => Promise<T>): Promise<T> {
-    await this.takeQuotaSlot();
     const release = await this.semaphore.acquire();
     try {
+      await this.takeQuotaSlot();
       return await operation();
     } finally {
       release();
@@ -144,7 +144,7 @@ export class QboClientService {
     if (!initialToken) throw new QboConnectionRequiredError();
     let token: QboToken = initialToken;
 
-    const url = this.buildUrl(token.realmId, options);
+    const requestId = isWrite(options.method) ? (options.requestId ?? randomUUID()) : undefined;
     let refreshed = false;
     let transientAttempts = 0;
 
@@ -153,7 +153,7 @@ export class QboClientService {
         const response = await this.limiterFor(token.realmId).run(() =>
           axios.request<T>({
             method: options.method,
-            url,
+            url: this.buildUrl(token.realmId, options, requestId),
             data: options.data,
             headers: {
               Authorization: `Bearer ${token.accessToken}`,
@@ -211,7 +211,7 @@ export class QboClientService {
     });
   }
 
-  private buildUrl(realmId: string, options: QboRequestOptions): string {
+  private buildUrl(realmId: string, options: QboRequestOptions, requestId?: string): string {
     const path = normalizePath(options.path);
     const baseUrl = (process.env.QBO_API_URL || 'https://quickbooks.api.intuit.com').replace(
       /\/$/,
@@ -223,7 +223,7 @@ export class QboClientService {
     }
     url.searchParams.set('minorversion', String(QBO_MINOR_VERSION));
     if (isWrite(options.method)) {
-      url.searchParams.set('requestid', options.requestId ?? randomUUID());
+      url.searchParams.set('requestid', requestId ?? randomUUID());
     }
     return url.toString();
   }

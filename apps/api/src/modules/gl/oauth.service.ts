@@ -133,17 +133,7 @@ export class OAuthService {
       return;
     }
 
-    await this.db
-      .update(integrationConnections)
-      .set({ status: INTEGRATION_CONNECTION_STATUS.RECONNECT_REQUIRED, updatedAt: new Date() })
-      .where(
-        and(
-          eq(integrationConnections.id, connectionId),
-          eq(integrationConnections.provider, 'qbo'),
-          eq(integrationConnections.status, INTEGRATION_CONNECTION_STATUS.ACTIVE),
-          eq(integrationConnections.accessTokenEncrypted, connection.accessTokenEncrypted),
-        ),
-      );
+    await this.transitionToReconnectRequired(connection, 'second_401');
   }
 
   async getXeroToken(
@@ -338,10 +328,7 @@ export class OAuthService {
           .where(eq(integrationConnections.id, connectionId));
       } catch (error: unknown) {
         if (this.isInvalidRefreshToken(error)) {
-          await this.db
-            .update(integrationConnections)
-            .set({ status: 'reconnect_required', updatedAt: new Date() })
-            .where(eq(integrationConnections.id, connectionId));
+          await this.transitionToReconnectRequired(connection, 'invalid_refresh_token');
         }
         throw error;
       }
@@ -457,6 +444,48 @@ export class OAuthService {
       realmId: connection.realmId,
       connectionId: connection.id,
     };
+  }
+
+  private async transitionToReconnectRequired(
+    connection: Pick<
+      ConnectionRow,
+      'id' | 'organizationId' | 'provider' | 'accessTokenEncrypted' | 'status'
+    >,
+    reason: 'invalid_refresh_token' | 'second_401',
+  ): Promise<void> {
+    const encryptedAccessToken = connection.accessTokenEncrypted;
+    if (!encryptedAccessToken || connection.status !== 'active') return;
+
+    await this.db.transaction(async (transaction) => {
+      const [updated] = await transaction
+        .update(integrationConnections)
+        .set({ status: INTEGRATION_CONNECTION_STATUS.RECONNECT_REQUIRED, updatedAt: new Date() })
+        .where(
+          and(
+            eq(integrationConnections.id, connection.id),
+            eq(integrationConnections.provider, connection.provider),
+            eq(integrationConnections.status, INTEGRATION_CONNECTION_STATUS.ACTIVE),
+            eq(integrationConnections.accessTokenEncrypted, encryptedAccessToken),
+          ),
+        )
+        .returning({ id: integrationConnections.id });
+      if (!updated) return;
+
+      await transaction.insert(auditLog).values({
+        organizationId: connection.organizationId,
+        userId: null,
+        entityType: 'integration_connection',
+        entityId: connection.id,
+        action: 'reconnect_required',
+        changes: {
+          status: {
+            from: INTEGRATION_CONNECTION_STATUS.ACTIVE,
+            to: INTEGRATION_CONNECTION_STATUS.RECONNECT_REQUIRED,
+          },
+        },
+        metadata: { actor: 'system', provider: connection.provider, reason },
+      });
+    });
   }
 
   private redirectUri(provider: OAuthProvider): string {

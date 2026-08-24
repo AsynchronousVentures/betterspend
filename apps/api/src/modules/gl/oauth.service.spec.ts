@@ -244,39 +244,55 @@ describe('OAuthService', () => {
   it('does not disable credentials that changed after the rejected request began', async () => {
     const connection = {
       id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
       provider: 'qbo',
       accessTokenEncrypted: crypto.encrypt('newly-connected-access'),
       status: 'active',
     };
     const db = {
       query: { integrationConnections: { findFirst: jest.fn(async () => connection) } },
-      update: jest.fn(),
+      transaction: jest.fn(),
     } as unknown as Db;
     const service = new OAuthService(db, crypto, new FakeOAuthRedis() as never);
 
     await service.markQboReconnectRequired(connection.id, 'stale-rejected-access');
 
-    expect((db as unknown as { update: jest.Mock }).update).not.toHaveBeenCalled();
+    expect((db as unknown as { transaction: jest.Mock }).transaction).not.toHaveBeenCalled();
   });
 
-  it('makes the reconnect update conditional on the rejected credential version', async () => {
+  it('atomically audits a reconnect transition for the rejected credential version', async () => {
     let predicate: unknown;
+    const audits: Array<Record<string, unknown>> = [];
     const encryptedAccessToken = crypto.encrypt('rejected-access');
     const connection = {
       id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
       provider: 'qbo',
       accessTokenEncrypted: encryptedAccessToken,
       status: 'active',
     };
-    const db = {
-      query: { integrationConnections: { findFirst: jest.fn(async () => connection) } },
+    const transaction = {
       update: jest.fn(() => ({
         set: jest.fn(() => ({
-          where: jest.fn((condition: unknown) => {
-            predicate = condition;
-          }),
+          where: jest.fn((condition: unknown) => ({
+            returning: jest.fn(async () => {
+              predicate = condition;
+              return [{ id: connection.id }];
+            }),
+          })),
         })),
       })),
+      insert: jest.fn(() => ({
+        values: jest.fn(async (values: Record<string, unknown>) => {
+          audits.push(values);
+        }),
+      })),
+    };
+    const db = {
+      query: { integrationConnections: { findFirst: jest.fn(async () => connection) } },
+      transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback(transaction),
+      ),
     } as unknown as Db;
     const service = new OAuthService(db, crypto, new FakeOAuthRedis() as never);
 
@@ -286,6 +302,16 @@ describe('OAuthService', () => {
     expect(query.sql).toContain('"access_token_enc" =');
     expect(query.sql).toContain('"status" =');
     expect(query.params).toContain(encryptedAccessToken);
+    expect(audits).toEqual([
+      expect.objectContaining({
+        organizationId,
+        userId: null,
+        entityType: 'integration_connection',
+        entityId: connection.id,
+        action: 'reconnect_required',
+        metadata: { actor: 'system', provider: 'qbo', reason: 'second_401' },
+      }),
+    ]);
   });
 
   it('keeps an active connection retryable after a transient refresh failure', async () => {
