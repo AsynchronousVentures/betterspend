@@ -157,6 +157,8 @@ pnpm db:seed          # Seed demo data
 pnpm db:studio        # Open Drizzle Studio (visual DB browser)
 ```
 
+See [Database migrations](docs/database-migrations.md) before authoring or resolving a schema change.
+
 ---
 
 ## Contributing

@@ -54,7 +54,7 @@
     {
       "idx": 7,
       "version": "7",
-      "when": 1773210244439,
+      "when": 1773400000000,
       "tag": "0007_modern_pet_avengers",
       "breakpoints": true
     },
@@ -82,7 +82,7 @@
     {
       "idx": 11,
       "version": "7",
-      "when": 1773680000000,
+      "when": 1773750000000,
       "tag": "0011_vendor_diversity_esg",
       "breakpoints": true
     },
@@ -259,6 +259,13 @@
       "version": "7",
       "when": 1787576303000,
       "tag": "0036_budget_enforcement",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1787583428421,
+      "tag": "0037_canonicalize_migration_metadata",
       "breakpoints": true
     }
   ]

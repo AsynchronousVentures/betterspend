@@ -106,6 +106,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://betterspend@127.0.0.1:5432/betterspend_test
         run: |
+          pnpm --filter @betterspend/db db:validate-history
           pnpm --filter @betterspend/db db:migrate
           pnpm --filter @betterspend/db db:verify-migrations
 
