@@ -40,6 +40,7 @@ Production runs from immutable GHCR images under `/opt/betterspend`. The app pro
 
 ```bash
 cd /opt/betterspend
+export IMAGE_TAG="$(cat .current_image_tag)"
 docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml ps
 docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml logs -f api web caddy
 ./deploy/deploy.sh sha-<commit>           # deploy an immutable image tag

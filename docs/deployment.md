@@ -83,6 +83,7 @@ cd /opt/betterspend
 Tail logs:
 
 ```bash
+export IMAGE_TAG="$(cat .current_image_tag)"
 docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml logs -f api web caddy
 ```
 
@@ -117,6 +118,7 @@ Each deploy writes:
 Restore into a stopped or isolated database:
 
 ```bash
+export IMAGE_TAG="$(cat .current_image_tag)"
 gunzip -c backups/postgres-<timestamp>-sha-<commit>.sql.gz \
   | docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml exec -T postgres \
       sh -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
@@ -131,6 +133,7 @@ After deploy:
 ```bash
 curl -fsS https://$BETTERSPEND_DOMAIN/api/v1/health
 curl -fsS https://$BETTERSPEND_DOMAIN/
+export IMAGE_TAG="$(cat .current_image_tag)"
 docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml ps
 ```
 
