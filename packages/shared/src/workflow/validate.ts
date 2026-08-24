@@ -25,6 +25,7 @@ export const WORKFLOW_VALIDATION_CODES = [
   'missing_branch_condition',
   'invalid_branch_priority',
   'unwired_branch',
+  'ambiguous_disabled_bypass',
   'zero_resolvers',
   'duplicate_resolver',
   'invalid_quorum',
@@ -360,9 +361,20 @@ export function validateWorkflowGraph(input: unknown): WorkflowValidationResult 
 
   for (const node of graph.nodes) {
     const outgoing = outgoingEdges.get(node.id) ?? [];
-    if (node.disabled) continue;
-
     const declaredOutputs = WORKFLOW_NODE_PORTS[node.type].outputs as readonly string[];
+    if (node.disabled) {
+      const enabledTargets = reachableEnabledTargets(node.id, nodeById, outgoingEdges);
+      if (declaredOutputs.length > 1 && enabledTargets.length !== 1) {
+        issues.push({
+          code: 'ambiguous_disabled_bypass',
+          message: `Disabled branch node ${node.id} must resolve to exactly one enabled target`,
+          path: ['nodes', node.id],
+          nodeIds: [node.id, ...enabledTargets],
+        });
+      }
+      continue;
+    }
+
     if (declaredOutputs.length > 1) {
       for (const output of declaredOutputs) {
         if (!outgoing.some((edge) => edge.sourceHandle === output)) {

@@ -179,6 +179,19 @@ describe('validateWorkflowGraph', () => {
     assert.deepEqual(result.issues, []);
   });
 
+  it('rejects ambiguous bypasses through disabled branch nodes', () => {
+    const graph = validGraph();
+    const condition = graph.nodes.find((node) => node.id === 'amount-check');
+    if (!condition) throw new Error('Expected condition fixture');
+    condition.disabled = true;
+
+    const issue = validateWorkflowGraph(graph).issues.find(
+      (candidate) => candidate.code === 'ambiguous_disabled_bypass',
+    );
+
+    assert.deepEqual(issue?.nodeIds, ['amount-check', 'finance', 'rejected']);
+  });
+
   it('rejects graphs larger than the v1 validation limits', () => {
     const graph = validGraph();
     const tooManyNodes = Array.from({ length: WORKFLOW_GRAPH_LIMITS.nodes + 1 }, (_, index) => ({
