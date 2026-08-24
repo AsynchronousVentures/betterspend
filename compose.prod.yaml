@@ -10,7 +10,7 @@ services:
       - '80:80'
       - '443:443'
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -25,7 +25,7 @@ services:
     image: ${API_IMAGE:?Set API_IMAGE}:${IMAGE_TAG:?Set IMAGE_TAG}
     restart: unless-stopped
     env_file:
-      - .env.production
+      - ${PRODUCTION_ENV_FILE:-.env.production}
     environment:
       NODE_ENV: production
       API_PORT: 4001
@@ -95,50 +95,22 @@ services:
         condition: service_healthy
 
   postgres:
-    image: postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
-      interval: 10s
-      timeout: 5s
-      retries: 10
 
   redis:
-    image: redis:7-alpine
     restart: unless-stopped
     command: ['redis-server', '--appendonly', 'yes']
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 10s
-      timeout: 5s
-      retries: 10
 
   minio:
-    image: minio/minio:latest
     restart: unless-stopped
-    command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ['CMD-SHELL', 'curl -fsS http://localhost:9000/minio/health/live || exit 1']
-      interval: 30s
-      timeout: 20s
-      retries: 5
 
 volumes:
-  postgres_data:
-  redis_data:
-  minio_data:
   caddy_data:
   caddy_config:

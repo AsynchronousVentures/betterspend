@@ -2,6 +2,8 @@
 
 This deployment replaces manual `git pull`, host builds, migrations, and pm2 restarts with immutable Docker images and a single Docker Compose project on the VPS.
 
+`compose.yaml` owns the infrastructure shared with local development. `compose.prod.yaml` adds the production application images, Caddy, secrets, persistence settings, and restart policies. Production commands always load both files in that order.
+
 ## Architecture
 
 - `caddy` listens on public ports `80` and `443`, obtains TLS certificates, routes `/api/*` to the Nest API, routes the web UI to Next.js, and routes `files.<domain>` to MinIO for signed object downloads.
@@ -20,7 +22,7 @@ sudo mkdir -p /opt/betterspend
 sudo chown "$USER":"$USER" /opt/betterspend
 ```
 
-3. Copy `deploy/` into `/opt/betterspend`.
+3. Copy `compose.yaml`, `compose.prod.yaml`, and `deploy/` into `/opt/betterspend`, preserving the `deploy/` directory.
 4. Create `/opt/betterspend/.env.production` from `.env.production.example`.
 5. Point DNS records at the VPS:
 
@@ -65,7 +67,7 @@ ghcr.io/<namespace>/betterspend-web:sha-<commit>
 ghcr.io/<namespace>/betterspend-migrator:sha-<commit>
 ```
 
-Pushing a `v*` tag runs validation, publishes the immutable `sha-<commit>` images, synchronizes the explicit deployment file list to `/opt/betterspend`, and invokes `./deploy.sh sha-<commit>` over SSH. Publish jobs for the same commit are serialized, and the workflow skips any image tag that already exists rather than overwriting it. Registry administrators must preserve that `sha-*` immutability convention for any out-of-band operations. The deploy script backs up PostgreSQL, runs migrations, restarts the application containers, and smoke-checks production. Deployments are serialized by the workflow's production concurrency group.
+Pushing a `v*` tag runs validation, publishes the immutable `sha-<commit>` images, synchronizes the explicit deployment file list to `/opt/betterspend`, and invokes `./deploy/deploy.sh sha-<commit>` over SSH. Publish jobs for the same commit are serialized, and the workflow skips any image tag that already exists rather than overwriting it. Registry administrators must preserve that `sha-*` immutability convention for any out-of-band operations. The deploy script backs up PostgreSQL, runs migrations, restarts the application containers, and smoke-checks production. Deployments are serialized by the workflow's production concurrency group.
 
 Tag-driven deployment never synchronizes `.env.production` and does not use `rsync --delete`; production secrets remain server-side.
 
@@ -75,31 +77,31 @@ Deploy a known image tag manually (for example, when automated deployment is not
 
 ```bash
 cd /opt/betterspend
-./deploy.sh sha-<commit>
+./deploy/deploy.sh sha-<commit>
 ```
 
 Tail logs:
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml logs -f api web caddy
+docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml logs -f api web caddy
 ```
 
 Run migrations only:
 
 ```bash
-IMAGE_TAG=sha-<commit> docker compose --profile migrate --env-file .env.production -f docker-compose.prod.yml run --rm migrator
+IMAGE_TAG=sha-<commit> docker compose --profile migrate --env-file .env.production -f compose.yaml -f compose.prod.yaml run --rm migrator
 ```
 
 Roll back app containers to the previous recorded image tag:
 
 ```bash
-./rollback.sh
+./deploy/rollback.sh
 ```
 
 Roll back to a specific tag:
 
 ```bash
-./rollback.sh sha-<commit>
+./deploy/rollback.sh sha-<commit>
 ```
 
 Database migrations are forward-only. The rollback script does not revert schema changes; use the compressed dumps in `/opt/betterspend/backups` for disaster recovery.
@@ -116,7 +118,7 @@ Restore into a stopped or isolated database:
 
 ```bash
 gunzip -c backups/postgres-<timestamp>-sha-<commit>.sql.gz \
-  | docker compose --env-file .env.production -f docker-compose.prod.yml exec -T postgres \
+  | docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml exec -T postgres \
       sh -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
 ```
 
@@ -129,7 +131,7 @@ After deploy:
 ```bash
 curl -fsS https://$BETTERSPEND_DOMAIN/api/v1/health
 curl -fsS https://$BETTERSPEND_DOMAIN/
-docker compose --env-file .env.production -f docker-compose.prod.yml ps
+docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml ps
 ```
 
 Postgres, Redis, and MinIO should not have public host port mappings. Only Caddy should expose `80` and `443`.
