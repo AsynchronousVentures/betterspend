@@ -237,7 +237,9 @@ describe('validateWorkflowGraph', () => {
     if (finance.type !== 'approver_group') throw new Error('Expected approver group fixture');
     finance.config.resolvers = [{ type: 'manager_chain', maxLevels: 3 }];
     finance.config.quorum = { type: 'count', count: 2 };
-    finance.config.separationOfDuties.fallbackResolvers = [{ type: 'role', role: 'finance' }];
+    finance.config.separationOfDuties.fallbackResolvers = [
+      { type: 'role', role: 'finance', scope: 'global' },
+    ];
 
     const result = validateWorkflowGraph(graph);
 
@@ -297,6 +299,146 @@ describe('validateWorkflowGraph', () => {
 
     assert.ok(codes.includes('missing_handle'));
     assert.ok(codes.includes('missing_node_reference'));
+  });
+
+  it('requires unique priorities for first-true condition branches', () => {
+    const graph = validGraph();
+    graph.edges.push(
+      {
+        id: 'duplicate-priority',
+        sourceNodeId: 'amount-check',
+        sourceHandle: 'branch',
+        targetNodeId: 'approved',
+        targetHandle: 'in',
+        isDefault: false,
+        condition: { field: 'totalAmount', operator: '>=', value: 5_000 },
+        priority: 0,
+      },
+      {
+        id: 'missing-priority',
+        sourceNodeId: 'amount-check',
+        sourceHandle: 'branch',
+        targetNodeId: 'approved',
+        targetHandle: 'in',
+        isDefault: false,
+        condition: { field: 'totalAmount', operator: '>=', value: 10_000 },
+      },
+    );
+
+    const issue = validateWorkflowGraph(graph).issues.find(
+      (candidate) => candidate.code === 'invalid_branch_priority',
+    );
+
+    assert.deepEqual(issue?.edgeIds, ['missing-priority', 'high-value', 'duplicate-priority']);
+  });
+
+  it('rejects inconsistent condition default markers', () => {
+    const graph = validGraph();
+    graph.edges[2].isDefault = false;
+
+    assert.ok(issueCodes(graph).includes('default_edge_mismatch'));
+  });
+
+  it('requires every match and budget outcome to be wired', () => {
+    const graph = {
+      schemaVersion: 1,
+      domain: 'invoice',
+      entryNodeId: 'start',
+      nodes: [
+        {
+          id: 'start',
+          name: 'Start',
+          type: 'trigger',
+          config: { event: 'invoice_submitted' },
+        },
+        { id: 'match', name: 'Match', type: 'match_check', config: {} },
+        {
+          id: 'budget',
+          name: 'Budget',
+          type: 'budget_check',
+          config: { policy: 'organization_default' },
+        },
+        { id: 'approved', name: 'Approved', type: 'approved', config: {} },
+      ],
+      edges: [
+        {
+          id: 'to-match',
+          sourceNodeId: 'start',
+          sourceHandle: 'out',
+          targetNodeId: 'match',
+          targetHandle: 'in',
+        },
+        {
+          id: 'match-within',
+          sourceNodeId: 'match',
+          sourceHandle: 'within_tolerance',
+          targetNodeId: 'budget',
+          targetHandle: 'in',
+        },
+        {
+          id: 'budget-available',
+          sourceNodeId: 'budget',
+          sourceHandle: 'available',
+          targetNodeId: 'approved',
+          targetHandle: 'in',
+        },
+      ],
+    };
+
+    const issues = validateWorkflowGraph(graph).issues.filter(
+      (issue) => issue.code === 'unwired_branch',
+    );
+
+    assert.deepEqual(
+      issues.map((issue) => issue.message),
+      ['Node match has no edge for output exception', 'Node budget has no edge for output breach'],
+    );
+  });
+
+  it('requires escalation timers to reference an enabled approval node', () => {
+    const graph = {
+      schemaVersion: 1,
+      domain: 'invoice',
+      entryNodeId: 'start',
+      nodes: [
+        {
+          id: 'start',
+          name: 'Start',
+          type: 'trigger',
+          config: { event: 'invoice_submitted' },
+        },
+        {
+          id: 'timer',
+          name: 'Escalate',
+          type: 'escalation_timer',
+          config: {
+            parentNodeId: 'approved',
+            slaHours: 24,
+            warningPercent: 75,
+            action: { type: 'auto_reject' },
+          },
+        },
+        { id: 'approved', name: 'Approved', type: 'approved', config: {} },
+      ],
+      edges: [
+        {
+          id: 'to-timer',
+          sourceNodeId: 'start',
+          sourceHandle: 'out',
+          targetNodeId: 'timer',
+          targetHandle: 'in',
+        },
+        {
+          id: 'timer-to-approved',
+          sourceNodeId: 'timer',
+          sourceHandle: 'out',
+          targetNodeId: 'approved',
+          targetHandle: 'in',
+        },
+      ],
+    };
+
+    assert.ok(issueCodes(graph).includes('invalid_parent_node'));
   });
 
   it('detects enabled paths that terminate in disabled nodes', () => {

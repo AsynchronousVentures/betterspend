@@ -1,6 +1,11 @@
 import type { z } from 'zod';
-import type { ApproverResolver, SeparationOfDuties, WorkflowNode } from './node-types';
-import { TERMINAL_NODE_TYPES, WORKFLOW_NODE_PORTS } from './node-types';
+import type {
+  ApprovalNode,
+  ApproverResolver,
+  SeparationOfDuties,
+  WorkflowNode,
+} from './node-types';
+import { isApprovalNode, TERMINAL_NODE_TYPES, WORKFLOW_NODE_PORTS } from './node-types';
 import type { WorkflowEdge, WorkflowGraph } from './graph';
 import { workflowGraphSchema } from './graph';
 
@@ -16,13 +21,17 @@ export const WORKFLOW_VALIDATION_CODES = [
   'missing_handle',
   'missing_default_edge',
   'multiple_default_edges',
+  'default_edge_mismatch',
   'missing_branch_condition',
+  'invalid_branch_priority',
+  'unwired_branch',
   'zero_resolvers',
   'duplicate_resolver',
   'invalid_quorum',
   'invalid_separation_of_duties',
   'domain_trigger_mismatch',
   'missing_parent_node',
+  'invalid_parent_node',
   'dead_end',
   'terminal_has_outgoing_edge',
   'cycle',
@@ -79,7 +88,7 @@ function resolverIdentity(resolver: ApproverResolver): string {
 }
 
 function validateSeparationOfDuties(
-  node: Extract<WorkflowNode, { type: 'approver_group' | 'resolver' }>,
+  node: ApprovalNode,
   resolvers: ApproverResolver[],
   config: SeparationOfDuties,
 ): WorkflowValidationIssue[] {
@@ -350,11 +359,37 @@ export function validateWorkflowGraph(input: unknown): WorkflowValidationResult 
   }
 
   for (const node of graph.nodes) {
+    const outgoing = outgoingEdges.get(node.id) ?? [];
+    if (!node.disabled) {
+      const declaredOutputs = WORKFLOW_NODE_PORTS[node.type].outputs as readonly string[];
+      if (declaredOutputs.length > 1) {
+        for (const output of declaredOutputs) {
+          if (!outgoing.some((edge) => edge.sourceHandle === output)) {
+            issues.push({
+              code: 'unwired_branch',
+              message: `Node ${node.id} has no edge for output ${output}`,
+              path: ['nodes', node.id],
+              nodeIds: [node.id],
+            });
+          }
+        }
+      }
+    }
+
     if (node.type === 'condition' && !node.disabled) {
-      const outgoing = outgoingEdges.get(node.id) ?? [];
-      const defaultEdges = outgoing.filter(
-        (edge) => edge.isDefault || edge.sourceHandle === 'default',
+      const defaultEdges = outgoing.filter((edge) => edge.sourceHandle === 'default');
+      const mismatchedDefaultEdges = outgoing.filter(
+        (edge) => edge.isDefault !== (edge.sourceHandle === 'default'),
       );
+      if (mismatchedDefaultEdges.length > 0) {
+        issues.push({
+          code: 'default_edge_mismatch',
+          message: `Condition node ${node.id} has inconsistent default-edge markers`,
+          path: ['nodes', node.id],
+          nodeIds: [node.id],
+          edgeIds: mismatchedDefaultEdges.map((edge) => edge.id),
+        });
+      }
       if (defaultEdges.length === 0) {
         issues.push({
           code: 'missing_default_edge',
@@ -371,7 +406,8 @@ export function validateWorkflowGraph(input: unknown): WorkflowValidationResult 
           edgeIds: defaultEdges.map((edge) => edge.id),
         });
       }
-      for (const edge of outgoing.filter((candidate) => !defaultEdges.includes(candidate))) {
+      const branchEdges = outgoing.filter((edge) => edge.sourceHandle !== 'default');
+      for (const edge of branchEdges) {
         if (!edge.condition) {
           issues.push({
             code: 'missing_branch_condition',
@@ -382,9 +418,34 @@ export function validateWorkflowGraph(input: unknown): WorkflowValidationResult 
           });
         }
       }
+      if (node.config.mode === 'first_true') {
+        const edgesWithoutPriority = branchEdges.filter((edge) => edge.priority == null);
+        const priorityCounts = new Map<number, number>();
+        for (const edge of branchEdges) {
+          if (edge.priority != null) {
+            priorityCounts.set(edge.priority, (priorityCounts.get(edge.priority) ?? 0) + 1);
+          }
+        }
+        const duplicatePriorities = new Set(
+          [...priorityCounts].filter(([, count]) => count > 1).map(([priority]) => priority),
+        );
+        const duplicatePriorityEdges = branchEdges.filter(
+          (edge) => edge.priority != null && duplicatePriorities.has(edge.priority),
+        );
+        const invalidPriorityEdges = [...edgesWithoutPriority, ...duplicatePriorityEdges];
+        if (invalidPriorityEdges.length > 0) {
+          issues.push({
+            code: 'invalid_branch_priority',
+            message: `First-true condition node ${node.id} requires a unique priority on each branch`,
+            path: ['nodes', node.id],
+            nodeIds: [node.id],
+            edgeIds: invalidPriorityEdges.map((edge) => edge.id),
+          });
+        }
+      }
     }
 
-    if (node.type === 'approver_group' || node.type === 'resolver') {
+    if (isApprovalNode(node)) {
       const resolverIdentities = node.config.resolvers.map(resolverIdentity);
       const duplicateResolverIdentities = resolverIdentities.filter(
         (identity, index) => resolverIdentities.indexOf(identity) !== index,
@@ -423,17 +484,26 @@ export function validateWorkflowGraph(input: unknown): WorkflowValidationResult 
       );
     }
 
-    if (node.type === 'escalation_timer' && !nodeById.has(node.config.parentNodeId)) {
-      issues.push({
-        code: 'missing_parent_node',
-        message: `Escalation timer ${node.id} references missing parent ${node.config.parentNodeId}`,
-        path: ['nodes', node.id, 'config', 'parentNodeId'],
-        nodeIds: [node.id, node.config.parentNodeId],
-      });
+    if (node.type === 'escalation_timer') {
+      const parent = nodeById.get(node.config.parentNodeId);
+      if (!parent) {
+        issues.push({
+          code: 'missing_parent_node',
+          message: `Escalation timer ${node.id} references missing parent ${node.config.parentNodeId}`,
+          path: ['nodes', node.id, 'config', 'parentNodeId'],
+          nodeIds: [node.id, node.config.parentNodeId],
+        });
+      } else if (parent.disabled || !isApprovalNode(parent)) {
+        issues.push({
+          code: 'invalid_parent_node',
+          message: `Escalation timer ${node.id} must reference an enabled approval node`,
+          path: ['nodes', node.id, 'config', 'parentNodeId'],
+          nodeIds: [node.id, parent.id],
+        });
+      }
     }
 
     if (node.disabled) continue;
-    const outgoing = outgoingEdges.get(node.id) ?? [];
     const terminal = (TERMINAL_NODE_TYPES as readonly string[]).includes(node.type);
     if (terminal && outgoing.length > 0) {
       issues.push({

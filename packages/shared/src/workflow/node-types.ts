@@ -252,3 +252,10 @@ export const WORKFLOW_NODE_PORTS = {
 
 export const APPROVAL_NODE_TYPES = ['approver_group', 'resolver'] as const;
 export const TERMINAL_NODE_TYPES = ['auto_approve', 'reject', 'approved'] as const;
+
+export type ApprovalNodeType = (typeof APPROVAL_NODE_TYPES)[number];
+export type ApprovalNode = Extract<WorkflowNode, { type: ApprovalNodeType }>;
+
+export function isApprovalNode(node: WorkflowNode): node is ApprovalNode {
+  return (APPROVAL_NODE_TYPES as readonly WorkflowNodeType[]).includes(node.type);
+}
