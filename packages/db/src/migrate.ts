@@ -33,11 +33,12 @@ function expiryDate(value: string | undefined): Date | null {
 }
 
 async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
-  await client.begin(async (transaction) => {
-    const rows = await transaction<LegacyRow[]>`
+  await client`BEGIN`;
+  try {
+    const rows = await client<LegacyRow[]>`
       SELECT organization_id, key, value
       FROM system_settings
-      WHERE key IN ${transaction(LEGACY_KEYS)}
+      WHERE key IN ${client(LEGACY_KEYS)}
       FOR UPDATE
     `;
 
@@ -73,7 +74,7 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
           status === 'active' && refreshToken ? encryptCredential(refreshToken) : null;
         const accessExpiresAt = expiryDate(settings[`${provider}_token_expires_at`]);
 
-        await transaction`
+        await client`
           INSERT INTO integration_connections (
             organization_id, provider, realm_id, access_token_enc, refresh_token_enc,
             access_expires_at, status, scopes
@@ -94,7 +95,7 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
     for (const row of rows) {
       const provider = row.key.startsWith('qbo_') ? 'qbo' : 'xero';
       if (!migratedProviders.has(`${row.organization_id}:${provider}`)) continue;
-      await transaction`
+      await client`
         DELETE FROM system_settings
         WHERE organization_id = ${row.organization_id}
           AND key = ${row.key}
@@ -103,7 +104,7 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
     }
 
     if (rows.length > 0) {
-      await transaction`
+      await client`
         UPDATE sync_records AS record
         SET connection_id = (
           SELECT connection.id
@@ -122,7 +123,11 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
           )
       `;
     }
-  });
+    await client`COMMIT`;
+  } catch (error) {
+    await client`ROLLBACK`;
+    throw error;
+  }
 }
 
 async function main(): Promise<void> {
@@ -134,9 +139,10 @@ async function main(): Promise<void> {
     connection = await client.reserve();
     await connection`SELECT pg_advisory_lock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
     migrationLockAcquired = true;
-    const db = drizzle(connection);
+    const migrationClient = Object.assign(connection, { options: client.options });
+    const db = drizzle(migrationClient);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
-    await migrateLegacyConnections(connection);
+    await migrateLegacyConnections(migrationClient);
   } finally {
     if (migrationLockAcquired && connection) {
       await connection`SELECT pg_advisory_unlock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
