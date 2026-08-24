@@ -220,11 +220,13 @@ export function allowsAutomaticReply(verdicts: SesAuthVerdicts, autoSubmitted: u
 }
 
 function archiveMagic(content: Buffer): boolean {
+  const rarSignature = Buffer.from('Rar!\x1a\x07', 'binary');
+  const sevenZipSignature = Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]);
   return (
     content.subarray(0, 2).equals(Buffer.from([0x1f, 0x8b])) ||
     content.subarray(0, 2).equals(Buffer.from('PK')) ||
-    content.subarray(0, 6).equals(Buffer.from('Rar!\x1a\x07', 'binary')) ||
-    content.subarray(0, 6).equals(Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])) ||
+    content.includes(rarSignature) ||
+    content.includes(sevenZipSignature) ||
     content.subarray(257, 262).toString('ascii') === 'ustar' ||
     hasZipEndOfCentralDirectory(content)
   );
@@ -282,7 +284,15 @@ export function isEncryptedPdf(content: Buffer): boolean {
     if (dictionary) structuralDictionaries.push(dictionary);
   }
 
-  return structuralDictionaries.some((dictionary) => /\/Encrypt\b/.test(dictionary));
+  return structuralDictionaries.some((dictionary) =>
+    /\/Encrypt\b/.test(decodePdfNameEscapes(dictionary)),
+  );
+}
+
+function decodePdfNameEscapes(value: string): string {
+  return value.replace(/#([a-f\d]{2})/gi, (_, hex: string) =>
+    String.fromCharCode(Number.parseInt(hex, 16)),
+  );
 }
 
 function pdfEnclosingDictionaryStart(source: string, position: number): number {
