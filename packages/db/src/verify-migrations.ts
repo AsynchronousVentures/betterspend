@@ -194,6 +194,7 @@ async function main(): Promise<void> {
       JOIN pg_namespace table_namespace ON table_namespace.oid = table_definition.relnamespace
       WHERE NOT trigger.tgisinternal
         AND table_namespace.nspname = 'public'
+        AND trigger.tgenabled IN ('O', 'A')
         AND trigger.tgname IN ${client(EXPECTED_TRIGGERS)}
     `;
     const foundTables = new Set(tables.map((row) => row.name));

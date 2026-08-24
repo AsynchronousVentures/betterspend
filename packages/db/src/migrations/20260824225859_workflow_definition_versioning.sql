@@ -1,3 +1,5 @@
+SET LOCAL lock_timeout = '5s';--> statement-breakpoint
+SET LOCAL statement_timeout = '30s';--> statement-breakpoint
 CREATE TABLE "workflow_definition_versions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"definition_id" uuid NOT NULL,
@@ -27,7 +29,7 @@ CREATE TABLE "workflow_definitions" (
 ALTER TABLE "approval_requests" ADD COLUMN "definition_version_id" uuid;--> statement-breakpoint
 ALTER TABLE "approval_requests" ADD COLUMN "current_node_id" varchar(100);--> statement-breakpoint
 ALTER TABLE "approval_requests" ADD COLUMN "attempt" integer DEFAULT 1 NOT NULL;--> statement-breakpoint
-CREATE UNIQUE INDEX "legal_entities_id_organization_id_unique" ON "legal_entities" USING btree ("id","organization_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "legal_entities_id_organization_id_unique" ON "legal_entities" USING btree ("id","organization_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "workflow_definition_versions_id_organization_id_unique" ON "workflow_definition_versions" USING btree ("id","organization_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "workflow_definitions_id_organization_id_unique" ON "workflow_definitions" USING btree ("id","organization_id");--> statement-breakpoint
 ALTER TABLE "workflow_definition_versions" ADD CONSTRAINT "workflow_definition_versions_definition_org_fk" FOREIGN KEY ("definition_id","organization_id") REFERENCES "public"."workflow_definitions"("id","organization_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
