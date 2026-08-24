@@ -589,6 +589,22 @@ export class ApprovalEngineService {
       ) {
         throw new ForbiddenException('This approval step is assigned to the budget owner');
       }
+      const currentRuleStep = atRequiredApproval
+        ? undefined
+        : sortedSteps.find((step) => step.stepOrder === approvalReq.currentStep);
+      if (currentRuleStep?.approverId && currentRuleStep.approverId !== actorId) {
+        const delegatee =
+          this.delegations && organizationId
+            ? await this.delegations.getActiveDelegatee(
+                organizationId,
+                currentRuleStep.approverId,
+                tx,
+              )
+            : null;
+        if (delegatee !== actorId) {
+          throw new ForbiddenException('This approval step is assigned to another approver');
+        }
+      }
       const nextRuleStep = atRequiredApproval
         ? undefined
         : sortedSteps.find((step) => step.stepOrder > approvalReq.currentStep);

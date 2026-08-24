@@ -9,7 +9,7 @@ import type { SettingsService } from '../settings/settings.service';
 import { ApprovalEngineService } from './approval-engine.service';
 
 function createService(
-  ruleSteps: Array<{ stepOrder: number }> = [],
+  ruleSteps: Array<{ stepOrder: number; approverId?: string }> = [],
   lockedRequest?: Record<string, unknown>,
   requiredApproverIsActive = true,
 ) {
@@ -203,6 +203,24 @@ describe('ApprovalEngineService required approvals', () => {
     assert.ok(!updateValues.some((values) => values.status === 'approved'));
     assert.equal(approvalActionValues.filter((values) => values.action === 'approve').length, 1);
     assert.equal(approvalActionValues.filter((values) => values.action === 'forwarded').length, 1);
+  });
+
+  it('rejects an actor who is not assigned to the current rule step', async () => {
+    const { service } = createService([{ stepOrder: 4, approverId: 'assigned-approver' }], {
+      id: 'approval-request-1',
+      approvableType: 'requisition',
+      approvableId: 'requisition-1',
+      status: 'pending',
+      approvalRuleId: 'rule-1',
+      currentStep: 4,
+      requiredApprovalStep: 5,
+      requiredApproverId: 'owner-1',
+    });
+
+    await assert.rejects(
+      service.processAction('approval-request-1', 'different-user', 'approve'),
+      /assigned to another approver/,
+    );
   });
 
   it('finalizes when the assigned owner approves the required step', async () => {
