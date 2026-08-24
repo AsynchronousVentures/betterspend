@@ -4,6 +4,9 @@ export default {
   schema: './src/schema/index.ts',
   out: './src/migrations',
   dialect: 'postgresql',
+  migrations: {
+    prefix: 'timestamp',
+  },
   dbCredentials: {
     url: process.env.DATABASE_URL!,
   },

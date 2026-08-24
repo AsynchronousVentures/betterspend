@@ -12,7 +12,7 @@ Each developer or agent must use an isolated, disposable PostgreSQL database. Do
 6. Run `pnpm --filter @betterspend/db db:validate-history`.
 7. Apply the full history to an empty database, seed it, and run the database checks.
 
-Concurrent migrations can conflict in their filename, journal entry, or snapshot. Resolve them by regenerating the new migration on top of the combined history. Never renumber, merge, or silently rewrite migrations in CI.
+New migrations use timestamp prefixes to reduce filename collisions between concurrent branches. The journal and snapshot can still conflict, so resolve them by regenerating the new migration on top of the combined history. Never renumber, merge, or silently rewrite migrations in CI.
 
 Committed migration SQL is immutable and forward-only. If an applied migration is wrong, add a new migration. Editing an applied migration requires a documented recovery change that explains the affected environments and preserves a working path for both fresh and existing databases.
 
