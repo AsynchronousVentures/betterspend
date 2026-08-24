@@ -1,13 +1,13 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { eq } from 'drizzle-orm';
+import { createHash, randomUUID } from 'crypto';
+import { and, eq, ne, sql } from 'drizzle-orm';
+import axios from 'axios';
+import { syncRecords, type Db } from '@betterspend/db';
 import { DB_TOKEN } from '../../database/database.module';
-import type { Db } from '@betterspend/db';
-import { glExportJobs, invoices } from '@betterspend/db';
 import { GlMappingsService } from './gl-mappings.service';
 import { OAuthService } from './oauth.service';
-import axios from 'axios';
 
 export type GlTargetSystem = 'qbo' | 'xero';
 
@@ -36,6 +36,10 @@ export interface GlExportPayload {
   unmappedAccounts: string[];
 }
 
+type SendOutcome =
+  | { kind: 'pending'; reason: string }
+  | { kind: 'synced'; externalId: string; connectionId: string };
+
 @Injectable()
 export class GlExportService {
   private readonly logger = new Logger(GlExportService.name);
@@ -47,22 +51,16 @@ export class GlExportService {
     @InjectQueue('gl-export') private readonly glQueue: Queue,
   ) {}
 
-  /**
-   * Enqueues a GL export job for a newly approved invoice.
-   * Called fire-and-forget from InvoicesService via the invoice.approved webhook event.
-   */
+  /** Enqueues the one shared path used by first attempts, queue retries, and manual retries. */
   enqueue(organizationId: string, invoiceId: string, targetSystem: GlTargetSystem): void {
     this.glQueue
       .add(
         'process-export',
         { organizationId, invoiceId, targetSystem },
-        {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 2000 },
-        },
+        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
       )
-      .catch((err: unknown) =>
-        this.logger.error(`Failed to enqueue GL export for invoice ${invoiceId}: ${String(err)}`),
+      .catch((error: unknown) =>
+        this.logger.error(`Failed to enqueue GL export for invoice ${invoiceId}: ${String(error)}`),
       );
   }
 
@@ -71,325 +69,393 @@ export class GlExportService {
     invoiceId: string,
     targetSystem: GlTargetSystem,
   ): Promise<void> {
-    // Create pending job record
-    const [job] = await this.db
-      .insert(glExportJobs)
-      .values({ organizationId, invoiceId, targetSystem, status: 'pending', attempts: 0 })
-      .returning();
+    const requestId = this.requestId(organizationId, invoiceId, targetSystem);
+    const [record] = await this.db
+      .insert(syncRecords)
+      .values({
+        organizationId,
+        provider: targetSystem,
+        direction: 'outbound',
+        localEntity: 'invoice',
+        localId: invoiceId,
+        externalEntity: targetSystem === 'qbo' ? 'Bill' : 'Invoice',
+        status: 'queued',
+        requestId,
+        docNumber: invoiceId,
+        payload: null,
+      })
+      .onConflictDoUpdate({
+        target: [
+          syncRecords.organizationId,
+          syncRecords.provider,
+          syncRecords.direction,
+          syncRecords.localEntity,
+          syncRecords.localId,
+        ],
+        set: { requestId: sql`${syncRecords.requestId}` },
+      })
+      .returning({ id: syncRecords.id, status: syncRecords.status });
+
+    if (record.status === 'synced') return;
+
+    const attemptId = randomUUID();
+    const started = await this.db
+      .update(syncRecords)
+      .set({
+        status: 'queued',
+        attempts: sql`${syncRecords.attempts} + 1`,
+        attemptId,
+        lastAttemptAt: new Date(),
+        errorCode: null,
+        errorMessage: null,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(syncRecords.id, record.id), ne(syncRecords.status, 'synced')))
+      .returning({ id: syncRecords.id });
+    if (started.length === 0) return;
+
+    let payload: GlExportPayload;
+    try {
+      payload = await this.buildPayload(organizationId, invoiceId, targetSystem);
+      await this.markRecord(record.id, attemptId, {
+        docNumber: payload.invoiceNumber || payload.internalNumber,
+        payload: payload as unknown as Record<string, unknown>,
+      });
+    } catch (error: unknown) {
+      await this.markRecord(record.id, attemptId, {
+        status: 'failed',
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+
+    const allUnmapped = payload.lines.length > 0 && payload.lines.every((line) => line.unmapped);
+    if (allUnmapped) {
+      await this.markRecord(record.id, attemptId, {
+        status: 'skipped',
+        errorMessage: `No GL mappings found for ${targetSystem}`,
+      });
+      return;
+    }
 
     try {
-      const invoice = await this.db.query.invoices.findFirst({
-        where: (i, { eq }) => eq(i.id, invoiceId),
-        with: { vendor: true, lines: true },
-      });
-
-      if (!invoice) {
-        await this.markJob(job.id, 'failed', 'Invoice not found', null, null);
-        return;
-      }
-
-      // Build export lines with GL mapping lookups
-      const exportLines: GlExportLine[] = [];
-      const unmappedAccounts: string[] = [];
-
-      for (const line of invoice.lines as Array<{
-        lineNumber: string;
-        description: string;
-        quantity: string;
-        unitPrice: string;
-        totalPrice: string;
-        glAccount: string | null;
-      }>) {
-        let externalCode: string | null = null;
-        let externalName: string | null = null;
-        let unmapped = false;
-
-        if (line.glAccount) {
-          const mapping = await this.glMappingsService.findByGlAccount(
-            organizationId,
-            line.glAccount,
-            targetSystem,
-          );
-          if (mapping) {
-            externalCode = mapping.externalAccountCode;
-            externalName = mapping.externalAccountName ?? null;
-          } else {
-            unmapped = true;
-            if (!unmappedAccounts.includes(line.glAccount)) {
-              unmappedAccounts.push(line.glAccount);
-            }
-          }
-        } else {
-          unmapped = true;
-        }
-
-        exportLines.push({
-          lineNumber: Number(line.lineNumber),
-          description: line.description,
-          quantity: parseFloat(line.quantity),
-          unitPrice: parseFloat(line.unitPrice),
-          totalPrice: parseFloat(line.totalPrice),
-          glAccount: line.glAccount,
-          externalAccountCode: externalCode,
-          externalAccountName: externalName,
-          unmapped,
-        });
-      }
-
-      const vendor = invoice.vendor as { name: string } | null;
-      const payload: GlExportPayload = {
-        invoiceId: invoice.id,
-        internalNumber: invoice.internalNumber,
-        invoiceNumber: invoice.invoiceNumber,
-        vendorName: vendor?.name ?? 'Unknown Vendor',
-        invoiceDate: invoice.invoiceDate.toISOString(),
-        dueDate: invoice.dueDate ? invoice.dueDate.toISOString() : null,
-        currency: invoice.currency,
-        totalAmount: parseFloat(invoice.totalAmount),
-        lines: exportLines,
-        unmappedAccounts,
-      };
-
-      // If all lines have unmapped GL accounts, mark as skipped (cannot export without codes)
-      const allUnmapped = exportLines.length > 0 && exportLines.every((l) => l.unmapped);
-      if (allUnmapped) {
-        await this.markJob(job.id, 'skipped', `No GL mappings found for ${targetSystem}`, payload, null);
-        this.logger.warn(`GL export skipped for invoice ${invoice.internalNumber}: no mappings for ${targetSystem}`);
-        return;
-      }
-
-      // Attempt actual API call; fall back to PENDING placeholder if no tokens configured
-      const externalId = await this.sendToExternalSystem(organizationId, targetSystem, payload, job.id);
-      await this.markJob(job.id, 'exported', null, payload, externalId);
-
-      this.logger.log(
-        `GL export complete for invoice ${invoice.internalNumber} → ${targetSystem} (externalId=${externalId})`,
+      const outcome = await this.sendToExternalSystem(
+        organizationId,
+        targetSystem,
+        payload,
+        requestId,
       );
-    } catch (err: unknown) {
-      await this.markJob(job.id, 'failed', String(err), null, null);
-      throw err;
+      if (outcome.kind === 'pending') {
+        await this.markRecord(record.id, attemptId, {
+          status: 'pending',
+          errorMessage: outcome.reason,
+        });
+        return;
+      }
+
+      await this.markRecord(record.id, attemptId, {
+        status: 'synced',
+        connectionId: outcome.connectionId,
+        externalId: outcome.externalId,
+        syncedAt: new Date(),
+        errorMessage: null,
+      });
+      this.logger.log(
+        `GL export synced for invoice ${payload.internalNumber} -> ${targetSystem} (externalId=${outcome.externalId})`,
+      );
+    } catch (error: unknown) {
+      await this.markRecord(record.id, attemptId, {
+        status: 'failed',
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     }
   }
 
-  /**
-   * Sends the export payload to the external GL system (QBO or Xero).
-   * Returns the external record ID assigned by the remote API.
-   * If OAuth tokens are not configured, returns a PENDING placeholder so the
-   * job still records a useful state rather than failing.
-   */
+  async findJobsForInvoice(invoiceId: string, organizationId: string) {
+    const records = await this.db.query.syncRecords.findMany({
+      where: (record, { and: andFn, eq: eqFn, or: orFn }) =>
+        andFn(
+          eqFn(record.organizationId, organizationId),
+          eqFn(record.direction, 'outbound'),
+          eqFn(record.localEntity, 'invoice'),
+          eqFn(record.localId, invoiceId),
+          orFn(eqFn(record.provider, 'qbo'), eqFn(record.provider, 'xero')),
+        ),
+      orderBy: (record, { desc }) => desc(record.createdAt),
+    });
+    return records.map((record) => this.toLegacyApiShape(record));
+  }
+
+  async retryJob(recordId: string, organizationId: string): Promise<void> {
+    const record = await this.db.query.syncRecords.findFirst({
+      where: (row, { and: andFn, eq: eqFn, or: orFn }) =>
+        andFn(
+          eqFn(row.id, recordId),
+          eqFn(row.organizationId, organizationId),
+          eqFn(row.direction, 'outbound'),
+          eqFn(row.localEntity, 'invoice'),
+          orFn(eqFn(row.provider, 'qbo'), eqFn(row.provider, 'xero')),
+        ),
+    });
+    if (!record) throw new BadRequestException(`GL sync record ${recordId} not found`);
+    if (record.status === 'synced')
+      throw new BadRequestException('A synced record cannot be retried');
+
+    const previous = {
+      status: record.status,
+      errorCode: record.errorCode,
+      errorMessage: record.errorMessage,
+    };
+    await this.db
+      .update(syncRecords)
+      .set({ status: 'pending', errorCode: null, errorMessage: null, updatedAt: new Date() })
+      .where(eq(syncRecords.id, recordId));
+    try {
+      await this.glQueue.add(
+        'process-export',
+        {
+          organizationId,
+          invoiceId: record.localId,
+          targetSystem: record.provider as GlTargetSystem,
+        },
+        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+      );
+    } catch (error: unknown) {
+      await this.db
+        .update(syncRecords)
+        .set({ ...previous, updatedAt: new Date() })
+        .where(eq(syncRecords.id, recordId));
+      throw error;
+    }
+  }
+
+  async findAll(organizationId: string) {
+    const records = await this.db.query.syncRecords.findMany({
+      where: (record, { and: andFn, eq: eqFn, or: orFn }) =>
+        andFn(
+          eqFn(record.organizationId, organizationId),
+          eqFn(record.direction, 'outbound'),
+          eqFn(record.localEntity, 'invoice'),
+          orFn(eqFn(record.provider, 'qbo'), eqFn(record.provider, 'xero')),
+        ),
+      orderBy: (record, { desc }) => desc(record.createdAt),
+      limit: 100,
+    });
+    const invoiceRows =
+      records.length === 0
+        ? []
+        : await this.db.query.invoices.findMany({
+            where: (invoice, { and: andFn, eq: eqFn, inArray }) =>
+              andFn(
+                eqFn(invoice.organizationId, organizationId),
+                inArray(
+                  invoice.id,
+                  records.map((record) => record.localId),
+                ),
+              ),
+          });
+    const invoicesById = new Map(invoiceRows.map((invoice) => [invoice.id, invoice]));
+    return records.map((record) =>
+      this.toLegacyApiShape({ ...record, invoice: invoicesById.get(record.localId) ?? null }),
+    );
+  }
+
+  private async buildPayload(
+    organizationId: string,
+    invoiceId: string,
+    targetSystem: GlTargetSystem,
+  ): Promise<GlExportPayload> {
+    const invoice = await this.db.query.invoices.findFirst({
+      where: (row, { and: andFn, eq: eqFn }) =>
+        andFn(eqFn(row.id, invoiceId), eqFn(row.organizationId, organizationId)),
+      with: { vendor: true, lines: true },
+    });
+    if (!invoice) throw new BadRequestException(`Invoice ${invoiceId} not found`);
+
+    const exportLines: GlExportLine[] = [];
+    const unmappedAccounts: string[] = [];
+    for (const line of invoice.lines as Array<{
+      lineNumber: string;
+      description: string;
+      quantity: string;
+      unitPrice: string;
+      totalPrice: string;
+      glAccount: string | null;
+    }>) {
+      const mapping = line.glAccount
+        ? await this.glMappingsService.findByGlAccount(organizationId, line.glAccount, targetSystem)
+        : null;
+      const unmapped = !mapping;
+      if (unmapped && line.glAccount && !unmappedAccounts.includes(line.glAccount)) {
+        unmappedAccounts.push(line.glAccount);
+      }
+      exportLines.push({
+        lineNumber: Number(line.lineNumber),
+        description: line.description,
+        quantity: Number(line.quantity),
+        unitPrice: Number(line.unitPrice),
+        totalPrice: Number(line.totalPrice),
+        glAccount: line.glAccount,
+        externalAccountCode: mapping?.externalAccountCode ?? null,
+        externalAccountName: mapping?.externalAccountName ?? null,
+        unmapped,
+      });
+    }
+
+    const vendor = invoice.vendor as { name: string } | null;
+    return {
+      invoiceId: invoice.id,
+      internalNumber: invoice.internalNumber,
+      invoiceNumber: invoice.invoiceNumber,
+      vendorName: vendor?.name ?? 'Unknown Vendor',
+      invoiceDate: invoice.invoiceDate.toISOString(),
+      dueDate: invoice.dueDate?.toISOString() ?? null,
+      currency: invoice.currency,
+      totalAmount: Number(invoice.totalAmount),
+      lines: exportLines,
+      unmappedAccounts,
+    };
+  }
+
   private async sendToExternalSystem(
     organizationId: string,
     targetSystem: GlTargetSystem,
     payload: GlExportPayload,
-    jobId: string,
-  ): Promise<string> {
-    if (targetSystem === 'qbo') {
-      return this.sendToQbo(organizationId, payload);
-    }
-    // targetSystem === 'xero'
-    return this.sendToXero(organizationId, payload);
+    requestId: string,
+  ): Promise<SendOutcome> {
+    return targetSystem === 'qbo'
+      ? this.sendToQbo(organizationId, payload, requestId)
+      : this.sendToXero(organizationId, payload, requestId);
   }
 
-  private async sendToQbo(organizationId: string, payload: GlExportPayload): Promise<string> {
+  private async sendToQbo(
+    organizationId: string,
+    payload: GlExportPayload,
+    requestId: string,
+  ): Promise<SendOutcome> {
     const tokens = await this.oauthService.getQboToken(organizationId);
-    if (!tokens) {
-      this.logger.warn(`QBO not connected for org ${organizationId}; using placeholder`);
-      return `QBO-PENDING-${payload.internalNumber}`;
-    }
+    if (!tokens) return { kind: 'pending', reason: 'QBO is not connected' };
 
-    const { accessToken, realmId } = tokens;
-    const baseUrl = process.env.QBO_API_URL || 'https://quickbooks.api.intuit.com';
-
-    // Map lines to QBO Bill line items
     const lineItems = payload.lines
-      .filter((l) => !l.unmapped && l.externalAccountCode)
-      .map((l) => ({
-        Amount: l.totalPrice,
+      .filter((line) => !line.unmapped && line.externalAccountCode)
+      .map((line) => ({
+        Amount: line.totalPrice,
         DetailType: 'AccountBasedExpenseLineDetail',
-        Description: l.description,
-        AccountBasedExpenseLineDetail: {
-          AccountRef: { value: l.externalAccountCode },
-        },
+        Description: line.description,
+        AccountBasedExpenseLineDetail: { AccountRef: { value: line.externalAccountCode } },
       }));
+    if (lineItems.length === 0)
+      return { kind: 'pending', reason: 'No mapped QBO lines are available' };
 
-    if (lineItems.length === 0) {
-      return `QBO-SKIPPED-${payload.internalNumber}`;
-    }
-
-    const billBody = {
-      VendorRef: { name: payload.vendorName },
-      TxnDate: payload.invoiceDate.split('T')[0],
-      DueDate: payload.dueDate ? payload.dueDate.split('T')[0] : undefined,
-      DocNumber: payload.invoiceNumber,
-      CurrencyRef: { value: payload.currency },
-      Line: lineItems,
-    };
-
-    const res = await axios.post<{ Bill: { Id: string } }>(
-      `${baseUrl}/v3/company/${realmId}/bill`,
-      billBody,
+    const baseUrl = process.env.QBO_API_URL || 'https://quickbooks.api.intuit.com';
+    const response = await axios.post<{ Bill?: { Id?: string } }>(
+      `${baseUrl}/v3/company/${tokens.realmId}/bill?requestid=${encodeURIComponent(requestId)}`,
+      {
+        VendorRef: { name: payload.vendorName },
+        TxnDate: payload.invoiceDate.split('T')[0],
+        DueDate: payload.dueDate?.split('T')[0],
+        DocNumber: payload.invoiceNumber,
+        CurrencyRef: { value: payload.currency },
+        Line: lineItems,
+      },
       {
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${tokens.accessToken}`,
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
       },
     );
-
-    const qboId = res.data?.Bill?.Id ?? `QBO-${payload.internalNumber}`;
-    this.logger.log(`QBO Bill created: ${qboId} for invoice ${payload.internalNumber}`);
-    return `QBO-${qboId}`;
+    const externalId = response.data.Bill?.Id;
+    if (!externalId) throw new Error('QBO did not return a Bill ID');
+    return { kind: 'synced', externalId, connectionId: tokens.connectionId };
   }
 
-  private async sendToXero(organizationId: string, payload: GlExportPayload): Promise<string> {
+  private async sendToXero(
+    organizationId: string,
+    payload: GlExportPayload,
+    requestId: string,
+  ): Promise<SendOutcome> {
     const tokens = await this.oauthService.getXeroToken(organizationId);
-    if (!tokens) {
-      this.logger.warn(`Xero not connected for org ${organizationId}; using placeholder`);
-      return `XERO-PENDING-${payload.internalNumber}`;
-    }
+    if (!tokens) return { kind: 'pending', reason: 'Xero is not connected' };
 
-    const { accessToken, tenantId } = tokens;
-
-    // Map lines to Xero invoice line items
     const lineItems = payload.lines
-      .filter((l) => !l.unmapped && l.externalAccountCode)
-      .map((l) => ({
-        Description: l.description,
-        Quantity: l.quantity,
-        UnitAmount: l.unitPrice,
-        AccountCode: l.externalAccountCode,
+      .filter((line) => !line.unmapped && line.externalAccountCode)
+      .map((line) => ({
+        Description: line.description,
+        Quantity: line.quantity,
+        UnitAmount: line.unitPrice,
+        AccountCode: line.externalAccountCode,
       }));
+    if (lineItems.length === 0)
+      return { kind: 'pending', reason: 'No mapped Xero lines are available' };
 
-    if (lineItems.length === 0) {
-      return `XERO-SKIPPED-${payload.internalNumber}`;
-    }
-
-    const invoiceBody = {
-      Type: 'ACCPAY',
-      Contact: { Name: payload.vendorName },
-      Date: payload.invoiceDate.split('T')[0],
-      DueDate: payload.dueDate ? payload.dueDate.split('T')[0] : undefined,
-      InvoiceNumber: payload.invoiceNumber,
-      CurrencyCode: payload.currency,
-      LineItems: lineItems,
-      Status: 'AUTHORISED',
-    };
-
-    const res = await axios.post<{ Invoices: Array<{ InvoiceID: string }> }>(
+    const response = await axios.post<{ Invoices?: Array<{ InvoiceID?: string }> }>(
       'https://api.xero.com/api.xro/2.0/Invoices',
-      { Invoices: [invoiceBody] },
+      {
+        Invoices: [
+          {
+            Type: 'ACCPAY',
+            Contact: { Name: payload.vendorName },
+            Date: payload.invoiceDate.split('T')[0],
+            DueDate: payload.dueDate?.split('T')[0],
+            InvoiceNumber: payload.invoiceNumber,
+            CurrencyCode: payload.currency,
+            LineItems: lineItems,
+            Status: 'AUTHORISED',
+          },
+        ],
+      },
       {
         headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'xero-tenant-id': tenantId,
+          Authorization: `Bearer ${tokens.accessToken}`,
+          'xero-tenant-id': tokens.tenantId,
+          'Idempotency-Key': requestId,
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
       },
     );
-
-    const xeroId = res.data?.Invoices?.[0]?.InvoiceID ?? `XERO-${payload.internalNumber}`;
-    this.logger.log(`Xero Invoice created: ${xeroId} for invoice ${payload.internalNumber}`);
-    return `XERO-${xeroId}`;
+    const externalId = response.data.Invoices?.[0]?.InvoiceID;
+    if (!externalId) throw new Error('Xero did not return an Invoice ID');
+    return { kind: 'synced', externalId, connectionId: tokens.connectionId };
   }
 
-  async findJobsForInvoice(invoiceId: string) {
-    return this.db.query.glExportJobs.findMany({
-      where: (j, { eq }) => eq(j.invoiceId, invoiceId),
-      orderBy: (j, { desc }) => desc(j.createdAt),
-    });
-  }
-
-  async retryJob(jobId: string, organizationId: string): Promise<void> {
-    const job = await this.db.query.glExportJobs.findFirst({
-      where: (j, { and, eq: eqFn }) => and(eqFn(j.id, jobId), eqFn(j.organizationId, organizationId)),
-    });
-    if (!job) throw new Error(`GL export job ${jobId} not found`);
-    // Reset to pending then re-process
-    await this.db.update(glExportJobs).set({ status: 'pending', errorMessage: null, updatedAt: new Date() }).where(eq(glExportJobs.id, jobId));
-    await this.glQueue.add(
-      'retry-export',
-      { jobId, organizationId, invoiceId: job.invoiceId, targetSystem: job.targetSystem as GlTargetSystem },
-      {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 2000 },
-      },
-    );
-  }
-
-  async processExportForJob(jobId: string, organizationId: string, invoiceId: string, targetSystem: GlTargetSystem): Promise<void> {
-    try {
-      const invoice = await this.db.query.invoices.findFirst({
-        where: (i, { eq: eqFn }) => eqFn(i.id, invoiceId),
-        with: { vendor: true, lines: true },
-      });
-      if (!invoice) { await this.markJobById(jobId, 'failed', 'Invoice not found', null, null); return; }
-
-      const exportLines: GlExportLine[] = [];
-      const unmappedAccounts: string[] = [];
-      for (const line of invoice.lines as Array<{ lineNumber: string; description: string; quantity: string; unitPrice: string; totalPrice: string; glAccount: string | null; }>) {
-        let externalCode: string | null = null;
-        let externalName: string | null = null;
-        let unmapped = false;
-        if (line.glAccount) {
-          const mapping = await this.glMappingsService.findByGlAccount(organizationId, line.glAccount, targetSystem);
-          if (mapping) { externalCode = mapping.externalAccountCode; externalName = mapping.externalAccountName ?? null; }
-          else { unmapped = true; if (!unmappedAccounts.includes(line.glAccount)) unmappedAccounts.push(line.glAccount); }
-        } else { unmapped = true; }
-        exportLines.push({ lineNumber: Number(line.lineNumber), description: line.description, quantity: parseFloat(line.quantity), unitPrice: parseFloat(line.unitPrice), totalPrice: parseFloat(line.totalPrice), glAccount: line.glAccount, externalAccountCode: externalCode, externalAccountName: externalName, unmapped });
-      }
-      const vendor = invoice.vendor as { name: string } | null;
-      const payload: GlExportPayload = {
-        invoiceId: invoice.id, internalNumber: invoice.internalNumber, invoiceNumber: invoice.invoiceNumber,
-        vendorName: vendor?.name ?? 'Unknown Vendor', invoiceDate: invoice.invoiceDate.toISOString(),
-        dueDate: invoice.dueDate ? invoice.dueDate.toISOString() : null, currency: invoice.currency,
-        totalAmount: parseFloat(invoice.totalAmount), lines: exportLines, unmappedAccounts,
-      };
-      const allUnmapped = exportLines.length > 0 && exportLines.every((l) => l.unmapped);
-      if (allUnmapped) { await this.markJobById(jobId, 'skipped', `No GL mappings found for ${targetSystem}`, payload, null); return; }
-
-      const externalId = await this.sendToExternalSystem(organizationId, targetSystem, payload, jobId);
-      await this.markJobById(jobId, 'exported', null, payload, externalId);
-    } catch (err: unknown) {
-      await this.markJobById(jobId, 'failed', String(err), null, null);
-    }
-  }
-
-  private async markJobById(id: string, status: string, errorMessage: string | null, payload: GlExportPayload | null, externalId: string | null) {
-    await this.db.update(glExportJobs).set({
-      status, attempts: 1, errorMessage, payload: payload as Record<string, unknown> | null,
-      externalId, exportedAt: status === 'exported' ? new Date() : null, updatedAt: new Date(),
-    }).where(eq(glExportJobs.id, id));
-  }
-
-  async findAll(organizationId: string) {
-    return this.db.query.glExportJobs.findMany({
-      where: (j, { eq }) => eq(j.organizationId, organizationId),
-      with: { invoice: true },
-      orderBy: (j, { desc }) => desc(j.createdAt),
-      limit: 100,
-    });
-  }
-
-  private async markJob(
+  private async markRecord(
     id: string,
-    status: string,
-    errorMessage: string | null,
-    payload: GlExportPayload | null,
-    externalId: string | null,
-  ) {
+    attemptId: string,
+    values: Partial<typeof syncRecords.$inferInsert>,
+  ): Promise<void> {
     await this.db
-      .update(glExportJobs)
-      .set({
-        status,
-        attempts: 1,
-        errorMessage,
-        payload: payload as Record<string, unknown> | null,
-        externalId,
-        exportedAt: status === 'exported' ? new Date() : null,
-        updatedAt: new Date(),
-      })
-      .where(eq(glExportJobs.id, id));
+      .update(syncRecords)
+      .set({ ...values, updatedAt: new Date() })
+      .where(
+        and(
+          eq(syncRecords.id, id),
+          eq(syncRecords.attemptId, attemptId),
+          ne(syncRecords.status, 'synced'),
+        ),
+      );
+  }
+
+  private requestId(organizationId: string, invoiceId: string, provider: GlTargetSystem): string {
+    return createHash('sha256')
+      .update(`${organizationId}:${provider}:invoice:${invoiceId}`)
+      .digest('hex')
+      .slice(0, 50);
+  }
+
+  private toLegacyApiShape<T extends { provider: string; localId: string; syncedAt: Date | null }>(
+    record: T,
+  ) {
+    const { payload: _payload, ...publicRecord } = record as T & { payload?: unknown };
+    return {
+      ...publicRecord,
+      invoiceId: record.localId,
+      targetSystem: record.provider,
+      exportedAt: record.syncedAt,
+      completedAt: record.syncedAt,
+    };
   }
 }

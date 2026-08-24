@@ -7,6 +7,6 @@ import { CredentialCryptoService } from './credential-crypto.service';
 @Module({
   controllers: [AiProvidersController],
   providers: [AiProvidersService, AiRuntimeService, CredentialCryptoService],
-  exports: [AiRuntimeService, AiProvidersService],
+  exports: [AiRuntimeService, AiProvidersService, CredentialCryptoService],
 })
 export class AiProvidersModule {}

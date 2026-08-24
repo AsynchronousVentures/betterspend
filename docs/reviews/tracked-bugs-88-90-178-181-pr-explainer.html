@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tracked bug fixes PR explainer</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #000;
+        --text: #fff;
+        --muted: #aaa;
+        --line: #2a2a2a;
+        --green: #67d391;
+        --yellow: #f0c75e;
+        --red: #ff6b6b;
+        --blue: #74b9ff;
+        --code: #0b0b0b;
+        --space: clamp(1rem, 2vw, 1.75rem);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+      main { width: min(1120px, calc(100% - 2rem)); margin: 0 auto; padding: 2rem 0 4rem; }
+      header { border-bottom: 1px solid var(--line); padding-bottom: var(--space); }
+      h1, h2, h3 { line-height: 1.15; margin: 0; }
+      h1 { font-size: clamp(1.8rem, 4vw, 3rem); letter-spacing: -0.04em; }
+      h2 { margin-top: 2.5rem; padding-bottom: 0.6rem; border-bottom: 1px solid var(--line); font-size: 1.25rem; }
+      h3 { margin-top: 1.5rem; font-size: 1rem; }
+      p { max-width: 78ch; }
+      .meta { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; color: var(--muted); margin-top: 0.8rem; font-family: ui-monospace, monospace; font-size: 0.82rem; }
+      .summary { font-size: 1.08rem; max-width: 80ch; }
+      .flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); margin-top: 1rem; }
+      .flow div { padding: 1rem; border-right: 1px solid var(--line); min-height: 8rem; }
+      .flow div:last-child { border-right: 0; }
+      .flow strong { display: block; color: var(--blue); margin-bottom: 0.4rem; }
+      table { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 1rem; font-size: 0.92rem; }
+      th, td { text-align: left; vertical-align: top; overflow-wrap: anywhere; padding: 0.7rem; border-bottom: 1px solid var(--line); }
+      th { color: var(--muted); font-weight: 600; }
+      .risk-high { color: var(--red); }
+      .risk-medium { color: var(--yellow); }
+      .risk-low { color: var(--green); }
+      .diff { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(15rem, 0.8fr); border: 1px solid var(--line); margin-top: 0.75rem; }
+      pre { min-width: 0; max-width: 100%; margin: 0; padding: 1rem; overflow: auto; background: var(--code); font: 0.8rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+      .note { padding: 1rem; border-left: 1px solid var(--line); color: #ddd; font-size: 0.9rem; }
+      .note strong { display: block; margin-bottom: 0.35rem; }
+      .nice strong { color: var(--green); }
+      .attention strong { color: var(--yellow); }
+      ul, ol { padding-left: 1.25rem; max-width: 84ch; }
+      li { margin: 0.45rem 0; }
+      code { color: #d7e9ff; }
+      footer { color: var(--muted); border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1rem; font-size: 0.82rem; }
+      @media (max-width: 700px) {
+        .flow, .diff { grid-template-columns: 1fr; }
+        .flow div { border-right: 0; border-bottom: 1px solid var(--line); min-height: auto; }
+        .flow div:last-child { border-bottom: 0; }
+        .note { border-left: 0; border-top: 1px solid var(--line); }
+        th:nth-child(3), td:nth-child(3) { display: none; }
+      }
+      @media print {
+        :root { color-scheme: light; --bg: #fff; --text: #000; --muted: #444; --line: #bbb; --code: #f4f4f4; }
+        main { width: 100%; }
+        .diff { break-inside: avoid; }
+        code { color: #12385c; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>fix: repair GL sync security and database migrations</h1>
+        <div class="meta">
+          <span>Author: gpt-5.6-sol on behalf of Tyler</span>
+          <span>Branch: fix/tracked-bugs-88-90-178-181</span>
+          <span>Issues: #88, #89, #90, #178, #181</span>
+        </div>
+        <p class="summary">OAuth credentials move out of general settings into encrypted connection rows, OAuth state becomes opaque and single-use, export status records only confirmed remote IDs as synced, and clean PostgreSQL 18 migrations plus the root test command are enforced in CI.</p>
+      </header>
+
+      <section>
+        <h2>What changed, and why</h2>
+        <div class="flow" aria-label="New GL integration flow">
+          <div><strong>1. Connect</strong>Authenticated finance/admin session requests a provider URL.</div>
+          <div><strong>2. Bind</strong>Redis stores 32-byte state with org, user, session, provider, and a 10-minute TTL.</div>
+          <div><strong>3. Persist</strong>Callback consumes state once and stores only AES-256-GCM ciphertext.</div>
+          <div><strong>4. Sync</strong>A shared journal path increments attempts and marks synced only after a real provider ID.</div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Risk map</h2>
+        <table>
+          <thead><tr><th>Area</th><th>Risk</th><th>Why reviewers should care</th><th>Guard</th></tr></thead>
+          <tbody>
+            <tr><td><code>oauth.service.ts</code></td><td class="risk-high">High</td><td>Token rotation, revocation, callback trust, and encrypted persistence changed together.</td><td>Three focused OAuth tests, exact redirect check, Redis lock.</td></tr>
+            <tr><td><code>0035_integration_connections.sql</code></td><td class="risk-high">High</td><td>Creates durable connection and sync records, then reconciles legacy export jobs.</td><td>Fresh PostgreSQL 18 run and schema verification.</td></tr>
+            <tr><td><code>gl-export.service.ts</code></td><td class="risk-medium">Medium</td><td>Initial and retry flows now share one path and status vocabulary changes to pending/queued/synced.</td><td>False-success regression test and stable request IDs.</td></tr>
+            <tr><td><code>migrate.ts</code></td><td class="risk-medium">Medium</td><td>Moves legacy plaintext settings after schema migrations and deletes the old rows.</td><td>Transaction, production key requirement, explicit legacy migration run.</td></tr>
+            <tr><td>CI and badges</td><td class="risk-low">Low</td><td>Adds tests, PostgreSQL service, migration verification, and status colors.</td><td>Root test command and web typecheck.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Annotated critical diffs</h2>
+        <h3>OAuth state no longer carries organization JSON</h3>
+        <div class="diff">
+          <pre><code>+ const state = randomBytes(32).toString('base64url');
++ SET oauth:state:&lt;state&gt; JSON(binding) EX 600 NX
++ consumeState uses atomic GET + DEL
++ callback rejects unknown, expired, or wrong-provider state</code></pre>
+          <div class="note nice"><strong>Nice</strong>The organization never crosses the browser as trusted state. One callback consumes one grant.</div>
+        </div>
+
+        <h3>Credentials get a dedicated encrypted model</h3>
+        <div class="diff">
+          <pre><code>+ integration_connections
++   organization_id, entity_id, provider, realm_id
++   access_token_enc, refresh_token_enc, access_expires_at
++   status, connected_by_user_id, last_sync_at
+
+- system_settings.qbo_access_token
+- system_settings.qbo_refresh_token</code></pre>
+          <div class="note attention"><strong>Review closely</strong>Check the connection uniqueness rule and whether one realm per org/provider matches the near-term product model.</div>
+        </div>
+
+        <h3>False success becomes an explicit pending outcome</h3>
+        <div class="diff">
+          <pre><code>- return `QBO-PENDING-${payload.internalNumber}`;
+- markJob(id, 'exported', ..., placeholder);
+
++ if (!tokens) return { kind: 'pending', reason: 'QBO is not connected' };
++ if (!response.data.Bill?.Id) throw new Error(...);
++ markRecord(id, { status: 'synced', externalId: realId });</code></pre>
+          <div class="note nice"><strong>Nice</strong>The synced invariant is now local and obvious: no real provider ID, no synced state.</div>
+        </div>
+
+        <h3>The broken historical migration is narrowed</h3>
+        <div class="diff">
+          <pre><code>0006: CREATE vendor_portal_tokens + vendor FK
+0007: CREATE notifications + notifications FK
+
+- duplicate vendor_portal_tokens creation in 0007
+- duplicate vendor foreign key in 0007</code></pre>
+          <div class="note nice"><strong>Nice</strong>The snapshots already show vendor tokens in 0006 and notifications in 0007, so the SQL now matches the recorded schema history.</div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Test coverage</h2>
+        <ul>
+          <li><code>pnpm test -- --runInBand</code>, 2 suites and 4 tests.</li>
+          <li>Clean Drizzle migration sequence against PostgreSQL 18.</li>
+          <li>Verification queries for four tables and four foreign keys.</li>
+          <li>Legacy QBO settings migrate to <code>v1:</code> ciphertext and old rows are deleted.</li>
+          <li>Repository typechecks and builds remain the final pre-push gate.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>What to look at hardest</h2>
+        <ol>
+          <li>Whether storing the initiating session ID in Redis is the right binding for the bearer-token callback flow.</li>
+          <li>Whether local credential purge should still complete when provider revocation fails. Current behavior purges in <code>finally</code> and surfaces the remote error.</li>
+          <li>The legacy export reconciliation rules, especially placeholder IDs converted to pending and valid exported IDs converted to synced.</li>
+          <li>The one-active-connection assumptions used by connection lookup and the current web UI.</li>
+        </ol>
+      </section>
+
+      <footer>Last updated 2026-08-24 06:45 MDT</footer>
+    </main>
+  </body>
+</html>

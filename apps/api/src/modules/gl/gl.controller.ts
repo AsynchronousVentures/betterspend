@@ -1,16 +1,30 @@
 import {
-  Controller, Get, Post, Patch, Delete, Param, Body, Query, HttpCode, HttpStatus, Res,
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Param,
+  Body,
+  Query,
+  HttpCode,
+  HttpStatus,
+  Res,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { Response } from 'express';
-import { GlMappingsService, CreateGlMappingInput, UpdateGlMappingInput } from './gl-mappings.service';
+import {
+  GlMappingsService,
+  CreateGlMappingInput,
+  UpdateGlMappingInput,
+} from './gl-mappings.service';
 import { GlExportService } from './gl-export.service';
 import { OAuthService } from './oauth.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
+import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
+import { CurrentSessionId } from '../../common/decorators/current-session-id.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { Public } from '../../common/decorators/public.decorator';
-
-const DEMO_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
 @ApiTags('gl')
 @Roles('finance', 'admin')
@@ -45,7 +59,11 @@ export class GlController {
 
   @Patch('mappings/:id')
   @ApiOperation({ summary: 'Update a GL mapping' })
-  updateMapping(@Param('id') id: string, @Body() body: UpdateGlMappingInput, @CurrentOrgId() orgId: string) {
+  updateMapping(
+    @Param('id') id: string,
+    @Body() body: UpdateGlMappingInput,
+    @CurrentOrgId() orgId: string,
+  ) {
     return this.glMappingsService.update(id, orgId, body);
   }
 
@@ -66,14 +84,14 @@ export class GlController {
 
   @Get('export-jobs/invoice/:invoiceId')
   @ApiOperation({ summary: 'List GL export jobs for a specific invoice' })
-  findJobsForInvoice(@Param('invoiceId') invoiceId: string) {
-    return this.glExportService.findJobsForInvoice(invoiceId);
+  findJobsForInvoice(@Param('invoiceId') invoiceId: string, @CurrentOrgId() orgId: string) {
+    return this.glExportService.findJobsForInvoice(invoiceId, orgId);
   }
 
   @Post('export-jobs/:id/retry')
   @ApiOperation({ summary: 'Retry a failed GL export job' })
-  retryJob(@Param('id') id: string, @CurrentOrgId() orgId: string) {
-    this.glExportService.retryJob(id, orgId).catch(() => {});
+  async retryJob(@Param('id') id: string, @CurrentOrgId() orgId: string) {
+    await this.glExportService.retryJob(id, orgId);
     return { queued: true };
   }
 
@@ -101,30 +119,31 @@ export class GlController {
 
   @Get('oauth/qbo/connect')
   @ApiOperation({ summary: 'Get QBO OAuth authorize URL using the platform-managed app' })
-  getQboConnectUrl(@CurrentOrgId() orgId: string) {
-    const url = this.oauthService.getQboAuthUrl(orgId);
+  async getQboConnectUrl(
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+    @CurrentSessionId() sessionId?: string,
+  ) {
+    if (!sessionId)
+      throw new UnauthorizedException('An authenticated session is required to connect QBO');
+    const url = await this.oauthService.getQboAuthUrl(orgId, userId, sessionId);
     return { url };
   }
 
   @Get('oauth/qbo/callback')
-  @Public()
   @ApiOperation({ summary: 'QBO OAuth callback — exchanges code for tokens' })
   async qboCallback(
     @Query('code') code: string,
     @Query('realmId') realmId: string,
     @Query('state') state: string,
+    @CurrentUserId() userId: string,
+    @CurrentSessionId() sessionId: string | undefined,
     @Res() res: Response,
   ) {
     const webUrl = process.env.WEB_URL || 'http://localhost:3100';
     try {
-      let organizationId = DEMO_ORG_ID;
-      try {
-        const parsed = JSON.parse(Buffer.from(state, 'base64').toString('utf8')) as { organizationId?: string };
-        if (parsed.organizationId) organizationId = parsed.organizationId;
-      } catch {
-        // state parse failure — fall back to demo org
-      }
-      await this.oauthService.exchangeQboCode(organizationId, code, realmId);
+      if (!sessionId) throw new UnauthorizedException('The OAuth session is no longer available');
+      await this.oauthService.completeQboOAuth(state, code, realmId, userId, sessionId);
       res.redirect(`${webUrl}/addons?connected=qbo`);
     } catch (err) {
       const message = encodeURIComponent(String(err));
@@ -135,37 +154,38 @@ export class GlController {
   @Delete('oauth/qbo')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Disconnect QBO' })
-  async disconnectQbo(@CurrentOrgId() orgId: string) {
-    await this.oauthService.disconnectQbo(orgId);
+  async disconnectQbo(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
+    await this.oauthService.disconnectQbo(orgId, userId);
   }
 
   // ── OAuth — Xero ────────────────────────────────────────────────────────────
 
   @Get('oauth/xero/connect')
   @ApiOperation({ summary: 'Get Xero OAuth authorize URL using the platform-managed app' })
-  getXeroConnectUrl(@CurrentOrgId() orgId: string) {
-    const url = this.oauthService.getXeroAuthUrl(orgId);
+  async getXeroConnectUrl(
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+    @CurrentSessionId() sessionId?: string,
+  ) {
+    if (!sessionId)
+      throw new UnauthorizedException('An authenticated session is required to connect Xero');
+    const url = await this.oauthService.getXeroAuthUrl(orgId, userId, sessionId);
     return { url };
   }
 
   @Get('oauth/xero/callback')
-  @Public()
   @ApiOperation({ summary: 'Xero OAuth callback — exchanges code for tokens' })
   async xeroCallback(
     @Query('code') code: string,
     @Query('state') state: string,
+    @CurrentUserId() userId: string,
+    @CurrentSessionId() sessionId: string | undefined,
     @Res() res: Response,
   ) {
     const webUrl = process.env.WEB_URL || 'http://localhost:3100';
     try {
-      let organizationId = DEMO_ORG_ID;
-      try {
-        const parsed = JSON.parse(Buffer.from(state, 'base64').toString('utf8')) as { organizationId?: string };
-        if (parsed.organizationId) organizationId = parsed.organizationId;
-      } catch {
-        // state parse failure — fall back to demo org
-      }
-      await this.oauthService.exchangeXeroCode(organizationId, code);
+      if (!sessionId) throw new UnauthorizedException('The OAuth session is no longer available');
+      await this.oauthService.completeXeroOAuth(state, code, userId, sessionId);
       res.redirect(`${webUrl}/addons?connected=xero`);
     } catch (err) {
       const message = encodeURIComponent(String(err));
@@ -176,7 +196,7 @@ export class GlController {
   @Delete('oauth/xero')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Disconnect Xero' })
-  async disconnectXero(@CurrentOrgId() orgId: string) {
-    await this.oauthService.disconnectXero(orgId);
+  async disconnectXero(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
+    await this.oauthService.disconnectXero(orgId, userId);
   }
 }

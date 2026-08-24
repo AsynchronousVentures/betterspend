@@ -42,3 +42,22 @@ export const NUMBER_PREFIXES = {
   GOODS_RECEIPT: 'GRN',
   INVOICE: 'INV',
 } as const;
+
+export const INTEGRATION_CONNECTION_STATUS = {
+  ACTIVE: 'active',
+  RECONNECT_REQUIRED: 'reconnect_required',
+  REVOKED: 'revoked',
+} as const;
+
+export type IntegrationConnectionStatus =
+  (typeof INTEGRATION_CONNECTION_STATUS)[keyof typeof INTEGRATION_CONNECTION_STATUS];
+
+export const SYNC_RECORD_STATUS = {
+  PENDING: 'pending',
+  QUEUED: 'queued',
+  SKIPPED: 'skipped',
+  SYNCED: 'synced',
+  FAILED: 'failed',
+} as const;
+
+export type SyncRecordStatus = (typeof SYNC_RECORD_STATUS)[keyof typeof SYNC_RECORD_STATUS];

@@ -16,6 +16,7 @@ import {
 } from './schema/approvals';
 import { webhookEndpoints, webhookDeliveries } from './schema/webhooks';
 import { glMappings, glExportJobs } from './schema/gl';
+import { integrationConnections, syncRecords } from './schema/integrations';
 import { ocrJobs } from './schema/ocr';
 import { authSessions, authAccounts } from './schema/auth';
 import {
@@ -42,7 +43,10 @@ import { spendGuardAlerts } from './schema/spend-guard-alerts';
 import { softwareLicenses } from './schema/software-licenses';
 import { catalogPriceProposals } from './schema/catalog-price-proposals';
 import { emailIntakeItems } from './schema/email-intake';
-import { onboardingQuestionnaires, vendorOnboardingSubmissions } from './schema/onboarding-questionnaires';
+import {
+  onboardingQuestionnaires,
+  vendorOnboardingSubmissions,
+} from './schema/onboarding-questionnaires';
 import { documents } from './schema/documents';
 import { intakeConciergeSessions, procurementPolicies } from './schema/procurement-concierge';
 import { aiProviderConnections, aiProviderOauthStates } from './schema/ai-providers';
@@ -67,6 +71,8 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   vendorOnboardingSubmissions: many(vendorOnboardingSubmissions),
   aiProviderConnections: many(aiProviderConnections),
   aiProviderOauthStates: many(aiProviderOauthStates),
+  integrationConnections: many(integrationConnections),
+  syncRecords: many(syncRecords),
 }));
 
 export const aiProviderConnectionsRelations = relations(aiProviderConnections, ({ one }) => ({
@@ -197,28 +203,34 @@ export const vendorsRelations = relations(vendors, ({ one, many }) => ({
   onboardingSubmissions: many(vendorOnboardingSubmissions),
 }));
 
-export const onboardingQuestionnairesRelations = relations(onboardingQuestionnaires, ({ one, many }) => ({
-  organization: one(organizations, {
-    fields: [onboardingQuestionnaires.organizationId],
-    references: [organizations.id],
+export const onboardingQuestionnairesRelations = relations(
+  onboardingQuestionnaires,
+  ({ one, many }) => ({
+    organization: one(organizations, {
+      fields: [onboardingQuestionnaires.organizationId],
+      references: [organizations.id],
+    }),
+    submissions: many(vendorOnboardingSubmissions),
   }),
-  submissions: many(vendorOnboardingSubmissions),
-}));
+);
 
-export const vendorOnboardingSubmissionsRelations = relations(vendorOnboardingSubmissions, ({ one }) => ({
-  organization: one(organizations, {
-    fields: [vendorOnboardingSubmissions.organizationId],
-    references: [organizations.id],
+export const vendorOnboardingSubmissionsRelations = relations(
+  vendorOnboardingSubmissions,
+  ({ one }) => ({
+    organization: one(organizations, {
+      fields: [vendorOnboardingSubmissions.organizationId],
+      references: [organizations.id],
+    }),
+    vendor: one(vendors, {
+      fields: [vendorOnboardingSubmissions.vendorId],
+      references: [vendors.id],
+    }),
+    questionnaire: one(onboardingQuestionnaires, {
+      fields: [vendorOnboardingSubmissions.questionnaireId],
+      references: [onboardingQuestionnaires.id],
+    }),
   }),
-  vendor: one(vendors, {
-    fields: [vendorOnboardingSubmissions.vendorId],
-    references: [vendors.id],
-  }),
-  questionnaire: one(onboardingQuestionnaires, {
-    fields: [vendorOnboardingSubmissions.questionnaireId],
-    references: [onboardingQuestionnaires.id],
-  }),
-}));
+);
 
 export const catalogItemsRelations = relations(catalogItems, ({ one }) => ({
   organization: one(organizations, {
@@ -424,6 +436,32 @@ export const glExportJobsRelations = relations(glExportJobs, ({ one }) => ({
   invoice: one(invoices, { fields: [glExportJobs.invoiceId], references: [invoices.id] }),
 }));
 
+export const integrationConnectionsRelations = relations(
+  integrationConnections,
+  ({ one, many }) => ({
+    organization: one(organizations, {
+      fields: [integrationConnections.organizationId],
+      references: [organizations.id],
+    }),
+    connectedBy: one(users, {
+      fields: [integrationConnections.connectedByUserId],
+      references: [users.id],
+    }),
+    syncRecords: many(syncRecords),
+  }),
+);
+
+export const syncRecordsRelations = relations(syncRecords, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [syncRecords.organizationId],
+    references: [organizations.id],
+  }),
+  connection: one(integrationConnections, {
+    fields: [syncRecords.connectionId],
+    references: [integrationConnections.id],
+  }),
+}));
+
 export const ocrJobsRelations = relations(ocrJobs, ({ one }) => ({
   organization: one(organizations, {
     fields: [ocrJobs.organizationId],
@@ -511,8 +549,14 @@ export const contractExtractionsRelations = relations(contractExtractions, ({ on
     fields: [contractExtractions.organizationId],
     references: [organizations.id],
   }),
-  contract: one(contracts, { fields: [contractExtractions.contractId], references: [contracts.id] }),
-  document: one(documents, { fields: [contractExtractions.documentId], references: [documents.id] }),
+  contract: one(contracts, {
+    fields: [contractExtractions.contractId],
+    references: [contracts.id],
+  }),
+  document: one(documents, {
+    fields: [contractExtractions.documentId],
+    references: [documents.id],
+  }),
   createdByUser: one(users, {
     fields: [contractExtractions.createdBy],
     references: [users.id],
@@ -549,7 +593,10 @@ export const contractObligationsRelations = relations(contractObligations, ({ on
     fields: [contractObligations.organizationId],
     references: [organizations.id],
   }),
-  contract: one(contracts, { fields: [contractObligations.contractId], references: [contracts.id] }),
+  contract: one(contracts, {
+    fields: [contractObligations.contractId],
+    references: [contracts.id],
+  }),
   clause: one(contractClauses, {
     fields: [contractObligations.clauseId],
     references: [contractClauses.id],
