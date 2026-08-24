@@ -329,6 +329,7 @@ export class OAuthService {
       } catch (error: unknown) {
         if (this.isInvalidRefreshToken(error)) {
           await this.transitionToReconnectRequired(connection, 'invalid_refresh_token');
+          return;
         }
         throw error;
       }

@@ -60,6 +60,7 @@ describe('OAuthService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedAxios.isAxiosError.mockReturnValue(false);
     process.env.AI_CREDENTIAL_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
     process.env.QBO_CLIENT_ID = 'client-id';
     process.env.QBO_CLIENT_SECRET = 'client-secret';
@@ -239,6 +240,58 @@ describe('OAuthService', () => {
     expect(mockedAxios.post).toHaveBeenCalledTimes(1);
     expect(first?.accessToken).toBe('rotated-access');
     expect(second?.accessToken).toBe('rotated-access');
+  });
+
+  it('returns no token after an invalid refresh marks the connection for reconnection', async () => {
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
+      provider: 'qbo',
+      realmId: 'realm-1',
+      realmName: null,
+      accessTokenEncrypted: crypto.encrypt('rejected-access'),
+      refreshTokenEncrypted: crypto.encrypt('invalid-refresh'),
+      accessExpiresAt: new Date(Date.now() + 3_600_000),
+      status: 'active',
+      scopes: 'com.intuit.quickbooks.accounting',
+      connectedByUserId: userId,
+      lastSyncAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const transaction = {
+      update: jest.fn(() => ({
+        set: jest.fn((values: Record<string, unknown>) => ({
+          where: jest.fn(() => ({
+            returning: jest.fn(async () => {
+              Object.assign(connection, values);
+              return [{ id: connection.id }];
+            }),
+          })),
+        })),
+      })),
+      insert: jest.fn(() => ({ values: jest.fn(async () => undefined) })),
+    };
+    const db = {
+      query: {
+        integrationConnections: { findFirst: jest.fn(async () => ({ ...connection })) },
+      },
+      transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback(transaction),
+      ),
+    } as unknown as Db;
+    const invalidGrant = Object.assign(new Error('invalid grant'), {
+      response: { data: { error: 'invalid_grant' } },
+    });
+    mockedAxios.post.mockRejectedValue(invalidGrant);
+    mockedAxios.isAxiosError.mockImplementation((error: unknown) => error === invalidGrant);
+    const service = new OAuthService(db, crypto, new FakeOAuthRedis() as never);
+
+    const result = await service.refreshQboToken(organizationId, 'rejected-access');
+
+    expect(result).toBeNull();
+    expect(connection.status).toBe('reconnect_required');
+    expect(transaction.insert).toHaveBeenCalled();
   });
 
   it('does not disable credentials that changed after the rejected request began', async () => {

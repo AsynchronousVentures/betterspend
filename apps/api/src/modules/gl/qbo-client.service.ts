@@ -87,12 +87,25 @@ class Semaphore {
 
   async acquire(): Promise<() => void> {
     if (this.active >= this.capacity) {
-      await new Promise<void>((resolve) => this.waiters.push(resolve));
+      return new Promise<() => void>((resolve) =>
+        this.waiters.push(() => resolve(this.releasePermit())),
+      );
     }
     this.active += 1;
+    return this.releasePermit();
+  }
+
+  private releasePermit(): () => void {
+    let released = false;
     return () => {
-      this.active -= 1;
-      this.waiters.shift()?.();
+      if (released) return;
+      released = true;
+      const next = this.waiters.shift();
+      if (next) {
+        next();
+      } else {
+        this.active -= 1;
+      }
     };
   }
 }
