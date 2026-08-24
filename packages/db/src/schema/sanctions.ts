@@ -9,6 +9,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { organizations } from './organizations';
 import { users } from './users';
+import { vendors } from './vendors';
 
 /**
  * Local copy of public sanctions/denied-party entries (OFAC SDN, EU, UN, or an
@@ -43,7 +44,7 @@ export const sanctionsScreenings = pgTable(
     organizationId: uuid('organization_id')
       .notNull()
       .references(() => organizations.id),
-    vendorId: uuid('vendor_id').notNull(),
+    vendorId: uuid('vendor_id').notNull().references(() => vendors.id),
     result: varchar('result', { length: 20 }).notNull(), // clear | flagged
     matchCount: jsonb('match_count'),
     screenedBy: uuid('screened_by').references(() => users.id), // null = automated
