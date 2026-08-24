@@ -225,8 +225,23 @@ function archiveMagic(content: Buffer): boolean {
     content.subarray(0, 2).equals(Buffer.from('PK')) ||
     content.subarray(0, 6).equals(Buffer.from('Rar!\x1a\x07', 'binary')) ||
     content.subarray(0, 6).equals(Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])) ||
-    content.subarray(257, 262).toString('ascii') === 'ustar'
+    content.subarray(257, 262).toString('ascii') === 'ustar' ||
+    hasZipEndOfCentralDirectory(content)
   );
+}
+
+/** Detect a complete ZIP directory even when an allowed document signature is prepended. */
+function hasZipEndOfCentralDirectory(content: Buffer): boolean {
+  const minimumRecordLength = 22;
+  if (content.length < minimumRecordLength) return false;
+  const earliestOffset = Math.max(0, content.length - minimumRecordLength - 0xffff);
+
+  for (let offset = content.length - minimumRecordLength; offset >= earliestOffset; offset -= 1) {
+    if (content.readUInt32LE(offset) !== 0x06054b50) continue;
+    const commentLength = content.readUInt16LE(offset + 20);
+    if (offset + minimumRecordLength + commentLength === content.length) return true;
+  }
+  return false;
 }
 
 function detectedContentType(content: Buffer): string | null {
@@ -262,11 +277,54 @@ export function isEncryptedPdf(content: Buffer): boolean {
   const xrefMarkers = [...tail.slice(0, structuralEnd).matchAll(/\/Type\s*\/XRef\b/g)];
   const xrefMarker = xrefMarkers.at(-1);
   if (xrefMarker?.index !== undefined) {
-    const dictionary = pdfDictionaryAt(tail, tail.lastIndexOf('<<', xrefMarker.index));
+    const dictionaryStart = pdfEnclosingDictionaryStart(tail, xrefMarker.index);
+    const dictionary = pdfDictionaryAt(tail, dictionaryStart);
     if (dictionary) structuralDictionaries.push(dictionary);
   }
 
   return structuralDictionaries.some((dictionary) => /\/Encrypt\b/.test(dictionary));
+}
+
+function pdfEnclosingDictionaryStart(source: string, position: number): number {
+  const starts: number[] = [];
+  let literalDepth = 0;
+  let escaped = false;
+
+  for (let index = 0; index < position; index += 1) {
+    const character = source[index]!;
+    if (literalDepth > 0) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === '(') {
+        literalDepth += 1;
+      } else if (character === ')') {
+        literalDepth -= 1;
+      }
+      continue;
+    }
+    if (character === '(') {
+      literalDepth = 1;
+      continue;
+    }
+    if (character === '%') {
+      const lineEnding = source.slice(index + 1, position).search(/[\r\n]/);
+      if (lineEnding < 0) break;
+      index += lineEnding + 1;
+      continue;
+    }
+    if (source.slice(index, index + 2) === '<<') {
+      starts.push(index);
+      index += 1;
+      continue;
+    }
+    if (source.slice(index, index + 2) === '>>') {
+      starts.pop();
+      index += 1;
+    }
+  }
+  return starts.at(-1) ?? -1;
 }
 
 function pdfDictionaryAt(source: string, start: number): string | null {

@@ -184,6 +184,15 @@ describe('email intake policy', () => {
       },
       0,
     );
+    const encryptedNestedXref = decideAttachment(
+      {
+        filename: 'locked-xref.pdf',
+        content: Buffer.from(
+          '%PDF-1.7\n5 0 obj\n<< /DecodeParms << /Columns 4 >> /Type /XRef /Encrypt 2 0 R >>\nstream\nendstream\nstartxref\n0',
+        ),
+      },
+      0,
+    );
     const oversized = decideAttachment(
       { filename: 'huge.pdf', content: Buffer.alloc(MAX_EMAIL_ATTACHMENT_BYTES + 1, 1) },
       0,
@@ -200,6 +209,15 @@ describe('email intake policy', () => {
     tar.write('%PDF-', 0, 'ascii');
     tar.write('ustar', 257, 'ascii');
     const tarDecision = decideAttachment({ filename: 'invoice.pdf', content: tar }, 0);
+    const emptyZipDirectory = Buffer.alloc(22);
+    emptyZipDirectory.writeUInt32LE(0x06054b50, 0);
+    const pdfZipPolyglot = decideAttachment(
+      {
+        filename: 'polyglot.pdf',
+        content: Buffer.concat([Buffer.from('%PDF-1.7\n%%EOF\n'), emptyZipDirectory]),
+      },
+      0,
+    );
 
     assert.equal(zip.status === 'rejected' && zip.reason, 'archive_not_allowed');
     assert.equal(encrypted.status === 'rejected' && encrypted.reason, 'encrypted_pdf');
@@ -207,11 +225,19 @@ describe('email intake policy', () => {
       encryptedAfterCrComment.status === 'rejected' && encryptedAfterCrComment.reason,
       'encrypted_pdf',
     );
+    assert.equal(
+      encryptedNestedXref.status === 'rejected' && encryptedNestedXref.reason,
+      'encrypted_pdf',
+    );
     assert.equal(mentionsEncryption.status, 'accepted');
     assert.equal(oversized.status === 'rejected' && oversized.reason, 'attachment_too_large');
     assert.equal(excess.status === 'rejected' && excess.reason, 'attachment_count_exceeded');
     assert.equal(prefixedPdf.status === 'rejected' && prefixedPdf.reason, 'archive_not_allowed');
     assert.equal(tarDecision.status === 'rejected' && tarDecision.reason, 'archive_not_allowed');
+    assert.equal(
+      pdfZipPolyglot.status === 'rejected' && pdfZipPolyglot.reason,
+      'archive_not_allowed',
+    );
   });
 
   it('extracts an invoice number hint for fuzzy duplicate checks', () => {
