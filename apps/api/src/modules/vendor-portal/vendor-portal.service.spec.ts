@@ -29,6 +29,7 @@ describe('VendorPortalService sessions', () => {
         vendorPortalSessions: {
           findFirst: jest.fn(async () => ({
             vendorId,
+            organizationId,
             expiresAt: new Date(Date.now() - 1),
             revokedAt: null,
           })),
@@ -47,6 +48,7 @@ describe('VendorPortalService sessions', () => {
         vendorPortalSessions: {
           findFirst: jest.fn(async () => ({
             vendorId,
+            organizationId,
             expiresAt: new Date(Date.now() + 60_000),
             revokedAt: new Date(),
           })),
@@ -65,12 +67,10 @@ describe('VendorPortalService sessions', () => {
         vendorPortalSessions: {
           findFirst: jest.fn(async () => ({
             vendorId,
+            organizationId,
             expiresAt: new Date(Date.now() + 60_000),
             revokedAt: null,
           })),
-        },
-        vendors: {
-          findFirst: jest.fn(async () => ({ organizationId })),
         },
       },
     };
@@ -89,6 +89,9 @@ describe('VendorPortalService sessions', () => {
             id: '00000000-0000-0000-0000-000000000003',
             vendorId,
           })),
+        },
+        vendors: {
+          findFirst: jest.fn(async () => ({ organizationId })),
         },
       },
       update: jest.fn(() => ({
@@ -118,6 +121,9 @@ describe('VendorPortalService sessions', () => {
             vendorId,
           })),
         },
+        vendors: {
+          findFirst: jest.fn(async () => ({ organizationId })),
+        },
       },
       update: jest.fn(() => ({
         set: jest.fn(() => ({
@@ -141,6 +147,7 @@ describe('VendorPortalService sessions', () => {
 
     expect(insertedSessions).toEqual([
       expect.objectContaining({
+        organizationId,
         vendorId,
         tokenHash: hashPortalSessionToken(result.sessionToken),
       }),

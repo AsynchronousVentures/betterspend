@@ -621,7 +621,14 @@ export const vendorPortalTokensRelations = relations(vendorPortalTokens, ({ one 
 }));
 
 export const vendorPortalSessionsRelations = relations(vendorPortalSessions, ({ one }) => ({
-  vendor: one(vendors, { fields: [vendorPortalSessions.vendorId], references: [vendors.id] }),
+  organization: one(organizations, {
+    fields: [vendorPortalSessions.organizationId],
+    references: [organizations.id],
+  }),
+  vendor: one(vendors, {
+    fields: [vendorPortalSessions.vendorId, vendorPortalSessions.organizationId],
+    references: [vendors.id, vendors.organizationId],
+  }),
 }));
 
 export const requisitionTemplatesRelations = relations(requisitionTemplates, ({ one }) => ({

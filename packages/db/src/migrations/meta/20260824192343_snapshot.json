@@ -1,5 +1,5 @@
 {
-  "id": "a4f82120-2222-4cb7-85b3-8f9882274434",
+  "id": "05bbe11a-b998-4d8f-b00c-57875b894f99",
   "prevId": "b8c0a6b7-2954-4bc8-8e53-b81e6a647c70",
   "version": "7",
   "dialect": "postgresql",
@@ -979,7 +979,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "vendors_id_organization_id_unique": {
+          "name": "vendors_id_organization_id_unique",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "vendors_organization_id_organizations_id_fk": {
           "name": "vendors_organization_id_organizations_id_fk",
@@ -5698,6 +5720,12 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
         "vendor_id": {
           "name": "vendor_id",
           "type": "uuid",
@@ -5731,9 +5759,15 @@
         }
       },
       "indexes": {
-        "vendor_portal_sessions_vendor_idx": {
-          "name": "vendor_portal_sessions_vendor_idx",
+        "vendor_portal_sessions_org_vendor_idx": {
+          "name": "vendor_portal_sessions_org_vendor_idx",
           "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
             {
               "expression": "vendor_id",
               "isExpression": false,
@@ -5748,15 +5782,30 @@
         }
       },
       "foreignKeys": {
-        "vendor_portal_sessions_vendor_id_vendors_id_fk": {
-          "name": "vendor_portal_sessions_vendor_id_vendors_id_fk",
+        "vendor_portal_sessions_organization_id_organizations_id_fk": {
+          "name": "vendor_portal_sessions_organization_id_organizations_id_fk",
           "tableFrom": "vendor_portal_sessions",
-          "tableTo": "vendors",
+          "tableTo": "organizations",
           "columnsFrom": [
-            "vendor_id"
+            "organization_id"
           ],
           "columnsTo": [
             "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vendor_portal_sessions_vendor_org_fk": {
+          "name": "vendor_portal_sessions_vendor_org_fk",
+          "tableFrom": "vendor_portal_sessions",
+          "tableTo": "vendors",
+          "columnsFrom": [
+            "vendor_id",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"

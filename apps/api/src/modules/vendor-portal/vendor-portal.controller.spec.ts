@@ -56,4 +56,26 @@ describe('VendorPortalController session boundary', () => {
 
     await expect(controller.getDashboard(request)).rejects.toBeInstanceOf(UnauthorizedException);
   });
+
+  it('revokes the session and clears the scoped cookie', async () => {
+    const service = { revokeSession: jest.fn(async () => undefined) };
+    const response = { clearCookie: jest.fn() };
+    const controller = new VendorPortalController(service as never, {} as never);
+    const request = {
+      headers: { cookie: `${PORTAL_SESSION_COOKIE}=session-secret` },
+    } as Request;
+
+    await expect(
+      controller.revokeSession(request, response as unknown as Response),
+    ).resolves.toEqual({ success: true });
+
+    expect(service.revokeSession).toHaveBeenCalledWith('session-secret');
+    expect(response.clearCookie).toHaveBeenCalledWith(
+      PORTAL_SESSION_COOKIE,
+      expect.objectContaining({
+        httpOnly: true,
+        path: '/api/v1/vendor-portal',
+      }),
+    );
+  });
 });

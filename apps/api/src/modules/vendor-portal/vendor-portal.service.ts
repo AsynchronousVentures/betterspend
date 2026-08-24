@@ -147,6 +147,12 @@ export class VendorPortalService {
       });
       if (!record) throw new UnauthorizedException('Invalid or expired portal link');
 
+      const vendor = await tx.query.vendors.findFirst({
+        where: (candidate, { eq }) => eq(candidate.id, record.vendorId),
+        columns: { organizationId: true },
+      });
+      if (!vendor) throw new UnauthorizedException('Invalid vendor portal link');
+
       const consumed = await tx
         .update(vendorPortalTokens)
         .set({ used: true })
@@ -163,6 +169,7 @@ export class VendorPortalService {
       }
 
       await tx.insert(vendorPortalSessions).values({
+        organizationId: vendor.organizationId,
         vendorId: record.vendorId,
         tokenHash: hashPortalSessionToken(sessionToken),
         expiresAt,
@@ -184,12 +191,7 @@ export class VendorPortalService {
       throw new UnauthorizedException('Invalid or expired vendor portal session');
     }
 
-    const vendor = await this.db.query.vendors.findFirst({
-      where: (v, { eq }) => eq(v.id, record.vendorId),
-      columns: { organizationId: true },
-    });
-    if (!vendor) throw new UnauthorizedException('Invalid vendor portal session');
-    return { vendorId: record.vendorId, organizationId: vendor.organizationId };
+    return { vendorId: record.vendorId, organizationId: record.organizationId };
   }
 
   async revokeSession(sessionToken: string): Promise<void> {
