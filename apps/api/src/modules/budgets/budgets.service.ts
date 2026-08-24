@@ -852,6 +852,7 @@ export class BudgetsService {
   async recordRequisitionApproval(executor: DbTransaction, requisitionId: string): Promise<void> {
     const context = await this.getRequisitionCommitmentContext(executor, requisitionId);
     if (!context) return;
+    await this.lockRequisitionCommitments(executor, requisitionId);
     const current = await this.getCommitmentBalance(executor, context.budget.id, requisitionId);
     await this.appendCommitmentEvent(executor, context, {
       eventKey: `requisition:${requisitionId}:approved:${context.requisition.updatedAt.getTime()}`,
@@ -868,6 +869,7 @@ export class BudgetsService {
   ): Promise<void> {
     const context = await this.getRequisitionCommitmentContext(executor, requisitionId);
     if (!context) return;
+    await this.lockRequisitionCommitments(executor, requisitionId);
     const current = await this.getCommitmentBalance(executor, context.budget.id, requisitionId);
     await this.appendCommitmentEvent(executor, context, {
       eventKey: `requisition:${requisitionId}:${reason}:${context.requisition.updatedAt.getTime()}`,
@@ -880,6 +882,7 @@ export class BudgetsService {
   async commitPurchaseOrder(executor: DbTransaction, purchaseOrderId: string): Promise<void> {
     const context = await this.getPurchaseOrderCommitmentContext(executor, purchaseOrderId);
     if (!context) return;
+    await this.lockRequisitionCommitments(executor, context.requisition.id);
     const current = await this.getCommitmentBalance(
       executor,
       context.budget.id,
@@ -921,6 +924,7 @@ export class BudgetsService {
   ): Promise<void> {
     const context = await this.getPurchaseOrderCommitmentContext(executor, purchaseOrderId);
     if (!context) return;
+    await this.lockRequisitionCommitments(executor, context.requisition.id);
     const current = await this.getCommitmentBalance(
       executor,
       context.budget.id,
@@ -962,6 +966,7 @@ export class BudgetsService {
   ): Promise<void> {
     const context = await this.getPurchaseOrderCommitmentContext(executor, purchaseOrderId);
     if (!context) return;
+    await this.lockRequisitionCommitments(executor, context.requisition.id);
     const current = await this.getCommitmentBalance(
       executor,
       context.budget.id,
@@ -1010,6 +1015,7 @@ export class BudgetsService {
       invoice.purchaseOrderId,
     );
     if (!context) return;
+    await this.lockRequisitionCommitments(executor, context.requisition.id);
     const current = await this.getCommitmentBalance(
       executor,
       context.budget.id,
@@ -1073,6 +1079,17 @@ export class BudgetsService {
       invoiceId: null as string | null,
       baseAmount: convertMoney(requisition.totalAmount, rate),
     };
+  }
+
+  private async lockRequisitionCommitments(
+    executor: DbTransaction,
+    requisitionId: string,
+  ): Promise<void> {
+    await executor
+      .select({ id: requisitions.id })
+      .from(requisitions)
+      .where(eq(requisitions.id, requisitionId))
+      .for('update');
   }
 
   private async getPurchaseOrderCommitmentContext(
