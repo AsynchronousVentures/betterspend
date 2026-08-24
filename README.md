@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Next.js](https://img.shields.io/badge/Next.js-15-black)](https://nextjs.org)
 [![NestJS](https://img.shields.io/badge/NestJS-10-red)](https://nestjs.com)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue)](https://postgresql.org)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-blue)](https://postgresql.org)
 
 <!-- Screenshot: Dashboard overview -->
 
@@ -38,7 +38,7 @@ Most procurement tools are per-seat SaaS products that cost thousands of dollars
 | Backend      | NestJS v10 (TypeScript)                       |
 | Frontend     | Next.js 15 App Router                         |
 | ORM          | Drizzle ORM                                   |
-| Database     | PostgreSQL 16                                 |
+| Database     | PostgreSQL 18                                 |
 | Auth         | better-auth                                   |
 | Queue        | BullMQ + Redis                                |
 | File Storage | S3-compatible (MinIO for dev, S3/R2 for prod) |
@@ -68,7 +68,15 @@ pnpm install
 
 ```bash
 docker compose up -d
-# Starts: PostgreSQL 16, Redis 7, MinIO
+# Starts: PostgreSQL 18, Redis 7, MinIO
+```
+
+If this checkout previously ran PostgreSQL 16, recreate the local development volumes once before starting PostgreSQL
+18. This deletes all local PostgreSQL, Redis, and MinIO data:
+
+```bash
+docker compose down -v
+docker compose up -d
 ```
 
 ### 3. Set up the database
