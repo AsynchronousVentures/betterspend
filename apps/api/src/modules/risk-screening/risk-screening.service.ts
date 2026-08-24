@@ -396,6 +396,9 @@ const TRUSTED_SANCTIONS_REDIRECT_HOSTS = new Set([
   'sanctionslistservice.ofac.treas.gov',
   'wc2h-sls-prod-public-published.s3.us-gov-west-1.amazonaws.com',
 ]);
+// ipaddr.js supplies the canonical special-use classifier. Keep only registry
+// entries newer than its table here (IANA IPv6 registry, updated 2025-10-09).
+const NON_GLOBAL_IP_RANGE_OVERRIDES = [ipaddr.parseCIDR('100:0:0:1::/64')];
 
 async function downloadSanctionsSource(
   sourceUrl: string,
@@ -450,7 +453,12 @@ function assertSafeHttpsUrl(url: URL): void {
 function isGlobalIp(address: string): boolean {
   if (!ipaddr.isValid(address)) return false;
   const parsed = ipaddr.parse(address);
-  return parsed.range() === 'unicast';
+  return (
+    parsed.range() === 'unicast' &&
+    !NON_GLOBAL_IP_RANGE_OVERRIDES.some(
+      (range) => range[0].kind() === parsed.kind() && parsed.match(range),
+    )
+  );
 }
 
 function requestPinned(
