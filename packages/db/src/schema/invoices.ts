@@ -8,6 +8,7 @@ import {
   jsonb,
   date,
   uniqueIndex,
+  foreignKey,
 } from 'drizzle-orm/pg-core';
 import { organizations, legalEntities } from './organizations';
 import { vendors } from './vendors';
@@ -55,6 +56,8 @@ export const invoices = pgTable(
     documentId: uuid('document_id'),
     matchStatus: varchar('match_status', { length: 20 }).notNull().default('unmatched'),
     matchDetails: jsonb('match_details').default({}),
+    submissionSource: varchar('submission_source', { length: 30 }).notNull().default('legacy'),
+    createdBy: uuid('created_by'),
     approvedBy: uuid('approved_by').references(() => users.id),
     approvedAt: timestamp('approved_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -65,6 +68,11 @@ export const invoices = pgTable(
       table.id,
       table.organizationId,
     ),
+    createdByOrganizationFk: foreignKey({
+      columns: [table.createdBy, table.organizationId],
+      foreignColumns: [users.id, users.organizationId],
+      name: 'invoices_created_by_organization_fk',
+    }),
   }),
 );
 

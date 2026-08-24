@@ -1,4 +1,6 @@
-import { Injectable, Inject, NotFoundException, Logger } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Injectable, Inject, NotFoundException, Logger, OnModuleInit } from '@nestjs/common';
+import type { Queue } from 'bullmq';
 import { eq, and, desc } from 'drizzle-orm';
 import { createHmac, randomBytes } from 'crypto';
 import { DB_TOKEN } from '../../database/database.module';
@@ -21,10 +23,29 @@ export interface UpdateWebhookEndpointInput {
 }
 
 @Injectable()
-export class WebhooksService {
+export class WebhooksService implements OnModuleInit {
   private readonly logger = new Logger(WebhooksService.name);
 
-  constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
+  constructor(
+    @Inject(DB_TOKEN) private readonly db: Db,
+    @InjectQueue('webhook-delivery') private readonly webhookQueue: Queue,
+  ) {}
+
+  async onModuleInit(): Promise<void> {
+    const retrying = await this.db.query.webhookDeliveries.findMany({
+      where: (delivery, { eq }) => eq(delivery.status, 'retrying'),
+    });
+
+    await Promise.all(
+      retrying.map((delivery) =>
+        this.enqueueRetry(delivery.id, delivery.attempts, delivery.nextRetryAt ?? new Date()),
+      ),
+    );
+
+    if (retrying.length > 0) {
+      this.logger.log(`Recovered ${retrying.length} webhook deliveries awaiting retry`);
+    }
+  }
 
   // ── CRUD ───────────────────────────────────────────────────────────────────
 
@@ -107,14 +128,6 @@ export class WebhooksService {
     eventType: string,
     payload: Record<string, unknown>,
   ): Promise<void> {
-    const body = JSON.stringify({
-      event: eventType,
-      timestamp: new Date().toISOString(),
-      data: payload,
-    });
-
-    const signature = createHmac('sha256', secret).update(body).digest('hex');
-
     // Create delivery record
     const [delivery] = await this.db
       .insert(webhookDeliveries)
@@ -127,24 +140,45 @@ export class WebhooksService {
       })
       .returning();
 
-    await this.attemptDelivery(delivery.id, url, body, signature);
+    await this.attemptDelivery(delivery.id, { url, secret });
+  }
+
+  async retryDelivery(deliveryId: string): Promise<void> {
+    const delivery = await this.db.query.webhookDeliveries.findFirst({
+      where: (d, { eq }) => eq(d.id, deliveryId),
+    });
+    if (!delivery || delivery.status !== 'retrying') return;
+
+    await this.attemptDelivery(deliveryId);
   }
 
   private async attemptDelivery(
     deliveryId: string,
-    url: string,
-    body: string,
-    signature: string,
+    knownEndpoint?: { url: string; secret: string },
   ): Promise<void> {
     const delivery = await this.db.query.webhookDeliveries.findFirst({
       where: (d, { eq }) => eq(d.id, deliveryId),
     });
     if (!delivery) return;
 
+    const endpoint =
+      knownEndpoint ??
+      (await this.db.query.webhookEndpoints.findFirst({
+        where: (w, { eq }) => eq(w.id, delivery.webhookEndpointId),
+      }));
+    if (!endpoint) return;
+
+    const body = JSON.stringify({
+      event: delivery.eventType,
+      timestamp: new Date().toISOString(),
+      data: delivery.payload,
+    });
+    const signature = createHmac('sha256', endpoint.secret).update(body).digest('hex');
+
     const attempt = (delivery.attempts ?? 0) + 1;
 
     try {
-      const response = await fetch(url, {
+      const response = await fetch(endpoint.url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -167,6 +201,7 @@ export class WebhooksService {
             responseStatus: response.status,
             responseBody,
             deliveredAt: new Date(),
+            nextRetryAt: null,
             updatedAt: new Date(),
           })
           .where(eq(webhookDeliveries.id, deliveryId));
@@ -195,6 +230,7 @@ export class WebhooksService {
           attempts: attempt,
           responseStatus,
           responseBody,
+          nextRetryAt: null,
           updatedAt: new Date(),
         })
         .where(eq(webhookDeliveries.id, deliveryId));
@@ -217,29 +253,23 @@ export class WebhooksService {
       })
       .where(eq(webhookDeliveries.id, deliveryId));
 
-    // Schedule the retry
-    setTimeout(() => {
-      const delivery = this.db.query.webhookDeliveries
-        .findFirst({ where: (d, { eq }) => eq(d.id, deliveryId) })
-        .then(async (d) => {
-          if (!d || d.status !== 'retrying') return;
-          const endpoint = await this.db.query.webhookEndpoints.findFirst({
-            where: (w, { eq }) => eq(w.id, d.webhookEndpointId),
-          });
-          if (!endpoint) return;
+    await this.enqueueRetry(deliveryId, attempt, nextRetryAt);
+  }
 
-          const body = JSON.stringify({
-            event: d.eventType,
-            timestamp: new Date().toISOString(),
-            data: d.payload,
-          });
-          const signature = createHmac('sha256', endpoint.secret).update(body).digest('hex');
-          await this.attemptDelivery(deliveryId, endpoint.url, body, signature);
-        })
-        .catch((err: unknown) =>
-          this.logger.error(`Retry scheduling error for ${deliveryId}: ${String(err)}`),
-        );
-      void delivery;
-    }, delayMs);
+  private async enqueueRetry(
+    deliveryId: string,
+    completedAttempts: number,
+    nextRetryAt: Date,
+  ): Promise<void> {
+    await this.webhookQueue.add(
+      'retry',
+      { kind: 'retry', deliveryId },
+      {
+        delay: Math.max(0, nextRetryAt.getTime() - Date.now()),
+        jobId: `webhook-retry-${deliveryId}-${completedAttempts + 1}`,
+        removeOnComplete: true,
+        removeOnFail: true,
+      },
+    );
   }
 }
