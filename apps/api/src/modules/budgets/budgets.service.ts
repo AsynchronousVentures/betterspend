@@ -221,6 +221,11 @@ export class BudgetsService {
           eq(b.scopeId, departmentId),
           eq(b.fiscalYear, fiscalYear),
         ),
+      orderBy: (record, { asc }) => [
+        sql`${record.entityId} nulls first`,
+        asc(record.createdAt),
+        asc(record.id),
+      ],
     });
 
     if (!budget) {
@@ -366,6 +371,11 @@ export class BudgetsService {
           eq(record.scopeId, input.departmentId!),
           eq(record.fiscalYear, input.fiscalYear),
         ),
+      orderBy: (record, { asc }) => [
+        sql`${record.entityId} nulls first`,
+        asc(record.createdAt),
+        asc(record.id),
+      ],
     });
     if (!budget) return noBudgetDecision();
 
@@ -395,6 +405,7 @@ export class BudgetsService {
             eq(budgets.fiscalYear, input.fiscalYear),
           ),
         )
+        .orderBy(sql`${budgets.entityId} nulls first`, budgets.createdAt, budgets.id)
         .for('update');
       if (!budget) return apply(tx, noBudgetDecision());
 
@@ -800,6 +811,11 @@ export class BudgetsService {
           eq(b.scopeId, departmentId),
           eq(b.fiscalYear, fiscalYear),
         ),
+      orderBy: (record, { asc }) => [
+        sql`${record.entityId} nulls first`,
+        asc(record.createdAt),
+        asc(record.id),
+      ],
     });
 
     if (!budget) return { updated: false, message: 'No budget configured' };
@@ -838,7 +854,7 @@ export class BudgetsService {
     if (!context) return;
     const current = await this.getCommitmentBalance(executor, context.budget.id, requisitionId);
     await this.appendCommitmentEvent(executor, context, {
-      eventKey: `requisition:${requisitionId}:approved`,
+      eventKey: `requisition:${requisitionId}:approved:${context.requisition.updatedAt.getTime()}`,
       eventType: 'requisition_reserved',
       reason: 'Approved requisition reserved budget',
       desired: { ...current, reserved: context.baseAmount, committed: '0' },
@@ -854,7 +870,7 @@ export class BudgetsService {
     if (!context) return;
     const current = await this.getCommitmentBalance(executor, context.budget.id, requisitionId);
     await this.appendCommitmentEvent(executor, context, {
-      eventKey: `requisition:${requisitionId}:${reason}`,
+      eventKey: `requisition:${requisitionId}:${reason}:${context.requisition.updatedAt.getTime()}`,
       eventType: 'requisition_released',
       reason: `Requisition ${reason}`,
       desired: { reserved: '0', committed: '0', expended: current.expended },
@@ -869,13 +885,31 @@ export class BudgetsService {
       context.budget.id,
       context.requisition.id,
     );
+    const currentPurchaseOrder = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisition.id,
+      purchaseOrderId,
+    );
+    const desiredPurchaseOrderCommitment = subtractMoneyFloorZero(
+      context.purchaseOrder.baseTotalAmount,
+      currentPurchaseOrder.expended,
+    );
+    const commitmentDelta = addMoney([
+      desiredPurchaseOrderCommitment,
+      `-${currentPurchaseOrder.committed}`,
+    ]);
+    const newReservationUsed = subtractMoneyFloorZero(
+      desiredPurchaseOrderCommitment,
+      currentPurchaseOrder.committed,
+    );
     await this.appendCommitmentEvent(executor, context, {
       eventKey: `purchase_order:${purchaseOrderId}:issued:${context.purchaseOrder.version}`,
       eventType: 'purchase_order_committed',
       reason: 'Issued purchase order converted reservation to commitment',
       desired: {
-        reserved: '0',
-        committed: context.purchaseOrder.baseTotalAmount,
+        reserved: subtractMoneyFloorZero(current.reserved, newReservationUsed),
+        committed: addMoney([current.committed, commitmentDelta]),
         expended: current.expended,
       },
     });
@@ -892,15 +926,32 @@ export class BudgetsService {
       context.budget.id,
       context.requisition.id,
     );
-    const reduced = subtractMoneyFloorZero(
-      current.committed,
-      subtractMoneyFloorZero(current.committed, context.purchaseOrder.baseTotalAmount),
+    const currentPurchaseOrder = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisition.id,
+      purchaseOrderId,
+    );
+    const outstandingAfterChange = subtractMoneyFloorZero(
+      context.purchaseOrder.baseTotalAmount,
+      currentPurchaseOrder.expended,
+    );
+    const reducedPurchaseOrderCommitment = subtractMoneyFloorZero(
+      currentPurchaseOrder.committed,
+      subtractMoneyFloorZero(currentPurchaseOrder.committed, outstandingAfterChange),
+    );
+    const commitmentReduction = subtractMoneyFloorZero(
+      currentPurchaseOrder.committed,
+      reducedPurchaseOrderCommitment,
     );
     await this.appendCommitmentEvent(executor, context, {
       eventKey: `purchase_order:${purchaseOrderId}:change_order:${context.purchaseOrder.version}`,
       eventType: 'purchase_order_reduced',
       reason: 'Change order released reduced commitment',
-      desired: { ...current, committed: reduced },
+      desired: {
+        ...current,
+        committed: subtractMoneyFloorZero(current.committed, commitmentReduction),
+      },
     });
   }
 
@@ -916,11 +967,32 @@ export class BudgetsService {
       context.budget.id,
       context.requisition.id,
     );
+    const currentPurchaseOrder = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisition.id,
+      purchaseOrderId,
+    );
+    const plannedOutstanding = subtractMoneyFloorZero(
+      context.purchaseOrder.baseTotalAmount,
+      currentPurchaseOrder.expended,
+    );
+    const reservationRelease = subtractMoneyFloorZero(
+      current.reserved,
+      subtractMoneyFloorZero(current.reserved, plannedOutstanding),
+    );
     await this.appendCommitmentEvent(executor, context, {
-      eventKey: `purchase_order:${purchaseOrderId}:${reason}:${context.purchaseOrder.version}`,
+      eventKey: `purchase_order:${purchaseOrderId}:${reason}:${context.purchaseOrder.updatedAt.getTime()}`,
       eventType: 'purchase_order_released',
       reason: `Purchase order ${reason}`,
-      desired: { reserved: '0', committed: '0', expended: current.expended },
+      desired: {
+        reserved: subtractMoneyFloorZero(current.reserved, reservationRelease),
+        committed: subtractMoneyFloorZero(
+          current.committed,
+          currentPurchaseOrder.committed,
+        ),
+        expended: current.expended,
+      },
     });
   }
 
@@ -943,13 +1015,23 @@ export class BudgetsService {
       context.budget.id,
       context.requisition.id,
     );
+    const currentPurchaseOrder = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisition.id,
+      invoice.purchaseOrderId,
+    );
+    const releasedCommitment = subtractMoneyFloorZero(
+      currentPurchaseOrder.committed,
+      subtractMoneyFloorZero(currentPurchaseOrder.committed, baseAmount),
+    );
     await this.appendCommitmentEvent(executor, { ...context, invoiceId }, {
       eventKey: `invoice:${invoiceId}:approved`,
       eventType: 'invoice_expended',
       reason: 'Approved invoice converted commitment to spend',
       desired: {
         reserved: current.reserved,
-        committed: subtractMoneyFloorZero(current.committed, baseAmount),
+        committed: subtractMoneyFloorZero(current.committed, releasedCommitment),
         expended: addMoney([current.expended, baseAmount]),
       },
     });
@@ -968,6 +1050,11 @@ export class BudgetsService {
           eq(record.scopeId, requisition.departmentId!),
           eq(record.fiscalYear, requisition.createdAt.getUTCFullYear()),
         ),
+      orderBy: (record, { asc }) => [
+        sql`${record.entityId} nulls first`,
+        asc(record.createdAt),
+        asc(record.id),
+      ],
     });
     if (!budget) return null;
     const rate = await this.exchangeRatesService.getRateDecimal(
@@ -1008,7 +1095,15 @@ export class BudgetsService {
     executor: Db | DbTransaction,
     budgetId: string,
     requisitionId: string,
+    purchaseOrderId?: string,
   ): Promise<CommitmentBalance> {
+    const conditions = [
+      eq(budgetCommitmentEvents.budgetId, budgetId),
+      eq(budgetCommitmentEvents.requisitionId, requisitionId),
+    ];
+    if (purchaseOrderId) {
+      conditions.push(eq(budgetCommitmentEvents.purchaseOrderId, purchaseOrderId));
+    }
     const [balance] = await executor
       .select({
         reserved: sql<string>`coalesce(sum(${budgetCommitmentEvents.baseReservedDelta}), 0)`,
@@ -1016,12 +1111,7 @@ export class BudgetsService {
         expended: sql<string>`coalesce(sum(${budgetCommitmentEvents.baseExpendedDelta}), 0)`,
       })
       .from(budgetCommitmentEvents)
-      .where(
-        and(
-          eq(budgetCommitmentEvents.budgetId, budgetId),
-          eq(budgetCommitmentEvents.requisitionId, requisitionId),
-        ),
-      );
+      .where(and(...conditions));
     return {
       reserved: balance?.reserved ?? '0',
       committed: balance?.committed ?? '0',

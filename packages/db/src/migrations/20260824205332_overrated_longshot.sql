@@ -26,53 +26,6 @@ CREATE UNIQUE INDEX "budget_commitment_events_org_key_uniq" ON "budget_commitmen
 CREATE INDEX "budget_commitment_events_budget_created_idx" ON "budget_commitment_events" USING btree ("budget_id","created_at");--> statement-breakpoint
 CREATE INDEX "budget_commitment_events_requisition_idx" ON "budget_commitment_events" USING btree ("requisition_id");--> statement-breakpoint
 CREATE INDEX "budget_commitment_events_purchase_order_idx" ON "budget_commitment_events" USING btree ("purchase_order_id");--> statement-breakpoint
-INSERT INTO "budget_commitment_events" (
-	"organization_id",
-	"budget_id",
-	"requisition_id",
-	"purchase_order_id",
-	"event_key",
-	"event_type",
-	"base_reserved_delta",
-	"reason",
-	"metadata"
-)
-SELECT
-	r."organization_id",
-	b."id",
-	r."id",
-	po."id",
-	'legacy:requisition:' || r."id"::text,
-	'legacy_reservation_backfill',
-	round(r."total_amount" * CASE
-		WHEN r."currency" = b."base_currency" THEN 1
-		ELSE er."rate"
-	END, 2),
-	'Backfilled active requisition reservation',
-	jsonb_build_object('legacy_status', r."status")
-FROM "requisitions" r
-JOIN "budgets" b
-	ON b."organization_id" = r."organization_id"
-	AND b."budget_type" = 'department'
-	AND b."scope_id" = r."department_id"
-	AND b."fiscal_year" = EXTRACT(YEAR FROM r."created_at")::int
-LEFT JOIN LATERAL (
-	SELECT candidate."id", candidate."status"
-	FROM "purchase_orders" candidate
-	WHERE candidate."requisition_id" = r."id"
-	ORDER BY candidate."created_at" DESC
-	LIMIT 1
-) po ON true
-LEFT JOIN "exchange_rates" er
-	ON er."org_id" = r."organization_id"
-	AND er."from_currency" = r."currency"
-	AND er."to_currency" = b."base_currency"
-WHERE (
-	r."status" = 'approved'
-	OR (r."status" = 'converted' AND po."status" IN ('draft', 'pending_approval', 'approved'))
-)
-	AND (r."currency" = b."base_currency" OR er."rate" IS NOT NULL)
-ON CONFLICT DO NOTHING;--> statement-breakpoint
 WITH converted AS (
 	SELECT
 		r."organization_id",
@@ -81,21 +34,20 @@ WITH converted AS (
 		po."id" AS "purchase_order_id",
 		po."base_total_amount",
 		COALESCE(SUM(i."base_total_amount") FILTER (WHERE i."status" IN ('approved', 'paid')), 0) AS "expended"
-	FROM "requisitions" r
-	JOIN "budgets" b
-		ON b."organization_id" = r."organization_id"
-		AND b."budget_type" = 'department'
-		AND b."scope_id" = r."department_id"
-		AND b."fiscal_year" = EXTRACT(YEAR FROM r."created_at")::int
+	FROM "purchase_orders" po
+	JOIN "requisitions" r ON r."id" = po."requisition_id"
 	JOIN LATERAL (
-		SELECT candidate."id", candidate."status", candidate."base_total_amount"
-		FROM "purchase_orders" candidate
-		WHERE candidate."requisition_id" = r."id"
-		ORDER BY candidate."created_at" DESC
+		SELECT candidate."id", candidate."base_currency"
+		FROM "budgets" candidate
+		WHERE candidate."organization_id" = r."organization_id"
+			AND candidate."budget_type" = 'department'
+			AND candidate."scope_id" = r."department_id"
+			AND candidate."fiscal_year" = EXTRACT(YEAR FROM r."created_at")::int
+		ORDER BY (candidate."entity_id" IS NULL) DESC, candidate."created_at", candidate."id"
 		LIMIT 1
-	) po ON po."status" IN ('issued', 'received', 'invoiced', 'closed')
+	) b ON true
 	LEFT JOIN "invoices" i ON i."purchase_order_id" = po."id"
-	WHERE r."status" = 'converted'
+	WHERE po."status" IN ('issued', 'received', 'invoiced', 'closed')
 	GROUP BY r."organization_id", r."id", b."id", po."id", po."base_total_amount"
 )
 INSERT INTO "budget_commitment_events" (
@@ -122,4 +74,69 @@ SELECT
 	'Backfilled issued purchase order commitment and approved invoice spend',
 	jsonb_build_object('backfilled', true)
 FROM converted
+ON CONFLICT DO NOTHING;--> statement-breakpoint
+WITH reservations AS (
+	SELECT
+		r."organization_id",
+		r."id" AS "requisition_id",
+		r."status" AS "requisition_status",
+		b."id" AS "budget_id",
+		GREATEST(
+			round(r."total_amount" * CASE
+				WHEN r."currency" = b."base_currency" THEN 1
+				ELSE er."rate"
+			END, 2) - COALESCE(po."issued_total", 0),
+			0
+		) AS "reserved"
+	FROM "requisitions" r
+	JOIN LATERAL (
+		SELECT candidate."id", candidate."base_currency"
+		FROM "budgets" candidate
+		WHERE candidate."organization_id" = r."organization_id"
+			AND candidate."budget_type" = 'department'
+			AND candidate."scope_id" = r."department_id"
+			AND candidate."fiscal_year" = EXTRACT(YEAR FROM r."created_at")::int
+		ORDER BY (candidate."entity_id" IS NULL) DESC, candidate."created_at", candidate."id"
+		LIMIT 1
+	) b ON true
+	LEFT JOIN "exchange_rates" er
+		ON er."org_id" = r."organization_id"
+		AND er."from_currency" = r."currency"
+		AND er."to_currency" = b."base_currency"
+	LEFT JOIN LATERAL (
+		SELECT
+			COUNT(*) FILTER (WHERE candidate."status" <> 'cancelled') AS "active_count",
+			COALESCE(SUM(candidate."base_total_amount") FILTER (
+				WHERE candidate."status" IN ('issued', 'received', 'invoiced', 'closed')
+			), 0) AS "issued_total"
+		FROM "purchase_orders" candidate
+		WHERE candidate."requisition_id" = r."id"
+	) po ON true
+	WHERE (
+		r."status" = 'approved'
+		OR (r."status" = 'converted' AND po."active_count" > 0)
+	)
+		AND (r."currency" = b."base_currency" OR er."rate" IS NOT NULL)
+)
+INSERT INTO "budget_commitment_events" (
+	"organization_id",
+	"budget_id",
+	"requisition_id",
+	"event_key",
+	"event_type",
+	"base_reserved_delta",
+	"reason",
+	"metadata"
+)
+SELECT
+	"organization_id",
+	"budget_id",
+	"requisition_id",
+	'legacy:requisition:' || "requisition_id"::text,
+	'legacy_reservation_backfill',
+	"reserved",
+	'Backfilled active requisition reservation',
+	jsonb_build_object('legacy_status', "requisition_status")
+FROM reservations
+WHERE "reserved" > 0
 ON CONFLICT DO NOTHING;
