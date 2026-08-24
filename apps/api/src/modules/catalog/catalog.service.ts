@@ -1,8 +1,9 @@
 import { Injectable, Inject, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
-import { eq, and, ilike, or, desc } from 'drizzle-orm';
+import { eq, and, ilike, or, desc, isNull } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { catalogItems, catalogPriceProposals } from '@betterspend/db';
+import { auditLog, catalogItems, catalogPriceProposals } from '@betterspend/db';
+import { z } from 'zod';
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
 
@@ -221,10 +222,12 @@ export class CatalogService {
    * when the setting is disabled or the change exceeds the threshold.
    */
   async considerAutoApproval(proposalId: string, organizationId: string): Promise<boolean> {
-    const thresholdPct = Number(
-      await this.settingsService.get(organizationId, 'catalog_auto_approve_price_change_pct'),
+    const threshold = await this.settingsService.get(
+      organizationId,
+      'catalog_auto_approve_price_change_pct',
     );
-    if (!Number.isFinite(thresholdPct) || thresholdPct <= 0) return false;
+    const thresholdBasisPoints = decimalToScaledInteger(threshold, 2);
+    if (thresholdBasisPoints == null || thresholdBasisPoints <= 0n) return false;
 
     const proposal = await this.db.query.catalogPriceProposals.findFirst({
       where: (p, { and, eq }) =>
@@ -232,28 +235,50 @@ export class CatalogService {
     });
     if (!proposal) return false;
 
-    const currentPrice = Number(proposal.currentPrice);
-    const proposedPrice = Number(proposal.proposedPrice);
-    if (!(currentPrice > 0)) return false;
+    const currentCents = decimalToScaledInteger(proposal.currentPrice, 2);
+    const proposedCents = decimalToScaledInteger(proposal.proposedPrice, 2);
+    if (currentCents == null || proposedCents == null || currentCents <= 0n) return false;
 
-    const changePct = Math.abs((proposedPrice - currentPrice) / currentPrice) * 100;
-    if (changePct > thresholdPct) return false;
+    const differenceCents =
+      proposedCents >= currentCents
+        ? proposedCents - currentCents
+        : currentCents - proposedCents;
+    if (differenceCents * 10_000n > currentCents * thresholdBasisPoints) return false;
 
-    const [approved] = await this.db
-      .update(catalogPriceProposals)
-      .set({
-        status: 'approved',
-        reviewedAt: new Date(),
-        reviewNote: `Auto-approved: ${changePct.toFixed(1)}% change is within the ${thresholdPct}% threshold`,
-      })
-      .where(and(eq(catalogPriceProposals.id, proposal.id), eq(catalogPriceProposals.status, 'pending')))
-      .returning();
+    const changeBasisPoints = (differenceCents * 10_000n + currentCents / 2n) / currentCents;
+    const reviewNote = `Auto-approved: ${formatBasisPoints(changeBasisPoints)}% change is within the ${formatBasisPoints(thresholdBasisPoints)}% threshold`;
+    const approved = await this.db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(catalogPriceProposals)
+        .set({ status: 'approved', reviewedAt: new Date(), reviewNote })
+        .where(
+          and(
+            eq(catalogPriceProposals.id, proposal.id),
+            eq(catalogPriceProposals.status, 'pending'),
+          ),
+        )
+        .returning();
+      if (!updated) return undefined;
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: null,
+        entityType: 'catalog_price_proposal',
+        entityId: proposal.id,
+        action: 'auto_approved',
+        changes: {
+          currentPrice: proposal.currentPrice,
+          proposedPrice: proposal.proposedPrice,
+          thresholdPercent: threshold,
+        },
+      });
+      return updated;
+    });
     if (!approved) return false;
 
     await this.applyProposalIfDue(approved);
     await this.notifyVendorOfDecision(approved, 'approved', approved.reviewNote);
     this.logger.log(
-      `Auto-approved catalog price proposal ${approved.id} (${changePct.toFixed(1)}% <= ${thresholdPct}%)`,
+      `Auto-approved catalog price proposal ${approved.id} (${formatBasisPoints(changeBasisPoints)}% <= ${formatBasisPoints(thresholdBasisPoints)}%)`,
     );
     return true;
   }
@@ -294,17 +319,37 @@ export class CatalogService {
 
     // Single transaction so a crash between the two writes cannot leave the
     // item repriced with appliedAt still null (which would re-apply later).
-    await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
+      const [claimed] = await tx
+        .update(catalogPriceProposals)
+        .set({ appliedAt: new Date() })
+        .where(
+          and(
+            eq(catalogPriceProposals.id, proposal.id),
+            eq(catalogPriceProposals.status, 'approved'),
+            isNull(catalogPriceProposals.appliedAt),
+          ),
+        )
+        .returning({ id: catalogPriceProposals.id });
+      if (!claimed) return false;
       await tx
         .update(catalogItems)
         .set({ unitPrice: String(proposal.proposedPrice), updatedAt: new Date() })
         .where(eq(catalogItems.id, proposal.itemId));
-      await tx
-        .update(catalogPriceProposals)
-        .set({ appliedAt: new Date() })
-        .where(eq(catalogPriceProposals.id, proposal.id));
+      await tx.insert(auditLog).values({
+        organizationId: proposal.organizationId,
+        userId: null,
+        entityType: 'catalog_item',
+        entityId: proposal.itemId,
+        action: 'scheduled_price_applied',
+        changes: {
+          proposalId: proposal.id,
+          previousPrice: proposal.currentPrice,
+          unitPrice: proposal.proposedPrice,
+        },
+      });
+      return true;
     });
-    return true;
   }
 
   /**
@@ -375,7 +420,22 @@ export class CatalogService {
 function extractContactEmail(contactInfo: unknown): string | undefined {
   if (!contactInfo || typeof contactInfo !== 'object') return undefined;
   const email = (contactInfo as Record<string, unknown>)['email'];
-  return typeof email === 'string' && email.includes('@') ? email : undefined;
+  if (typeof email !== 'string' || /[,;\r\n]/.test(email)) return undefined;
+  const parsed = z.string().trim().email().safeParse(email);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function decimalToScaledInteger(value: string, scale: number): bigint | null {
+  const match = value.trim().match(/^(\d+)(?:\.(\d+))?$/);
+  if (!match || (match[2]?.length ?? 0) > scale) return null;
+  const fraction = (match[2] ?? '').padEnd(scale, '0');
+  return BigInt(`${match[1]}${fraction}`);
+}
+
+function formatBasisPoints(value: bigint): string {
+  const whole = value / 100n;
+  const fraction = String(value % 100n).padStart(2, '0').replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : String(whole);
 }
 
 function escapeHtml(value: string): string {
