@@ -15,7 +15,7 @@ import { MatchingService } from './matching.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { GlExportService } from '../gl/gl-export.service';
 import { BudgetsService } from '../budgets/budgets.service';
-import { addMoney } from '../budgets/budget-enforcement';
+import { addMoney, convertMoney } from '../budgets/budget-enforcement';
 import { invoiceCommitmentAmounts } from '../budgets/budget-commitments';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -651,9 +651,13 @@ export class InvoicesService {
             .filter((line) => line.taxCode?.isRecoverable)
             .map((line) => String(line.taxAmount ?? '0')),
         );
-        const amounts = invoiceCommitmentAmounts(
-          String(approved.totalAmount ?? '0'),
+        const baseRecoverableTaxAmount = convertMoney(
           recoverableTaxAmount,
+          String(approved.exchangeRate),
+        );
+        const amounts = invoiceCommitmentAmounts(
+          String(approved.baseTotalAmount),
+          baseRecoverableTaxAmount,
         );
         await this.budgets.expenseInvoice(
           tx,

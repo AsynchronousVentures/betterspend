@@ -32,7 +32,8 @@ function createService(
     status: 'approved',
     matchStatus,
     totalAmount: '125.00',
-    exchangeRate: '1',
+    baseTotalAmount: '250.00',
+    exchangeRate: '2',
     internalNumber: 'INV-2026-0001',
     createdBy: options.createdBy === undefined ? 'maker-1' : options.createdBy,
     submissionSource: options.submissionSource ?? 'internal',
@@ -156,7 +157,7 @@ describe('InvoicesService approval budget accounting', () => {
       service.approve('invoice-1', 'organization-1', 'approver-1'),
       /budget update failed/,
     );
-    assert.deepEqual(receivedAmounts, { expense: '100.00', release: '125.00' });
+    assert.deepEqual(receivedAmounts, { expense: '200.00', release: '250.00' });
     assert.equal(receivedTransaction, transaction);
   });
 
@@ -173,7 +174,7 @@ describe('InvoicesService approval budget accounting', () => {
     assert.equal(spendRecorded, false);
   });
 
-  it('moves approved invoice spend out of the PO commitment in the same transaction', async () => {
+  it('moves persisted base spend out of the PO commitment in the same transaction', async () => {
     let expensed:
       | {
           organizationId: string;
@@ -201,8 +202,8 @@ describe('InvoicesService approval budget accounting', () => {
       executor: transaction,
       organizationId: 'organization-1',
       invoiceId: 'invoice-1',
-      expenseAmount: '100.00',
-      commitmentReleaseAmount: '125.00',
+      expenseAmount: '200.00',
+      commitmentReleaseAmount: '250.00',
     });
   });
 

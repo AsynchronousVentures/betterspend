@@ -1026,8 +1026,8 @@ export class BudgetsService {
     executor: DbTransaction,
     organizationId: string,
     invoiceId: string,
-    expenseAmount: string,
-    commitmentReleaseAmount: string,
+    baseExpenseAmount: string,
+    baseCommitmentReleaseAmount: string,
   ): Promise<void> {
     const invoice = await executor.query.invoices.findFirst({
       where: (record, { and, eq }) =>
@@ -1041,15 +1041,6 @@ export class BudgetsService {
     );
     if (!context) return;
     await this.lockRequisitionCommitments(executor, organizationId, context.requisition.id);
-    const rate = await this.exchangeRatesService.getRateDecimal(
-      organizationId,
-      invoice.currency,
-      context.budget.baseCurrency,
-      undefined,
-      executor,
-    );
-    const baseExpenseAmount = convertMoney(expenseAmount, rate);
-    const baseCommitmentReleaseAmount = convertMoney(commitmentReleaseAmount, rate);
     await this.recordSpend(
       organizationId,
       context.requisition.departmentId!,
