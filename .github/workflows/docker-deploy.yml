@@ -1,10 +1,10 @@
 name: Docker CI/CD
 
 # Flow:
-#   PR              -> validate (fast build check, cancels superseded runs)
-#   push to main    -> validate -> publish immutable sha-<sha> images (no deploy)
-#   push v* tag     -> validate -> publish -> deploy to production
-#   workflow_dispatch -> validate (manual re-check / republish)
+#   PR              -> review gate -> CI -> validate result
+#   push to main    -> CI -> validate result -> publish immutable images
+#   push v* tag     -> CI -> validate result -> publish -> deploy
+#   workflow_dispatch -> CI -> validate result (manual re-check / republish)
 #
 # Releases are tags. Any merge to main is instantly deployable because its
 # images are already in GHCR under sha-<sha>; tagging just promotes it.
@@ -21,7 +21,10 @@ on:
   workflow_dispatch:
 
 permissions:
+  checks: read
   contents: read
+  pull-requests: read
+  statuses: read
 
 concurrency:
   group: betterspend-${{ github.ref }}
@@ -32,8 +35,33 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  validate:
-    name: Validate
+  review-gate:
+    name: Review Gate
+    # The review apps do not run on Dependabot PRs.
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Wait for external reviews
+        env:
+          GATE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GATE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node .github/scripts/wait-for-review-gate.mjs
+
+  ci:
+    name: CI Validation
+    needs: review-gate
+    if: >-
+      always()
+      && (github.event_name != 'pull_request'
+        || github.event.pull_request.user.login == 'dependabot[bot]'
+        || needs.review-gate.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -85,6 +113,24 @@ jobs:
 
       - name: Build migrator image
         run: docker build -f docker/migrator.Dockerfile -t betterspend-migrator:ci .
+
+  validate:
+    name: Validate
+    if: always()
+    needs: [review-gate, ci]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report validation result
+        env:
+          CI_RESULT: ${{ needs.ci.result }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          REVIEW_GATE_RESULT: ${{ needs.review-gate.result }}
+        run: |
+          test "$CI_RESULT" = "success"
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" != "dependabot[bot]" ]; then
+            test "$REVIEW_GATE_RESULT" = "success"
+          fi
 
   publish:
     name: Publish Images

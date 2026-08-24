@@ -109,6 +109,10 @@ reviews:
       enabled: true
 
   tools:
+    # CI waits for CodeRabbit, so CodeRabbit must review immediately.
+    github-checks:
+      enabled: false
+
     # Disabled: redundant with pnpm lint / typecheck CI and Macroscope coverage
     eslint:
       enabled: false
