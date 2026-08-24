@@ -234,12 +234,12 @@ function archiveMagic(content: Buffer): boolean {
 function hasZipEndOfCentralDirectory(content: Buffer): boolean {
   const minimumRecordLength = 22;
   if (content.length < minimumRecordLength) return false;
-  const earliestOffset = Math.max(0, content.length - minimumRecordLength - 0xffff);
-
-  for (let offset = content.length - minimumRecordLength; offset >= earliestOffset; offset -= 1) {
-    if (content.readUInt32LE(offset) !== 0x06054b50) continue;
+  const signature = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+  let offset = content.indexOf(signature);
+  while (offset >= 0 && offset + minimumRecordLength <= content.length) {
     const commentLength = content.readUInt16LE(offset + 20);
-    if (offset + minimumRecordLength + commentLength === content.length) return true;
+    if (offset + minimumRecordLength + commentLength <= content.length) return true;
+    offset = content.indexOf(signature, offset + 1);
   }
   return false;
 }

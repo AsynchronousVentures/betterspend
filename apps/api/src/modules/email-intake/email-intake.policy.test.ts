@@ -218,6 +218,17 @@ describe('email intake policy', () => {
       },
       0,
     );
+    const pdfZipPolyglotWithTrailingData = decideAttachment(
+      {
+        filename: 'polyglot-trailing.pdf',
+        content: Buffer.concat([
+          Buffer.from('%PDF-1.7\n%%EOF\n'),
+          emptyZipDirectory,
+          Buffer.from('trailing data tolerated by ZIP readers'),
+        ]),
+      },
+      0,
+    );
 
     assert.equal(zip.status === 'rejected' && zip.reason, 'archive_not_allowed');
     assert.equal(encrypted.status === 'rejected' && encrypted.reason, 'encrypted_pdf');
@@ -236,6 +247,10 @@ describe('email intake policy', () => {
     assert.equal(tarDecision.status === 'rejected' && tarDecision.reason, 'archive_not_allowed');
     assert.equal(
       pdfZipPolyglot.status === 'rejected' && pdfZipPolyglot.reason,
+      'archive_not_allowed',
+    );
+    assert.equal(
+      pdfZipPolyglotWithTrailingData.status === 'rejected' && pdfZipPolyglotWithTrailingData.reason,
       'archive_not_allowed',
     );
   });
