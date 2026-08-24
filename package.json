@@ -18,8 +18,8 @@
     "release:push": "git push origin main --follow-tags"
   },
   "devDependencies": {
-    "turbo": "^2.5.0",
-    "prettier": "^3.5.0",
+    "turbo": "^2.10.11",
+    "prettier": "^3.9.6",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   }
