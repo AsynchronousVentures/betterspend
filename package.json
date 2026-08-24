@@ -21,6 +21,6 @@
     "turbo": "^2.5.0",
     "prettier": "^3.5.0",
     "@types/node": "^22.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^7.0.2"
   }
 }
