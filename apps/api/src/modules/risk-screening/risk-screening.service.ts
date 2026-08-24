@@ -581,6 +581,9 @@ function splitCsvLine(line: string): string[] {
       current += char;
     }
   }
+  if (inQuotes) {
+    throw new Error('Malformed CSV: unterminated quoted field');
+  }
   cells.push(current);
   return cells.map((cell) => cell.trim());
 }
