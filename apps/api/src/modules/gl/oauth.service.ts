@@ -7,7 +7,8 @@ import {
 } from '@nestjs/common';
 import axios from 'axios';
 import { and, desc, eq } from 'drizzle-orm';
-import { integrationConnections, type Db } from '@betterspend/db';
+import { auditLog, integrationConnections, type Db } from '@betterspend/db';
+import { INTEGRATION_CONNECTION_STATUS } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
 import { CredentialCryptoService } from '../ai-providers/credential-crypto.service';
 import {
@@ -122,12 +123,12 @@ export class OAuthService {
     };
   }
 
-  async disconnectQbo(organizationId: string): Promise<void> {
-    await this.disconnect(organizationId, 'qbo');
+  async disconnectQbo(organizationId: string, userId: string): Promise<void> {
+    await this.disconnect(organizationId, 'qbo', userId);
   }
 
-  async disconnectXero(organizationId: string): Promise<void> {
-    await this.disconnect(organizationId, 'xero');
+  async disconnectXero(organizationId: string, userId: string): Promise<void> {
+    await this.disconnect(organizationId, 'xero', userId);
   }
 
   async getConnectionStatus(organizationId: string): Promise<{
@@ -218,18 +219,29 @@ export class OAuthService {
       accessTokenEncrypted: this.crypto.encrypt(token.access_token),
       refreshTokenEncrypted: this.crypto.encrypt(token.refresh_token),
       accessExpiresAt: new Date(Date.now() + token.expires_in * 1000),
-      status: 'active',
+      status: INTEGRATION_CONNECTION_STATUS.ACTIVE,
       scopes: token.scope ?? this.defaultScopes(provider),
       connectedByUserId: binding.userId,
       updatedAt: new Date(),
     };
-    await this.db
-      .insert(integrationConnections)
-      .values(values)
-      .onConflictDoUpdate({
-        target: [integrationConnections.organizationId, integrationConnections.provider],
-        set: values,
+    await this.db.transaction(async (transaction) => {
+      const [connection] = await transaction
+        .insert(integrationConnections)
+        .values(values)
+        .onConflictDoUpdate({
+          target: [integrationConnections.organizationId, integrationConnections.provider],
+          set: values,
+        })
+        .returning({ id: integrationConnections.id });
+      await transaction.insert(auditLog).values({
+        organizationId: binding.organizationId,
+        userId: binding.userId,
+        entityType: 'integration_connection',
+        entityId: connection.id,
+        action: 'connected',
+        changes: { provider, realmId, realmName: realmName ?? null },
       });
+    });
   }
 
   private async getValidConnection(
@@ -288,7 +300,11 @@ export class OAuthService {
     });
   }
 
-  private async disconnect(organizationId: string, provider: OAuthProvider): Promise<void> {
+  private async disconnect(
+    organizationId: string,
+    provider: OAuthProvider,
+    userId: string,
+  ): Promise<void> {
     const connections = await this.db.query.integrationConnections.findMany({
       where: (connection, { and: andFn, eq: eqFn }) =>
         andFn(eqFn(connection.organizationId, organizationId), eqFn(connection.provider, provider)),
@@ -307,21 +323,35 @@ export class OAuthService {
         }
       }
     } finally {
-      await this.db
-        .update(integrationConnections)
-        .set({
-          accessTokenEncrypted: null,
-          refreshTokenEncrypted: null,
-          accessExpiresAt: null,
-          status: 'revoked',
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(integrationConnections.organizationId, organizationId),
-            eq(integrationConnections.provider, provider),
-          ),
-        );
+      await this.db.transaction(async (transaction) => {
+        const purged = await transaction
+          .update(integrationConnections)
+          .set({
+            accessTokenEncrypted: null,
+            refreshTokenEncrypted: null,
+            accessExpiresAt: null,
+            status: 'revoked',
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(integrationConnections.organizationId, organizationId),
+              eq(integrationConnections.provider, provider),
+            ),
+          )
+          .returning({ id: integrationConnections.id, realmId: integrationConnections.realmId });
+        for (const connection of purged) {
+          await transaction.insert(auditLog).values({
+            organizationId,
+            userId,
+            entityType: 'integration_connection',
+            entityId: connection.id,
+            action: 'disconnected',
+            changes: { provider, realmId: connection.realmId },
+            metadata: { providerRevoked: !revocationError },
+          });
+        }
+      });
     }
     if (revocationError) throw revocationError;
     this.logger.log(`${provider.toUpperCase()} disconnected for org ${organizationId}`);

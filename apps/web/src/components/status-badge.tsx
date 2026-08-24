@@ -1,9 +1,18 @@
 import { Badge, type BadgeProps } from './ui/badge';
+import type { SyncRecordStatus } from '@betterspend/shared';
+
+const SYNC_RECORD_VARIANTS: Record<SyncRecordStatus, NonNullable<BadgeProps['variant']>> = {
+  pending: 'warning',
+  queued: 'warning',
+  skipped: 'secondary',
+  synced: 'success',
+  failed: 'destructive',
+};
 
 const VARIANT_MAP: Record<string, NonNullable<BadgeProps['variant']>> = {
+  ...SYNC_RECORD_VARIANTS,
   active: 'success',
   approved: 'success',
-  synced: 'success',
   matched: 'success',
   clear: 'success',
   full_match: 'success',
@@ -11,20 +20,16 @@ const VARIANT_MAP: Record<string, NonNullable<BadgeProps['variant']>> = {
   partial_match: 'default',
   converted: 'default',
   received: 'default',
-  pending: 'warning',
   pending_match: 'warning',
   pending_approval: 'warning',
-  queued: 'warning',
   manually_reviewed: 'warning',
   draft: 'secondary',
   inactive: 'secondary',
   cancelled: 'secondary',
   closed: 'secondary',
   paid: 'secondary',
-  skipped: 'secondary',
   blocked: 'destructive',
   rejected: 'destructive',
-  failed: 'destructive',
   flagged: 'destructive',
   exception: 'destructive',
   unmatched: 'outline',

@@ -38,6 +38,7 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
     `;
 
     const byOrganization = new Map<string, Record<string, string>>();
+    const migratedProviders = new Set<string>();
     for (const row of rows) {
       const settings = byOrganization.get(row.organization_id) ?? {};
       settings[row.key] = row.value ?? '';
@@ -48,14 +49,24 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
       for (const provider of ['qbo', 'xero'] as const) {
         const accessToken = settings[`${provider}_access_token`];
         const refreshToken = settings[`${provider}_refresh_token`];
-        if (!accessToken && !refreshToken) continue;
+        const hasLegacySettings = Object.keys(settings).some((key) =>
+          key.startsWith(`${provider}_`),
+        );
+        if (!hasLegacySettings) continue;
 
         const realmKey = provider === 'qbo' ? 'qbo_realm_id' : 'xero_tenant_id';
         const realmId = settings[realmKey] || 'legacy-unresolved';
-        const accessTokenEncrypted = accessToken ? encryptCredential(accessToken) : null;
-        const refreshTokenEncrypted = refreshToken ? encryptCredential(refreshToken) : null;
+        const wasConnected = settings[`${provider}_connected`] === 'true';
+        const status = wasConnected
+          ? accessToken || refreshToken
+            ? 'active'
+            : 'reconnect_required'
+          : 'revoked';
+        const accessTokenEncrypted =
+          status === 'active' && accessToken ? encryptCredential(accessToken) : null;
+        const refreshTokenEncrypted =
+          status === 'active' && refreshToken ? encryptCredential(refreshToken) : null;
         const accessExpiresAt = expiryDate(settings[`${provider}_token_expires_at`]);
-        const status = settings[`${provider}_connected`] === 'true' ? 'active' : 'revoked';
 
         await transaction`
           INSERT INTO integration_connections (
@@ -71,10 +82,13 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
           )
           ON CONFLICT (organization_id, provider) DO NOTHING
         `;
+        migratedProviders.add(`${organizationId}:${provider}`);
       }
     }
 
     for (const row of rows) {
+      const provider = row.key.startsWith('qbo_') ? 'qbo' : 'xero';
+      if (!migratedProviders.has(`${row.organization_id}:${provider}`)) continue;
       await transaction`
         DELETE FROM system_settings
         WHERE organization_id = ${row.organization_id}

@@ -154,8 +154,8 @@ export class GlController {
   @Delete('oauth/qbo')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Disconnect QBO' })
-  async disconnectQbo(@CurrentOrgId() orgId: string) {
-    await this.oauthService.disconnectQbo(orgId);
+  async disconnectQbo(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
+    await this.oauthService.disconnectQbo(orgId, userId);
   }
 
   // ── OAuth — Xero ────────────────────────────────────────────────────────────
@@ -196,7 +196,7 @@ export class GlController {
   @Delete('oauth/xero')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Disconnect Xero' })
-  async disconnectXero(@CurrentOrgId() orgId: string) {
-    await this.oauthService.disconnectXero(orgId);
+  async disconnectXero(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
+    await this.oauthService.disconnectXero(orgId, userId);
   }
 }

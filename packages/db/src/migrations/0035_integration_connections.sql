@@ -1,7 +1,6 @@
 CREATE TABLE "integration_connections" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"organization_id" uuid NOT NULL,
-	"entity_id" uuid,
 	"provider" varchar(20) NOT NULL,
 	"realm_id" varchar(255) NOT NULL,
 	"realm_name" varchar(255),
@@ -18,7 +17,11 @@ CREATE TABLE "integration_connections" (
 --> statement-breakpoint
 CREATE UNIQUE INDEX "integration_connections_org_provider_unique" ON "integration_connections" USING btree ("organization_id","provider");
 --> statement-breakpoint
+CREATE UNIQUE INDEX "integration_connections_id_organization_id_unique" ON "integration_connections" USING btree ("id","organization_id");
+--> statement-breakpoint
 CREATE INDEX "integration_connections_org_provider_status_idx" ON "integration_connections" USING btree ("organization_id","provider","status");
+--> statement-breakpoint
+CREATE UNIQUE INDEX "users_id_organization_id_unique" ON "users" USING btree ("id","organization_id");
 --> statement-breakpoint
 CREATE TABLE "sync_records" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -33,6 +36,7 @@ CREATE TABLE "sync_records" (
 	"status" varchar(20) DEFAULT 'pending' NOT NULL,
 	"attempts" integer DEFAULT 0 NOT NULL,
 	"request_id" varchar(50) NOT NULL,
+	"attempt_id" uuid,
 	"doc_number" varchar(100) NOT NULL,
 	"last_attempt_at" timestamp with time zone,
 	"synced_at" timestamp with time zone,
@@ -49,13 +53,15 @@ CREATE INDEX "sync_records_org_provider_status_idx" ON "sync_records" USING btre
 --> statement-breakpoint
 ALTER TABLE "integration_connections" ADD CONSTRAINT "integration_connections_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "integration_connections" ADD CONSTRAINT "integration_connections_entity_id_legal_entities_id_fk" FOREIGN KEY ("entity_id") REFERENCES "public"."legal_entities"("id") ON DELETE no action ON UPDATE no action;
---> statement-breakpoint
-ALTER TABLE "integration_connections" ADD CONSTRAINT "integration_connections_connected_by_user_id_users_id_fk" FOREIGN KEY ("connected_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "integration_connections" ADD CONSTRAINT "integration_connections_connected_by_user_org_fk" FOREIGN KEY ("connected_by_user_id","organization_id") REFERENCES "public"."users"("id","organization_id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
 ALTER TABLE "sync_records" ADD CONSTRAINT "sync_records_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "sync_records" ADD CONSTRAINT "sync_records_connection_id_integration_connections_id_fk" FOREIGN KEY ("connection_id") REFERENCES "public"."integration_connections"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "sync_records" ADD CONSTRAINT "sync_records_connection_org_fk" FOREIGN KEY ("connection_id","organization_id") REFERENCES "public"."integration_connections"("id","organization_id") ON DELETE no action ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "integration_connections" ADD CONSTRAINT "integration_connections_status_check" CHECK ("status" IN ('active', 'reconnect_required', 'revoked'));
+--> statement-breakpoint
+ALTER TABLE "sync_records" ADD CONSTRAINT "sync_records_status_check" CHECK ("status" IN ('pending', 'queued', 'skipped', 'synced', 'failed'));
 --> statement-breakpoint
 INSERT INTO "sync_records" (
 	"id", "organization_id", "connection_id", "provider", "direction", "local_entity", "local_id",

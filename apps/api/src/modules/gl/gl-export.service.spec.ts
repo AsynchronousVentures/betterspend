@@ -42,7 +42,11 @@ describe('GlExportService', () => {
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => {
           updates.push(values);
-          return { where: jest.fn(async () => undefined) };
+          return {
+            where: jest.fn(() => ({
+              returning: jest.fn(async () => [{ id: 'record-1' }]),
+            })),
+          };
         }),
       })),
     } as unknown as Db;
@@ -89,7 +93,11 @@ describe('GlExportService', () => {
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => {
           updates.push(values);
-          return { where: jest.fn(async () => undefined) };
+          return {
+            where: jest.fn(() => ({
+              returning: jest.fn(async () => [{ id: 'record-1' }]),
+            })),
+          };
         }),
       })),
     } as unknown as Db;
@@ -134,5 +142,29 @@ describe('GlExportService', () => {
     await service.findJobsForInvoice('invoice-1', 'organization-1');
 
     expect(predicate).toEqual(expect.arrayContaining([['eq', 'organizationId', 'organization-1']]));
+  });
+
+  it('does not let a stale delivery move a synced record back into an active state', async () => {
+    const invoiceLookup = jest.fn();
+    const db = {
+      query: { invoices: { findFirst: invoiceLookup } },
+      insert: jest.fn(() => ({
+        values: jest.fn(() => ({
+          onConflictDoUpdate: jest.fn(() => ({
+            returning: jest.fn(async () => [{ id: 'record-1', status: 'queued' }]),
+          })),
+        })),
+      })),
+      update: jest.fn(() => ({
+        set: jest.fn(() => ({
+          where: jest.fn(() => ({ returning: jest.fn(async () => []) })),
+        })),
+      })),
+    } as unknown as Db;
+    const service = new GlExportService(db, {} as never, {} as never, {} as never);
+
+    await service.processExport('organization-1', 'invoice-1', 'qbo');
+
+    expect(invoiceLookup).not.toHaveBeenCalled();
   });
 });

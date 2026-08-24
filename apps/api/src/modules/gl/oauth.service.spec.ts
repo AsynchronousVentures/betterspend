@@ -33,16 +33,21 @@ class FakeOAuthRedis {
 }
 
 function insertCapturingDb(captured: Array<Record<string, unknown>>): Db {
-  return {
-    insert: jest.fn(() => ({
-      values: jest.fn((values: Record<string, unknown>) => {
-        captured.push(values);
-        return {
-          onConflictDoUpdate: jest.fn(async () => undefined),
-        };
-      }),
-    })),
-  } as unknown as Db;
+  const db = {} as { insert: jest.Mock; transaction: jest.Mock };
+  db.insert = jest.fn(() => ({
+    values: jest.fn((values: Record<string, unknown>) => {
+      captured.push(values);
+      return {
+        onConflictDoUpdate: jest.fn(() => ({
+          returning: jest.fn(async () => [{ id: '00000000-0000-0000-0000-000000000010' }]),
+        })),
+      };
+    }),
+  }));
+  db.transaction = jest.fn(async (callback: (transaction: unknown) => Promise<unknown>) =>
+    callback(db),
+  );
+  return db as unknown as Db;
 }
 
 describe('OAuthService', () => {
@@ -82,11 +87,20 @@ describe('OAuthService', () => {
       service.completeQboOAuth(state!, 'authorization-code', 'realm-1', userId, sessionId),
     ).rejects.toThrow('Invalid or expired OAuth state');
 
-    expect(captured).toHaveLength(1);
-    expect(captured[0].accessTokenEncrypted).not.toBe('plain-access-token');
-    expect(captured[0].refreshTokenEncrypted).not.toBe('plain-refresh-token');
-    expect(crypto.decrypt(String(captured[0].accessTokenEncrypted))).toBe('plain-access-token');
-    expect(crypto.decrypt(String(captured[0].refreshTokenEncrypted))).toBe('plain-refresh-token');
+    const connection = captured.find((values) => 'accessTokenEncrypted' in values)!;
+    const audit = captured.find((values) => values.action === 'connected');
+    expect(connection.accessTokenEncrypted).not.toBe('plain-access-token');
+    expect(connection.refreshTokenEncrypted).not.toBe('plain-refresh-token');
+    expect(crypto.decrypt(String(connection.accessTokenEncrypted))).toBe('plain-access-token');
+    expect(crypto.decrypt(String(connection.refreshTokenEncrypted))).toBe('plain-refresh-token');
+    expect(audit).toEqual(
+      expect.objectContaining({
+        organizationId,
+        userId,
+        entityType: 'integration_connection',
+        action: 'connected',
+      }),
+    );
   });
 
   it('rejects unknown state before exchanging a code', async () => {
@@ -96,6 +110,15 @@ describe('OAuthService', () => {
       service.completeQboOAuth('unknown', 'authorization-code', 'realm-1', userId, sessionId),
     ).rejects.toThrow('Invalid or expired OAuth state');
     expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+
+  it('keeps existing passphrase-derived v1 credentials readable', () => {
+    delete process.env.CREDENTIAL_ENCRYPTION_KEY;
+    process.env.AI_CREDENTIAL_ENCRYPTION_KEY = 'existing-deployment-passphrase';
+
+    const encrypted = crypto.encrypt('existing-token');
+
+    expect(crypto.decrypt(encrypted)).toBe('existing-token');
   });
 
   it('rejects a callback from a different authenticated session before exchanging the code', async () => {
@@ -119,7 +142,6 @@ describe('OAuthService', () => {
     const connection = {
       id: '00000000-0000-0000-0000-000000000010',
       organizationId,
-      entityId: null,
       provider: 'qbo',
       realmId: 'realm-1',
       realmName: null,
@@ -166,7 +188,6 @@ describe('OAuthService', () => {
     const connection = {
       id: '00000000-0000-0000-0000-000000000010',
       organizationId,
-      entityId: null,
       provider: 'qbo',
       realmId: 'realm-1',
       realmName: null,

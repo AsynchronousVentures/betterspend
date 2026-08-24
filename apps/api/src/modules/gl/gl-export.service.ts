@@ -1,8 +1,8 @@
 import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { createHash } from 'crypto';
-import { eq, sql } from 'drizzle-orm';
+import { createHash, randomUUID } from 'crypto';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import axios from 'axios';
 import { syncRecords, type Db } from '@betterspend/db';
 import { DB_TOKEN } from '../../database/database.module';
@@ -98,27 +98,31 @@ export class GlExportService {
 
     if (record.status === 'synced') return;
 
-    await this.db
+    const attemptId = randomUUID();
+    const started = await this.db
       .update(syncRecords)
       .set({
         status: 'queued',
         attempts: sql`${syncRecords.attempts} + 1`,
+        attemptId,
         lastAttemptAt: new Date(),
         errorCode: null,
         errorMessage: null,
         updatedAt: new Date(),
       })
-      .where(eq(syncRecords.id, record.id));
+      .where(and(eq(syncRecords.id, record.id), ne(syncRecords.status, 'synced')))
+      .returning({ id: syncRecords.id });
+    if (started.length === 0) return;
 
     let payload: GlExportPayload;
     try {
       payload = await this.buildPayload(organizationId, invoiceId, targetSystem);
-      await this.markRecord(record.id, {
+      await this.markRecord(record.id, attemptId, {
         docNumber: payload.invoiceNumber || payload.internalNumber,
         payload: payload as unknown as Record<string, unknown>,
       });
     } catch (error: unknown) {
-      await this.markRecord(record.id, {
+      await this.markRecord(record.id, attemptId, {
         status: 'failed',
         errorMessage: error instanceof Error ? error.message : String(error),
       });
@@ -127,7 +131,7 @@ export class GlExportService {
 
     const allUnmapped = payload.lines.length > 0 && payload.lines.every((line) => line.unmapped);
     if (allUnmapped) {
-      await this.markRecord(record.id, {
+      await this.markRecord(record.id, attemptId, {
         status: 'skipped',
         errorMessage: `No GL mappings found for ${targetSystem}`,
       });
@@ -142,11 +146,14 @@ export class GlExportService {
         requestId,
       );
       if (outcome.kind === 'pending') {
-        await this.markRecord(record.id, { status: 'pending', errorMessage: outcome.reason });
+        await this.markRecord(record.id, attemptId, {
+          status: 'pending',
+          errorMessage: outcome.reason,
+        });
         return;
       }
 
-      await this.markRecord(record.id, {
+      await this.markRecord(record.id, attemptId, {
         status: 'synced',
         connectionId: outcome.connectionId,
         externalId: outcome.externalId,
@@ -157,7 +164,7 @@ export class GlExportService {
         `GL export synced for invoice ${payload.internalNumber} -> ${targetSystem} (externalId=${outcome.externalId})`,
       );
     } catch (error: unknown) {
-      await this.markRecord(record.id, {
+      await this.markRecord(record.id, attemptId, {
         status: 'failed',
         errorMessage: error instanceof Error ? error.message : String(error),
       });
@@ -232,11 +239,26 @@ export class GlExportService {
           eqFn(record.localEntity, 'invoice'),
           orFn(eqFn(record.provider, 'qbo'), eqFn(record.provider, 'xero')),
         ),
-      with: { invoice: true },
       orderBy: (record, { desc }) => desc(record.createdAt),
       limit: 100,
     });
-    return records.map((record) => this.toLegacyApiShape(record));
+    const invoiceRows =
+      records.length === 0
+        ? []
+        : await this.db.query.invoices.findMany({
+            where: (invoice, { and: andFn, eq: eqFn, inArray }) =>
+              andFn(
+                eqFn(invoice.organizationId, organizationId),
+                inArray(
+                  invoice.id,
+                  records.map((record) => record.localId),
+                ),
+              ),
+          });
+    const invoicesById = new Map(invoiceRows.map((invoice) => [invoice.id, invoice]));
+    return records.map((record) =>
+      this.toLegacyApiShape({ ...record, invoice: invoicesById.get(record.localId) ?? null }),
+    );
   }
 
   private async buildPayload(
@@ -402,12 +424,21 @@ export class GlExportService {
 
   private async markRecord(
     id: string,
+    attemptId: string,
     values: Partial<typeof syncRecords.$inferInsert>,
   ): Promise<void> {
+    const attemptCondition =
+      values.status === 'synced'
+        ? eq(syncRecords.id, id)
+        : and(
+            eq(syncRecords.id, id),
+            eq(syncRecords.attemptId, attemptId),
+            ne(syncRecords.status, 'synced'),
+          );
     await this.db
       .update(syncRecords)
       .set({ ...values, updatedAt: new Date() })
-      .where(eq(syncRecords.id, id));
+      .where(attemptCondition);
   }
 
   private requestId(organizationId: string, invoiceId: string, provider: GlTargetSystem): string {

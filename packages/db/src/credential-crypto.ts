@@ -1,10 +1,12 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 
 const CIPHER = 'aes-256-gcm';
 const VERSION = 'v1';
 
 function getCredentialKey(): Buffer {
-  const configured = process.env.AI_CREDENTIAL_ENCRYPTION_KEY?.trim();
+  const configured =
+    process.env.CREDENTIAL_ENCRYPTION_KEY?.trim() ||
+    process.env.AI_CREDENTIAL_ENCRYPTION_KEY?.trim();
   if (configured) {
     const trimmed = configured;
     if (/^[a-f0-9]{64}$/i.test(trimmed)) return Buffer.from(trimmed, 'hex');
@@ -12,10 +14,11 @@ function getCredentialKey(): Buffer {
     const decoded = Buffer.from(trimmed, 'base64');
     if (decoded.length === 32) return decoded;
 
-    throw new Error('AI_CREDENTIAL_ENCRYPTION_KEY must be 32 bytes encoded as hex or base64');
+    // Existing v1 ciphertext used SHA-256-normalized passphrases. Keep that format readable.
+    return createHash('sha256').update(trimmed).digest();
   }
 
-  throw new Error('AI_CREDENTIAL_ENCRYPTION_KEY is required');
+  throw new Error('CREDENTIAL_ENCRYPTION_KEY is required');
 }
 
 export function encryptCredential(value: string): string {
