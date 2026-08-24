@@ -17,6 +17,10 @@ const LEGACY_KEYS = [
   'xero_connected',
 ] as const;
 
+// Session-level lock namespace for every BetterSpend migration runner.
+const MIGRATION_LOCK_NAMESPACE = 0x42535044;
+const MIGRATION_LOCK_ID = 1;
+
 type LegacyRow = {
   organization_id: string;
   key: string;
@@ -123,11 +127,17 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
 
 async function main(): Promise<void> {
   const client = postgres(process.env.DATABASE_URL!);
+  let migrationLockAcquired = false;
   try {
+    await client`SELECT pg_advisory_lock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
+    migrationLockAcquired = true;
     const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
     await migrateLegacyConnections(client);
   } finally {
+    if (migrationLockAcquired) {
+      await client`SELECT pg_advisory_unlock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
+    }
     await client.end();
   }
 }

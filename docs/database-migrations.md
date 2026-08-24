@@ -39,4 +39,4 @@ The recovery at migration `0037_canonicalize_migration_metadata` repaired a bran
 
 ## Production execution
 
-`deploy/deploy.sh` is the production migration path. It takes a backup and runs the one-shot migrator before starting new application containers. Do not run an out-of-band migrator while a deployment is active.
+`deploy/deploy.sh` is the production migration path. It takes a backup and runs the one-shot migrator before starting new application containers. The migrator holds a PostgreSQL session advisory lock while it applies schema and legacy-data migrations, so an out-of-band migrator waits instead of running concurrently.
