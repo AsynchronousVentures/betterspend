@@ -62,7 +62,7 @@ jobs:
       && (github.event_name != 'pull_request'
         || github.event.pull_request.user.login == 'dependabot[bot]'
         || needs.review-gate.result == 'success')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -138,7 +138,7 @@ jobs:
     # same commit is serialized, and existing sha-* tags are never replaced.
     if: github.event_name == 'push'
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     concurrency:
       group: publish-${{ github.sha }}
       cancel-in-progress: false
@@ -167,8 +167,8 @@ jobs:
             printf 'web_api_url=%s\n' "$web_api_url"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v1
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -207,7 +207,7 @@ jobs:
 
       - name: Build and push API image
         if: steps.existing_images.outputs.api_exists != 'true'
-        uses: docker/build-push-action@v6
+        uses: useblacksmith/build-push-action@v2
         with:
           context: .
           file: docker/api.Dockerfile
@@ -217,7 +217,7 @@ jobs:
 
       - name: Build and push web image
         if: steps.existing_images.outputs.web_exists != 'true'
-        uses: docker/build-push-action@v6
+        uses: useblacksmith/build-push-action@v2
         with:
           context: .
           file: docker/web.Dockerfile
@@ -229,7 +229,7 @@ jobs:
 
       - name: Build and push migrator image
         if: steps.existing_images.outputs.migrator_exists != 'true'
-        uses: docker/build-push-action@v6
+        uses: useblacksmith/build-push-action@v2
         with:
           context: .
           file: docker/migrator.Dockerfile
@@ -244,7 +244,7 @@ jobs:
     # secrets are configured, so tagging still releases images before
     # automated deployment exists.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       ready: ${{ steps.check.outputs.ready }}
     steps:
@@ -271,7 +271,7 @@ jobs:
       && startsWith(github.ref, 'refs/tags/')
       && needs.deploy-preflight.outputs.ready == 'true'
     needs: [publish, deploy-preflight]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # Protect this environment in repo settings (required reviewers, or none
     # for fully automatic deploys). Only tag pushes reach production here.
     environment: production
