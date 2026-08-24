@@ -33,12 +33,11 @@ function expiryDate(value: string | undefined): Date | null {
 }
 
 async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
-  await client`BEGIN`;
-  try {
-    const rows = await client<LegacyRow[]>`
+  await client.begin(async (transaction) => {
+    const rows = await transaction<LegacyRow[]>`
       SELECT organization_id, key, value
       FROM system_settings
-      WHERE key IN ${client(LEGACY_KEYS)}
+      WHERE key IN ${transaction(LEGACY_KEYS)}
       FOR UPDATE
     `;
 
@@ -74,7 +73,7 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
           status === 'active' && refreshToken ? encryptCredential(refreshToken) : null;
         const accessExpiresAt = expiryDate(settings[`${provider}_token_expires_at`]);
 
-        await client`
+        await transaction`
           INSERT INTO integration_connections (
             organization_id, provider, realm_id, access_token_enc, refresh_token_enc,
             access_expires_at, status, scopes
@@ -95,7 +94,7 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
     for (const row of rows) {
       const provider = row.key.startsWith('qbo_') ? 'qbo' : 'xero';
       if (!migratedProviders.has(`${row.organization_id}:${provider}`)) continue;
-      await client`
+      await transaction`
         DELETE FROM system_settings
         WHERE organization_id = ${row.organization_id}
           AND key = ${row.key}
@@ -104,7 +103,7 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
     }
 
     if (rows.length > 0) {
-      await client`
+      await transaction`
         UPDATE sync_records AS record
         SET connection_id = (
           SELECT connection.id
@@ -123,31 +122,23 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
           )
       `;
     }
-    await client`COMMIT`;
-  } catch (error) {
-    await client`ROLLBACK`;
-    throw error;
-  }
+  });
 }
 
 async function main(): Promise<void> {
-  const client = postgres(process.env.DATABASE_URL!);
-  let connection: postgres.ReservedSql | undefined;
+  // Advisory locks are session-scoped, so the migration runner uses one database session.
+  const client = postgres(process.env.DATABASE_URL!, { max: 1 });
   let migrationLockAcquired = false;
   try {
-    // Advisory locks are session-scoped, so all migration work must use this connection.
-    connection = await client.reserve();
-    await connection`SELECT pg_advisory_lock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
+    await client`SELECT pg_advisory_lock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
     migrationLockAcquired = true;
-    const migrationClient = Object.assign(connection, { options: client.options });
-    const db = drizzle(migrationClient);
+    const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
-    await migrateLegacyConnections(migrationClient);
+    await migrateLegacyConnections(client);
   } finally {
-    if (migrationLockAcquired && connection) {
-      await connection`SELECT pg_advisory_unlock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
+    if (migrationLockAcquired) {
+      await client`SELECT pg_advisory_unlock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
     }
-    connection?.release();
     await client.end();
   }
 }
