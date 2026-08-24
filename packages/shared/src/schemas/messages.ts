@@ -4,11 +4,15 @@ export const MESSAGE_THREAD_TYPES = ['po', 'rfq', 'grn', 'invoice'] as const;
 
 export const messageThreadTypeSchema = z.enum(MESSAGE_THREAD_TYPES);
 
-export const messageAttachmentSchema = z.object({
-  documentId: z.string().uuid().optional(),
-  url: z.string().url().optional(),
-  name: z.string().max(255).optional(),
-});
+export const messageAttachmentSchema = z
+  .object({
+    documentId: z.string().uuid().optional(),
+    url: z.string().url().optional(),
+    name: z.string().max(255).optional(),
+  })
+  .refine(({ documentId, url }) => documentId !== undefined || url !== undefined, {
+    message: 'Either documentId or url is required',
+  });
 
 export const postMessageSchema = z.object({
   body: z.string().trim().min(1).max(10_000),

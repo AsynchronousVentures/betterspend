@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { and, asc, eq } from 'drizzle-orm';
+import { z } from 'zod';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import {
@@ -343,11 +344,7 @@ export class MessagesService {
         where: (v, { and, eq }) =>
           and(eq(v.id, vendorIdForThread), eq(v.organizationId, organizationId)),
       });
-      const contactInfo = vendor?.contactInfo as Record<string, unknown> | null | undefined;
-      const email =
-        typeof contactInfo?.['email'] === 'string' && contactInfo['email'].includes('@')
-          ? contactInfo['email']
-          : undefined;
+      const email = extractContactEmail(vendor?.contactInfo);
       if (!vendor || !email) return;
 
       const settings = await this.settingsService.getAll(organizationId);
@@ -390,6 +387,14 @@ export class MessagesService {
       );
     }
   }
+}
+
+function extractContactEmail(contactInfo: unknown): string | undefined {
+  if (!contactInfo || typeof contactInfo !== 'object') return undefined;
+  const email = (contactInfo as Record<string, unknown>)['email'];
+  if (typeof email !== 'string' || /[,;\r\n]/.test(email)) return undefined;
+  const parsed = z.string().trim().email().safeParse(email);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function escapeHtml(value: string): string {
