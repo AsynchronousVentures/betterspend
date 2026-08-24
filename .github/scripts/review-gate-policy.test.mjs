@@ -30,10 +30,9 @@ test('reports missing Macroscope checks', () => {
 test('waits for pending Macroscope checks', () => {
   assert.deepEqual(
     evaluateGateState({
-      checkRunItems: [
-        completedMacroscopeChecks[0],
-        { ...completedMacroscopeChecks[1], conclusion: null, status: 'in_progress' },
-      ],
+      checkRunItems: completedMacroscopeChecks.map((checkRun, index) =>
+        index === 1 ? { ...checkRun, conclusion: null, status: 'in_progress' } : checkRun,
+      ),
     }),
     { blockers: [], missing: [], pending: [requiredMacroscopeChecks[1]] },
   );
@@ -42,10 +41,9 @@ test('waits for pending Macroscope checks', () => {
 test('blocks failed Macroscope checks', () => {
   assert.deepEqual(
     evaluateGateState({
-      checkRunItems: [
-        completedMacroscopeChecks[0],
-        { ...completedMacroscopeChecks[1], conclusion: 'failure' },
-      ],
+      checkRunItems: completedMacroscopeChecks.map((checkRun, index) =>
+        index === 1 ? { ...checkRun, conclusion: 'failure' } : checkRun,
+      ),
     }),
     { blockers: [`${requiredMacroscopeChecks[1]}: failure`], missing: [], pending: [] },
   );
