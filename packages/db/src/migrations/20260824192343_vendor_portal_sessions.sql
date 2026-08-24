@@ -9,7 +9,9 @@ CREATE TABLE "vendor_portal_sessions" (
 	CONSTRAINT "vendor_portal_sessions_token_hash_unique" UNIQUE("token_hash")
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX "vendors_id_organization_id_unique" ON "vendors" USING btree ("id","organization_id");--> statement-breakpoint
+-- Existing databases build this concurrently in migrate.ts before transactional migrations run.
+-- This fallback creates it only while bootstrapping an empty database.
+CREATE UNIQUE INDEX IF NOT EXISTS "vendors_id_organization_id_unique" ON "vendors" USING btree ("id","organization_id");--> statement-breakpoint
 ALTER TABLE "vendor_portal_sessions" ADD CONSTRAINT "vendor_portal_sessions_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "vendor_portal_sessions" ADD CONSTRAINT "vendor_portal_sessions_vendor_org_fk" FOREIGN KEY ("vendor_id","organization_id") REFERENCES "public"."vendors"("id","organization_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "vendor_portal_sessions_org_vendor_idx" ON "vendor_portal_sessions" USING btree ("organization_id","vendor_id");
