@@ -1,15 +1,13 @@
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
 import { eq, and, lte, gte } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
-import type { Db } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
 import { approvalDelegations } from '@betterspend/db';
 import { sql } from 'drizzle-orm';
 
 @Injectable()
 export class ApprovalDelegationsService {
-  constructor(
-    @Inject(DB_TOKEN) private readonly db: Db,
-  ) {}
+  constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
   async list(orgId: string, activeOnly?: boolean) {
     const rows = await this.db.query.approvalDelegations.findMany({
@@ -26,11 +24,8 @@ export class ApprovalDelegationsService {
 
   async myDelegations(orgId: string, userId: string) {
     const rows = await this.db.query.approvalDelegations.findMany({
-      where: (d, { and, eq }) => and(
-        eq(d.organizationId, orgId),
-        eq(d.delegatorId, userId),
-        eq(d.active, true),
-      ),
+      where: (d, { and, eq }) =>
+        and(eq(d.organizationId, orgId), eq(d.delegatorId, userId), eq(d.active, true)),
       orderBy: (d, { desc }) => desc(d.createdAt),
     });
     return this.enrichWithUsers(rows);
@@ -38,11 +33,8 @@ export class ApprovalDelegationsService {
 
   async delegateForMe(orgId: string, userId: string) {
     const rows = await this.db.query.approvalDelegations.findMany({
-      where: (d, { and, eq }) => and(
-        eq(d.organizationId, orgId),
-        eq(d.delegateeId, userId),
-        eq(d.active, true),
-      ),
+      where: (d, { and, eq }) =>
+        and(eq(d.organizationId, orgId), eq(d.delegateeId, userId), eq(d.active, true)),
       orderBy: (d, { desc }) => desc(d.createdAt),
     });
     return this.enrichWithUsers(rows);
@@ -80,10 +72,7 @@ export class ApprovalDelegationsService {
 
   async cancel(orgId: string, id: string, userId: string) {
     const delegation = await this.db.query.approvalDelegations.findFirst({
-      where: (d, { and, eq }) => and(
-        eq(d.id, id),
-        eq(d.organizationId, orgId),
-      ),
+      where: (d, { and, eq }) => and(eq(d.id, id), eq(d.organizationId, orgId)),
     });
 
     if (!delegation) {
@@ -107,16 +96,21 @@ export class ApprovalDelegationsService {
    * Returns the active delegatee user ID for a given delegator, if an active
    * delegation exists covering the current timestamp.
    */
-  async getActiveDelegatee(orgId: string, delegatorId: string): Promise<string | null> {
+  async getActiveDelegatee(
+    orgId: string,
+    delegatorId: string,
+    executor: Db | DbTransaction = this.db,
+  ): Promise<string | null> {
     const now = new Date();
-    const result = await this.db.query.approvalDelegations.findFirst({
-      where: (d, { and, eq, lte, gte }) => and(
-        eq(d.organizationId, orgId),
-        eq(d.delegatorId, delegatorId),
-        eq(d.active, true),
-        lte(d.startDate, now),
-        gte(d.endDate, now),
-      ),
+    const result = await executor.query.approvalDelegations.findFirst({
+      where: (d, { and, eq, lte, gte }) =>
+        and(
+          eq(d.organizationId, orgId),
+          eq(d.delegatorId, delegatorId),
+          eq(d.active, true),
+          lte(d.startDate, now),
+          gte(d.endDate, now),
+        ),
     });
     return result?.delegateeId ?? null;
   }
@@ -131,9 +125,9 @@ export class ApprovalDelegationsService {
     }
 
     const ids = Array.from(allUserIds);
-    const userRows = await this.db.execute(
+    const userRows = (await this.db.execute(
       sql`SELECT id, name, email FROM users WHERE id = ANY(${sql.raw(`ARRAY[${ids.map((i) => `'${i}'`).join(',')}]::uuid[]`)})`,
-    ) as any[];
+    )) as any[];
 
     const userMap: Record<string, { id: string; name: string; email: string }> = {};
     for (const u of userRows) {

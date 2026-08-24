@@ -1,6 +1,6 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
-import type { Db } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
 import { exchangeRates, organizations } from '@betterspend/db';
 import { DB_TOKEN } from '../../database/database.module';
 
@@ -30,8 +30,11 @@ export class ExchangeRatesService {
     return rate;
   }
 
-  async getOrganizationBaseCurrency(organizationId: string) {
-    const org = await this.db.query.organizations.findFirst({
+  async getOrganizationBaseCurrency(
+    organizationId: string,
+    executor: Db | DbTransaction = this.db,
+  ) {
+    const org = await executor.query.organizations.findFirst({
       where: (record, { eq }) => eq(record.id, organizationId),
     });
     if (!org) throw new BadRequestException(`Organization ${organizationId} not found`);
@@ -41,7 +44,11 @@ export class ExchangeRatesService {
   async list(organizationId: string) {
     const rows = await this.db.query.exchangeRates.findMany({
       where: (record, { eq }) => eq(record.orgId, organizationId),
-      orderBy: (record, { desc, asc }) => [asc(record.fromCurrency), asc(record.toCurrency), desc(record.fetchedAt)],
+      orderBy: (record, { desc, asc }) => [
+        asc(record.fromCurrency),
+        asc(record.toCurrency),
+        desc(record.fetchedAt),
+      ],
     });
 
     const latest = new Map<string, (typeof rows)[number]>();
@@ -57,20 +64,24 @@ export class ExchangeRatesService {
     const toCurrency = this.normalizeCurrency(input.toCurrency, 'To currency');
     const rate = this.validateRate(input.rate);
 
-    const [row] = await this.db.insert(exchangeRates).values({
-      orgId: organizationId,
-      fromCurrency,
-      toCurrency,
-      rate: String(rate),
-      isManual: input.isManual ?? true,
-    }).onConflictDoUpdate({
-      target: [exchangeRates.orgId, exchangeRates.fromCurrency, exchangeRates.toCurrency],
-      set: {
+    const [row] = await this.db
+      .insert(exchangeRates)
+      .values({
+        orgId: organizationId,
+        fromCurrency,
+        toCurrency,
         rate: String(rate),
         isManual: input.isManual ?? true,
-        fetchedAt: new Date(),
-      },
-    }).returning();
+      })
+      .onConflictDoUpdate({
+        target: [exchangeRates.orgId, exchangeRates.fromCurrency, exchangeRates.toCurrency],
+        set: {
+          rate: String(rate),
+          isManual: input.isManual ?? true,
+          fetchedAt: new Date(),
+        },
+      })
+      .returning();
 
     return row;
   }
@@ -87,7 +98,8 @@ export class ExchangeRatesService {
     const toCurrency = this.normalizeCurrency(input.toCurrency, 'To currency');
     const rate = this.validateRate(input.rate);
 
-    const [row] = await this.db.update(exchangeRates)
+    const [row] = await this.db
+      .update(exchangeRates)
       .set({
         fromCurrency,
         toCurrency,
@@ -102,7 +114,8 @@ export class ExchangeRatesService {
   }
 
   async remove(organizationId: string, id: string) {
-    const [row] = await this.db.delete(exchangeRates)
+    const [row] = await this.db
+      .delete(exchangeRates)
       .where(and(eq(exchangeRates.id, id), eq(exchangeRates.orgId, organizationId)))
       .returning();
 
@@ -113,15 +126,42 @@ export class ExchangeRatesService {
     return row;
   }
 
-  async getRate(organizationId: string, fromCurrency: string, toCurrency: string, overrideRate?: number | null) {
+  async getRate(
+    organizationId: string,
+    fromCurrency: string,
+    toCurrency: string,
+    overrideRate?: number | null,
+  ) {
+    return Number(
+      await this.getRateDecimal(
+        organizationId,
+        fromCurrency,
+        toCurrency,
+        overrideRate == null ? undefined : String(overrideRate),
+      ),
+    );
+  }
+
+  /** Return the stored decimal unchanged so money policy code never crosses through a float. */
+  async getRateDecimal(
+    organizationId: string,
+    fromCurrency: string,
+    toCurrency: string,
+    overrideRate?: string | null,
+    executor: Db | DbTransaction = this.db,
+  ): Promise<string> {
     const from = fromCurrency.toUpperCase();
     const to = toCurrency.toUpperCase();
-    if (from === to) return 1;
+    if (from === to) return '1';
     if (overrideRate != null) return overrideRate;
 
-    const latest = await this.db.query.exchangeRates.findFirst({
+    const latest = await executor.query.exchangeRates.findFirst({
       where: (record, { and, eq }) =>
-        and(eq(record.orgId, organizationId), eq(record.fromCurrency, from), eq(record.toCurrency, to)),
+        and(
+          eq(record.orgId, organizationId),
+          eq(record.fromCurrency, from),
+          eq(record.toCurrency, to),
+        ),
       orderBy: (record, { desc }) => desc(record.fetchedAt),
     });
 
@@ -129,14 +169,19 @@ export class ExchangeRatesService {
       throw new BadRequestException(`No exchange rate configured for ${from} -> ${to}`);
     }
 
-    return Number(latest.rate);
+    return latest.rate;
   }
 
   roundMoney(amount: number) {
     return Math.round(amount * 100) / 100;
   }
 
-  async convertToBase(organizationId: string, amount: number, currency: string, overrideRate?: number | null) {
+  async convertToBase(
+    organizationId: string,
+    amount: number,
+    currency: string,
+    overrideRate?: number | null,
+  ) {
     const baseCurrency = await this.getOrganizationBaseCurrency(organizationId);
     const exchangeRate = await this.getRate(organizationId, currency, baseCurrency, overrideRate);
     const baseAmount = this.roundMoney(amount * exchangeRate);
@@ -145,7 +190,8 @@ export class ExchangeRatesService {
 
   async updateOrganizationBaseCurrency(organizationId: string, baseCurrency: string) {
     const normalizedBaseCurrency = this.normalizeCurrency(baseCurrency, 'Base currency');
-    const [org] = await this.db.update(organizations)
+    const [org] = await this.db
+      .update(organizations)
       .set({ baseCurrency: normalizedBaseCurrency, updatedAt: new Date() })
       .where(eq(organizations.id, organizationId))
       .returning();

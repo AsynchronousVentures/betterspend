@@ -5,15 +5,16 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { eq, and, isNull, lte, gte, sql } from 'drizzle-orm';
+import { eq, and, ne, isNull, lte, gte, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
-import type { Db } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
 import { invoices, invoiceLines, purchaseOrders, requisitions } from '@betterspend/db';
 import { SequenceService } from '../../common/services/sequence.service';
 import { MatchingService } from './matching.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { GlExportService } from '../gl/gl-export.service';
 import { BudgetsService } from '../budgets/budgets.service';
+import { addMoney, convertMoney } from '../budgets/budget-enforcement';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EntitiesService } from '../entities/entities.service';
@@ -134,8 +135,12 @@ export class InvoicesService {
     });
   }
 
-  async findOne(id: string, organizationId: string) {
-    const invoice = await this.db.query.invoices.findFirst({
+  private async findOneWithExecutor(
+    id: string,
+    organizationId: string,
+    executor: Db | DbTransaction,
+  ) {
+    const invoice = await executor.query.invoices.findFirst({
       where: (i, { and, eq }) => and(eq(i.id, id), eq(i.organizationId, organizationId)),
       with: {
         vendor: true,
@@ -146,6 +151,10 @@ export class InvoicesService {
     });
     if (!invoice) throw new NotFoundException(`Invoice ${id} not found`);
     return invoice;
+  }
+
+  async findOne(id: string, organizationId: string) {
+    return this.findOneWithExecutor(id, organizationId, this.db);
   }
 
   async create(organizationId: string, input: CreateInvoiceInput) {
@@ -325,7 +334,7 @@ export class InvoicesService {
     if ((invoice as any).status !== 'approved') {
       throw new BadRequestException('Only approved invoices can be marked as paid');
     }
-    await this.db
+    const [transitioned] = await this.db
       .update(invoices)
       .set({
         status: 'paid',
@@ -516,20 +525,82 @@ export class InvoicesService {
   }
 
   async approve(id: string, organizationId: string, approverId: string) {
-    const invoice = await this.findOne(id, organizationId);
-    if (invoice.matchStatus === 'exception') {
-      throw new BadRequestException('Cannot approve invoice with unresolved exceptions');
-    }
-    await this.db
-      .update(invoices)
-      .set({
-        status: 'approved',
-        approvedBy: approverId,
-        approvedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
-    const approved = await this.findOne(id, organizationId);
+    const result = await this.db.transaction(async (tx) => {
+      const [lockedInvoice] = await tx
+        .select()
+        .from(invoices)
+        .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)))
+        .for('update');
+      if (!lockedInvoice) throw new NotFoundException(`Invoice ${id} not found`);
+      if (lockedInvoice.matchStatus !== 'full_match') {
+        throw new BadRequestException('Invoice requires a full three-way match before approval');
+      }
+      if (lockedInvoice.status === 'approved' || lockedInvoice.status === 'paid') {
+        return {
+          approved: await this.findOneWithExecutor(id, organizationId, tx),
+          transitioned: false,
+        };
+      }
+
+      const [transitioned] = await tx
+        .update(invoices)
+        .set({
+          status: 'approved',
+          approvedBy: approverId,
+          approvedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(invoices.id, id),
+            eq(invoices.organizationId, organizationId),
+            ne(invoices.status, 'approved'),
+            ne(invoices.status, 'paid'),
+            eq(invoices.matchStatus, 'full_match'),
+          ),
+        )
+        .returning({ id: invoices.id });
+      if (!transitioned) throw new BadRequestException('Invoice is not in an approvable state');
+
+      const approved = await this.findOneWithExecutor(id, organizationId, tx);
+
+      // Record spend in the approval transaction so budget accounting cannot lag invoice state.
+      if (approved.purchaseOrderId) {
+        const po = await tx.query.purchaseOrders.findFirst({
+          where: (p, { and, eq }) =>
+            and(eq(p.id, approved.purchaseOrderId!), eq(p.organizationId, organizationId)),
+        });
+        if (po?.requisitionId) {
+          const req = await tx.query.requisitions.findFirst({
+            where: (r, { and, eq }) =>
+              and(eq(r.id, po.requisitionId!), eq(r.organizationId, organizationId)),
+          });
+          if (req?.departmentId) {
+            const recoverableTaxAmount = addMoney(
+              approved.lines
+                .filter((line) => line.taxCode?.isRecoverable)
+                .map((line) => String(line.taxAmount ?? '0')),
+            );
+            const spendAmount = addMoney([
+              String(approved.totalAmount ?? '0'),
+              `-${recoverableTaxAmount}`,
+            ]);
+            await this.budgets.recordSpend(
+              organizationId,
+              req.departmentId,
+              convertMoney(spendAmount, String(approved.exchangeRate ?? '1')),
+              req.createdAt.getUTCFullYear(),
+              tx,
+            );
+          }
+        }
+      }
+
+      return { approved, transitioned: true };
+    });
+
+    const { approved, transitioned } = result;
+    if (!transitioned) return approved;
     this.webhookEvents.emit(organizationId, 'invoice.approved', { invoice: approved });
     this.audit
       .log(organizationId, approverId, 'invoice', id, 'approved', {
@@ -550,37 +621,6 @@ export class InvoicesService {
         .catch(() => {});
     }
     this.glExport.enqueue(organizationId, id, 'qbo');
-
-    // Auto-track budget spend: resolve department via PO → Requisition
-    if ((approved as any).purchaseOrderId) {
-      try {
-        const po = await this.db.query.purchaseOrders.findFirst({
-          where: (p, { eq }) => eq(p.id, (approved as any).purchaseOrderId),
-        });
-        if (po?.requisitionId) {
-          const req = await this.db.query.requisitions.findFirst({
-            where: (r, { eq }) => eq(r.id, po.requisitionId!),
-          });
-          if (req?.departmentId) {
-            const fiscalYear = new Date().getFullYear();
-            const recoverableTaxAmount = ((approved as any).lines ?? [])
-              .filter((line: any) => line.taxCode?.isRecoverable)
-              .reduce(
-                (sum: number, line: any) => sum + parseFloat(String(line.taxAmount ?? '0')),
-                0,
-              );
-            await this.budgets.recordSpend(
-              organizationId,
-              req.departmentId,
-              parseFloat((approved as any).totalAmount ?? '0') - recoverableTaxAmount,
-              fiscalYear,
-            );
-          }
-        }
-      } catch {
-        // Budget tracking is best-effort; never fail the approval
-      }
-    }
 
     return approved;
   }

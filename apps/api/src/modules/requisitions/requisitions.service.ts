@@ -1,5 +1,5 @@
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import { SequenceService } from '../../common/services/sequence.service';
 import { ApprovalEngineService } from '../approvals/approval-engine.service';
@@ -153,41 +153,77 @@ export class RequisitionsService {
       throw new BadRequestException('Requisition must have at least one line item');
     }
 
-    // Budget gate: check if departmentId + totalAmount exceeds remaining budget
-    if (req.departmentId && req.totalAmount) {
-      const fiscalYear = new Date().getFullYear();
-      const amount = parseFloat(String(req.totalAmount));
-      const budgetCheck = await this.budgets.checkBudget(
-        organizationId,
-        req.departmentId,
-        amount,
-        fiscalYear,
-      );
-      if (!budgetCheck.withinBudget) {
-        throw new BadRequestException(
-          `Budget exceeded for department. Remaining: $${budgetCheck.remaining?.toFixed(2) ?? '0'}, ` +
-            `Requested: $${amount.toFixed(2)}. ` +
-            `Budget: ${budgetCheck.budgetName} (Allocated: $${budgetCheck.allocated?.toFixed(2) ?? '0'}, Spent: $${budgetCheck.spent?.toFixed(2) ?? '0'})`,
-        );
-      }
-    }
-
-    await this.db
-      .update(requisitions)
-      .set({ status: 'pending_approval', submittedAt: new Date(), updatedAt: new Date() })
-      .where(eq(requisitions.id, id));
-
     const actorId = requesterId ?? req.requesterId;
-
-    // Initiate approval — may auto-approve (status → 'approved') or create a pending request
-    await this.approvalEngine.initiateApproval(organizationId, 'requisition', id, actorId);
+    const { budgetEnforcement, approvalResult, requiredApproval } =
+      await this.budgets.withEnforcementLock(
+        {
+          organizationId,
+          departmentId: req.departmentId,
+          requestedAmount: req.totalAmount,
+          currency: req.currency,
+          fiscalYear: req.createdAt.getUTCFullYear(),
+          excludeRequisitionId: req.id,
+        },
+        async (tx, decision) => {
+          if (decision.action === 'block') {
+            throw new BadRequestException(decision.message);
+          }
+          let requiredApproval: { approverId: string; reason: string; key: string } | undefined;
+          if (decision.action === 'require_approval') {
+            const ownerUserId = decision.ownerUserId;
+            if (!ownerUserId) {
+              throw new BadRequestException('An active budget owner is required for approval');
+            }
+            requiredApproval = {
+              approverId: ownerUserId,
+              reason: decision.message,
+              key: `budget:${decision.budgetId}:requisition:${id}:owner:${ownerUserId}`,
+            };
+          }
+          const approvalResult = await this.approvalEngine.initiateApproval(
+            organizationId,
+            'requisition',
+            id,
+            actorId,
+            requiredApproval,
+            async (approvalTx) => {
+              const [transitioned] = await approvalTx
+                .update(requisitions)
+                .set({ status: 'pending_approval', submittedAt: new Date(), updatedAt: new Date() })
+                .where(
+                  and(
+                    eq(requisitions.id, id),
+                    eq(requisitions.organizationId, organizationId),
+                    eq(requisitions.status, 'draft'),
+                  ),
+                )
+                .returning({ id: requisitions.id });
+              if (!transitioned) {
+                throw new BadRequestException('Only draft requisitions can be submitted');
+              }
+            },
+            tx,
+          );
+          return { budgetEnforcement: decision, approvalResult, requiredApproval };
+        },
+      );
+    this.approvalEngine.publishInitiation(
+      organizationId,
+      'requisition',
+      id,
+      approvalResult,
+      requiredApproval,
+    );
 
     const submitted = await this.findOne(id, organizationId);
     this.webhookEvents.emit(organizationId, 'requisition.submitted', { requisition: submitted });
     this.audit
-      .log(organizationId, actorId, 'requisition', id, 'submitted', { status: submitted.status })
+      .log(organizationId, actorId, 'requisition', id, 'submitted', {
+        status: submitted.status,
+        budgetEnforcement,
+      })
       .catch(() => {});
-    return submitted;
+    return { ...submitted, budgetEnforcement };
   }
 
   async cancel(id: string, organizationId: string) {

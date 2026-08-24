@@ -4,7 +4,9 @@ import { users } from './users';
 
 export const approvalRules = pgTable('approval_rules', {
   id: uuid('id').primaryKey().defaultRandom(),
-  organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+  organizationId: uuid('organization_id')
+    .notNull()
+    .references(() => organizations.id),
   entityId: uuid('entity_id').references(() => legalEntities.id),
   name: varchar('name', { length: 255 }).notNull(),
   description: text('description'),
@@ -17,7 +19,9 @@ export const approvalRules = pgTable('approval_rules', {
 
 export const approvalRuleSteps = pgTable('approval_rule_steps', {
   id: uuid('id').primaryKey().defaultRandom(),
-  approvalRuleId: uuid('approval_rule_id').notNull().references(() => approvalRules.id),
+  approvalRuleId: uuid('approval_rule_id')
+    .notNull()
+    .references(() => approvalRules.id),
   stepOrder: integer('step_order').notNull(),
   approverType: varchar('approver_type', { length: 50 }).notNull(), // user|role|department_head|budget_owner
   approverId: uuid('approver_id'),
@@ -34,15 +38,23 @@ export const approvalRequests = pgTable('approval_requests', {
   approvalRuleId: uuid('approval_rule_id').references(() => approvalRules.id),
   currentStep: integer('current_step').notNull().default(1),
   status: varchar('status', { length: 20 }).notNull().default('pending'),
+  requiredApproverId: uuid('required_approver_id').references(() => users.id),
+  requiredApprovalStep: integer('required_approval_step'),
+  requiredApprovalReason: text('required_approval_reason'),
+  requiredApprovalKey: varchar('required_approval_key', { length: 255 }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const approvalActions = pgTable('approval_actions', {
   id: uuid('id').primaryKey().defaultRandom(),
-  approvalRequestId: uuid('approval_request_id').notNull().references(() => approvalRequests.id),
+  approvalRequestId: uuid('approval_request_id')
+    .notNull()
+    .references(() => approvalRequests.id),
   stepOrder: integer('step_order').notNull(),
-  approverId: uuid('approver_id').notNull().references(() => users.id),
+  approverId: uuid('approver_id')
+    .notNull()
+    .references(() => users.id),
   action: varchar('action', { length: 20 }).notNull(), // approved|rejected|delegated|returned
   comment: text('comment'),
   actedAt: timestamp('acted_at', { withTimezone: true }).notNull().defaultNow(),

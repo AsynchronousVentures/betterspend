@@ -5,7 +5,7 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import { SequenceService } from '../../common/services/sequence.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
@@ -15,6 +15,8 @@ import { ContractComplianceService } from './contract-compliance.service';
 import { EntitiesService } from '../entities/entities.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { RiskScreeningService } from '../risk-screening/risk-screening.service';
+import { BudgetsService } from '../budgets/budgets.service';
+import { ApprovalEngineService } from '../approvals/approval-engine.service';
 import type { Db } from '@betterspend/db';
 import {
   auditLog,
@@ -105,6 +107,8 @@ export class PurchaseOrdersService {
     private readonly entitiesService: EntitiesService,
     private readonly exchangeRatesService: ExchangeRatesService,
     private readonly riskScreening: RiskScreeningService,
+    private readonly budgets: BudgetsService,
+    private readonly approvalEngine: ApprovalEngineService,
   ) {}
 
   private calculateLineTax(
@@ -338,44 +342,146 @@ export class PurchaseOrdersService {
       throw new BadRequestException(`Cannot issue a PO with status "${po.status}"`);
     }
 
-    // Re-check at issuance: the vendor may have been flagged after the draft
-    // was created, and issuance is the moment the commitment becomes real.
-    const updated = await this.db.transaction(async (tx) => {
-      const [issueVendor] = await tx
-        .select()
-        .from(vendors)
-        .where(and(eq(vendors.id, po.vendorId), eq(vendors.organizationId, organizationId)))
-        .for('update');
-      if (!issueVendor) throw new NotFoundException(`Vendor ${po.vendorId} not found`);
-      const sanctionsWarning = await this.riskScreening.checkVendorStatusForPo(
-        organizationId,
-        issueVendor,
-      );
-      const [issued] = await tx
-        .update(purchaseOrders)
-        .set({ status: 'issued', issuedBy, issuedAt: new Date(), updatedAt: new Date() })
-        .where(eq(purchaseOrders.id, id))
-        .returning();
-      if (sanctionsWarning) {
+    const linkedRequisition = po.requisitionId
+      ? await this.db.query.requisitions.findFirst({
+          where: (record, { and, eq }) =>
+            and(eq(record.id, po.requisitionId!), eq(record.organizationId, organizationId)),
+        })
+      : null;
+    if (po.requisitionId && !linkedRequisition) {
+      throw new BadRequestException('The linked requisition was not found in this organization');
+    }
+    const enforcementInput = {
+      organizationId,
+      departmentId: linkedRequisition?.departmentId,
+      requestedAmount: po.totalAmount,
+      currency: po.currency,
+      fiscalYear: linkedRequisition?.createdAt.getUTCFullYear() ?? po.createdAt.getUTCFullYear(),
+      excludeRequisitionId: linkedRequisition?.id,
+    };
+    const outcome = await this.budgets.withEnforcementLock(
+      enforcementInput,
+      async (tx, budgetEnforcement) => {
+        if (budgetEnforcement.action === 'block') {
+          throw new BadRequestException(budgetEnforcement.message);
+        }
+        if (budgetEnforcement.action === 'require_approval') {
+          if (!budgetEnforcement.ownerUserId) {
+            throw new BadRequestException('An active budget owner is required for approval');
+          }
+          const approvalKey = `budget:${budgetEnforcement.budgetId}:po:${id}:version:${po.version}:owner:${budgetEnforcement.ownerUserId}`;
+          const completed =
+            po.status === 'approved' &&
+            (await this.approvalEngine.hasCompletedRequiredApproval(
+              'purchase_order',
+              id,
+              budgetEnforcement.ownerUserId,
+              approvalKey,
+              po.updatedAt,
+            ));
+          if (!completed) return { kind: 'approval' as const, budgetEnforcement };
+        }
+
+        // Issuance and its budget decision share the budget-row lock, so two
+        // commitments cannot both spend the same remaining amount.
+        const [issueVendor] = await tx
+          .select()
+          .from(vendors)
+          .where(and(eq(vendors.id, po.vendorId), eq(vendors.organizationId, organizationId)))
+          .for('update');
+        if (!issueVendor) throw new NotFoundException(`Vendor ${po.vendorId} not found`);
+        const sanctionsWarning = await this.riskScreening.checkVendorStatusForPo(
+          organizationId,
+          issueVendor,
+        );
+        const now = new Date();
+        const [issued] = await tx
+          .update(purchaseOrders)
+          .set({ status: 'issued', issuedBy, issuedAt: now, updatedAt: now })
+          .where(
+            and(
+              eq(purchaseOrders.id, id),
+              eq(purchaseOrders.organizationId, organizationId),
+              eq(purchaseOrders.version, po.version),
+              eq(purchaseOrders.totalAmount, po.totalAmount),
+              inArray(purchaseOrders.status, ['draft', 'approved']),
+            ),
+          )
+          .returning();
+        if (!issued) throw new BadRequestException('Purchase order status changed before issuance');
+        if (sanctionsWarning) {
+          await tx.insert(auditLog).values({
+            organizationId,
+            userId: issuedBy,
+            entityType: 'vendor',
+            entityId: issueVendor.id,
+            action: 'po_sanctions_warning',
+            changes: { poNumber: po.number, warning: sanctionsWarning },
+          });
+        }
         await tx.insert(auditLog).values({
           organizationId,
           userId: issuedBy,
-          entityType: 'vendor',
-          entityId: issueVendor.id,
-          action: 'po_sanctions_warning',
-          changes: { poNumber: po.number, warning: sanctionsWarning },
+          entityType: 'purchase_order',
+          entityId: id,
+          action: 'issued',
+          changes: { totalAmount: issued.totalAmount, budgetEnforcement },
         });
+        return { kind: 'issued' as const, issued, sanctionsWarning, budgetEnforcement };
+      },
+    );
+
+    if (outcome.kind === 'approval') {
+      const ownerUserId = outcome.budgetEnforcement.ownerUserId;
+      if (!ownerUserId) {
+        throw new BadRequestException('An active budget owner is required for approval');
       }
-      await tx.insert(auditLog).values({
+      const approvalKey = `budget:${outcome.budgetEnforcement.budgetId}:po:${id}:version:${po.version}:owner:${ownerUserId}`;
+      await this.approvalEngine.initiateApproval(
         organizationId,
-        userId: issuedBy,
-        entityType: 'purchase_order',
-        entityId: id,
-        action: 'issued',
-        changes: { totalAmount: issued.totalAmount },
-      });
-      return issued;
-    });
+        'purchase_order',
+        id,
+        issuedBy,
+        {
+          approverId: ownerUserId,
+          reason: outcome.budgetEnforcement.message,
+          key: approvalKey,
+          only: po.status === 'approved',
+        },
+        async (tx) => {
+          const now = new Date();
+          const [transitioned] = await tx
+            .update(purchaseOrders)
+            .set({ status: 'pending_approval', updatedAt: now })
+            .where(
+              and(
+                eq(purchaseOrders.id, id),
+                eq(purchaseOrders.organizationId, organizationId),
+                eq(purchaseOrders.version, po.version),
+                eq(purchaseOrders.totalAmount, po.totalAmount),
+                inArray(purchaseOrders.status, ['draft', 'approved']),
+              ),
+            )
+            .returning({ id: purchaseOrders.id });
+          if (!transitioned) {
+            throw new BadRequestException('Purchase order status changed before approval started');
+          }
+          await tx.insert(auditLog).values({
+            organizationId,
+            userId: issuedBy,
+            entityType: 'purchase_order',
+            entityId: id,
+            action: 'budget_owner_approval_requested',
+            changes: { budgetEnforcement: outcome.budgetEnforcement },
+          });
+        },
+      );
+      const pending = await this.findOne(id, organizationId);
+      return { ...pending, budgetEnforcement: outcome.budgetEnforcement };
+    }
+
+    const updated = outcome.issued;
+    const budgetEnforcement = outcome.budgetEnforcement;
     this.webhookEvents.emit(organizationId, 'po.issued', { purchaseOrder: updated });
     if (this.notifications) {
       this.notifications
@@ -390,7 +496,7 @@ export class PurchaseOrdersService {
         )
         .catch(() => {});
     }
-    return updated;
+    return { ...updated, budgetEnforcement };
   }
 
   async createChangeOrder(
