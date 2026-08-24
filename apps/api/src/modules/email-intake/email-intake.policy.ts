@@ -288,6 +288,8 @@ export function isEncryptedPdf(content: Buffer): boolean {
     structuralDictionaries.push(dictionary);
   }
 
+  if (startXref >= 0 && structuralDictionaries.length === 0) return true;
+
   return structuralDictionaries.some((dictionary) =>
     /\/Encrypt\b/.test(decodePdfNameEscapes(dictionary)),
   );
@@ -307,7 +309,8 @@ function pdfXrefTypePattern(): RegExp {
     character('e', '65'),
     character('f', '66'),
   ].join('');
-  return new RegExp(`/${type}\\s*/${xref}(?=[\\s/<>()\\[\\]{}%]|$)`, 'g');
+  const separator = '(?:\\s|%[^\\r\\n]*(?:\\r\\n?|\\n))*';
+  return new RegExp(`/${type}${separator}/${xref}(?=[\\s/<>()\\[\\]{}%]|$)`, 'g');
 }
 
 function decodePdfNameEscapes(value: string): string {

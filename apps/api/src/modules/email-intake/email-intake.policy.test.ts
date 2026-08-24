@@ -218,6 +218,24 @@ describe('email intake policy', () => {
       },
       0,
     );
+    const encryptedCommentSeparatedXref = decideAttachment(
+      {
+        filename: 'locked-comment-xref.pdf',
+        content: Buffer.from(
+          '%PDF-1.7\n5 0 obj\n<< /Type % legal PDF whitespace\r\n /XRef /Encrypt 2 0 R >>\nstream\nendstream\nstartxref\n0',
+        ),
+      },
+      0,
+    );
+    const encryptedTrailerOutsideBudget = decideAttachment(
+      {
+        filename: 'locked-distant-trailer.pdf',
+        content: Buffer.from(
+          `%PDF-1.7\ntrailer\n<< /Encrypt 2 0 R >>\n${'.'.repeat(129 * 1024)}\nstartxref\n0`,
+        ),
+      },
+      0,
+    );
     const oversized = decideAttachment(
       { filename: 'huge.pdf', content: Buffer.alloc(MAX_EMAIL_ATTACHMENT_BYTES + 1, 1) },
       0,
@@ -292,6 +310,14 @@ describe('email intake policy', () => {
     );
     assert.equal(
       oversizedTrailerDictionary.status === 'rejected' && oversizedTrailerDictionary.reason,
+      'encrypted_pdf',
+    );
+    assert.equal(
+      encryptedCommentSeparatedXref.status === 'rejected' && encryptedCommentSeparatedXref.reason,
+      'encrypted_pdf',
+    );
+    assert.equal(
+      encryptedTrailerOutsideBudget.status === 'rejected' && encryptedTrailerOutsideBudget.reason,
       'encrypted_pdf',
     );
     assert.equal(mentionsEncryption.status, 'accepted');
