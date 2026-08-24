@@ -208,7 +208,7 @@ export class EmailIntakeService implements OnModuleInit {
     const parsed = await simpleParser(rawMime, { skipImageLinks: true });
     const sourceEmail = (parsed.from?.value[0]?.address?.trim() || receipt.source).slice(0, 255);
     const subject = (parsed.subject || receipt.subject).trim().slice(0, 500);
-    const body = this.messageBody(parsed.text, parsed.html).slice(0, 100_000);
+    const body = this.messageBody(parsed.text).slice(0, 100_000);
 
     let topLevelIndex = 0;
     const attachments: PreparedAttachment[] = [];
@@ -623,15 +623,8 @@ export class EmailIntakeService implements OnModuleInit {
     };
   }
 
-  private messageBody(text: string | undefined, html: string | false): string {
-    if (text?.trim()) return text.trim();
-    if (!html) return '';
-    return html
-      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+  private messageBody(text: string | undefined): string {
+    return text?.trim() ?? '';
   }
 
   private async notifyIntake(
