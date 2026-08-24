@@ -31,12 +31,34 @@ export default defineConfig([
     },
   },
   {
-    // Existing pages intentionally own their loading callbacks and image URLs.
-    // Re-enable these rules as those call sites are migrated deliberately.
-    files: webFiles,
+    // These existing views intentionally own their loading callbacks. New files
+    // must satisfy exhaustive-deps while these call sites are migrated.
+    files: [
+      'apps/web/src/app/addons/page.tsx',
+      'apps/web/src/app/audit/page.tsx',
+      'apps/web/src/app/budgets/\\[id\\]/page.tsx',
+      'apps/web/src/app/catalog/page.tsx',
+      'apps/web/src/app/gl-mappings/page.tsx',
+      'apps/web/src/app/software-licenses/page.tsx',
+      'apps/web/src/app/spend-guard/page.tsx',
+      'apps/web/src/app/start/page.tsx',
+      'apps/web/src/app/workspace-settings/page.tsx',
+    ],
+    rules: {
+      'react-hooks/exhaustive-deps': 'off',
+    },
+  },
+  {
+    // These existing components render user-controlled or preview image URLs.
+    // New files must use the Next.js image component by default.
+    files: [
+      'apps/web/src/app/workspace-settings/page.tsx',
+      'apps/web/src/components/account-profile-form.tsx',
+      'apps/web/src/components/app-shell.tsx',
+      'apps/web/src/components/sidebar-account.tsx',
+    ],
     rules: {
       '@next/next/no-img-element': 'off',
-      'react-hooks/exhaustive-deps': 'off',
     },
   },
 ]);
