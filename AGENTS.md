@@ -165,6 +165,8 @@ Single-context: one root `CONTEXT.md` plus `docs/adr/`. See `docs/agents/domain.
 
 ## PR review etiquette
 
+- Follow `docs/agents/pr-review-policy.md`. Macroscope runs first as the required automatic reviewer. Request one manual CodeRabbit review only for security, migration, approval, or organization-boundary changes after all Macroscope findings are triaged.
+- CodeRabbit is advisory. Do not block CI or merge on its status or unresolved threads. Request one follow-up review only when a valid CodeRabbit finding caused a material code change.
 - Every review comment on a PR you opened must receive a reply before merge. Each reply either states the commit that addressed it, or states that it is being ignored and why.
-- Never merge a PR while any bot review has `CHANGES_REQUESTED` outstanding, even if required checks are green. Resolve or explicitly dismiss each thread first, and surface unresolved feedback to Tyler before merging rather than after.
+- Never merge a PR while a required Macroscope review has `CHANGES_REQUESTED` outstanding, even if other required checks are green. Resolve or explicitly dismiss each thread first, and surface unresolved feedback to Tyler before merging rather than after.
 - Use `@coderabbitai resolve` (or resolve threads via the API) once a CodeRabbit comment has been addressed.
