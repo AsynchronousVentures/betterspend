@@ -61,6 +61,11 @@ export class RfqService {
         : params.reason
           ? `Reason: ${params.reason}`
           : 'Thank you for participating in the sourcing event.';
+    const safeVendorName = escapeHtml(vendor.name);
+    const safeSummary = escapeHtml(summary);
+    const safeTitle = params.rfqTitle ? escapeHtml(params.rfqTitle) : null;
+    const safeDetail = escapeHtml(detail);
+    const safeAppName = escapeHtml(appName);
 
     await this.mailService.sendMail(
       {
@@ -77,12 +82,12 @@ export class RfqService {
         html: `
         <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
           <h2 style="color:#0f172a">${params.status === 'accepted' ? 'RFQ Awarded' : 'RFQ Response Update'}</h2>
-          <p>Dear ${vendor.name},</p>
-          <p>${summary}</p>
-          ${params.rfqTitle ? `<p><strong>${params.rfqTitle}</strong></p>` : ''}
-          <p>${detail}</p>
+          <p>Dear ${safeVendorName},</p>
+          <p>${safeSummary}</p>
+          ${safeTitle ? `<p><strong>${safeTitle}</strong></p>` : ''}
+          <p>${safeDetail}</p>
           <hr style="margin:24px 0;border:none;border-top:1px solid #e2e8f0">
-          <p style="color:#94a3b8;font-size:12px">This is an automated notification from ${appName}.</p>
+          <p style="color:#94a3b8;font-size:12px">This is an automated notification from ${safeAppName}.</p>
         </div>
       `,
         text: `${summary}\n\n${detail}`,
@@ -589,4 +594,17 @@ export class RfqService {
 
     return response;
   }
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    };
+    return entities[character] ?? character;
+  });
 }
