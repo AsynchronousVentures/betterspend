@@ -1,0 +1,53 @@
+version: 2
+updates:
+  # 1. GitHub Actions dependencies (keeps actions/checkout, docker/* up to date)
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'monthly'
+    labels:
+      - 'dependencies'
+      - 'actions'
+    groups:
+      github-actions:
+        patterns:
+          - '*'
+
+  # 2. Node / pnpm Monorepo dependencies
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+      time: '04:00'
+      timezone: 'America/Denver'
+    open-pull-requests-limit: 5
+    labels:
+      - 'dependencies'
+      - 'javascript'
+    # Bundle non-breaking updates so you aren't overwhelmed with 20 PRs
+    groups:
+      minor-and-patch:
+        patterns:
+          - '*'
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  # 3. Development Docker Compose images
+  - package-ecosystem: 'docker-compose'
+    directory: '/'
+    schedule:
+      interval: 'monthly'
+    labels:
+      - 'dependencies'
+      - 'docker'
+
+  # 4. Production Docker Compose images
+  - package-ecosystem: 'docker-compose'
+    directory: '/deploy'
+    schedule:
+      interval: 'monthly'
+    labels:
+      - 'dependencies'
+      - 'docker'
