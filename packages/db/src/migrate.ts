@@ -127,17 +127,20 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
 
 async function main(): Promise<void> {
   const client = postgres(process.env.DATABASE_URL!);
+  let connection: postgres.ReservedSql | undefined;
   let migrationLockAcquired = false;
   try {
-    await client`SELECT pg_advisory_lock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
+    connection = await client.reserve();
+    await connection`SELECT pg_advisory_lock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
     migrationLockAcquired = true;
-    const db = drizzle(client);
+    const db = drizzle(connection);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
-    await migrateLegacyConnections(client);
+    await migrateLegacyConnections(connection);
   } finally {
-    if (migrationLockAcquired) {
-      await client`SELECT pg_advisory_unlock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
+    if (migrationLockAcquired && connection) {
+      await connection`SELECT pg_advisory_unlock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
     }
+    connection?.release();
     await client.end();
   }
 }
