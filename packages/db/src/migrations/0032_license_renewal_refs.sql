@@ -1,5 +1,7 @@
 ALTER TABLE "software_licenses" ADD COLUMN "renewal_refs" jsonb DEFAULT '[]'::jsonb NOT NULL;
 --> statement-breakpoint
+LOCK TABLE "sequences" IN ACCESS EXCLUSIVE MODE;
+--> statement-breakpoint
 DELETE FROM "sequences"
 WHERE "id" IN (
   SELECT "id"
