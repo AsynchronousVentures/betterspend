@@ -15,6 +15,8 @@ X-Email-Intake-Secret: <EMAIL_INTAKE_WEBHOOK_SECRET>
 
 Set `rawStorageKey` on the event to `EMAIL_INTAKE_RAW_PREFIX + mail.messageId`. The endpoint also accepts `messageId`, `source`, `recipients`, `subject`, `receivedAt`, `rawStorageKey`, and a `verdicts` object directly. It queues work and returns HTTP 202. It never follows SNS subscription URLs. The endpoint HMAC-signs the normalized receipt, and the worker rejects modified Redis payloads.
 
+Rejected-attachment replies use the operator-controlled `EMAIL_INTAKE_SMTP_*` relay only. Tenant SMTP settings are not used for this public ingress path. Leave `EMAIL_INTAKE_SMTP_HOST` empty to disable replies.
+
 Use this receipt-rule order:
 
 1. S3 action with the configured raw prefix.
@@ -22,7 +24,7 @@ Use this receipt-rule order:
 
 ## Processing rules
 
-The `email-intake` worker parses raw MIME and considers non-inline attachments only. It accepts PDF, PNG, JPG, and WebP bytes, regardless of a misleading declared content type. It rejects archives, encrypted PDFs, files over 25 MB, and attachments after the first 10. Archive and encrypted-PDF rejections produce a sender reply when organization SMTP is configured.
+The `email-intake` worker parses raw MIME and considers non-inline attachments only. It accepts PDF, PNG, JPG, and WebP bytes, regardless of a misleading declared content type. It rejects archives, encrypted PDFs, files over 25 MB, and attachments after the first 10. Archive and encrypted-PDF rejections produce a sender reply when the fixed intake relay is configured and SPF, DMARC, and auto-submission checks pass.
 
 SES spam, virus, SPF, DKIM, and DMARC verdicts are stored as risk signals. Authentication failures raise risk but do not reject the message. Attachments are promoted only after a `PASS` virus verdict; otherwise the raw message remains quarantined and its attachment outcomes are rejected. Sender trust is ranked as known vendor domain, employee domain, then unknown domain.
 

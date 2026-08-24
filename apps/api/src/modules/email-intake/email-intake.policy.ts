@@ -387,7 +387,7 @@ export function decideAttachment(
 export function extractInvoiceNumberHint(...values: Array<string | undefined>): string | null {
   const text = values.filter(Boolean).join('\n');
   const match = text.match(
-    /\b(?:invoice|inv|bill)\s*(?:number|no\.?|#)?\s*[:#-]?\s*([a-z0-9][a-z0-9._/-]{2,})/i,
+    /\b(?:invoice|inv|bill)\s+(?:number|no\.?|#)\s*[:#-]?\s*([a-z0-9][a-z0-9._/-]{2,})/i,
   );
   return match?.[1]?.replace(/[.,;:]+$/, '').slice(0, 100) ?? null;
 }

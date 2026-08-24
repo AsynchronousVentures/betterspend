@@ -24,10 +24,9 @@ import {
 } from '@betterspend/db';
 import type { Db } from '@betterspend/db';
 import { DB_TOKEN } from '../../database/database.module';
-import { MailService } from '../../common/mail/mail.service';
+import { MailService, type SmtpConfig } from '../../common/mail/mail.service';
 import { StorageService } from '../../common/storage/storage.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { SettingsService } from '../settings/settings.service';
 import {
   assessSenderRisk,
   allowsAttachmentPromotion,
@@ -98,7 +97,6 @@ export class EmailIntakeService implements OnModuleInit {
     @InjectQueue('email-intake') private readonly intakeQueue: Queue<EmailIntakeJobData>,
     private readonly storage: StorageService,
     private readonly notificationsService: NotificationsService,
-    private readonly settingsService: SettingsService,
     private readonly mailService: MailService,
   ) {}
 
@@ -537,7 +535,7 @@ export class EmailIntakeService implements OnModuleInit {
       result.riskScore,
     );
     if (allowAutomaticReply) {
-      await this.replyToRejectedAttachments(organizationId, sourceEmail, subject, result.outcomes);
+      await this.replyToRejectedAttachments(sourceEmail, subject, result.outcomes);
     }
   }
 
@@ -937,7 +935,6 @@ export class EmailIntakeService implements OnModuleInit {
   }
 
   private async replyToRejectedAttachments(
-    organizationId: string,
     sourceEmail: string,
     subject: string,
     outcomes: StoredAttachmentOutcome[],
@@ -954,31 +951,37 @@ export class EmailIntakeService implements OnModuleInit {
     );
     if (rejections.length === 0) return;
 
-    const settings = await this.settingsService.getAll(organizationId);
-    const smtpHost = settings.smtp_host || '';
-    if (!smtpHost) return;
+    const smtpConfig = this.emailIntakeSmtpConfig();
+    if (!smtpConfig) return;
     const lines = rejections.map(
       (attachment) => `${attachment.filename}: ${this.rejectionCopy(attachment.rejectionReason!)}`,
     );
-    const sent = await this.mailService.sendMail(
-      {
-        host: smtpHost,
-        port: Number.parseInt(settings.smtp_port || '587', 10),
-        secure: settings.smtp_secure === 'true',
-        user: settings.smtp_user || '',
-        pass: settings.smtp_pass || '',
-        from: settings.smtp_from || `noreply@${smtpHost}`,
-      },
-      {
-        to: sourceEmail,
-        subject: `Attachments not accepted: ${subject || 'invoice email'}`,
-        text: `BetterSpend could not accept these attachments:\n\n${lines.join('\n')}\n\nPlease resend each invoice as a PDF, PNG, JPG, or WebP file.`,
-        html: `<p>BetterSpend could not accept these attachments:</p><ul>${lines
-          .map((line) => `<li>${this.escapeHtml(line)}</li>`)
-          .join('')}</ul><p>Please resend each invoice as a PDF, PNG, JPG, or WebP file.</p>`,
-      },
-    );
+    const sent = await this.mailService.sendMail(smtpConfig, {
+      to: sourceEmail,
+      subject: `Attachments not accepted: ${subject || 'invoice email'}`,
+      text: `BetterSpend could not accept these attachments:\n\n${lines.join('\n')}\n\nPlease resend each invoice as a PDF, PNG, JPG, or WebP file.`,
+      html: `<p>BetterSpend could not accept these attachments:</p><ul>${lines
+        .map((line) => `<li>${this.escapeHtml(line)}</li>`)
+        .join('')}</ul><p>Please resend each invoice as a PDF, PNG, JPG, or WebP file.</p>`,
+    });
     if (!sent) throw new Error('Rejected email attachment reply was not delivered');
+  }
+
+  private emailIntakeSmtpConfig(): SmtpConfig | null {
+    const host = process.env.EMAIL_INTAKE_SMTP_HOST?.trim();
+    if (!host) return null;
+    const port = Number(process.env.EMAIL_INTAKE_SMTP_PORT || '587');
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+      throw new ServiceUnavailableException('EMAIL_INTAKE_SMTP_PORT is invalid');
+    }
+    return {
+      host,
+      port,
+      secure: process.env.EMAIL_INTAKE_SMTP_SECURE === 'true',
+      user: process.env.EMAIL_INTAKE_SMTP_USER || '',
+      pass: process.env.EMAIL_INTAKE_SMTP_PASS || '',
+      from: process.env.EMAIL_INTAKE_SMTP_FROM || `noreply@${this.intakeDomain()}`,
+    };
   }
 
   private rejectionCopy(reason: string): string {

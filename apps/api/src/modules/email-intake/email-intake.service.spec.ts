@@ -35,7 +35,6 @@ function serviceWith(options?: {
     {} as never,
     {} as never,
     {} as never,
-    {} as never,
   );
   return { service, add, getJob, findAddresses };
 }
@@ -106,7 +105,6 @@ describe('EmailIntakeService attachment promotion', () => {
       { transaction } as never,
       {} as never,
       { exists: jest.fn().mockResolvedValue(false), upload } as never,
-      {} as never,
       {} as never,
       {} as never,
     );

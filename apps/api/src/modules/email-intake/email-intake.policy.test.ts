@@ -207,6 +207,8 @@ describe('email intake policy', () => {
       'INV-2026/0042',
     );
     assert.equal(extractInvoiceNumberHint('Monthly statement'), null);
+    assert.equal(extractInvoiceNumberHint('Invoice date: 2026-08-24'), null);
+    assert.equal(extractInvoiceNumberHint('Invoice attached'), null);
   });
 
   it('removes path separators and control characters from attachment names', () => {
