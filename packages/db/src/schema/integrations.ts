@@ -35,10 +35,9 @@ export const integrationConnections = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    uniqueRealm: uniqueIndex('integration_connections_org_provider_realm_unique').on(
+    uniqueProvider: uniqueIndex('integration_connections_org_provider_unique').on(
       table.organizationId,
       table.provider,
-      table.realmId,
     ),
     lookup: index('integration_connections_org_provider_status_idx').on(
       table.organizationId,

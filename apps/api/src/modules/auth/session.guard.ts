@@ -9,7 +9,7 @@ import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { IS_PUBLIC_KEY } from '../../common/decorators/public.decorator';
 import { AUTH_INSTANCE } from './auth.tokens';
-import type { AuthInstance, AuthUser } from '../../auth/auth.instance';
+import type { AuthInstance, AuthSession, AuthUser } from '../../auth/auth.instance';
 import { DB_TOKEN } from '../../database/database.module';
 import { and, eq, gt, inArray } from 'drizzle-orm';
 import * as schema from '@betterspend/db';
@@ -38,7 +38,8 @@ export class SessionGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     @Inject(AUTH_INSTANCE) private readonly auth: AuthInstance,
-    @Inject(DB_TOKEN) private readonly db: ReturnType<typeof import('drizzle-orm/postgres-js').drizzle>,
+    @Inject(DB_TOKEN)
+    private readonly db: ReturnType<typeof import('drizzle-orm/postgres-js').drizzle>,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
@@ -51,34 +52,37 @@ export class SessionGuard implements CanActivate {
     const req = ctx.switchToHttp().getRequest<Request>();
     const token = this.extractToken(req);
 
-    // No token — allow through in demo/dev mode (@CurrentOrgId falls back to demo IDs)
-    if (!token) return true;
-
-    // Validate the Bearer token directly against the DB.
-    // better-auth's getSession only reads its own cookie format, not Bearer tokens,
-    // so we query authSessions directly to avoid that limitation.
     const db = this.db as any;
-
-    const [session] = await db
-      .select()
-      .from(schema.authSessions)
-      .where(
-        and(
-          eq(schema.authSessions.token, token),
-          gt(schema.authSessions.expiresAt, new Date()),
-        ),
-      )
-      .limit(1);
-
-    if (!session) {
-      throw new UnauthorizedException('Invalid or expired session token');
+    let session: AuthSession | undefined;
+    let user: AuthUser | undefined;
+    if (token) {
+      [session] = await db
+        .select()
+        .from(schema.authSessions)
+        .where(
+          and(eq(schema.authSessions.token, token), gt(schema.authSessions.expiresAt, new Date())),
+        )
+        .limit(1);
+      if (!session) throw new UnauthorizedException('Invalid or expired session token');
+    } else {
+      const headers = new Headers();
+      for (const [name, value] of Object.entries(req.headers)) {
+        if (Array.isArray(value)) value.forEach((item) => headers.append(name, item));
+        else if (value !== undefined) headers.set(name, value);
+      }
+      const cookieSession = await this.auth.api.getSession({ headers });
+      if (!cookieSession) return true;
+      session = cookieSession.session;
+      user = cookieSession.user;
     }
 
-    const [user] = await db
-      .select()
-      .from(schema.users)
-      .where(eq(schema.users.id, session.userId))
-      .limit(1);
+    if (!user) {
+      [user] = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, session.userId))
+        .limit(1);
+    }
 
     if (!user) {
       throw new UnauthorizedException('User not found');
@@ -105,7 +109,7 @@ export class SessionGuard implements CanActivate {
       ...user,
       roles: roles.map((role: any) => ({
         ...role,
-        customRole: role.customRoleId ? customRolesById.get(role.customRoleId) ?? null : null,
+        customRole: role.customRoleId ? (customRolesById.get(role.customRoleId) ?? null) : null,
       })),
     };
     req.authSessionId = session.id;

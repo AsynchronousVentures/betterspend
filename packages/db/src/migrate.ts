@@ -69,21 +69,21 @@ async function migrateLegacyConnections(client: postgres.Sql): Promise<void> {
                 : 'accounting.transactions accounting.contacts accounting.settings offline_access'
             }
           )
-          ON CONFLICT (organization_id, provider, realm_id) DO UPDATE SET
-            access_token_enc = EXCLUDED.access_token_enc,
-            refresh_token_enc = EXCLUDED.refresh_token_enc,
-            access_expires_at = EXCLUDED.access_expires_at,
-            status = EXCLUDED.status,
-            updated_at = now()
+          ON CONFLICT (organization_id, provider) DO NOTHING
         `;
       }
     }
 
-    if (rows.length > 0) {
+    for (const row of rows) {
       await transaction`
         DELETE FROM system_settings
-        WHERE key IN ${transaction(LEGACY_KEYS)}
+        WHERE organization_id = ${row.organization_id}
+          AND key = ${row.key}
+          AND value IS NOT DISTINCT FROM ${row.value}
       `;
+    }
+
+    if (rows.length > 0) {
       await transaction`
         UPDATE sync_records AS record
         SET connection_id = (

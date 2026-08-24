@@ -17,7 +17,7 @@ services:
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: betterspend
       BETTER_AUTH_SECRET: betterspend-dev-secret-change-in-prod
-      AI_CREDENTIAL_ENCRYPTION_KEY: betterspend-dev-ai-credential-key
+      AI_CREDENTIAL_ENCRYPTION_KEY: ${AI_CREDENTIAL_ENCRYPTION_KEY}
       API_URL: http://localhost:4001
       WEB_URL: http://localhost:3100
     ports:

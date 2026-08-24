@@ -74,4 +74,64 @@ describe('GlExportService', () => {
       expect.arrayContaining([expect.objectContaining({ status: 'exported' })]),
     );
   });
+
+  it('journals payload construction failures as failed attempts', async () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const db = {
+      query: { invoices: { findFirst: jest.fn(async () => null) } },
+      insert: jest.fn(() => ({
+        values: jest.fn(() => ({
+          onConflictDoUpdate: jest.fn(() => ({
+            returning: jest.fn(async () => [{ id: 'record-1', status: 'pending' }]),
+          })),
+        })),
+      })),
+      update: jest.fn(() => ({
+        set: jest.fn((values: Record<string, unknown>) => {
+          updates.push(values);
+          return { where: jest.fn(async () => undefined) };
+        }),
+      })),
+    } as unknown as Db;
+    const service = new GlExportService(db, {} as never, {} as never, { add: jest.fn() } as never);
+
+    await expect(
+      service.processExport(
+        '00000000-0000-0000-0000-000000000001',
+        '00000000-0000-0000-0000-000000000101',
+        'qbo',
+      ),
+    ).rejects.toThrow('Invoice 00000000-0000-0000-0000-000000000101 not found');
+    expect(updates).toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: 'failed' })]),
+    );
+  });
+
+  it('scopes invoice journal lookups to the authenticated organization', async () => {
+    let predicate: unknown;
+    const db = {
+      query: {
+        syncRecords: {
+          findMany: jest.fn(async (options: { where: (row: object, ops: object) => unknown }) => {
+            const row = {
+              organizationId: 'organizationId',
+              direction: 'direction',
+              localEntity: 'localEntity',
+              localId: 'localId',
+            };
+            predicate = options.where(row, {
+              and: (...parts: unknown[]) => ['and', ...parts],
+              eq: (left: unknown, right: unknown) => ['eq', left, right],
+            });
+            return [];
+          }),
+        },
+      },
+    } as unknown as Db;
+    const service = new GlExportService(db, {} as never, {} as never, {} as never);
+
+    await service.findJobsForInvoice('invoice-1', 'organization-1');
+
+    expect(predicate).toEqual(expect.arrayContaining([['eq', 'organizationId', 'organization-1']]));
+  });
 });

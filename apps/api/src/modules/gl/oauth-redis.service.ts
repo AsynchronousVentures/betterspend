@@ -72,9 +72,36 @@ export class OAuthRedisService implements OnModuleDestroy {
     while (Date.now() < deadline) {
       const acquired = await this.redis.set(lockKey, lockValue, 'PX', 15_000, 'NX');
       if (acquired === 'OK') {
+        let renewalError: unknown;
+        let renewal = Promise.resolve();
+        const renewTimer = setInterval(() => {
+          renewal = renewal
+            .then(async () => {
+              const renewed = await this.redis.eval(
+                "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) else return 0 end",
+                1,
+                lockKey,
+                lockValue,
+                15_000,
+              );
+              if (renewed !== 1) {
+                renewalError = new ServiceUnavailableException('OAuth refresh lock was lost');
+              }
+            })
+            .catch((error: unknown) => {
+              renewalError = error;
+            });
+        }, 5_000);
+        renewTimer.unref();
+
         try {
-          return await callback();
+          const result = await callback();
+          await renewal;
+          if (renewalError) throw renewalError;
+          return result;
         } finally {
+          clearInterval(renewTimer);
+          await renewal;
           await this.redis.eval(
             "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
             1,

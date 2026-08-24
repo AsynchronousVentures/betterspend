@@ -69,7 +69,6 @@ export class GlExportService {
     invoiceId: string,
     targetSystem: GlTargetSystem,
   ): Promise<void> {
-    const payload = await this.buildPayload(organizationId, invoiceId, targetSystem);
     const requestId = this.requestId(organizationId, invoiceId, targetSystem);
     const [record] = await this.db
       .insert(syncRecords)
@@ -82,8 +81,8 @@ export class GlExportService {
         externalEntity: targetSystem === 'qbo' ? 'Bill' : 'Invoice',
         status: 'queued',
         requestId,
-        docNumber: payload.invoiceNumber || payload.internalNumber,
-        payload: payload as unknown as Record<string, unknown>,
+        docNumber: invoiceId,
+        payload: null,
       })
       .onConflictDoUpdate({
         target: [
@@ -93,11 +92,7 @@ export class GlExportService {
           syncRecords.localEntity,
           syncRecords.localId,
         ],
-        set: {
-          docNumber: payload.invoiceNumber || payload.internalNumber,
-          payload: payload as unknown as Record<string, unknown>,
-          updatedAt: new Date(),
-        },
+        set: { requestId: sql`${syncRecords.requestId}` },
       })
       .returning({ id: syncRecords.id, status: syncRecords.status });
 
@@ -114,6 +109,21 @@ export class GlExportService {
         updatedAt: new Date(),
       })
       .where(eq(syncRecords.id, record.id));
+
+    let payload: GlExportPayload;
+    try {
+      payload = await this.buildPayload(organizationId, invoiceId, targetSystem);
+      await this.markRecord(record.id, {
+        docNumber: payload.invoiceNumber || payload.internalNumber,
+        payload: payload as unknown as Record<string, unknown>,
+      });
+    } catch (error: unknown) {
+      await this.markRecord(record.id, {
+        status: 'failed',
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
 
     const allUnmapped = payload.lines.length > 0 && payload.lines.every((line) => line.unmapped);
     if (allUnmapped) {
@@ -155,10 +165,16 @@ export class GlExportService {
     }
   }
 
-  async findJobsForInvoice(invoiceId: string) {
+  async findJobsForInvoice(invoiceId: string, organizationId: string) {
     const records = await this.db.query.syncRecords.findMany({
-      where: (record, { and: andFn, eq: eqFn }) =>
-        andFn(eqFn(record.localEntity, 'invoice'), eqFn(record.localId, invoiceId)),
+      where: (record, { and: andFn, eq: eqFn, or: orFn }) =>
+        andFn(
+          eqFn(record.organizationId, organizationId),
+          eqFn(record.direction, 'outbound'),
+          eqFn(record.localEntity, 'invoice'),
+          eqFn(record.localId, invoiceId),
+          orFn(eqFn(record.provider, 'qbo'), eqFn(record.provider, 'xero')),
+        ),
       orderBy: (record, { desc }) => desc(record.createdAt),
     });
     return records.map((record) => this.toLegacyApiShape(record));
@@ -166,32 +182,56 @@ export class GlExportService {
 
   async retryJob(recordId: string, organizationId: string): Promise<void> {
     const record = await this.db.query.syncRecords.findFirst({
-      where: (row, { and: andFn, eq: eqFn }) =>
-        andFn(eqFn(row.id, recordId), eqFn(row.organizationId, organizationId)),
+      where: (row, { and: andFn, eq: eqFn, or: orFn }) =>
+        andFn(
+          eqFn(row.id, recordId),
+          eqFn(row.organizationId, organizationId),
+          eqFn(row.direction, 'outbound'),
+          eqFn(row.localEntity, 'invoice'),
+          orFn(eqFn(row.provider, 'qbo'), eqFn(row.provider, 'xero')),
+        ),
     });
     if (!record) throw new BadRequestException(`GL sync record ${recordId} not found`);
     if (record.status === 'synced')
       throw new BadRequestException('A synced record cannot be retried');
 
+    const previous = {
+      status: record.status,
+      errorCode: record.errorCode,
+      errorMessage: record.errorMessage,
+    };
     await this.db
       .update(syncRecords)
       .set({ status: 'pending', errorCode: null, errorMessage: null, updatedAt: new Date() })
       .where(eq(syncRecords.id, recordId));
-    await this.glQueue.add(
-      'process-export',
-      {
-        organizationId,
-        invoiceId: record.localId,
-        targetSystem: record.provider as GlTargetSystem,
-      },
-      { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
-    );
+    try {
+      await this.glQueue.add(
+        'process-export',
+        {
+          organizationId,
+          invoiceId: record.localId,
+          targetSystem: record.provider as GlTargetSystem,
+        },
+        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+      );
+    } catch (error: unknown) {
+      await this.db
+        .update(syncRecords)
+        .set({ ...previous, updatedAt: new Date() })
+        .where(eq(syncRecords.id, recordId));
+      throw error;
+    }
   }
 
   async findAll(organizationId: string) {
     const records = await this.db.query.syncRecords.findMany({
-      where: (record, { and: andFn, eq: eqFn }) =>
-        andFn(eqFn(record.organizationId, organizationId), eqFn(record.localEntity, 'invoice')),
+      where: (record, { and: andFn, eq: eqFn, or: orFn }) =>
+        andFn(
+          eqFn(record.organizationId, organizationId),
+          eqFn(record.direction, 'outbound'),
+          eqFn(record.localEntity, 'invoice'),
+          orFn(eqFn(record.provider, 'qbo'), eqFn(record.provider, 'xero')),
+        ),
       with: { invoice: true },
       orderBy: (record, { desc }) => desc(record.createdAt),
       limit: 100,
@@ -377,9 +417,12 @@ export class GlExportService {
       .slice(0, 50);
   }
 
-  private toLegacyApiShape<T extends { provider: string; syncedAt: Date | null }>(record: T) {
+  private toLegacyApiShape<T extends { provider: string; localId: string; syncedAt: Date | null }>(
+    record: T,
+  ) {
     return {
       ...record,
+      invoiceId: record.localId,
       targetSystem: record.provider,
       exportedAt: record.syncedAt,
       completedAt: record.syncedAt,

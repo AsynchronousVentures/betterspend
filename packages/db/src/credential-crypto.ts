@@ -1,27 +1,21 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 
 const CIPHER = 'aes-256-gcm';
 const VERSION = 'v1';
 
 function getCredentialKey(): Buffer {
-  const configured = process.env.AI_CREDENTIAL_ENCRYPTION_KEY;
+  const configured = process.env.AI_CREDENTIAL_ENCRYPTION_KEY?.trim();
   if (configured) {
-    const trimmed = configured.trim();
+    const trimmed = configured;
     if (/^[a-f0-9]{64}$/i.test(trimmed)) return Buffer.from(trimmed, 'hex');
 
     const decoded = Buffer.from(trimmed, 'base64');
     if (decoded.length === 32) return decoded;
 
-    return createHash('sha256').update(trimmed).digest();
+    throw new Error('AI_CREDENTIAL_ENCRYPTION_KEY must be 32 bytes encoded as hex or base64');
   }
 
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('AI_CREDENTIAL_ENCRYPTION_KEY is required in production');
-  }
-
-  return createHash('sha256')
-    .update(process.env.BETTER_AUTH_SECRET || 'betterspend-dev-ai-credential-key')
-    .digest();
+  throw new Error('AI_CREDENTIAL_ENCRYPTION_KEY is required');
 }
 
 export function encryptCredential(value: string): string {

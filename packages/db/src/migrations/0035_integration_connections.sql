@@ -16,7 +16,7 @@ CREATE TABLE "integration_connections" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX "integration_connections_org_provider_realm_unique" ON "integration_connections" USING btree ("organization_id","provider","realm_id");
+CREATE UNIQUE INDEX "integration_connections_org_provider_unique" ON "integration_connections" USING btree ("organization_id","provider");
 --> statement-breakpoint
 CREATE INDEX "integration_connections_org_provider_status_idx" ON "integration_connections" USING btree ("organization_id","provider","status");
 --> statement-breakpoint
@@ -82,6 +82,7 @@ SELECT
 		ELSE j."external_id"
 	END,
 	CASE
+		WHEN j."external_id" LIKE '%-SKIPPED-%' THEN 'skipped'
 		WHEN j."status" = 'exported' AND j."external_id" IS NOT NULL
 			AND j."external_id" NOT LIKE '%-PENDING-%' AND j."external_id" NOT LIKE '%-SKIPPED-%' THEN 'synced'
 		WHEN j."status" = 'failed' THEN 'failed'
@@ -101,6 +102,10 @@ SELECT
 	j."payload",
 	j."created_at",
 	j."updated_at"
-FROM "gl_export_jobs" j
+FROM (
+	SELECT DISTINCT ON (j0."organization_id", j0."target_system", j0."invoice_id") j0.*
+	FROM "gl_export_jobs" j0
+	ORDER BY j0."organization_id", j0."target_system", j0."invoice_id", j0."updated_at" DESC, j0."id" DESC
+) j
 JOIN "invoices" i ON i."id" = j."invoice_id"
 ON CONFLICT ("organization_id", "provider", "direction", "local_entity", "local_id") DO NOTHING;

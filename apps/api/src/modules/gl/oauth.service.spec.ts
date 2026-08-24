@@ -54,6 +54,7 @@ describe('OAuthService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.AI_CREDENTIAL_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
     process.env.QBO_CLIENT_ID = 'client-id';
     process.env.QBO_CLIENT_SECRET = 'client-secret';
     delete process.env.QBO_REDIRECT_URI;
@@ -76,10 +77,10 @@ describe('OAuthService', () => {
     expect(state).toBe('opaque-state-value');
     expect(state).not.toContain(organizationId);
 
-    await service.completeQboOAuth(state!, 'authorization-code', 'realm-1');
-    await expect(service.completeQboOAuth(state!, 'authorization-code', 'realm-1')).rejects.toThrow(
-      'Invalid or expired OAuth state',
-    );
+    await service.completeQboOAuth(state!, 'authorization-code', 'realm-1', userId, sessionId);
+    await expect(
+      service.completeQboOAuth(state!, 'authorization-code', 'realm-1', userId, sessionId),
+    ).rejects.toThrow('Invalid or expired OAuth state');
 
     expect(captured).toHaveLength(1);
     expect(captured[0].accessTokenEncrypted).not.toBe('plain-access-token');
@@ -92,7 +93,24 @@ describe('OAuthService', () => {
     const service = new OAuthService(insertCapturingDb([]), crypto, new FakeOAuthRedis() as never);
 
     await expect(
-      service.completeQboOAuth('unknown', 'authorization-code', 'realm-1'),
+      service.completeQboOAuth('unknown', 'authorization-code', 'realm-1', userId, sessionId),
+    ).rejects.toThrow('Invalid or expired OAuth state');
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+
+  it('rejects a callback from a different authenticated session before exchanging the code', async () => {
+    const stateStore = new FakeOAuthRedis();
+    const service = new OAuthService(insertCapturingDb([]), crypto, stateStore as never);
+    const url = new URL(await service.getQboAuthUrl(organizationId, userId, sessionId));
+
+    await expect(
+      service.completeQboOAuth(
+        url.searchParams.get('state')!,
+        'authorization-code',
+        'realm-1',
+        userId,
+        'different-session',
+      ),
     ).rejects.toThrow('Invalid or expired OAuth state');
     expect(mockedAxios.post).not.toHaveBeenCalled();
   });
@@ -142,5 +160,42 @@ describe('OAuthService', () => {
     expect(mockedAxios.post).toHaveBeenCalledTimes(1);
     expect(first?.accessToken).toBe('rotated-access');
     expect(second?.accessToken).toBe('rotated-access');
+  });
+
+  it('keeps an active connection retryable after a transient refresh failure', async () => {
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
+      entityId: null,
+      provider: 'qbo',
+      realmId: 'realm-1',
+      realmName: null,
+      accessTokenEncrypted: crypto.encrypt('expired-access'),
+      refreshTokenEncrypted: crypto.encrypt('refresh-token'),
+      accessExpiresAt: new Date(0),
+      status: 'active',
+      scopes: 'com.intuit.quickbooks.accounting',
+      connectedByUserId: userId,
+      lastSyncAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const updates: Array<Record<string, unknown>> = [];
+    const db = {
+      query: { integrationConnections: { findFirst: jest.fn(async () => ({ ...connection })) } },
+      update: jest.fn(() => ({
+        set: jest.fn((values: Record<string, unknown>) => {
+          updates.push(values);
+          return { where: jest.fn(async () => undefined) };
+        }),
+      })),
+    } as unknown as Db;
+    mockedAxios.post.mockRejectedValue(new Error('socket timed out'));
+    const service = new OAuthService(db, crypto, new FakeOAuthRedis() as never);
+
+    await expect(service.getQboToken(organizationId)).rejects.toThrow('socket timed out');
+    expect(updates).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: 'reconnect_required' })]),
+    );
   });
 });

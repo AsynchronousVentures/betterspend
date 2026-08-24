@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import axios from 'axios';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { integrationConnections, type Db } from '@betterspend/db';
 import { DB_TOKEN } from '../../database/database.module';
 import { CredentialCryptoService } from '../ai-providers/credential-crypto.service';
@@ -60,8 +60,14 @@ export class OAuthService {
     });
   }
 
-  async completeQboOAuth(state: string, code: string, realmId: string): Promise<void> {
-    const binding = await this.consumeState('qbo', state);
+  async completeQboOAuth(
+    state: string,
+    code: string,
+    realmId: string,
+    userId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const binding = await this.consumeState('qbo', state, userId, sessionId);
     if (!code || !realmId) throw new BadRequestException('QBO callback is missing code or realmId');
 
     const token = await this.exchangeToken('qbo', code);
@@ -69,8 +75,13 @@ export class OAuthService {
     this.logger.log(`QBO connection stored for org ${binding.organizationId}, realmId=${realmId}`);
   }
 
-  async completeXeroOAuth(state: string, code: string): Promise<void> {
-    const binding = await this.consumeState('xero', state);
+  async completeXeroOAuth(
+    state: string,
+    code: string,
+    userId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const binding = await this.consumeState('xero', state, userId, sessionId);
     if (!code) throw new BadRequestException('Xero callback is missing code');
 
     const token = await this.exchangeToken('xero', code);
@@ -161,9 +172,19 @@ export class OAuthService {
     return `${isQbo ? QBO_AUTH_URL : XERO_AUTH_URL}?${params}`;
   }
 
-  private async consumeState(provider: OAuthProvider, state: string): Promise<OAuthStateBinding> {
+  private async consumeState(
+    provider: OAuthProvider,
+    state: string,
+    userId: string,
+    sessionId: string,
+  ): Promise<OAuthStateBinding> {
     const binding = await this.oauthRedis.consumeState(state);
-    if (!binding || binding.provider !== provider) {
+    if (
+      !binding ||
+      binding.provider !== provider ||
+      binding.userId !== userId ||
+      binding.sessionId !== sessionId
+    ) {
       throw new BadRequestException('Invalid or expired OAuth state');
     }
     return binding;
@@ -206,11 +227,7 @@ export class OAuthService {
       .insert(integrationConnections)
       .values(values)
       .onConflictDoUpdate({
-        target: [
-          integrationConnections.organizationId,
-          integrationConnections.provider,
-          integrationConnections.realmId,
-        ],
+        target: [integrationConnections.organizationId, integrationConnections.provider],
         set: values,
       });
   }
@@ -259,23 +276,36 @@ export class OAuthService {
             updatedAt: new Date(),
           })
           .where(eq(integrationConnections.id, connectionId));
-      } catch (error) {
-        await this.db
-          .update(integrationConnections)
-          .set({ status: 'reconnect_required', updatedAt: new Date() })
-          .where(eq(integrationConnections.id, connectionId));
+      } catch (error: unknown) {
+        if (this.isInvalidRefreshToken(error)) {
+          await this.db
+            .update(integrationConnections)
+            .set({ status: 'reconnect_required', updatedAt: new Date() })
+            .where(eq(integrationConnections.id, connectionId));
+        }
         throw error;
       }
     });
   }
 
   private async disconnect(organizationId: string, provider: OAuthProvider): Promise<void> {
-    const connection = await this.findConnection(organizationId, provider);
-    if (!connection) return;
+    const connections = await this.db.query.integrationConnections.findMany({
+      where: (connection, { and: andFn, eq: eqFn }) =>
+        andFn(eqFn(connection.organizationId, organizationId), eqFn(connection.provider, provider)),
+    });
+    if (connections.length === 0) return;
 
+    let revocationError: unknown;
     try {
-      const encryptedToken = connection.refreshTokenEncrypted ?? connection.accessTokenEncrypted;
-      if (encryptedToken) await this.revoke(provider, this.crypto.decrypt(encryptedToken));
+      for (const connection of connections) {
+        const encryptedToken = connection.refreshTokenEncrypted ?? connection.accessTokenEncrypted;
+        if (!encryptedToken) continue;
+        try {
+          await this.revoke(provider, this.crypto.decrypt(encryptedToken));
+        } catch (error: unknown) {
+          revocationError ??= error;
+        }
+      }
     } finally {
       await this.db
         .update(integrationConnections)
@@ -286,9 +316,23 @@ export class OAuthService {
           status: 'revoked',
           updatedAt: new Date(),
         })
-        .where(eq(integrationConnections.id, connection.id));
+        .where(
+          and(
+            eq(integrationConnections.organizationId, organizationId),
+            eq(integrationConnections.provider, provider),
+          ),
+        );
     }
+    if (revocationError) throw revocationError;
     this.logger.log(`${provider.toUpperCase()} disconnected for org ${organizationId}`);
+  }
+
+  private isInvalidRefreshToken(error: unknown): boolean {
+    if (!axios.isAxiosError(error)) return false;
+    const data = error.response?.data;
+    if (!data || typeof data !== 'object') return false;
+    const code = 'error' in data ? data.error : undefined;
+    return code === 'invalid_grant' || code === 'invalid_token';
   }
 
   private async revoke(provider: OAuthProvider, token: string): Promise<void> {
