@@ -301,6 +301,7 @@ export class CatalogService {
           asc(p.reviewedAt),
           asc(p.id),
         ],
+      limit: 50,
     });
 
     for (const proposal of due) {
@@ -320,6 +321,15 @@ export class CatalogService {
     // Single transaction so a crash between the two writes cannot leave the
     // item repriced with appliedAt still null (which would re-apply later).
     return this.db.transaction(async (tx) => {
+      // Approved scheduled prices intentionally override later manual edits.
+      // Lock and capture the live value so the audit records what was actually
+      // replaced, including an intervening edit or earlier due proposal.
+      const [item] = await tx
+        .select({ unitPrice: catalogItems.unitPrice })
+        .from(catalogItems)
+        .where(eq(catalogItems.id, proposal.itemId))
+        .for('update');
+      if (!item) return false;
       const [claimed] = await tx
         .update(catalogPriceProposals)
         .set({ appliedAt: new Date() })
@@ -344,7 +354,7 @@ export class CatalogService {
         action: 'scheduled_price_applied',
         changes: {
           proposalId: proposal.id,
-          previousPrice: proposal.currentPrice,
+          previousPrice: item.unitPrice,
           unitPrice: proposal.proposedPrice,
         },
       });
