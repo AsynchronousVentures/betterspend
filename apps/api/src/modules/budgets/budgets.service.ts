@@ -777,8 +777,9 @@ export class BudgetsService {
     departmentId: string,
     baseAmount: string,
     fiscalYear: number,
+    executor: Db | DbTransaction = this.db,
   ) {
-    const budget = await this.db.query.budgets.findFirst({
+    const budget = await executor.query.budgets.findFirst({
       where: (b, { and, eq }) =>
         and(
           eq(b.organizationId, organizationId),
@@ -793,7 +794,7 @@ export class BudgetsService {
     const today = new Date();
     const budgetAmount = convertMoneyFromBase(baseAmount, budget.exchangeRate || '1');
 
-    await this.db
+    await executor
       .update(budgets)
       .set({
         spentAmount: sql`${budgets.spentAmount} + ${budgetAmount}`,
@@ -803,7 +804,7 @@ export class BudgetsService {
       .where(and(eq(budgets.id, budget.id), eq(budgets.organizationId, organizationId)));
 
     // Also update the period that covers today's date
-    await this.db
+    await executor
       .update(budgetPeriods)
       .set({
         spentAmount: sql`${budgetPeriods.spentAmount} + ${budgetAmount}`,
