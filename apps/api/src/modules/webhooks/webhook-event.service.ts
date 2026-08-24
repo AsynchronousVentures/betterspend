@@ -31,7 +31,7 @@ export class WebhookEventService {
     this.webhookQueue
       .add(
         'dispatch',
-        { organizationId, eventType, payload },
+        { kind: 'dispatch', organizationId, eventType, payload },
         {
           attempts: 5,
           backoff: { type: 'exponential', delay: 1000 },
