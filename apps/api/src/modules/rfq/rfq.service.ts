@@ -92,27 +92,15 @@ export class RfqService {
 
   private async nextNumber(orgId: string): Promise<string> {
     const year = new Date().getFullYear();
-    const rows = await this.db
-      .update(sequences)
-      .set({ lastValue: sql`${sequences.lastValue} + 1`, updatedAt: new Date() })
-      .where(
-        and(
-          eq(sequences.organizationId, orgId),
-          eq(sequences.entityType, 'rfq'),
-          eq(sequences.year, year),
-        ),
-      )
-      .returning();
-    if (!rows.length) {
-      await this.db.insert(sequences).values({
-        organizationId: orgId,
-        entityType: 'rfq',
-        year,
-        lastValue: 1,
-      });
-      return `RFQ-${year}-0001`;
-    }
-    return `RFQ-${year}-${String(rows[0].lastValue).padStart(4, '0')}`;
+    const [sequence] = await this.db
+      .insert(sequences)
+      .values({ organizationId: orgId, entityType: 'rfq', year, lastValue: 1 })
+      .onConflictDoUpdate({
+        target: [sequences.organizationId, sequences.entityType, sequences.year],
+        set: { lastValue: sql`${sequences.lastValue} + 1`, updatedAt: new Date() },
+      })
+      .returning({ lastValue: sequences.lastValue });
+    return `RFQ-${year}-${String(sequence.lastValue).padStart(4, '0')}`;
   }
 
   private async nextPoNumber(orgId: string): Promise<string> {

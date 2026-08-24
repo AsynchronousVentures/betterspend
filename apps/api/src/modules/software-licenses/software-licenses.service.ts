@@ -272,14 +272,16 @@ export class SoftwareLicensesService {
     note?: string,
   ): Promise<RenewalRef> {
     const targetPrice = Number(license.pricePerSeat);
+    const requestedDueDate = license.renewalDate
+      ? new Date(license.renewalDate).getTime() - 7 * 24 * 60 * 60 * 1000
+      : 0;
+    const minimumDueDate = Date.now() + 7 * 24 * 60 * 60 * 1000;
     const rfq = await this.rfqService.create(license.organizationId, userId, {
       title: `Renegotiation: ${license.productName} renewal`,
       description: `Competing quotes requested ahead of the ${license.renewalDate ? new Date(license.renewalDate).toLocaleDateString() : 'upcoming'} renewal of ${license.productName}. Current rate is ${license.currency} ${targetPrice} per seat.`,
       notes: note,
       currency: license.currency,
-      dueDate: license.renewalDate
-        ? new Date(new Date(license.renewalDate).getTime() - 7 * 24 * 60 * 60 * 1000).toISOString()
-        : undefined,
+      dueDate: new Date(Math.max(requestedDueDate, minimumDueDate)).toISOString(),
       lines: [
         {
           description: `${license.productName} (${license.seatCount} seats, ${license.billingCycle})`,
