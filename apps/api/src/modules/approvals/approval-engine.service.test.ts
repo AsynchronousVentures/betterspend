@@ -18,6 +18,7 @@ function createService(
   lockedRequest?: Record<string, unknown>,
   requiredApproverIsActive = true,
   actorRoles: Array<{ role: string; scopeType: string; scopeId: string | null }> = [],
+  delegatedApproverId?: string,
 ) {
   const approvalRequestValues: Array<Record<string, unknown>> = [];
   const approvalActionValues: Array<Record<string, unknown>> = [];
@@ -67,7 +68,9 @@ function createService(
   const db = {
     query: {
       requisitions: { findFirst: async () => ({ id: 'requisition-1', totalAmount: '25' }) },
-      purchaseOrders: { findFirst: async () => null },
+      purchaseOrders: {
+        findFirst: async () => ({ id: 'purchase-order-1', totalAmount: '25' }),
+      },
       users: { findFirst: async () => (requiredApproverIsActive ? { id: 'owner-1' } : null) },
       approvalRules: {
         findMany: async () =>
@@ -96,6 +99,11 @@ function createService(
       throw new Error('Fast-lane settings must not be read for required approvals');
     },
   } as unknown as SettingsService;
+  const delegations = delegatedApproverId
+    ? ({
+        getActiveDelegatee: async () => delegatedApproverId,
+      } as unknown as ApprovalDelegationsService)
+    : (undefined as unknown as ApprovalDelegationsService);
 
   return {
     approvalRequestValues,
@@ -106,7 +114,7 @@ function createService(
       db,
       webhookEvents,
       undefined as unknown as NotificationsService,
-      undefined as unknown as ApprovalDelegationsService,
+      delegations,
       settings,
     ),
   };
@@ -161,6 +169,29 @@ describe('ApprovalEngineService required approvals', () => {
     assert.equal(approvalRequestValues[0]?.requiredApprovalStep, 5);
   });
 
+  it('can create a required-owner-only request after normal approval', async () => {
+    const { approvalRequestValues, service } = createService([
+      { stepOrder: 2, approverId: 'normal-approver' },
+    ]);
+
+    await service.initiateApproval(
+      'organization-1',
+      'purchase_order',
+      'purchase-order-1',
+      'requester-1',
+      {
+        approverId: 'owner-1',
+        reason: 'Budget owner approval is required.',
+        key: 'budget:1:purchase-order:1:owner:1',
+        only: true,
+      },
+    );
+
+    assert.equal(approvalRequestValues[0]?.approvalRuleId, null);
+    assert.equal(approvalRequestValues[0]?.currentStep, 1);
+    assert.equal(approvalRequestValues[0]?.requiredApprovalStep, 1);
+  });
+
   it('rejects a required approver outside the active organization users', async () => {
     const { service } = createService([], undefined, false);
 
@@ -188,6 +219,36 @@ describe('ApprovalEngineService required approvals', () => {
       service.processAction('approval-request-1', 'different-user', 'approve'),
       /assigned to the budget owner/,
     );
+  });
+
+  it('allows an active delegate to act at the required owner step', async () => {
+    const { service, updateValues } = createService(
+      [],
+      {
+        id: 'approval-request-1',
+        approvableType: 'requisition',
+        approvableId: 'requisition-1',
+        status: 'pending',
+        approvalRuleId: null,
+        currentStep: 1,
+        requiredApprovalStep: 1,
+        requiredApproverId: 'owner-1',
+      },
+      true,
+      [],
+      'owner-delegate',
+    );
+
+    const result = await service.processAction(
+      'approval-request-1',
+      'owner-delegate',
+      'approve',
+      undefined,
+      'organization-1',
+    );
+
+    assert.deepEqual(result, { status: 'approved' });
+    assert.ok(updateValues.some((values) => values.status === 'approved'));
   });
 
   it('advances the final rule step into the required owner step', async () => {

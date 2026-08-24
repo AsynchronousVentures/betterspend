@@ -348,6 +348,9 @@ export class PurchaseOrdersService {
             and(eq(record.id, po.requisitionId!), eq(record.organizationId, organizationId)),
         })
       : null;
+    if (po.requisitionId && !linkedRequisition) {
+      throw new BadRequestException('The linked requisition was not found in this organization');
+    }
     const enforcementInput = {
       organizationId,
       departmentId: linkedRequisition?.departmentId,
@@ -443,6 +446,7 @@ export class PurchaseOrdersService {
           approverId: ownerUserId,
           reason: outcome.budgetEnforcement.message,
           key: approvalKey,
+          only: po.status === 'approved',
         },
         async (tx) => {
           const now = new Date();

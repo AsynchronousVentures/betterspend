@@ -31,6 +31,7 @@ export interface RequiredApproval {
   approverId: string;
   reason: string;
   key: string;
+  only?: boolean;
 }
 
 @Injectable()
@@ -202,7 +203,9 @@ export class ApprovalEngineService {
       }
     }
 
-    const rule = await this.findMatchingRule(organizationId, entityType, entity, executor);
+    const rule = requiredApproval?.only
+      ? null
+      : await this.findMatchingRule(organizationId, entityType, entity, executor);
 
     if ((!rule || !rule.steps || rule.steps.length === 0) && !requiredApproval) {
       // No matching rule → auto-approve
@@ -685,7 +688,17 @@ export class ApprovalEngineService {
         approvalReq.requiredApproverId &&
         approvalReq.requiredApproverId !== actorId
       ) {
-        throw new ForbiddenException('This approval step is assigned to the budget owner');
+        const delegatee =
+          this.delegations && organizationId
+            ? await this.delegations.getActiveDelegatee(
+                organizationId,
+                approvalReq.requiredApproverId,
+                tx,
+              )
+            : null;
+        if (delegatee !== actorId) {
+          throw new ForbiddenException('This approval step is assigned to the budget owner');
+        }
       }
       const currentRuleStep = atRequiredApproval
         ? undefined
