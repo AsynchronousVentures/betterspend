@@ -111,6 +111,7 @@ function SettingsContent() {
     auto_approve_threshold: '0',
     auto_approve_require_budget_check: 'false',
     auto_approve_notify_manager: 'true',
+    catalog_auto_approve_price_change_pct: '0',
   });
   const [approvalPolicySaving, setApprovalPolicySaving] = useState(false);
   const [approvalPolicyMsg, setApprovalPolicyMsg] = useState('');
@@ -147,6 +148,7 @@ function SettingsContent() {
       auto_approve_threshold: '0',
       auto_approve_require_budget_check: 'false',
       auto_approve_notify_manager: 'true',
+      catalog_auto_approve_price_change_pct: '0',
     },
     compliance: {
       contract_price_deviation_threshold: '5',
@@ -479,6 +481,21 @@ function SettingsContent() {
                 onChange={(checked) => setApprovalPolicy((current) => ({ ...current, auto_approve_notify_manager: checked ? 'true' : 'false' }))}
                 title="Notify managers when auto-approval fires"
               />
+              <Field label="Auto-approve supplier price changes within (%)">
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  value={approvalPolicy.catalog_auto_approve_price_change_pct}
+                  onChange={(event) =>
+                    setApprovalPolicy((current) => ({ ...current, catalog_auto_approve_price_change_pct: event.target.value }))
+                  }
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Supplier catalog price proposals within this percentage are approved automatically. Set 0 to require review for every proposal.
+                </p>
+              </Field>
               <InlineNotice error={approvalPolicyError} success={approvalPolicyMsg} />
               <div className="flex justify-end">
                 <Button type="submit" disabled={approvalPolicySaving}>

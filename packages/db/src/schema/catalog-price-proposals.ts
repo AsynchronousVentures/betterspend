@@ -32,4 +32,7 @@ export const catalogPriceProposals = pgTable('catalog_price_proposals', {
   reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
   reviewNote: text('review_note'),
   notifiedVendor: boolean('notified_vendor').notNull().default(false),
+  // Set when the proposed price has been written to the catalog item. Approved
+  // proposals with a future effective_date stay null until that date arrives.
+  appliedAt: timestamp('applied_at', { withTimezone: true }),
 });

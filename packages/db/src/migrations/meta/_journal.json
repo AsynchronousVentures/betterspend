@@ -218,6 +218,13 @@
       "when": 1775700000000,
       "tag": "0030_ai_provider_addons",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1775700100000,
+      "tag": "0031_catalog_price_scheduling",
+      "breakpoints": true
     }
   ]
 }
