@@ -1,3 +1,5 @@
+import { messageSchema } from '@betterspend/shared';
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001';
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 
@@ -144,10 +146,13 @@ export const api = {
         body: JSON.stringify(data),
       }),
     requestEmailChange: (email: string) =>
-      apiFetch<{ success: boolean; pendingEmail: string; pendingEmailExpiresAt: string }>('/account/me/email/change-request', {
-        method: 'POST',
-        body: JSON.stringify({ email }),
-      }),
+      apiFetch<{ success: boolean; pendingEmail: string; pendingEmailExpiresAt: string }>(
+        '/account/me/email/change-request',
+        {
+          method: 'POST',
+          body: JSON.stringify({ email }),
+        },
+      ),
     verifyEmail: (token: string) =>
       apiFetch<{ success: boolean; email: string; name: string }>('/account/me/email/verify', {
         method: 'POST',
@@ -174,7 +179,8 @@ export const api = {
       }),
   },
   health: {
-    check: () => apiFetch<{ status: string; timestamp: string; service: string; version: string }>('/health'),
+    check: () =>
+      apiFetch<{ status: string; timestamp: string; service: string; version: string }>('/health'),
   },
   entities: {
     list: (includeInactive = false) =>
@@ -251,7 +257,8 @@ export const api = {
       apiFetch<any>('/users/roles/custom', { method: 'POST', body: JSON.stringify(data) }),
     updateCustomRole: (id: string, data: unknown) =>
       apiFetch<any>(`/users/roles/custom/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-    deleteCustomRole: (id: string) => apiFetch<void>(`/users/roles/custom/${id}`, { method: 'DELETE' }),
+    deleteCustomRole: (id: string) =>
+      apiFetch<void>(`/users/roles/custom/${id}`, { method: 'DELETE' }),
     addRole: (id: string, data: unknown) =>
       apiFetch<any>(`/users/${id}/roles`, { method: 'POST', body: JSON.stringify(data) }),
     removeRole: (id: string, roleId: string) =>
@@ -363,9 +370,7 @@ export const api = {
         xeroConfigured: boolean;
         qboConnectionMode: 'platform';
         xeroConnectionMode: 'platform';
-      }>(
-        '/gl/oauth/status',
-      ),
+      }>('/gl/oauth/status'),
     oauthConnect: (provider: 'qbo' | 'xero') =>
       apiFetch<{ url: string }>(`/gl/oauth/${provider}/connect`),
     oauthDisconnect: (provider: 'qbo' | 'xero') =>
@@ -390,11 +395,13 @@ export const api = {
         body: JSON.stringify(data),
       }),
     test: (provider: AiProviderId) =>
-      apiFetch<{ ok: boolean; provider: AiProviderId; checkedAt: string }>(`/ai-providers/${provider}/test`, {
-        method: 'POST',
-      }),
-    openRouterConnect: () =>
-      apiFetch<{ url: string }>('/ai-providers/openrouter/oauth/connect'),
+      apiFetch<{ ok: boolean; provider: AiProviderId; checkedAt: string }>(
+        `/ai-providers/${provider}/test`,
+        {
+          method: 'POST',
+        },
+      ),
+    openRouterConnect: () => apiFetch<{ url: string }>('/ai-providers/openrouter/oauth/connect'),
     disconnect: (provider: AiProviderId) =>
       apiFetch<AiProvidersStatusResponse>(`/ai-providers/${provider}`, { method: 'DELETE' }),
   },
@@ -517,7 +524,9 @@ export const api = {
   },
   paymentRuns: {
     list: (params?: { status?: string }) =>
-      apiFetch<any[]>(`/payment-runs${params?.status ? `?status=${encodeURIComponent(params.status)}` : ''}`),
+      apiFetch<any[]>(
+        `/payment-runs${params?.status ? `?status=${encodeURIComponent(params.status)}` : ''}`,
+      ),
     get: (id: string) => apiFetch<any>(`/payment-runs/${id}`),
     summary: () => apiFetch<any>('/payment-runs/summary'),
     eligibleInvoices: () => apiFetch<any[]>('/payment-runs/eligible-invoices'),
@@ -753,7 +762,10 @@ export const api = {
       apiFetch<any>(`/contracts/${id}/amendments`, { method: 'POST', body: JSON.stringify(data) }),
     expiring: (days?: number) =>
       apiFetch<any[]>(`/contracts/expiring${days ? '?days=' + days : ''}`),
-    extractIntelligence: (id: string, data?: { documentText?: string; documentId?: string; sourceName?: string }) =>
+    extractIntelligence: (
+      id: string,
+      data?: { documentText?: string; documentId?: string; sourceName?: string },
+    ) =>
       apiFetch<any>(`/contracts/${id}/intelligence/extract`, {
         method: 'POST',
         body: JSON.stringify(data ?? {}),
@@ -783,7 +795,8 @@ export const api = {
       const q = new URLSearchParams();
       if (params?.status) q.set('status', params.status);
       if (params?.vendorId) q.set('vendorId', params.vendorId);
-      if (params?.renewingWithinDays) q.set('renewingWithinDays', String(params.renewingWithinDays));
+      if (params?.renewingWithinDays)
+        q.set('renewingWithinDays', String(params.renewingWithinDays));
       return apiFetch<any[]>(`/software-licenses${q.toString() ? '?' + q : ''}`);
     },
     get: (id: string) => apiFetch<any>(`/software-licenses/${id}`),
@@ -791,7 +804,10 @@ export const api = {
       apiFetch<any>('/software-licenses', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: unknown) =>
       apiFetch<any>(`/software-licenses/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-    renewalAction: (id: string, data: { action: 'renew' | 'renegotiate' | 'cancel'; note?: string }) =>
+    renewalAction: (
+      id: string,
+      data: { action: 'renew' | 'renegotiate' | 'cancel'; note?: string },
+    ) =>
       apiFetch<any>(`/software-licenses/${id}/renewal-action`, {
         method: 'POST',
         body: JSON.stringify(data),
@@ -802,12 +818,14 @@ export const api = {
   },
   messages: {
     list: (threadType: string, threadId: string) =>
-      apiFetch<any[]>(`/messages/${threadType}/${threadId}`),
+      apiFetch<unknown>(`/messages/${threadType}/${threadId}`).then((value) =>
+        messageSchema.array().parse(value),
+      ),
     post: (threadType: string, threadId: string, body: string) =>
-      apiFetch<any>(`/messages/${threadType}/${threadId}`, {
+      apiFetch<unknown>(`/messages/${threadType}/${threadId}`, {
         method: 'POST',
         body: JSON.stringify({ body }),
-      }),
+      }).then((value) => messageSchema.parse(value)),
   },
   passwordReset: {
     request: (email: string) =>
@@ -854,21 +872,30 @@ export const api = {
       }),
     submitBulkPriceProposals: (
       token: string,
-      rows: Array<{ itemId?: string; sku?: string; proposedPrice: number; effectiveDate?: string; note?: string }>,
+      rows: Array<{
+        itemId?: string;
+        sku?: string;
+        proposedPrice: number;
+        effectiveDate?: string;
+        note?: string;
+      }>,
     ) =>
-      apiFetch<any>(`/vendor-portal/catalog/price-proposals/bulk?token=${encodeURIComponent(token)}`, {
-        method: 'POST',
-        body: JSON.stringify({ rows }),
-      }),
-    listMessages: (token: string, threadType: string, threadId: string) =>
-      apiFetch<any[]>(
-        `/vendor-portal/messages/${threadType}/${threadId}?token=${encodeURIComponent(token)}`,
-      ),
-    postMessage: (token: string, threadType: string, threadId: string, body: string) =>
       apiFetch<any>(
+        `/vendor-portal/catalog/price-proposals/bulk?token=${encodeURIComponent(token)}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ rows }),
+        },
+      ),
+    listMessages: (token: string, threadType: string, threadId: string) =>
+      apiFetch<unknown>(
+        `/vendor-portal/messages/${threadType}/${threadId}?token=${encodeURIComponent(token)}`,
+      ).then((value) => messageSchema.array().parse(value)),
+    postMessage: (token: string, threadType: string, threadId: string, body: string) =>
+      apiFetch<unknown>(
         `/vendor-portal/messages/${threadType}/${threadId}?token=${encodeURIComponent(token)}`,
         { method: 'POST', body: JSON.stringify({ body }) },
-      ),
+      ).then((value) => messageSchema.parse(value)),
   },
   notifications: {
     list: (params?: {
@@ -886,13 +913,27 @@ export const api = {
       if (params?.type && params.type !== 'all') q.set('type', params.type);
       if (params?.status && params.status !== 'all') q.set('status', params.status);
       if (params?.sort) q.set('sort', params.sort);
-      return apiFetch<{ items: any[]; total: number; limit: number; offset: number }>(`/notifications${q.toString() ? '?' + q : ''}`);
+      return apiFetch<{ items: any[]; total: number; limit: number; offset: number }>(
+        `/notifications${q.toString() ? '?' + q : ''}`,
+      );
     },
     types: () => apiFetch<string[]>('/notifications/types'),
     getPreferences: () =>
-      apiFetch<{ emailEnabled: boolean; frequency: 'instant' | 'daily' | 'weekly'; enabledTypes: string[] }>('/notifications/preferences'),
-    updatePreferences: (data: { emailEnabled?: boolean; frequency?: 'instant' | 'daily' | 'weekly'; enabledTypes?: string[] }) =>
-      apiFetch<{ emailEnabled: boolean; frequency: 'instant' | 'daily' | 'weekly'; enabledTypes: string[] }>('/notifications/preferences', {
+      apiFetch<{
+        emailEnabled: boolean;
+        frequency: 'instant' | 'daily' | 'weekly';
+        enabledTypes: string[];
+      }>('/notifications/preferences'),
+    updatePreferences: (data: {
+      emailEnabled?: boolean;
+      frequency?: 'instant' | 'daily' | 'weekly';
+      enabledTypes?: string[];
+    }) =>
+      apiFetch<{
+        emailEnabled: boolean;
+        frequency: 'instant' | 'daily' | 'weekly';
+        enabledTypes: string[];
+      }>('/notifications/preferences', {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
@@ -943,7 +984,10 @@ export const api = {
     award: (id: string, responseId: string) =>
       apiFetch<any>(`/rfq/${id}/award`, { method: 'POST', body: JSON.stringify({ responseId }) }),
     reject: (id: string, responseId: string, reason: string) =>
-      apiFetch<any>(`/rfq/${id}/reject`, { method: 'POST', body: JSON.stringify({ responseId, reason }) }),
+      apiFetch<any>(`/rfq/${id}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ responseId, reason }),
+      }),
     submitResponse: (id: string, data: unknown) =>
       apiFetch<any>(`/rfq/${id}/responses`, { method: 'POST', body: JSON.stringify(data) }),
   },

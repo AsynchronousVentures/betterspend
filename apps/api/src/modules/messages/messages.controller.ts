@@ -1,12 +1,18 @@
-import { BadRequestException, Body, Controller, Get, Param, ParseUUIDPipe, Post, Req, UnauthorizedException } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Req,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { postMessageSchema } from '@betterspend/shared';
 import type { Request } from 'express';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
-import {
-  MessagesService,
-  parseThreadType,
-  type PostMessageInput,
-} from './messages.service';
+import { MessagesService, parseThreadType } from './messages.service';
 
 @ApiTags('messages')
 @Controller('messages')
@@ -44,20 +50,17 @@ export class MessagesController {
   post(
     @Param('threadType') threadType: string,
     @Param('threadId', ParseUUIDPipe) threadId: string,
-    @Body() body: PostMessageInput,
+    @Body() body: unknown,
     @Req() req: Request,
     @CurrentUserId() userId: string,
   ) {
+    const parsed = postMessageSchema.parse(body);
     return this.messagesService.postAsUser(
       this.requireSession(req),
       userId,
       parseThreadType(threadType),
       threadId,
-      {
-        body: String(body?.body ?? ''),
-        attachments: body?.attachments,
-        recipientVendorId: body?.recipientVendorId,
-      },
+      parsed,
     );
   }
 }

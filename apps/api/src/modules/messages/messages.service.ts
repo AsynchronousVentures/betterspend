@@ -1,28 +1,40 @@
-import { Injectable, Inject, NotFoundException, ForbiddenException, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+  Logger,
+} from '@nestjs/common';
 import { and, asc, eq } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { messages, purchaseOrders, invoices, rfqRequests, goodsReceipts, rfqInvitations } from '@betterspend/db';
-import { AuditService } from '../audit/audit.service';
+import {
+  auditLog,
+  messages,
+  purchaseOrders,
+  invoices,
+  rfqRequests,
+  goodsReceipts,
+  rfqInvitations,
+} from '@betterspend/db';
+import {
+  MESSAGE_THREAD_TYPES,
+  type MessageThreadType,
+  type PostMessageInput,
+} from '@betterspend/shared';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
 
-export const THREAD_TYPES = ['po', 'rfq', 'grn', 'invoice'] as const;
-export type ThreadType = (typeof THREAD_TYPES)[number];
+export const THREAD_TYPES = MESSAGE_THREAD_TYPES;
+export type ThreadType = MessageThreadType;
 
 export function parseThreadType(threadType: string): ThreadType {
   if (!(THREAD_TYPES as readonly string[]).includes(threadType)) {
     throw new BadRequestException(`Unsupported thread type "${threadType}"`);
   }
   return threadType as ThreadType;
-}
-
-export interface PostMessageInput {
-  body: string;
-  attachments?: Array<{ documentId?: string; url?: string; name?: string }>;
-  /** RFQ threads only: address the message to one invited vendor. */
-  recipientVendorId?: string;
 }
 
 interface ThreadContext {
@@ -36,7 +48,6 @@ export class MessagesService {
 
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
-    private readonly audit: AuditService,
     private readonly notificationsService: NotificationsService,
     private readonly mailService: MailService,
     private readonly settingsService: SettingsService,
@@ -63,7 +74,12 @@ export class MessagesService {
    * posting and hides competing vendors' messages on RFQ threads: a vendor
    * sees its own messages plus the buyer's replies, never other vendors'.
    */
-  async listAsVendor(organizationId: string, vendorId: string, threadType: ThreadType, threadId: string) {
+  async listAsVendor(
+    organizationId: string,
+    vendorId: string,
+    threadType: ThreadType,
+    threadId: string,
+  ) {
     const context = await this.getThreadContext(organizationId, threadType, threadId);
     if (!context) throw new NotFoundException('Thread not found');
     await this.assertVendorAccess(organizationId, vendorId, threadType, threadId, context);
@@ -110,32 +126,31 @@ export class MessagesService {
       recipientVendorId = input.recipientVendorId;
     }
 
-    const [message] = await this.db
-      .insert(messages)
-      .values({
+    const message = await this.db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(messages)
+        .values({
+          organizationId,
+          threadType,
+          threadId,
+          senderType: 'user',
+          senderId: userId,
+          recipientVendorId,
+          authorName: user.name,
+          body: trimmedBody,
+          attachments: input.attachments ?? [],
+        })
+        .returning();
+      await tx.insert(auditLog).values({
         organizationId,
-        threadType,
-        threadId,
-        senderType: 'user',
-        senderId: userId,
-        recipientVendorId,
-        authorName: user.name,
-        body: trimmedBody,
-        attachments: input.attachments ?? [],
-      })
-      .returning();
-
-    // Side effects after persistence are best-effort: the message exists once
-    // committed, so failures here must not turn a successful post into an
-    // error that invites client retries and duplicate messages.
-    this.audit
-      .log(organizationId, userId, 'message', message.id, 'created', {
-        threadType,
-        threadId,
-      })
-      .catch((error) =>
-        this.logger.warn(`Audit log failed for message ${message.id}: ${error instanceof Error ? error.message : error}`),
-      );
+        userId,
+        entityType: 'message',
+        entityId: created.id,
+        action: 'created',
+        changes: { threadType, threadId },
+      });
+      return created;
+    });
 
     // Email the addressed vendor on addressed RFQ messages; broadcast RFQ
     // messages go to every invited vendor. Other threads have a single
@@ -194,33 +209,30 @@ export class MessagesService {
     });
     if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
 
-    const [message] = await this.db
-      .insert(messages)
-      .values({
+    const message = await this.db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(messages)
+        .values({
+          organizationId,
+          threadType,
+          threadId,
+          senderType: 'vendor',
+          vendorId,
+          authorName: vendor.name,
+          body: trimmedBody,
+          attachments: input.attachments ?? [],
+        })
+        .returning();
+      await tx.insert(auditLog).values({
         organizationId,
-        threadType,
-        threadId,
-        senderType: 'vendor',
-        vendorId,
-        authorName: vendor.name,
-        body: trimmedBody,
-        attachments: input.attachments ?? [],
-      })
-      .returning();
-
-    // Append-only: messages are never updated or removed. Post-persist side
-    // effects are best-effort so a failure cannot imply a lost message and
-    // trigger duplicate retries.
-    this.audit
-      .log(organizationId, null, 'message', message.id, 'created', {
-        threadType,
-        threadId,
-        senderType: 'vendor',
-        vendorId,
-      })
-      .catch((error) =>
-        this.logger.warn(`Audit log failed for message ${message.id}: ${error instanceof Error ? error.message : error}`),
-      );
+        userId: null,
+        entityType: 'message',
+        entityId: created.id,
+        action: 'created',
+        changes: { threadType, threadId, senderType: 'vendor', vendorId },
+      });
+      return created;
+    });
 
     if (context.internalUserId) {
       this.notificationsService
@@ -234,7 +246,9 @@ export class MessagesService {
           threadId,
         )
         .catch((error) =>
-          this.logger.warn(`Notification failed for message ${message.id}: ${error instanceof Error ? error.message : error}`),
+          this.logger.warn(
+            `Notification failed for message ${message.id}: ${error instanceof Error ? error.message : error}`,
+          ),
         );
     }
     return message;
@@ -258,29 +272,25 @@ export class MessagesService {
     switch (threadType) {
       case 'po': {
         const po = await this.db.query.purchaseOrders.findFirst({
-          where: (p, { and, eq }) =>
-            and(eq(p.id, threadId), eq(p.organizationId, organizationId)),
+          where: (p, { and, eq }) => and(eq(p.id, threadId), eq(p.organizationId, organizationId)),
         });
         return po ? { vendorId: po.vendorId, internalUserId: po.issuedBy } : null;
       }
       case 'invoice': {
         const invoice = await this.db.query.invoices.findFirst({
-          where: (i, { and, eq }) =>
-            and(eq(i.id, threadId), eq(i.organizationId, organizationId)),
+          where: (i, { and, eq }) => and(eq(i.id, threadId), eq(i.organizationId, organizationId)),
         });
         return invoice ? { vendorId: invoice.vendorId, internalUserId: invoice.approvedBy } : null;
       }
       case 'rfq': {
         const rfq = await this.db.query.rfqRequests.findFirst({
-          where: (r, { and, eq }) =>
-            and(eq(r.id, threadId), eq(r.organizationId, organizationId)),
+          where: (r, { and, eq }) => and(eq(r.id, threadId), eq(r.organizationId, organizationId)),
         });
         return rfq ? { vendorId: rfq.awardedVendorId, internalUserId: rfq.requesterId } : null;
       }
       case 'grn': {
         const grn = await this.db.query.goodsReceipts.findFirst({
-          where: (g, { and, eq }) =>
-            and(eq(g.id, threadId), eq(g.organizationId, organizationId)),
+          where: (g, { and, eq }) => and(eq(g.id, threadId), eq(g.organizationId, organizationId)),
         });
         if (!grn) return null;
         const po = await this.db.query.purchaseOrders.findFirst({
@@ -304,8 +314,7 @@ export class MessagesService {
     if (threadType === 'rfq') {
       // Any vendor invited to quote may participate in the RFQ thread.
       const invitation = await this.db.query.rfqInvitations.findFirst({
-        where: (inv, { and, eq }) =>
-          and(eq(inv.rfqId, threadId), eq(inv.vendorId, vendorId)),
+        where: (inv, { and, eq }) => and(eq(inv.rfqId, threadId), eq(inv.vendorId, vendorId)),
       });
       allowed = !!invitation || context.vendorId === vendorId;
     } else {
@@ -327,8 +336,7 @@ export class MessagesService {
   ) {
     try {
       const context = await this.getThreadContext(organizationId, threadType, threadId);
-      const vendorIdForThread =
-        recipientVendorOverride ?? (context?.vendorId ?? null);
+      const vendorIdForThread = recipientVendorOverride ?? context?.vendorId ?? null;
       if (!vendorIdForThread) return;
 
       const vendor = await this.db.query.vendors.findFirst({

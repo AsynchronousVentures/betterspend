@@ -11,6 +11,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { postMessageSchema } from '@betterspend/shared';
 import {
   VendorPortalService,
   SubmitInvoiceInput,
@@ -36,10 +37,7 @@ export class VendorPortalController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send portal access link email to a vendor (admin use)' })
   @HttpCode(HttpStatus.OK)
-  async sendAccess(
-    @Body() body: { vendorId: string },
-    @CurrentOrgId() orgId: string,
-  ) {
+  async sendAccess(@Body() body: { vendorId: string }, @CurrentOrgId() orgId: string) {
     return this.vendorPortalService.sendAccessLink(body.vendorId, orgId);
   }
 
@@ -68,10 +66,7 @@ export class VendorPortalController {
   @Public()
   @ApiOperation({ summary: 'Submit an invoice against a PO via portal token' })
   @HttpCode(HttpStatus.CREATED)
-  async submitInvoice(
-    @Query('token') token: string,
-    @Body() body: SubmitInvoiceInput,
-  ) {
+  async submitInvoice(@Query('token') token: string, @Body() body: SubmitInvoiceInput) {
     if (!token) throw new UnauthorizedException('Token is required');
     const vendorId = await this.vendorPortalService.validateToken(token);
     return this.vendorPortalService.submitInvoice(vendorId, DEMO_ORG_ID, body);
@@ -98,7 +93,9 @@ export class VendorPortalController {
 
   @Get('onboarding')
   @Public()
-  @ApiOperation({ summary: 'Get vendor onboarding questionnaire and latest submission via portal token' })
+  @ApiOperation({
+    summary: 'Get vendor onboarding questionnaire and latest submission via portal token',
+  })
   async getOnboarding(@Query('token') token: string) {
     if (!token) throw new UnauthorizedException('Token is required');
     const vendorId = await this.vendorPortalService.validateToken(token);
@@ -131,19 +128,17 @@ export class VendorPortalController {
     @Param('threadType') threadType: string,
     @Param('threadId', ParseUUIDPipe) threadId: string,
     @Query('token') token: string,
-    @Body() body: { body?: string; attachments?: unknown },
+    @Body() body: unknown,
   ) {
     if (!token) throw new UnauthorizedException('Token is required');
     const vendorId = await this.vendorPortalService.validateToken(token);
+    const parsed = postMessageSchema.omit({ recipientVendorId: true }).parse(body);
     return this.messagesService.postAsVendor(
       DEMO_ORG_ID,
       vendorId,
       parseThreadType(threadType),
       threadId,
-      {
-        body: String(body?.body ?? ''),
-        attachments: Array.isArray(body?.attachments) ? body.attachments : [],
-      },
+      parsed,
     );
   }
 
