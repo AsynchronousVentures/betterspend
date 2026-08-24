@@ -40,8 +40,8 @@ const createPoSchema = z.object({
   exchangeRate: z.number().positive().optional(),
   notes: z.string().optional(),
   poType: z.enum(['standard', 'blanket']).default('standard'),
-  shippingAddress: z.record(z.unknown()).optional(),
-  billingAddress: z.record(z.unknown()).optional(),
+  shippingAddress: z.record(z.string(), z.unknown()).optional(),
+  billingAddress: z.record(z.string(), z.unknown()).optional(),
   // Blanket PO fields
   blanketStartDate: z.string().datetime().optional(),
   blanketEndDate: z.string().datetime().optional(),
