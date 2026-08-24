@@ -5,7 +5,7 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { eq, and, isNull, lte, gte, sql } from 'drizzle-orm';
+import { eq, and, ne, isNull, lte, gte, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { invoices, invoiceLines, purchaseOrders, requisitions } from '@betterspend/db';
@@ -326,7 +326,7 @@ export class InvoicesService {
     if ((invoice as any).status !== 'approved') {
       throw new BadRequestException('Only approved invoices can be marked as paid');
     }
-    await this.db
+    const [transitioned] = await this.db
       .update(invoices)
       .set({
         status: 'paid',
@@ -521,7 +521,7 @@ export class InvoicesService {
     if (invoice.matchStatus === 'exception') {
       throw new BadRequestException('Cannot approve invoice with unresolved exceptions');
     }
-    await this.db
+    const [transitioned] = await this.db
       .update(invoices)
       .set({
         status: 'approved',
@@ -529,7 +529,21 @@ export class InvoicesService {
         approvedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+      .where(
+        and(
+          eq(invoices.id, id),
+          eq(invoices.organizationId, organizationId),
+          ne(invoices.status, 'approved'),
+          ne(invoices.status, 'paid'),
+          ne(invoices.matchStatus, 'exception'),
+        ),
+      )
+      .returning({ id: invoices.id });
+    if (!transitioned) {
+      const latest = await this.findOne(id, organizationId);
+      if (latest.status === 'approved' || latest.status === 'paid') return latest;
+      throw new BadRequestException('Invoice is not in an approvable state');
+    }
     const approved = await this.findOne(id, organizationId);
     this.webhookEvents.emit(organizationId, 'invoice.approved', { invoice: approved });
     this.audit
@@ -576,7 +590,6 @@ export class InvoicesService {
             await this.budgets.recordSpend(
               organizationId,
               req.departmentId,
-              spendAmount,
               convertMoney(spendAmount, String((approved as any).exchangeRate ?? '1')),
               fiscalYear,
             );

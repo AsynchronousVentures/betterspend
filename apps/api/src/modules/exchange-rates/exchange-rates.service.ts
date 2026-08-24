@@ -1,6 +1,6 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
-import type { Db } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
 import { exchangeRates, organizations } from '@betterspend/db';
 import { DB_TOKEN } from '../../database/database.module';
 
@@ -30,8 +30,11 @@ export class ExchangeRatesService {
     return rate;
   }
 
-  async getOrganizationBaseCurrency(organizationId: string) {
-    const org = await this.db.query.organizations.findFirst({
+  async getOrganizationBaseCurrency(
+    organizationId: string,
+    executor: Db | DbTransaction = this.db,
+  ) {
+    const org = await executor.query.organizations.findFirst({
       where: (record, { eq }) => eq(record.id, organizationId),
     });
     if (!org) throw new BadRequestException(`Organization ${organizationId} not found`);
@@ -145,13 +148,14 @@ export class ExchangeRatesService {
     fromCurrency: string,
     toCurrency: string,
     overrideRate?: string | null,
+    executor: Db | DbTransaction = this.db,
   ): Promise<string> {
     const from = fromCurrency.toUpperCase();
     const to = toCurrency.toUpperCase();
     if (from === to) return '1';
     if (overrideRate != null) return overrideRate;
 
-    const latest = await this.db.query.exchangeRates.findFirst({
+    const latest = await executor.query.exchangeRates.findFirst({
       where: (record, { and, eq }) =>
         and(
           eq(record.orgId, organizationId),

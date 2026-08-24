@@ -153,58 +153,65 @@ export class RequisitionsService {
       throw new BadRequestException('Requisition must have at least one line item');
     }
 
-    const budgetEnforcement = await this.budgets.withEnforcementLock(
-      {
-        organizationId,
-        departmentId: req.departmentId,
-        requestedAmount: req.totalAmount,
-        currency: req.currency,
-        fiscalYear: req.createdAt.getUTCFullYear(),
-        excludeRequisitionId: req.id,
-      },
-      async (tx, decision) => {
-        if (decision.action === 'block') {
-          throw new BadRequestException(decision.message);
-        }
-        if (decision.action === 'require_approval' && !decision.ownerUserId) {
-          throw new BadRequestException('An active budget owner is required for approval');
-        }
-        const [transitioned] = await tx
-          .update(requisitions)
-          .set({ status: 'pending_approval', submittedAt: new Date(), updatedAt: new Date() })
-          .where(
-            and(
-              eq(requisitions.id, id),
-              eq(requisitions.organizationId, organizationId),
-              eq(requisitions.status, 'draft'),
-            ),
-          )
-          .returning({ id: requisitions.id });
-        if (!transitioned) {
-          throw new BadRequestException('Only draft requisitions can be submitted');
-        }
-        return decision;
-      },
-    );
-
     const actorId = requesterId ?? req.requesterId;
-
-    // Initiate approval — may auto-approve (status → 'approved') or create a pending request
-    let requiredApproval: { approverId: string; reason: string } | undefined;
-    if (budgetEnforcement.action === 'require_approval') {
-      if (!budgetEnforcement.ownerUserId) {
-        throw new BadRequestException('An active budget owner is required for approval');
-      }
-      requiredApproval = {
-        approverId: budgetEnforcement.ownerUserId,
-        reason: budgetEnforcement.message,
-      };
-    }
-    await this.approvalEngine.initiateApproval(
+    const { budgetEnforcement, approvalResult, requiredApproval } =
+      await this.budgets.withEnforcementLock(
+        {
+          organizationId,
+          departmentId: req.departmentId,
+          requestedAmount: req.totalAmount,
+          currency: req.currency,
+          fiscalYear: req.createdAt.getUTCFullYear(),
+          excludeRequisitionId: req.id,
+        },
+        async (tx, decision) => {
+          if (decision.action === 'block') {
+            throw new BadRequestException(decision.message);
+          }
+          let requiredApproval: { approverId: string; reason: string; key: string } | undefined;
+          if (decision.action === 'require_approval') {
+            const ownerUserId = decision.ownerUserId;
+            if (!ownerUserId) {
+              throw new BadRequestException('An active budget owner is required for approval');
+            }
+            requiredApproval = {
+              approverId: ownerUserId,
+              reason: decision.message,
+              key: `budget:${decision.budgetId}:requisition:${id}:owner:${ownerUserId}`,
+            };
+          }
+          const approvalResult = await this.approvalEngine.initiateApproval(
+            organizationId,
+            'requisition',
+            id,
+            actorId,
+            requiredApproval,
+            async (approvalTx) => {
+              const [transitioned] = await approvalTx
+                .update(requisitions)
+                .set({ status: 'pending_approval', submittedAt: new Date(), updatedAt: new Date() })
+                .where(
+                  and(
+                    eq(requisitions.id, id),
+                    eq(requisitions.organizationId, organizationId),
+                    eq(requisitions.status, 'draft'),
+                  ),
+                )
+                .returning({ id: requisitions.id });
+              if (!transitioned) {
+                throw new BadRequestException('Only draft requisitions can be submitted');
+              }
+            },
+            tx,
+          );
+          return { budgetEnforcement: decision, approvalResult, requiredApproval };
+        },
+      );
+    this.approvalEngine.publishInitiation(
       organizationId,
       'requisition',
       id,
-      actorId,
+      approvalResult,
       requiredApproval,
     );
 

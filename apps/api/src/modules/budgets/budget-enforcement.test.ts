@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { convertMoney, evaluateBudgetPolicy, noBudgetDecision } from './budget-enforcement';
+import {
+  convertMoney,
+  convertMoneyFromBase,
+  evaluateBudgetPolicy,
+  noBudgetDecision,
+} from './budget-enforcement';
 
 const budget = {
   id: 'budget-1',
@@ -14,6 +19,7 @@ describe('evaluateBudgetPolicy', () => {
   it('converts persisted decimals without floating-point drift', () => {
     assert.equal(convertMoney('0.10', '0.20000000'), '0.02');
     assert.equal(convertMoney('999999999999.99', '1.00000000'), '999999999999.99');
+    assert.equal(convertMoneyFromBase('120.00', '1.20000000'), '100.00');
   });
 
   it('allows requests when no matching budget exists', () => {
@@ -95,6 +101,20 @@ describe('evaluateBudgetPolicy', () => {
 
     assert.equal(decision.action, 'block');
     assert.equal(decision.reason, 'owner_missing');
+  });
+
+  it('fails closed for an unrecognized persisted enforcement mode', () => {
+    const decision = evaluateBudgetPolicy({
+      budget,
+      mode: 'legacy_mode' as never,
+      pendingPolicy: 'approved_only',
+      committedAmount: '100.00',
+      requestedAmount: '700.00',
+      ownerUserId: 'owner-1',
+    });
+
+    assert.equal(decision.action, 'block');
+    assert.equal(decision.withinBudget, false);
   });
 
   it('compares exact decimal cents at the budget boundary', () => {

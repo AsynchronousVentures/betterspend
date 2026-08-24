@@ -30,6 +30,7 @@ const SYSTEM_USER_ID = DEMO_ADMIN_USER_ID;
 export interface RequiredApproval {
   approverId: string;
   reason: string;
+  key: string;
 }
 
 @Injectable()
@@ -77,8 +78,13 @@ export class ApprovalEngineService {
   }
 
   // Find the first matching rule for an entity
-  async findMatchingRule(organizationId: string, entityType: string, entity: Record<string, any>) {
-    const rules = await this.db.query.approvalRules.findMany({
+  async findMatchingRule(
+    organizationId: string,
+    entityType: string,
+    entity: Record<string, any>,
+    executor: Db | DbTransaction = this.db,
+  ) {
+    const rules = await executor.query.approvalRules.findMany({
       where: (r, { and, eq }) => and(eq(r.organizationId, organizationId), eq(r.isActive, true)),
       with: { steps: true },
       orderBy: (r, { asc }) => asc(r.priority),
@@ -103,15 +109,21 @@ export class ApprovalEngineService {
   private async checkFastLaneAutoApproval(
     organizationId: string,
     entity: Record<string, any>,
+    executor: Db | DbTransaction = this.db,
   ): Promise<{ eligible: boolean; threshold: number; notifyManager: boolean }> {
     if (!this.settingsService) {
       return { eligible: false, threshold: 0, notifyManager: false };
     }
 
-    const thresholdStr = await this.settingsService.get(organizationId, 'auto_approve_threshold');
+    const thresholdStr = await this.settingsService.get(
+      organizationId,
+      'auto_approve_threshold',
+      executor,
+    );
     const notifyManagerStr = await this.settingsService.get(
       organizationId,
       'auto_approve_notify_manager',
+      executor,
     );
 
     const threshold = parseFloat(thresholdStr || '0');
@@ -135,24 +147,26 @@ export class ApprovalEngineService {
     initiatedBy: string,
     requiredApproval?: RequiredApproval,
     beforePersist?: (tx: DbTransaction) => Promise<void>,
+    transaction?: DbTransaction,
   ) {
+    const executor = transaction ?? this.db;
     // Fetch entity for condition evaluation
     let entity: Record<string, any> | null = null;
     if (entityType === 'requisition') {
       entity =
-        (await this.db.query.requisitions.findFirst({
+        (await executor.query.requisitions.findFirst({
           where: (r, { eq }) => eq(r.id, entityId),
         })) ?? null;
     } else {
       entity =
-        (await this.db.query.purchaseOrders.findFirst({
+        (await executor.query.purchaseOrders.findFirst({
           where: (p, { eq }) => eq(p.id, entityId),
         })) ?? null;
     }
     if (!entity) throw new NotFoundException(`Entity ${entityId} not found`);
 
     if (requiredApproval) {
-      const approver = await this.db.query.users.findFirst({
+      const approver = await executor.query.users.findFirst({
         where: (record, { and, eq }) =>
           and(
             eq(record.id, requiredApproval.approverId),
@@ -172,6 +186,7 @@ export class ApprovalEngineService {
       const { eligible, threshold, notifyManager } = await this.checkFastLaneAutoApproval(
         organizationId,
         entity,
+        executor,
       );
       if (eligible) {
         return this.applyFastLaneApproval(
@@ -181,32 +196,44 @@ export class ApprovalEngineService {
           threshold,
           notifyManager,
           initiatedBy,
+          beforePersist,
+          transaction,
         );
       }
     }
 
-    const rule = await this.findMatchingRule(organizationId, entityType, entity);
+    const rule = await this.findMatchingRule(organizationId, entityType, entity, executor);
 
     if ((!rule || !rule.steps || rule.steps.length === 0) && !requiredApproval) {
       // No matching rule → auto-approve
+      await this.runInTransaction(transaction, async (tx) => {
+        await beforePersist?.(tx);
+        if (entityType === 'requisition') {
+          await tx
+            .update(requisitions)
+            .set({ status: 'approved', updatedAt: new Date() })
+            .where(eq(requisitions.id, entityId));
+        } else {
+          await tx
+            .update(purchaseOrders)
+            .set({ status: 'approved', updatedAt: new Date() })
+            .where(eq(purchaseOrders.id, entityId));
+        }
+      });
       if (entityType === 'requisition') {
-        await this.db
-          .update(requisitions)
-          .set({ status: 'approved', updatedAt: new Date() })
-          .where(eq(requisitions.id, entityId));
-        this.webhookEvents.emit(organizationId, 'requisition.approved', {
-          requisitionId: entityId,
-          autoApproved: true,
-        });
+        if (!transaction) {
+          this.webhookEvents.emit(organizationId, 'requisition.approved', {
+            requisitionId: entityId,
+            autoApproved: true,
+          });
+        }
       } else {
-        await this.db
-          .update(purchaseOrders)
-          .set({ status: 'approved', updatedAt: new Date() })
-          .where(eq(purchaseOrders.id, entityId));
-        this.webhookEvents.emit(organizationId, 'po.approved', {
-          purchaseOrderId: entityId,
-          autoApproved: true,
-        });
+        if (!transaction) {
+          this.webhookEvents.emit(organizationId, 'po.approved', {
+            purchaseOrderId: entityId,
+            autoApproved: true,
+          });
+        }
       }
       return { autoApproved: true, rule: null };
     }
@@ -228,6 +255,7 @@ export class ApprovalEngineService {
       const delegatee = await this.delegations.getActiveDelegatee(
         organizationId,
         firstStep.approverId,
+        executor,
       );
       if (delegatee) {
         effectiveApproverId = delegatee;
@@ -236,7 +264,7 @@ export class ApprovalEngineService {
 
     // The schema for approvalRequests has no organizationId, initiatedBy, or dueAt —
     // those fields are tracked via the actions log and the approvableType/approvableId pattern
-    const requestId = await this.db.transaction(async (tx) => {
+    const requestId = await this.runInTransaction(transaction, async (tx) => {
       await beforePersist?.(tx);
       const [req] = await tx
         .insert(approvalRequests)
@@ -249,6 +277,7 @@ export class ApprovalEngineService {
           requiredApproverId: requiredApproval?.approverId ?? null,
           requiredApprovalStep,
           requiredApprovalReason: requiredApproval?.reason ?? null,
+          requiredApprovalKey: requiredApproval?.key ?? null,
         })
         .returning();
 
@@ -267,42 +296,81 @@ export class ApprovalEngineService {
       return req.id;
     });
 
+    const result = { autoApproved: false as const, rule, requestId };
+    if (!transaction) {
+      this.publishInitiation(organizationId, entityType, entityId, result, requiredApproval);
+    }
+    return result;
+  }
+
+  publishInitiation(
+    organizationId: string,
+    entityType: 'requisition' | 'purchase_order',
+    entityId: string,
+    result: {
+      autoApproved: boolean;
+      fastLane?: boolean;
+      threshold?: number;
+      requestId?: string;
+      rule?: { name: string; steps?: Array<{ stepOrder: number }> } | null;
+    },
+    requiredApproval?: RequiredApproval,
+  ): void {
+    if (result.autoApproved) {
+      const event = entityType === 'requisition' ? 'requisition.approved' : 'po.approved';
+      const payload =
+        entityType === 'requisition'
+          ? {
+              requisitionId: entityId,
+              autoApproved: true,
+              fastLane: result.fastLane,
+              threshold: result.threshold,
+            }
+          : { purchaseOrderId: entityId, autoApproved: true };
+      this.webhookEvents.emit(organizationId, event, payload);
+      return;
+    }
     this.webhookEvents.emit(organizationId, 'approval.requested', {
-      requestId,
+      requestId: result.requestId,
       entityType,
       entityId,
-      ruleName: rule?.name ?? null,
+      ruleName: result.rule?.name ?? null,
       requiredApproverId: requiredApproval?.approverId ?? null,
     });
+    if (!this.notifications) return;
 
-    if (this.notifications) {
-      const entityLabel = entityType === 'requisition' ? 'Requisition' : 'Purchase Order';
-      const initialApproverId = firstStep ? DEMO_ADMIN_USER_ID : requiredApproval!.approverId;
-      const approvalDescription =
-        rule && firstStep
-          ? `A ${entityLabel.toLowerCase()} requires your approval (rule: ${rule.name}).`
-          : requiredApproval!.reason;
-      this.notifications
-        .create(
-          organizationId,
-          initialApproverId,
-          'approval_request',
-          `Approval Required: ${entityLabel}`,
-          approvalDescription,
-          entityType,
-          entityId,
-        )
-        .catch(() => {});
-    }
+    const entityLabel = entityType === 'requisition' ? 'Requisition' : 'Purchase Order';
+    const hasRuleStep = !!result.rule?.steps?.length;
+    const initialApproverId = hasRuleStep ? DEMO_ADMIN_USER_ID : requiredApproval?.approverId;
+    if (!initialApproverId) return;
+    const approvalDescription = hasRuleStep
+      ? `A ${entityLabel.toLowerCase()} requires your approval (rule: ${result.rule!.name}).`
+      : (requiredApproval?.reason ?? 'Approval is required.');
+    this.notifications
+      .create(
+        organizationId,
+        initialApproverId,
+        'approval_request',
+        `Approval Required: ${entityLabel}`,
+        approvalDescription,
+        entityType,
+        entityId,
+      )
+      .catch(() => {});
+  }
 
-    return { autoApproved: false, rule, requestId };
+  private runInTransaction<T>(
+    transaction: DbTransaction | undefined,
+    run: (tx: DbTransaction) => Promise<T>,
+  ): Promise<T> {
+    return transaction ? run(transaction) : this.db.transaction(run);
   }
 
   async hasCompletedRequiredApproval(
     entityType: 'requisition' | 'purchase_order',
     entityId: string,
     approverId: string,
-    reason: string,
+    key: string,
     approvedAtOrAfter: Date,
   ): Promise<boolean> {
     const request = await this.db.query.approvalRequests.findFirst({
@@ -312,7 +380,7 @@ export class ApprovalEngineService {
           eq(record.approvableId, entityId),
           eq(record.status, 'approved'),
           eq(record.requiredApproverId, approverId),
-          eq(record.requiredApprovalReason, reason),
+          eq(record.requiredApprovalKey, key),
           gte(record.updatedAt, approvedAtOrAfter),
         ),
     });
@@ -327,12 +395,15 @@ export class ApprovalEngineService {
     threshold: number,
     notifyManager: boolean,
     initiatedBy: string,
+    beforePersist?: (tx: DbTransaction) => Promise<void>,
+    transaction?: DbTransaction,
   ) {
     const totalAmount = parseFloat(entity.totalAmount ?? entity.total_amount ?? '0');
     const note = `Auto-approved: requisition total $${totalAmount.toFixed(2)} is below the configured threshold of $${threshold.toFixed(2)}`;
 
     // Create an approval request in auto-approved state and record the action
-    const requestId = await this.db.transaction(async (tx) => {
+    const requestId = await this.runInTransaction(transaction, async (tx) => {
+      await beforePersist?.(tx);
       const [req] = await tx
         .insert(approvalRequests)
         .values({
@@ -362,21 +433,22 @@ export class ApprovalEngineService {
         comment: notifyManager ? note : 'Auto-approved: below configured threshold',
       });
 
+      await tx
+        .update(requisitions)
+        .set({ status: 'approved', updatedAt: new Date() })
+        .where(eq(requisitions.id, entityId));
+
       return req.id;
     });
 
-    // Update the requisition status to approved
-    await this.db
-      .update(requisitions)
-      .set({ status: 'approved', updatedAt: new Date() })
-      .where(eq(requisitions.id, entityId));
-
-    this.webhookEvents.emit(organizationId, 'requisition.approved', {
-      requisitionId: entityId,
-      autoApproved: true,
-      fastLane: true,
-      threshold,
-    });
+    if (!transaction) {
+      this.webhookEvents.emit(organizationId, 'requisition.approved', {
+        requisitionId: entityId,
+        autoApproved: true,
+        fastLane: true,
+        threshold,
+      });
+    }
 
     return { autoApproved: true, fastLane: true, rule: null, requestId };
   }

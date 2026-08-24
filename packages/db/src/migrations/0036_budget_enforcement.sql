@@ -8,12 +8,18 @@ ALTER TABLE "approval_requests" ADD COLUMN "required_approval_step" integer;
 --> statement-breakpoint
 ALTER TABLE "approval_requests" ADD COLUMN "required_approval_reason" text;
 --> statement-breakpoint
+ALTER TABLE "approval_requests" ADD COLUMN "required_approval_key" varchar(255);
+--> statement-breakpoint
 DO $$ BEGIN
  ALTER TABLE "approval_requests" ADD CONSTRAINT "approval_requests_required_approver_id_users_id_fk" FOREIGN KEY ("required_approver_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
 --> statement-breakpoint
-ALTER TABLE "budgets" ADD CONSTRAINT "budgets_enforcement_mode_check" CHECK ("enforcement_mode" IS NULL OR "enforcement_mode" IN ('hard_stop', 'owner_approval', 'visibility_only'));
+ALTER TABLE "budgets" ADD CONSTRAINT "budgets_enforcement_mode_check" CHECK ("enforcement_mode" IS NULL OR "enforcement_mode" IN ('hard_stop', 'owner_approval', 'visibility_only')) NOT VALID;
 --> statement-breakpoint
-ALTER TABLE "budgets" ADD CONSTRAINT "budgets_pending_requisition_policy_check" CHECK ("pending_requisition_policy" IS NULL OR "pending_requisition_policy" IN ('approved_only', 'include_pending'));
+ALTER TABLE "budgets" VALIDATE CONSTRAINT "budgets_enforcement_mode_check";
+--> statement-breakpoint
+ALTER TABLE "budgets" ADD CONSTRAINT "budgets_pending_requisition_policy_check" CHECK ("pending_requisition_policy" IS NULL OR "pending_requisition_policy" IN ('approved_only', 'include_pending')) NOT VALID;
+--> statement-breakpoint
+ALTER TABLE "budgets" VALIDATE CONSTRAINT "budgets_pending_requisition_policy_check";

@@ -16,6 +16,7 @@ import { BudgetsService, CreateBudgetInput } from './budgets.service';
 import type { BudgetEnforcementMode, PendingRequisitionPolicy } from './budget-enforcement';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 
 @ApiTags('budgets')
 @Controller('budgets')
@@ -70,6 +71,7 @@ export class BudgetsController {
   }
 
   @Post()
+  @Roles('admin')
   @ApiOperation({ summary: 'Create a budget with optional periods' })
   create(
     @Body() body: CreateBudgetInput,
@@ -80,6 +82,7 @@ export class BudgetsController {
   }
 
   @Patch(':id')
+  @Roles('admin')
   @ApiOperation({ summary: 'Update a budget' })
   update(
     @Param('id', ParseUUIDPipe) id: string,

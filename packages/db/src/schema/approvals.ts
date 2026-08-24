@@ -41,6 +41,7 @@ export const approvalRequests = pgTable('approval_requests', {
   requiredApproverId: uuid('required_approver_id').references(() => users.id),
   requiredApprovalStep: integer('required_approval_step'),
   requiredApprovalReason: text('required_approval_reason'),
+  requiredApprovalKey: varchar('required_approval_key', { length: 255 }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

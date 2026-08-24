@@ -44,7 +44,7 @@ Each budget can override either setting. A null budget value inherits the org se
 
 Department `budgetOwnerId` remains the owner source. The user must belong to the same organization and be active. If no valid owner exists, owner-approval mode fails closed with a configuration message.
 
-The approval engine stores one optional required approver on an approval request. If a normal rule matches, the required owner becomes the final step. If no rule matches, the owner is the only step. Only that owner may act at the required step.
+The approval engine stores one optional required approver and stable enforcement key on an approval request. If a normal rule matches, the required owner becomes the final step. If no rule matches, the owner is the only step. Only that owner may act at the required step.
 
 For a PO, the first issue attempt moves the draft to `pending_approval`. The status transition, approval request, and audit entry are atomic. After final approval changes it to `approved`, a second issue attempt verifies that the current budget owner completed the required step, performs the budget check again, and issues the PO.
 
@@ -52,7 +52,7 @@ For a PO, the first issue attempt moves the draft to `pending_approval`. The sta
 
 All comparisons use the organization's base currency. Persisted decimal amounts and exchange rates are converted with fixed-point integer math, then returned as two-decimal strings. Budget base totals and base spend are used when present.
 
-The matching budget row is locked while a requisition submission or PO issuance evaluates and commits its state transition. This prevents two concurrent requests from both spending the same remaining amount. #118 will replace the read-time requisition approximation with an event-backed encumbrance ledger without changing the enforcement interface.
+The matching budget row is locked while a requisition submission or PO issuance evaluates and commits its state transition. Requisition status, approval request, and approval actions share that transaction. Converted requisitions retain only the amount not covered by approved invoices. This prevents concurrent requests and partial invoices from distorting the remaining amount. #118 will replace the read-time requisition approximation with an event-backed encumbrance ledger without changing the enforcement interface.
 
 ## Failure behavior
 

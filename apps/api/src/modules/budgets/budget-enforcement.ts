@@ -78,6 +78,16 @@ export function convertMoney(amount: string, rate: string): string {
   return formatScaledDecimal(product < 0 ? -rounded : rounded);
 }
 
+export function convertMoneyFromBase(amount: string, rate: string): string {
+  const amountUnits = parseScaledDecimal(amount, MONEY_DECIMALS);
+  const rateUnits = parseScaledDecimal(rate, RATE_DECIMALS);
+  if (rateUnits <= 0n) throw new Error('Exchange rate must be greater than zero');
+  const dividend = amountUnits * 10n ** BigInt(RATE_DECIMALS);
+  const absolute = dividend < 0 ? -dividend : dividend;
+  const rounded = (absolute + rateUnits / 2n) / rateUnits;
+  return formatScaledDecimal(dividend < 0 ? -rounded : rounded);
+}
+
 export function addMoney(amounts: string[]): string {
   return formatScaledDecimal(
     amounts.reduce((sum, amount) => sum + parseScaledDecimal(amount, MONEY_DECIMALS), 0n),
@@ -86,6 +96,12 @@ export function addMoney(amounts: string[]): string {
 
 export function isZeroMoney(amount: string): boolean {
   return parseScaledDecimal(amount, MONEY_DECIMALS) === 0n;
+}
+
+export function subtractMoneyFloorZero(total: string, used: string): string {
+  const remaining =
+    parseScaledDecimal(total, MONEY_DECIMALS) - parseScaledDecimal(used, MONEY_DECIMALS);
+  return formatScaledDecimal(remaining > 0n ? remaining : 0n);
 }
 
 function money(currency: string, amount: bigint): string {

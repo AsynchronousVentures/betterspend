@@ -1,7 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { eq, and } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
-import type { Db } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
 import { auditLog, systemSettings } from '@betterspend/db';
 import { DEFAULT_SETTINGS, type SettingKey } from '@betterspend/shared';
 
@@ -22,8 +22,12 @@ export class SettingsService {
     return result;
   }
 
-  async get(organizationId: string, key: SettingKey): Promise<string> {
-    const row = await this.db.query.systemSettings.findFirst({
+  async get(
+    organizationId: string,
+    key: SettingKey,
+    executor: Db | DbTransaction = this.db,
+  ): Promise<string> {
+    const row = await executor.query.systemSettings.findFirst({
       where: (s, { and, eq }) => and(eq(s.organizationId, organizationId), eq(s.key, key)),
     });
     return row?.value ?? DEFAULT_SETTINGS[key] ?? '';

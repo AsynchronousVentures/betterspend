@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Db } from '@betterspend/db';
-import { approvalRequests } from '@betterspend/db';
+import { approvalActions, approvalRequests } from '@betterspend/db';
 import type { WebhookEventService } from '../webhooks/webhook-event.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { ApprovalDelegationsService } from '../approval-delegations/approval-delegations.service';
@@ -14,10 +14,14 @@ function createService(
   requiredApproverIsActive = true,
 ) {
   const approvalRequestValues: Array<Record<string, unknown>> = [];
+  const approvalActionValues: Array<Record<string, unknown>> = [];
+  const updateValues: Array<Record<string, unknown>> = [];
   const emitted: Array<Record<string, unknown>> = [];
   const transaction = {
     query: {
-      approvalRules: { findFirst: async () => null },
+      approvalRules: {
+        findFirst: async () => (ruleSteps.length > 0 ? { steps: ruleSteps } : null),
+      },
     },
     select() {
       return {
@@ -37,7 +41,16 @@ function createService(
             approvalRequestValues.push(values);
             return { returning: async () => [{ id: 'approval-request-1' }] };
           }
+          if (table === approvalActions) approvalActionValues.push(values);
           return Promise.resolve();
+        },
+      };
+    },
+    update() {
+      return {
+        set(values: Record<string, unknown>) {
+          updateValues.push(values);
+          return { where: async () => [] };
         },
       };
     },
@@ -77,6 +90,8 @@ function createService(
 
   return {
     approvalRequestValues,
+    approvalActionValues,
+    updateValues,
     emitted,
     service: new ApprovalEngineService(
       db,
@@ -97,7 +112,11 @@ describe('ApprovalEngineService required approvals', () => {
       'requisition',
       'requisition-1',
       'requester-1',
-      { approverId: 'owner-1', reason: 'Budget owner approval is required.' },
+      {
+        approverId: 'owner-1',
+        reason: 'Budget owner approval is required.',
+        key: 'budget:1:requisition:1:owner:1',
+      },
     );
 
     assert.equal(result.autoApproved, false);
@@ -110,6 +129,7 @@ describe('ApprovalEngineService required approvals', () => {
       requiredApproverId: 'owner-1',
       requiredApprovalStep: 1,
       requiredApprovalReason: 'Budget owner approval is required.',
+      requiredApprovalKey: 'budget:1:requisition:1:owner:1',
     });
   });
 
@@ -121,7 +141,11 @@ describe('ApprovalEngineService required approvals', () => {
       'requisition',
       'requisition-1',
       'requester-1',
-      { approverId: 'owner-1', reason: 'Budget owner approval is required.' },
+      {
+        approverId: 'owner-1',
+        reason: 'Budget owner approval is required.',
+        key: 'budget:1:requisition:1:owner:1',
+      },
     );
 
     assert.equal(approvalRequestValues[0]?.currentStep, 2);
@@ -135,6 +159,7 @@ describe('ApprovalEngineService required approvals', () => {
       service.initiateApproval('organization-1', 'requisition', 'requisition-1', 'requester-1', {
         approverId: 'other-org-owner',
         reason: 'Budget owner approval is required.',
+        key: 'budget:1:requisition:1:owner:other',
       }),
       /active user in this organization/,
     );
@@ -154,5 +179,48 @@ describe('ApprovalEngineService required approvals', () => {
       service.processAction('approval-request-1', 'different-user', 'approve'),
       /assigned to the budget owner/,
     );
+  });
+
+  it('advances the final rule step into the required owner step', async () => {
+    const { approvalActionValues, service, updateValues } = createService(
+      [{ stepOrder: 2 }, { stepOrder: 4 }],
+      {
+        id: 'approval-request-1',
+        approvableType: 'requisition',
+        approvableId: 'requisition-1',
+        status: 'pending',
+        approvalRuleId: 'rule-1',
+        currentStep: 4,
+        requiredApprovalStep: 5,
+        requiredApproverId: 'owner-1',
+      },
+    );
+
+    const result = await service.processAction('approval-request-1', 'rule-approver', 'approve');
+
+    assert.deepEqual(result, { status: 'pending', advancedToStep: 5 });
+    assert.ok(updateValues.some((values) => values.currentStep === 5));
+    assert.ok(!updateValues.some((values) => values.status === 'approved'));
+    assert.equal(approvalActionValues.filter((values) => values.action === 'approve').length, 1);
+    assert.equal(approvalActionValues.filter((values) => values.action === 'forwarded').length, 1);
+  });
+
+  it('finalizes when the assigned owner approves the required step', async () => {
+    const { service, updateValues } = createService([{ stepOrder: 4 }], {
+      id: 'approval-request-1',
+      approvableType: 'requisition',
+      approvableId: 'requisition-1',
+      status: 'pending',
+      approvalRuleId: 'rule-1',
+      currentStep: 5,
+      requiredApprovalStep: 5,
+      requiredApproverId: 'owner-1',
+    });
+
+    const result = await service.processAction('approval-request-1', 'owner-1', 'approve');
+
+    assert.deepEqual(result, { status: 'approved' });
+    assert.ok(updateValues.some((values) => values.status === 'approved'));
+    assert.ok(!updateValues.some((values) => values.currentStep === 6));
   });
 });

@@ -366,13 +366,14 @@ export class PurchaseOrdersService {
           if (!budgetEnforcement.ownerUserId) {
             throw new BadRequestException('An active budget owner is required for approval');
           }
+          const approvalKey = `budget:${budgetEnforcement.budgetId}:po:${id}:version:${po.version}:owner:${budgetEnforcement.ownerUserId}`;
           const completed =
             po.status === 'approved' &&
             (await this.approvalEngine.hasCompletedRequiredApproval(
               'purchase_order',
               id,
               budgetEnforcement.ownerUserId,
-              budgetEnforcement.message,
+              approvalKey,
               po.updatedAt,
             ));
           if (!completed) return { kind: 'approval' as const, budgetEnforcement };
@@ -430,6 +431,7 @@ export class PurchaseOrdersService {
       if (!ownerUserId) {
         throw new BadRequestException('An active budget owner is required for approval');
       }
+      const approvalKey = `budget:${outcome.budgetEnforcement.budgetId}:po:${id}:version:${po.version}:owner:${ownerUserId}`;
       await this.approvalEngine.initiateApproval(
         organizationId,
         'purchase_order',
@@ -438,6 +440,7 @@ export class PurchaseOrdersService {
         {
           approverId: ownerUserId,
           reason: outcome.budgetEnforcement.message,
+          key: approvalKey,
         },
         async (tx) => {
           const now = new Date();
