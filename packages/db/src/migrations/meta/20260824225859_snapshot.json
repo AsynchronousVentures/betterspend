@@ -1,6 +1,6 @@
 {
-  "id": "086cfc22-47cb-4537-8258-088db460ce39",
-  "prevId": "bedd9838-cd01-439a-8b47-9f9f3cef5769",
+  "id": "2358f30b-a43d-4692-b165-8e567c0a8820",
+  "prevId": "f9a3c475-638a-4404-a326-97c80850359a",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -159,7 +159,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "legal_entities_id_organization_id_unique": {
+          "name": "legal_entities_id_organization_id_unique",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "legal_entities_organization_id_organizations_id_fk": {
           "name": "legal_entities_organization_id_organizations_id_fk",
@@ -1518,7 +1540,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "requisitions_id_organization_id_unique": {
+          "name": "requisitions_id_organization_id_unique",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "requisitions_organization_id_organizations_id_fk": {
           "name": "requisitions_organization_id_organizations_id_fk",
@@ -2035,6 +2079,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
         "version": {
           "name": "version",
           "type": "integer",
@@ -2110,31 +2160,56 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "workflow_definition_versions_id_organization_id_unique": {
+          "name": "workflow_definition_versions_id_organization_id_unique",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
-        "workflow_definition_versions_published_by_users_id_fk": {
-          "name": "workflow_definition_versions_published_by_users_id_fk",
+        "workflow_definition_versions_definition_org_fk": {
+          "name": "workflow_definition_versions_definition_org_fk",
           "tableFrom": "workflow_definition_versions",
-          "tableTo": "users",
+          "tableTo": "workflow_definitions",
           "columnsFrom": [
-            "published_by"
+            "definition_id",
+            "organization_id"
           ],
           "columnsTo": [
-            "id"
+            "id",
+            "organization_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "workflow_definition_versions_definition_fk": {
-          "name": "workflow_definition_versions_definition_fk",
+        "workflow_definition_versions_published_by_org_fk": {
+          "name": "workflow_definition_versions_published_by_org_fk",
           "tableFrom": "workflow_definition_versions",
-          "tableTo": "workflow_definitions",
+          "tableTo": "users",
           "columnsFrom": [
-            "definition_id"
+            "published_by",
+            "organization_id"
           ],
           "columnsTo": [
-            "id"
+            "id",
+            "organization_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -2256,6 +2331,27 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "workflow_definitions_id_organization_id_unique": {
+          "name": "workflow_definitions_id_organization_id_unique",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2272,54 +2368,62 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "workflow_definitions_entity_id_legal_entities_id_fk": {
-          "name": "workflow_definitions_entity_id_legal_entities_id_fk",
+        "workflow_definitions_entity_org_fk": {
+          "name": "workflow_definitions_entity_org_fk",
           "tableFrom": "workflow_definitions",
           "tableTo": "legal_entities",
           "columnsFrom": [
-            "entity_id"
+            "entity_id",
+            "organization_id"
           ],
           "columnsTo": [
-            "id"
+            "id",
+            "organization_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "workflow_definitions_created_by_users_id_fk": {
-          "name": "workflow_definitions_created_by_users_id_fk",
+        "workflow_definitions_created_by_org_fk": {
+          "name": "workflow_definitions_created_by_org_fk",
           "tableFrom": "workflow_definitions",
           "tableTo": "users",
           "columnsFrom": [
-            "created_by"
+            "created_by",
+            "organization_id"
           ],
           "columnsTo": [
-            "id"
+            "id",
+            "organization_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "workflow_definitions_updated_by_users_id_fk": {
-          "name": "workflow_definitions_updated_by_users_id_fk",
+        "workflow_definitions_updated_by_org_fk": {
+          "name": "workflow_definitions_updated_by_org_fk",
           "tableFrom": "workflow_definitions",
           "tableTo": "users",
           "columnsFrom": [
-            "updated_by"
+            "updated_by",
+            "organization_id"
           ],
           "columnsTo": [
-            "id"
+            "id",
+            "organization_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "workflow_definitions_published_version_fk": {
-          "name": "workflow_definitions_published_version_fk",
+        "workflow_definitions_published_version_org_fk": {
+          "name": "workflow_definitions_published_version_org_fk",
           "tableFrom": "workflow_definitions",
           "tableTo": "workflow_definition_versions",
           "columnsFrom": [
-            "published_version_id"
+            "published_version_id",
+            "organization_id"
           ],
           "columnsTo": [
-            "id"
+            "id",
+            "organization_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -2975,7 +3079,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "purchase_orders_id_organization_id_unique": {
+          "name": "purchase_orders_id_organization_id_unique",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "purchase_orders_organization_id_organizations_id_fk": {
           "name": "purchase_orders_organization_id_organizations_id_fk",
@@ -3675,7 +3801,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "invoices_id_organization_id_unique": {
+          "name": "invoices_id_organization_id_unique",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "invoices_organization_id_organizations_id_fk": {
           "name": "invoices_organization_id_organizations_id_fk",
@@ -3903,6 +4051,261 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.budget_commitment_events": {
+      "name": "budget_commitment_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "budget_id": {
+          "name": "budget_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "requisition_id": {
+          "name": "requisition_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "purchase_order_id": {
+          "name": "purchase_order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "invoice_id": {
+          "name": "invoice_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "event_key": {
+          "name": "event_key",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "base_reserved_delta": {
+          "name": "base_reserved_delta",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "base_committed_delta": {
+          "name": "base_committed_delta",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "base_expended_delta": {
+          "name": "base_expended_delta",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "reason": {
+          "name": "reason",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "budget_commitment_events_org_key_uniq": {
+          "name": "budget_commitment_events_org_key_uniq",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "event_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "budget_commitment_events_budget_created_idx": {
+          "name": "budget_commitment_events_budget_created_idx",
+          "columns": [
+            {
+              "expression": "budget_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "budget_commitment_events_requisition_idx": {
+          "name": "budget_commitment_events_requisition_idx",
+          "columns": [
+            {
+              "expression": "requisition_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "budget_commitment_events_purchase_order_idx": {
+          "name": "budget_commitment_events_purchase_order_idx",
+          "columns": [
+            {
+              "expression": "purchase_order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "budget_commitment_events_organization_id_organizations_id_fk": {
+          "name": "budget_commitment_events_organization_id_organizations_id_fk",
+          "tableFrom": "budget_commitment_events",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "budget_commitment_events_budget_org_fk": {
+          "name": "budget_commitment_events_budget_org_fk",
+          "tableFrom": "budget_commitment_events",
+          "tableTo": "budgets",
+          "columnsFrom": [
+            "budget_id",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "budget_commitment_events_requisition_org_fk": {
+          "name": "budget_commitment_events_requisition_org_fk",
+          "tableFrom": "budget_commitment_events",
+          "tableTo": "requisitions",
+          "columnsFrom": [
+            "requisition_id",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "budget_commitment_events_purchase_order_org_fk": {
+          "name": "budget_commitment_events_purchase_order_org_fk",
+          "tableFrom": "budget_commitment_events",
+          "tableTo": "purchase_orders",
+          "columnsFrom": [
+            "purchase_order_id",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "budget_commitment_events_invoice_org_fk": {
+          "name": "budget_commitment_events_invoice_org_fk",
+          "tableFrom": "budget_commitment_events",
+          "tableTo": "invoices",
+          "columnsFrom": [
+            "invoice_id",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "budget_commitment_events_event_type_check": {
+          "name": "budget_commitment_events_event_type_check",
+          "value": "\"budget_commitment_events\".\"event_type\" in ('requisition_reserved', 'requisition_released', 'purchase_order_committed', 'purchase_order_reduced', 'purchase_order_released', 'invoice_expended', 'legacy_commitment_backfill', 'legacy_reservation_backfill')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.budget_periods": {
@@ -4134,7 +4537,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "budgets_id_organization_id_unique": {
+          "name": "budgets_id_organization_id_unique",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "budgets_organization_id_organizations_id_fk": {
           "name": "budgets_organization_id_organizations_id_fk",

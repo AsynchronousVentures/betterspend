@@ -52,6 +52,7 @@ describe('WorkflowDefinitionsService', () => {
   it('publishes the next immutable version with a compiled artifact', async () => {
     const inserted: Array<Record<string, unknown>> = [];
     const updates: Array<Record<string, unknown>> = [];
+    const auditExecutors: unknown[] = [];
     const definition = {
       id: 'definition-1',
       organizationId: 'organization-1',
@@ -94,7 +95,13 @@ describe('WorkflowDefinitionsService', () => {
     const db = {
       transaction: async (run: (transaction: typeof tx) => Promise<unknown>) => run(tx),
     } as unknown as Db;
-    const { audit, entities } = dependencies();
+    const { entities } = dependencies();
+    const audit = {
+      log: async (...args: unknown[]) => {
+        auditExecutors.push(args[7]);
+        return {};
+      },
+    } as unknown as AuditService;
     const service = new WorkflowDefinitionsService(db, entities, audit);
 
     const result = await service.publish('definition-1', 'organization-1', 'publisher-1');
@@ -109,6 +116,7 @@ describe('WorkflowDefinitionsService', () => {
       ['trigger', 'approved'],
     );
     assert.equal(updates[0]?.publishedVersionId, 'version-2');
+    assert.equal(auditExecutors[0], tx);
   });
 
   it('blocks publication when the mutable draft is invalid', async () => {
@@ -201,6 +209,23 @@ describe('WorkflowDefinitionsService', () => {
             disabled: false,
             config: { event: 'invoice_submitted' as const },
           },
+          transitions: [
+            {
+              edgeId: 'to-approved',
+              targetStepId: 'approved',
+              sourceHandle: 'out',
+              isDefault: false,
+            },
+          ],
+        },
+        {
+          node: {
+            id: 'approved',
+            name: 'Approved',
+            type: 'approved' as const,
+            disabled: false,
+            config: {},
+          },
           transitions: [],
         },
       ],
@@ -213,6 +238,10 @@ describe('WorkflowDefinitionsService', () => {
       status: 'pending',
       attempt: 1,
       currentStep: 3,
+    };
+    let executableJson: unknown = {
+      ...executable,
+      steps: [{ ...executable.steps[0], transitions: [] }],
     };
     let definitionSelects = 0;
     const tx = {
@@ -242,7 +271,7 @@ describe('WorkflowDefinitionsService', () => {
             id: 'version-2',
             definitionId: 'definition-1',
             version: 2,
-            executableJson: executable,
+            executableJson,
           }),
         },
       },
@@ -272,16 +301,25 @@ describe('WorkflowDefinitionsService', () => {
     const { audit, entities } = dependencies();
     const service = new WorkflowDefinitionsService(db, entities, audit);
 
+    await assert.rejects(
+      service.restartInstanceOnLatest('request-1', 'organization-1', 'admin-1'),
+      /requires the compiled workflow execution engine/,
+    );
+    assert.equal(updates.length, 0);
+
+    executableJson = executable;
     const result = await service.restartInstanceOnLatest('request-1', 'organization-1', 'admin-1');
 
     assert.equal(updates[0]?.status, 'cancelled');
     assert.equal(requestInserts[0]?.definitionVersionId, 'version-2');
-    assert.equal(requestInserts[0]?.currentNodeId, 'trigger');
+    assert.equal(requestInserts[0]?.currentNodeId, 'approved');
     assert.equal(requestInserts[0]?.attempt, 2);
-    assert.equal(definitionSelects, 1);
+    assert.equal(requestInserts[0]?.status, 'approved');
+    assert.equal(definitionSelects, 2);
     assert.equal(actionInserts[0]?.action, 'cancelled');
     assert.equal(actionInserts[1]?.action, 'restarted');
     assert.equal(actionInserts[1]?.approvalRequestId, 'request-2');
+    assert.equal(actionInserts[2]?.action, 'approved');
     assert.deepEqual(result, {
       cancelledRequestId: 'request-1',
       replacementRequestId: 'request-2',

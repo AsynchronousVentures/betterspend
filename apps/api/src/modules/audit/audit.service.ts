@@ -1,7 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { desc, eq, and } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
-import type { Db } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
 import { auditLog } from '@betterspend/db';
 
 @Injectable()
@@ -34,8 +34,9 @@ export class AuditService {
     action: string,
     changes?: Record<string, unknown>,
     metadata?: Record<string, unknown>,
+    executor: Db | DbTransaction = this.db,
   ) {
-    const [entry] = await this.db
+    const [entry] = await executor
       .insert(auditLog)
       .values({
         organizationId,

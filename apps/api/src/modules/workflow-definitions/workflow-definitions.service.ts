@@ -8,6 +8,7 @@ import {
 import { and, desc, eq } from 'drizzle-orm';
 import type {
   CreateWorkflowDefinitionInput,
+  ExecutableDefinition,
   WorkflowDomain,
   WorkflowDraft,
 } from '@betterspend/shared';
@@ -62,6 +63,33 @@ function newWorkflowDraft(domain: WorkflowDomain): WorkflowDraft {
   });
 }
 
+function resolveRestartTerminal(executable: ExecutableDefinition): {
+  nodeId: string;
+  status: 'approved' | 'rejected';
+} {
+  const steps = new Map(executable.steps.map((step) => [step.node.id, step]));
+  const visited = new Set<string>();
+  let step = steps.get(executable.entryStepId);
+
+  while (step && !visited.has(step.node.id)) {
+    visited.add(step.node.id);
+    if (step.node.type === 'approved' || step.node.type === 'auto_approve') {
+      return { nodeId: step.node.id, status: 'approved' };
+    }
+    if (step.node.type === 'reject') {
+      return { nodeId: step.node.id, status: 'rejected' };
+    }
+    if (step.node.type !== 'trigger' || step.transitions.length !== 1) break;
+    const [transition] = step.transitions;
+    if (transition.condition || transition.isDefault || transition.priority !== undefined) break;
+    step = steps.get(transition.targetStepId);
+  }
+
+  throw new ConflictException(
+    'Restart requires the compiled workflow execution engine for this definition',
+  );
+}
+
 @Injectable()
 export class WorkflowDefinitionsService {
   constructor(
@@ -97,42 +125,64 @@ export class WorkflowDefinitionsService {
     const draft = input.draft ?? newWorkflowDraft(input.domain);
     this.assertDraftDomain(input.domain, draft);
 
-    const [definition] = await this.db
-      .insert(workflowDefinitions)
-      .values({
+    const definition = await this.db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(workflowDefinitions)
+        .values({
+          organizationId,
+          entityId: input.entityId ?? null,
+          domain: input.domain,
+          name: input.name,
+          currentDraft: draft,
+          createdBy: userId,
+          updatedBy: userId,
+        })
+        .returning();
+      await this.audit.log(
         organizationId,
-        entityId: input.entityId ?? null,
-        domain: input.domain,
-        name: input.name,
-        currentDraft: draft,
-        createdBy: userId,
-        updatedBy: userId,
-      })
-      .returning();
-
-    this.audit
-      .log(organizationId, userId, 'workflow_definition', definition.id, 'created', {
-        domain: input.domain,
-        name: input.name,
-      })
-      .catch(() => {});
+        userId,
+        'workflow_definition',
+        created.id,
+        'created',
+        { domain: input.domain, name: input.name },
+        undefined,
+        tx,
+      );
+      return created;
+    });
     return this.findOne(definition.id, organizationId);
   }
 
   async saveDraft(id: string, organizationId: string, userId: string, draft: WorkflowDraft) {
-    const definition = await this.findOne(id, organizationId);
-    this.assertDraftDomain(definition.domain as WorkflowDomain, draft);
+    await this.db.transaction(async (tx) => {
+      const [definition] = await tx
+        .select({ domain: workflowDefinitions.domain })
+        .from(workflowDefinitions)
+        .where(
+          and(
+            eq(workflowDefinitions.id, id),
+            eq(workflowDefinitions.organizationId, organizationId),
+          ),
+        )
+        .for('update');
+      if (!definition) throw new NotFoundException(`Workflow definition ${id} not found`);
+      this.assertDraftDomain(definition.domain as WorkflowDomain, draft);
 
-    await this.db
-      .update(workflowDefinitions)
-      .set({ currentDraft: draft, updatedBy: userId, updatedAt: new Date() })
-      .where(
-        and(eq(workflowDefinitions.id, id), eq(workflowDefinitions.organizationId, organizationId)),
+      await tx
+        .update(workflowDefinitions)
+        .set({ currentDraft: draft, updatedBy: userId, updatedAt: new Date() })
+        .where(eq(workflowDefinitions.id, id));
+      await this.audit.log(
+        organizationId,
+        userId,
+        'workflow_definition',
+        id,
+        'draft_saved',
+        undefined,
+        undefined,
+        tx,
       );
-
-    this.audit
-      .log(organizationId, userId, 'workflow_definition', id, 'draft_saved')
-      .catch(() => {});
+    });
     return this.findOne(id, organizationId);
   }
 
@@ -169,6 +219,7 @@ export class WorkflowDefinitionsService {
         .insert(workflowDefinitionVersions)
         .values({
           definitionId: id,
+          organizationId,
           version: (latest?.version ?? 0) + 1,
           graphJson: compilation.graph,
           positionsJson: definition.currentDraft.positions,
@@ -181,15 +232,18 @@ export class WorkflowDefinitionsService {
         .update(workflowDefinitions)
         .set({ publishedVersionId: version.id, updatedBy: userId, updatedAt: new Date() })
         .where(eq(workflowDefinitions.id, id));
+      await this.audit.log(
+        organizationId,
+        userId,
+        'workflow_definition',
+        id,
+        'published',
+        { version: version.version, versionId: version.id },
+        undefined,
+        tx,
+      );
       return version;
     });
-
-    this.audit
-      .log(organizationId, userId, 'workflow_definition', id, 'published', {
-        version: published.version,
-        versionId: published.id,
-      })
-      .catch(() => {});
     return published;
   }
 
@@ -230,15 +284,18 @@ export class WorkflowDefinitionsService {
         .update(workflowDefinitions)
         .set({ currentDraft: draft, updatedBy: userId, updatedAt: new Date() })
         .where(eq(workflowDefinitions.id, definition.id));
+      await this.audit.log(
+        organizationId,
+        userId,
+        'workflow_definition',
+        id,
+        'version_restored_as_draft',
+        { version: version.version, versionId },
+        undefined,
+        tx,
+      );
       return { definitionId: definition.id, restoredFromVersion: version.version, draft };
     });
-
-    this.audit
-      .log(organizationId, userId, 'workflow_definition', id, 'version_restored_as_draft', {
-        version: restored.restoredFromVersion,
-        versionId,
-      })
-      .catch(() => {});
     return restored;
   }
 
@@ -300,6 +357,7 @@ export class WorkflowDefinitionsService {
         throw new ConflictException('The published workflow version is unavailable');
       }
       const executable = executableDefinitionSchema.parse(latestVersion.executableJson);
+      const terminal = resolveRestartTerminal(executable);
 
       await tx
         .update(approvalRequests)
@@ -313,10 +371,10 @@ export class WorkflowDefinitionsService {
           approvableId: request.approvableId,
           approvalRuleId: null,
           definitionVersionId: latestVersion.id,
-          currentNodeId: executable.entryStepId,
+          currentNodeId: terminal.nodeId,
           attempt: request.attempt + 1,
           currentStep: 1,
-          status: 'pending',
+          status: terminal.status,
           requiredApproverId: null,
           requiredApprovalStep: null,
           requiredApprovalReason: null,
@@ -338,25 +396,32 @@ export class WorkflowDefinitionsService {
         action: 'restarted',
         comment: `Restarted from ${request.id} on workflow version ${latestVersion.version}`,
       });
-      return {
+      await tx.insert(approvalActions).values({
+        approvalRequestId: replacement.id,
+        stepOrder: 1,
+        approverId: userId,
+        action: terminal.status,
+        comment: `Workflow version ${latestVersion.version} reached terminal node ${terminal.nodeId}`,
+      });
+      const result = {
         cancelledRequestId: request.id,
         replacementRequestId: replacement.id,
         definitionVersionId: latestVersion.id,
         version: latestVersion.version,
         attempt: replacement.attempt,
       };
-    });
-
-    this.audit
-      .log(
+      await this.audit.log(
         organizationId,
         userId,
         'approval_request',
         approvalRequestId,
         'restarted_on_latest',
-        restarted,
-      )
-      .catch(() => {});
+        result,
+        undefined,
+        tx,
+      );
+      return result;
+    });
     return restarted;
   }
 

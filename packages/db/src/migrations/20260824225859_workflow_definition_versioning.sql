@@ -1,6 +1,7 @@
 CREATE TABLE "workflow_definition_versions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"definition_id" uuid NOT NULL,
+	"organization_id" uuid NOT NULL,
 	"version" integer NOT NULL,
 	"graph_json" jsonb NOT NULL,
 	"positions_json" jsonb DEFAULT '{}'::jsonb NOT NULL,
@@ -26,13 +27,16 @@ CREATE TABLE "workflow_definitions" (
 ALTER TABLE "approval_requests" ADD COLUMN "definition_version_id" uuid;--> statement-breakpoint
 ALTER TABLE "approval_requests" ADD COLUMN "current_node_id" varchar(100);--> statement-breakpoint
 ALTER TABLE "approval_requests" ADD COLUMN "attempt" integer DEFAULT 1 NOT NULL;--> statement-breakpoint
-ALTER TABLE "workflow_definition_versions" ADD CONSTRAINT "workflow_definition_versions_published_by_users_id_fk" FOREIGN KEY ("published_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "workflow_definition_versions" ADD CONSTRAINT "workflow_definition_versions_definition_fk" FOREIGN KEY ("definition_id") REFERENCES "public"."workflow_definitions"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE UNIQUE INDEX "legal_entities_id_organization_id_unique" ON "legal_entities" USING btree ("id","organization_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "workflow_definition_versions_id_organization_id_unique" ON "workflow_definition_versions" USING btree ("id","organization_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "workflow_definitions_id_organization_id_unique" ON "workflow_definitions" USING btree ("id","organization_id");--> statement-breakpoint
+ALTER TABLE "workflow_definition_versions" ADD CONSTRAINT "workflow_definition_versions_definition_org_fk" FOREIGN KEY ("definition_id","organization_id") REFERENCES "public"."workflow_definitions"("id","organization_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "workflow_definition_versions" ADD CONSTRAINT "workflow_definition_versions_published_by_org_fk" FOREIGN KEY ("published_by","organization_id") REFERENCES "public"."users"("id","organization_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "workflow_definitions" ADD CONSTRAINT "workflow_definitions_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "workflow_definitions" ADD CONSTRAINT "workflow_definitions_entity_id_legal_entities_id_fk" FOREIGN KEY ("entity_id") REFERENCES "public"."legal_entities"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "workflow_definitions" ADD CONSTRAINT "workflow_definitions_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "workflow_definitions" ADD CONSTRAINT "workflow_definitions_updated_by_users_id_fk" FOREIGN KEY ("updated_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "workflow_definitions" ADD CONSTRAINT "workflow_definitions_published_version_fk" FOREIGN KEY ("published_version_id") REFERENCES "public"."workflow_definition_versions"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "workflow_definitions" ADD CONSTRAINT "workflow_definitions_entity_org_fk" FOREIGN KEY ("entity_id","organization_id") REFERENCES "public"."legal_entities"("id","organization_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "workflow_definitions" ADD CONSTRAINT "workflow_definitions_created_by_org_fk" FOREIGN KEY ("created_by","organization_id") REFERENCES "public"."users"("id","organization_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "workflow_definitions" ADD CONSTRAINT "workflow_definitions_updated_by_org_fk" FOREIGN KEY ("updated_by","organization_id") REFERENCES "public"."users"("id","organization_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "workflow_definitions" ADD CONSTRAINT "workflow_definitions_published_version_org_fk" FOREIGN KEY ("published_version_id","organization_id") REFERENCES "public"."workflow_definition_versions"("id","organization_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "workflow_definition_versions_definition_version_unique" ON "workflow_definition_versions" USING btree ("definition_id","version");--> statement-breakpoint
 CREATE INDEX "workflow_definition_versions_definition_idx" ON "workflow_definition_versions" USING btree ("definition_id");--> statement-breakpoint
 CREATE INDEX "workflow_definitions_org_domain_idx" ON "workflow_definitions" USING btree ("organization_id","domain");--> statement-breakpoint

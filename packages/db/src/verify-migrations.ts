@@ -14,6 +14,7 @@ const EXPECTED_COLUMNS = [
   { table: 'approval_requests', column: 'definition_version_id' },
   { table: 'approval_requests', column: 'current_node_id' },
   { table: 'approval_requests', column: 'attempt' },
+  { table: 'workflow_definition_versions', column: 'organization_id' },
 ] as const;
 
 const EXPECTED_TRIGGERS = [
@@ -72,18 +73,46 @@ const EXPECTED_FOREIGN_KEYS = [
     parentColumns: ['id', 'organization_id'],
   },
   {
-    name: 'workflow_definition_versions_definition_fk',
+    name: 'workflow_definition_versions_definition_org_fk',
     child: 'workflow_definition_versions',
     parent: 'workflow_definitions',
-    childColumns: ['definition_id'],
-    parentColumns: ['id'],
+    childColumns: ['definition_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
   },
   {
-    name: 'workflow_definitions_published_version_fk',
+    name: 'workflow_definitions_published_version_org_fk',
     child: 'workflow_definitions',
     parent: 'workflow_definition_versions',
-    childColumns: ['published_version_id'],
-    parentColumns: ['id'],
+    childColumns: ['published_version_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'workflow_definitions_entity_org_fk',
+    child: 'workflow_definitions',
+    parent: 'legal_entities',
+    childColumns: ['entity_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'workflow_definitions_created_by_org_fk',
+    child: 'workflow_definitions',
+    parent: 'users',
+    childColumns: ['created_by', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'workflow_definitions_updated_by_org_fk',
+    child: 'workflow_definitions',
+    parent: 'users',
+    childColumns: ['updated_by', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'workflow_definition_versions_published_by_org_fk',
+    child: 'workflow_definition_versions',
+    parent: 'users',
+    childColumns: ['published_by', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
   },
   {
     name: 'approval_requests_definition_version_fk',
