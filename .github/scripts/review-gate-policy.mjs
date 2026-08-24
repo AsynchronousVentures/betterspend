@@ -3,6 +3,8 @@ export const requiredMacroscopeChecks = [
   'Macroscope - Security review',
 ];
 
+const passingConclusions = new Set(['neutral', 'skipped', 'success']);
+
 function latestByName(items, getName) {
   const latestItems = new Map();
   for (const item of items) {
@@ -27,7 +29,7 @@ export function evaluateGateState({ checkRunItems }) {
       missing.push(name);
     } else if (checkRun.status !== 'completed') {
       pending.push(name);
-    } else if (checkRun.conclusion !== 'success') {
+    } else if (!passingConclusions.has(checkRun.conclusion)) {
       blockers.push(`${name}: ${checkRun.conclusion}`);
     }
   }

@@ -49,6 +49,17 @@ test('blocks failed Macroscope checks', () => {
   );
 });
 
+test('accepts a skipped scoped Macroscope check', () => {
+  assert.deepEqual(
+    evaluateGateState({
+      checkRunItems: completedMacroscopeChecks.map((checkRun, index) =>
+        index === 0 ? { ...checkRun, conclusion: 'skipped' } : checkRun,
+      ),
+    }),
+    { blockers: [], missing: [], pending: [] },
+  );
+});
+
 test('ignores CodeRabbit check runs', () => {
   assert.deepEqual(
     evaluateGateState({
