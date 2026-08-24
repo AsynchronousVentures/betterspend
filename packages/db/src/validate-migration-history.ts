@@ -10,6 +10,7 @@ type Snapshot = {
   prevId: string;
 };
 
+const rootSnapshotId = '00000000-0000-0000-0000-000000000000';
 const migrationsDirectory = path.resolve(__dirname, 'migrations');
 const metadataDirectory = path.join(migrationsDirectory, 'meta');
 
@@ -56,10 +57,7 @@ async function main(): Promise<void> {
 
   const childrenByParent = new Map<string, string[]>();
   for (const { file, snapshot } of snapshots) {
-    if (
-      snapshot.prevId !== '00000000-0000-0000-0000-000000000000' &&
-      !snapshotsById.has(snapshot.prevId)
-    ) {
+    if (snapshot.prevId !== rootSnapshotId && !snapshotsById.has(snapshot.prevId)) {
       fail(`${file} points to missing parent snapshot ${snapshot.prevId}`);
     }
     const children = childrenByParent.get(snapshot.prevId) ?? [];
@@ -69,6 +67,26 @@ async function main(): Promise<void> {
   for (const [parent, children] of childrenByParent) {
     if (children.length > 1)
       fail(`snapshot ${parent} has multiple children: ${children.join(', ')}`);
+  }
+
+  const reachableSnapshots = new Set<string>();
+  let parentId = rootSnapshotId;
+  while (true) {
+    const childFile = childrenByParent.get(parentId)?.[0];
+    if (!childFile) break;
+    const child = snapshots.find(({ file }) => file === childFile);
+    if (!child) fail(`could not load snapshot ${childFile}`);
+    if (reachableSnapshots.has(child.snapshot.id)) {
+      fail(`snapshot chain contains a cycle at ${childFile}`);
+    }
+    reachableSnapshots.add(child.snapshot.id);
+    parentId = child.snapshot.id;
+  }
+  if (reachableSnapshots.size !== snapshots.length) {
+    const unreachable = snapshots
+      .filter(({ snapshot }) => !reachableSnapshots.has(snapshot.id))
+      .map(({ file }) => file);
+    fail(`snapshots are unreachable from the root: ${unreachable.join(', ')}`);
   }
 
   const latest = journal.entries.at(-1);
