@@ -329,7 +329,12 @@ export default function RiskScreeningPage() {
                             setReviewVendor(vendor);
                             setReviewNote('');
                           }}
-                          disabled={busyVendorId !== null || ingestBusy || screenAllBusy}
+                          disabled={
+                            busyVendorId !== null ||
+                            ingestBusy ||
+                            screenAllBusy ||
+                            vendor.sanctionsStatus === 'untested'
+                          }
                         >
                           Manual Review
                         </Button>

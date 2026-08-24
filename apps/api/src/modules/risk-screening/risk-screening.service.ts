@@ -241,6 +241,9 @@ export class RiskScreeningService {
         .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
         .for('update');
       if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
+      if (vendor.sanctionsStatus === 'untested') {
+        throw new BadRequestException('Screen this vendor before recording a manual review');
+      }
 
       await tx
         .update(vendors)
