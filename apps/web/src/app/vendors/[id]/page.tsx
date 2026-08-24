@@ -13,12 +13,21 @@ import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
 import { Select } from '../../../components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../../components/ui/table';
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </div>
       <div className="mt-1 text-sm text-foreground">{value}</div>
     </div>
   );
@@ -39,6 +48,7 @@ export default function VendorDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { toast } = useToast();
   const [vendor, setVendor] = useState<any>(null);
+  const [screeningBusy, setScreeningBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -75,8 +85,14 @@ export default function VendorDetailPage() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
 
-    api.vendors.transactions(id).then(setTxns).catch(() => {});
-    api.vendors.onboardingDetail(id).then(setOnboarding).catch(() => {});
+    api.vendors
+      .transactions(id)
+      .then(setTxns)
+      .catch(() => {});
+    api.vendors
+      .onboardingDetail(id)
+      .then(setOnboarding)
+      .catch(() => {});
   }, [id]);
 
   function set(key: string, value: string) {
@@ -143,6 +159,35 @@ export default function VendorDetailPage() {
     }
   }
 
+  async function rescreenVendor() {
+    setScreeningBusy(true);
+    try {
+      const result = await api.riskScreening.screenVendor(id);
+      try {
+        setVendor(await api.vendors.get(id));
+      } catch {
+        toast('Screening completed, but vendor details could not be refreshed', 'error');
+        return;
+      }
+      toast(
+        result.status === 'flagged'
+          ? `Flagged with ${result.matches.length} potential match(es)`
+          : result.status === 'manually_reviewed'
+            ? 'Screening complete; manual review status preserved'
+            : 'Screening clear',
+        result.status === 'flagged' ? 'error' : 'success',
+      );
+    } catch (err: any) {
+      const message =
+        err?.status === 403 || err?.message?.includes('403')
+          ? 'Screening requires an admin or approver role.'
+          : err.message || 'Screening failed';
+      toast(message, 'error');
+    } finally {
+      setScreeningBusy(false);
+    }
+  }
+
   async function togglePunchout() {
     setPunchoutSaving(true);
     try {
@@ -164,7 +209,10 @@ export default function VendorDetailPage() {
   return (
     <div className="space-y-6 p-4 lg:p-8">
       <Breadcrumbs items={[{ label: 'Vendors', href: '/vendors' }, { label: vendor.name }]} />
-      <Link href="/vendors" className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
+      <Link
+        href="/vendors"
+        className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+      >
         <ArrowLeft className="h-4 w-4" />
         Vendors
       </Link>
@@ -183,11 +231,14 @@ export default function VendorDetailPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="mb-3 flex flex-wrap items-center gap-3">
-            <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{vendor.name}</h1>
+            <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">
+              {vendor.name}
+            </h1>
             <StatusBadge value={vendor.status || 'inactive'} />
           </div>
           <div className="text-sm text-muted-foreground">
-            {vendor.code ? `${vendor.code} · ` : ''}{vendor.paymentTerms || 'No payment terms set'}
+            {vendor.code ? `${vendor.code} · ` : ''}
+            {vendor.paymentTerms || 'No payment terms set'}
           </div>
         </div>
         {!editing ? (
@@ -222,16 +273,30 @@ export default function VendorDetailPage() {
               <div className="grid gap-4 md:grid-cols-3">
                 <Field label="Risk Score" value={String(vendor.onboardingRiskScore ?? 0)} />
                 <Field label="Risk Level" value={String(vendor.onboardingRiskLevel ?? 'low')} />
-                <Field label="Submitted" value={vendor.onboardingLastSubmittedAt ? new Date(vendor.onboardingLastSubmittedAt).toLocaleString() : '—'} />
+                <Field
+                  label="Submitted"
+                  value={
+                    vendor.onboardingLastSubmittedAt
+                      ? new Date(vendor.onboardingLastSubmittedAt).toLocaleString()
+                      : '—'
+                  }
+                />
               </div>
 
               {latestSubmission ? (
                 <div className="rounded-lg border border-border/70 bg-muted/40 p-4 text-sm text-muted-foreground">
-                  <div>Latest questionnaire: {latestSubmission.questionnaire?.name ?? 'Default questionnaire'}</div>
-                  <div className="mt-2">
-                    Documents: W-9 {latestSubmission.documentLinks?.w9 ? 'attached' : 'missing'} · COI {latestSubmission.documentLinks?.coi ? 'attached' : 'missing'} · Banking {latestSubmission.documentLinks?.banking ? 'attached' : 'missing'}
+                  <div>
+                    Latest questionnaire:{' '}
+                    {latestSubmission.questionnaire?.name ?? 'Default questionnaire'}
                   </div>
-                  {latestSubmission.reviewNote ? <div className="mt-2">Review note: {latestSubmission.reviewNote}</div> : null}
+                  <div className="mt-2">
+                    Documents: W-9 {latestSubmission.documentLinks?.w9 ? 'attached' : 'missing'} ·
+                    COI {latestSubmission.documentLinks?.coi ? 'attached' : 'missing'} · Banking{' '}
+                    {latestSubmission.documentLinks?.banking ? 'attached' : 'missing'}
+                  </div>
+                  {latestSubmission.reviewNote ? (
+                    <div className="mt-2">Review note: {latestSubmission.reviewNote}</div>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -245,7 +310,11 @@ export default function VendorDetailPage() {
                       <ShieldCheck className="h-4 w-4" />
                       Approve Onboarding
                     </Button>
-                    <Button variant="outline" onClick={() => reviewOnboarding('changes_requested')} disabled={reviewSaving}>
+                    <Button
+                      variant="outline"
+                      onClick={() => reviewOnboarding('changes_requested')}
+                      disabled={reviewSaving}
+                    >
                       Request Changes
                     </Button>
                   </>
@@ -259,6 +328,35 @@ export default function VendorDetailPage() {
             <Field label="Email" value={vendor.contactInfo?.email || '—'} />
             <Field label="Phone" value={vendor.contactInfo?.phone || '—'} />
           </Section>
+
+          <Card>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardTitle className="text-base">Risk Screening</CardTitle>
+              <StatusBadge value={vendor.sanctionsStatus || 'untested'} />
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                <Field
+                  label="Last Checked"
+                  value={
+                    vendor.sanctionsCheckedAt
+                      ? new Date(vendor.sanctionsCheckedAt).toLocaleString()
+                      : 'Never'
+                  }
+                />
+                <Field label="Note" value={vendor.sanctionsNote || '—'} />
+                <div />
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button variant="outline" onClick={rescreenVendor} disabled={screeningBusy}>
+                  {screeningBusy ? 'Screening...' : 'Screen Against Sanctions Lists'}
+                </Button>
+                <Button asChild variant="ghost">
+                  <Link href="/risk-screening">Open Risk Screening</Link>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
           <Section title="Address">
             <Field label="Street" value={vendor.address?.street || '—'} />
@@ -276,7 +374,9 @@ export default function VendorDetailPage() {
             </CardHeader>
             <CardContent className="p-0">
               {!txns || txns.purchaseOrders.length === 0 ? (
-                <div className="p-8 text-center text-sm text-muted-foreground">No purchase orders.</div>
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  No purchase orders.
+                </div>
               ) : (
                 <Table>
                   <TableHeader>
@@ -291,14 +391,22 @@ export default function VendorDetailPage() {
                     {txns.purchaseOrders.map((po: any) => (
                       <TableRow key={po.id}>
                         <TableCell className="font-medium">
-                          <Link href={`/purchase-orders/${po.id}`} className="text-primary hover:underline">
+                          <Link
+                            href={`/purchase-orders/${po.id}`}
+                            className="text-primary hover:underline"
+                          >
                             {po.number}
                           </Link>
                         </TableCell>
-                        <TableCell className="capitalize text-muted-foreground">{po.status}</TableCell>
+                        <TableCell className="capitalize text-muted-foreground">
+                          {po.status}
+                        </TableCell>
                         <TableCell className="text-muted-foreground">
                           {po.amount != null
-                            ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(po.amount)
+                            ? new Intl.NumberFormat('en-US', {
+                                style: 'currency',
+                                currency: 'USD',
+                              }).format(po.amount)
                             : '—'}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
@@ -314,7 +422,9 @@ export default function VendorDetailPage() {
 
           <Card className="overflow-hidden">
             <CardHeader>
-              <CardTitle className="text-base">Invoices {txns ? `(${txns.invoices.length})` : ''}</CardTitle>
+              <CardTitle className="text-base">
+                Invoices {txns ? `(${txns.invoices.length})` : ''}
+              </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
               {!txns || txns.invoices.length === 0 ? (
@@ -335,18 +445,34 @@ export default function VendorDetailPage() {
                     {txns.invoices.map((invoice: any) => (
                       <TableRow key={invoice.id}>
                         <TableCell className="font-medium">
-                          <Link href={`/invoices/${invoice.id}`} className="text-primary hover:underline">
+                          <Link
+                            href={`/invoices/${invoice.id}`}
+                            className="text-primary hover:underline"
+                          >
                             {invoice.number}
                           </Link>
                         </TableCell>
-                        <TableCell className="text-muted-foreground">{invoice.vendorInvoiceNumber ?? '—'}</TableCell>
-                        <TableCell className="capitalize text-muted-foreground">{invoice.status}</TableCell>
-                        <TableCell className={invoice.matchStatus === 'exception' ? 'text-rose-700' : 'text-muted-foreground'}>
+                        <TableCell className="text-muted-foreground">
+                          {invoice.vendorInvoiceNumber ?? '—'}
+                        </TableCell>
+                        <TableCell className="capitalize text-muted-foreground">
+                          {invoice.status}
+                        </TableCell>
+                        <TableCell
+                          className={
+                            invoice.matchStatus === 'exception'
+                              ? 'text-rose-700'
+                              : 'text-muted-foreground'
+                          }
+                        >
                           {invoice.matchStatus ?? '—'}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           {invoice.amount != null
-                            ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(invoice.amount)
+                            ? new Intl.NumberFormat('en-US', {
+                                style: 'currency',
+                                currency: 'USD',
+                              }).format(invoice.amount)
                             : '—'}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
@@ -372,10 +498,13 @@ export default function VendorDetailPage() {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground">
-                Send a secure, tokenized portal link so the vendor can view purchase orders and submit invoices directly.
+                Send a secure, tokenized portal link so the vendor can view purchase orders and
+                submit invoices directly.
               </p>
               {portalMsg ? (
-                <div className={`mt-4 rounded-xl border px-4 py-3 text-sm ${portalMsg.startsWith('Error') ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+                <div
+                  className={`mt-4 rounded-xl border px-4 py-3 text-sm ${portalMsg.startsWith('Error') ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}
+                >
                   {portalMsg}
                 </div>
               ) : null}
@@ -403,7 +532,8 @@ export default function VendorDetailPage() {
               </p>
               {vendor.punchoutEnabled ? (
                 <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700">
-                  Setup endpoint: <code className="font-mono">POST /api/v1/punchout/vendors/{vendor.id}/setup</code>
+                  Setup endpoint:{' '}
+                  <code className="font-mono">POST /api/v1/punchout/vendors/{vendor.id}/setup</code>
                 </div>
               ) : null}
             </CardContent>
@@ -418,7 +548,11 @@ export default function VendorDetailPage() {
             <CardContent className="grid gap-4 md:grid-cols-2">
               <div className="md:col-span-2">
                 <label className="mb-2 block text-sm font-medium text-foreground">Name *</label>
-                <Input required value={form.name} onChange={(event) => set('name', event.target.value)} />
+                <Input
+                  required
+                  value={form.name}
+                  onChange={(event) => set('name', event.target.value)}
+                />
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-foreground">Code</label>
@@ -429,18 +563,30 @@ export default function VendorDetailPage() {
                 <Input value={form.taxId} onChange={(event) => set('taxId', event.target.value)} />
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-foreground">Payment Terms</label>
-                <Select value={form.paymentTerms} onChange={(event) => set('paymentTerms', event.target.value)} className="w-full">
-                  {['Net 15', 'Net 30', 'Net 45', 'Net 60', 'Due on Receipt', '2/10 Net 30'].map((term) => (
-                    <option key={term} value={term}>
-                      {term}
-                    </option>
-                  ))}
+                <label className="mb-2 block text-sm font-medium text-foreground">
+                  Payment Terms
+                </label>
+                <Select
+                  value={form.paymentTerms}
+                  onChange={(event) => set('paymentTerms', event.target.value)}
+                  className="w-full"
+                >
+                  {['Net 15', 'Net 30', 'Net 45', 'Net 60', 'Due on Receipt', '2/10 Net 30'].map(
+                    (term) => (
+                      <option key={term} value={term}>
+                        {term}
+                      </option>
+                    ),
+                  )}
                 </Select>
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-foreground">Status</label>
-                <Select value={form.status} onChange={(event) => set('status', event.target.value)} className="w-full">
+                <Select
+                  value={form.status}
+                  onChange={(event) => set('status', event.target.value)}
+                  className="w-full"
+                >
                   <option value="active">Active</option>
                   <option value="inactive">Inactive</option>
                   <option value="blocked">Blocked</option>
@@ -455,12 +601,21 @@ export default function VendorDetailPage() {
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
               <div>
-                <label className="mb-2 block text-sm font-medium text-foreground">Contact Name</label>
-                <Input value={form.contactName} onChange={(event) => set('contactName', event.target.value)} />
+                <label className="mb-2 block text-sm font-medium text-foreground">
+                  Contact Name
+                </label>
+                <Input
+                  value={form.contactName}
+                  onChange={(event) => set('contactName', event.target.value)}
+                />
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-foreground">Email</label>
-                <Input type="email" value={form.email} onChange={(event) => set('email', event.target.value)} />
+                <Input
+                  type="email"
+                  value={form.email}
+                  onChange={(event) => set('email', event.target.value)}
+                />
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-foreground">Phone</label>
@@ -476,7 +631,10 @@ export default function VendorDetailPage() {
             <CardContent className="grid gap-4 md:grid-cols-2">
               <div className="md:col-span-2">
                 <label className="mb-2 block text-sm font-medium text-foreground">Street</label>
-                <Input value={form.street} onChange={(event) => set('street', event.target.value)} />
+                <Input
+                  value={form.street}
+                  onChange={(event) => set('street', event.target.value)}
+                />
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-foreground">City</label>
@@ -487,12 +645,20 @@ export default function VendorDetailPage() {
                 <Input value={form.state} onChange={(event) => set('state', event.target.value)} />
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-foreground">Postal Code</label>
-                <Input value={form.postalCode} onChange={(event) => set('postalCode', event.target.value)} />
+                <label className="mb-2 block text-sm font-medium text-foreground">
+                  Postal Code
+                </label>
+                <Input
+                  value={form.postalCode}
+                  onChange={(event) => set('postalCode', event.target.value)}
+                />
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-foreground">Country</label>
-                <Input value={form.country} onChange={(event) => set('country', event.target.value)} />
+                <Input
+                  value={form.country}
+                  onChange={(event) => set('country', event.target.value)}
+                />
               </div>
             </CardContent>
           </Card>
