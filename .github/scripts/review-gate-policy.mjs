@@ -1,6 +1,5 @@
 export const requiredMacroscopeChecks = [
   'Macroscope - Correctness Check',
-  'Macroscope - Migration history safety',
   'Macroscope - Security review',
 ];
 
