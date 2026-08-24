@@ -9,9 +9,15 @@ import type { SettingsService } from '../settings/settings.service';
 import { ApprovalEngineService } from './approval-engine.service';
 
 function createService(
-  ruleSteps: Array<{ stepOrder: number; approverId?: string }> = [],
+  ruleSteps: Array<{
+    stepOrder: number;
+    approverId?: string;
+    approverType?: string;
+    approverRole?: string;
+  }> = [],
   lockedRequest?: Record<string, unknown>,
   requiredApproverIsActive = true,
+  actorRoles: Array<{ role: string; scopeType: string; scopeId: string | null }> = [],
 ) {
   const approvalRequestValues: Array<Record<string, unknown>> = [];
   const approvalActionValues: Array<Record<string, unknown>> = [];
@@ -21,6 +27,9 @@ function createService(
     query: {
       approvalRules: {
         findFirst: async () => (ruleSteps.length > 0 ? { steps: ruleSteps } : null),
+      },
+      users: {
+        findFirst: async () => ({ id: 'role-approver', userRoles: actorRoles }),
       },
     },
     select() {
@@ -261,6 +270,33 @@ describe('ApprovalEngineService required approvals', () => {
       /no assigned approver/,
     );
     assert.equal(approvalActionValues.length, 0);
+  });
+
+  it('authorizes an actor through a global role assignment', async () => {
+    const { approvalActionValues, service } = createService(
+      [{ stepOrder: 4, approverType: 'role', approverRole: 'approver' }],
+      {
+        id: 'approval-request-1',
+        approvableType: 'requisition',
+        approvableId: 'requisition-1',
+        status: 'pending',
+        approvalRuleId: 'rule-1',
+        currentStep: 4,
+      },
+      true,
+      [{ role: 'approver', scopeType: 'global', scopeId: null }],
+    );
+
+    const result = await service.processAction(
+      'approval-request-1',
+      'role-approver',
+      'approve',
+      undefined,
+      'organization-1',
+    );
+
+    assert.deepEqual(result, { status: 'approved' });
+    assert.equal(approvalActionValues.filter((values) => values.action === 'approve').length, 1);
   });
 
   it('finalizes when the assigned owner approves the required step', async () => {

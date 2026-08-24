@@ -399,6 +399,8 @@ export class PurchaseOrdersService {
             and(
               eq(purchaseOrders.id, id),
               eq(purchaseOrders.organizationId, organizationId),
+              eq(purchaseOrders.version, po.version),
+              eq(purchaseOrders.totalAmount, po.totalAmount),
               inArray(purchaseOrders.status, ['draft', 'approved']),
             ),
           )
@@ -451,6 +453,8 @@ export class PurchaseOrdersService {
               and(
                 eq(purchaseOrders.id, id),
                 eq(purchaseOrders.organizationId, organizationId),
+                eq(purchaseOrders.version, po.version),
+                eq(purchaseOrders.totalAmount, po.totalAmount),
                 inArray(purchaseOrders.status, ['draft', 'approved']),
               ),
             )

@@ -366,6 +366,104 @@ export class ApprovalEngineService {
     return transaction ? run(transaction) : this.db.transaction(run);
   }
 
+  private async getApprovalScope(
+    tx: DbTransaction,
+    approvalReq: typeof approvalRequests.$inferSelect,
+  ): Promise<{ departmentId: string | null; projectId: string | null; entityId: string | null }> {
+    if (approvalReq.approvableType === 'requisition') {
+      const requisition = await tx.query.requisitions.findFirst({
+        where: (record, { eq }) => eq(record.id, approvalReq.approvableId),
+      });
+      return {
+        departmentId: requisition?.departmentId ?? null,
+        projectId: requisition?.projectId ?? null,
+        entityId: null,
+      };
+    }
+
+    const purchaseOrder = await tx.query.purchaseOrders.findFirst({
+      where: (record, { eq }) => eq(record.id, approvalReq.approvableId),
+    });
+    const requisition = purchaseOrder?.requisitionId
+      ? await tx.query.requisitions.findFirst({
+          where: (record, { eq }) => eq(record.id, purchaseOrder.requisitionId!),
+        })
+      : null;
+    return {
+      departmentId: requisition?.departmentId ?? null,
+      projectId: requisition?.projectId ?? null,
+      entityId: purchaseOrder?.entityId ?? null,
+    };
+  }
+
+  private async assertDynamicRuleApprover(
+    tx: DbTransaction,
+    approvalReq: typeof approvalRequests.$inferSelect,
+    step: typeof approvalRuleSteps.$inferSelect,
+    actorId: string,
+    organizationId?: string,
+  ): Promise<void> {
+    if (!organizationId) {
+      throw new BadRequestException('The current approval step has no assigned approver');
+    }
+    const actor = await tx.query.users.findFirst({
+      where: (record, { and, eq }) =>
+        and(
+          eq(record.id, actorId),
+          eq(record.organizationId, organizationId),
+          eq(record.isActive, true),
+        ),
+      with: { userRoles: true },
+    });
+    if (!actor) throw new ForbiddenException('The current approval step is assigned elsewhere');
+
+    if (step.approverType === 'budget_owner') {
+      const scope = await this.getApprovalScope(tx, approvalReq);
+      const department = scope.departmentId
+        ? await tx.query.departments.findFirst({
+            where: (record, { and, eq }) =>
+              and(eq(record.id, scope.departmentId!), eq(record.organizationId, organizationId)),
+          })
+        : null;
+      if (!department?.budgetOwnerId) {
+        throw new BadRequestException('The current approval step has no assigned approver');
+      }
+      if (department.budgetOwnerId === actorId) return;
+      const delegatee = this.delegations
+        ? await this.delegations.getActiveDelegatee(organizationId, department.budgetOwnerId, tx)
+        : null;
+      if (delegatee === actorId) return;
+      throw new ForbiddenException('The current approval step is assigned elsewhere');
+    }
+
+    const matchingRole =
+      step.approverType === 'role'
+        ? step.approverRole
+        : step.approverType === 'department_head'
+          ? 'approver'
+          : null;
+    if (!matchingRole) {
+      throw new BadRequestException('The current approval step has no assigned approver');
+    }
+    const roleAssignments = actor.userRoles.filter(
+      (assignment) => assignment.role === matchingRole,
+    );
+    if (roleAssignments.some((assignment) => assignment.scopeType === 'global')) return;
+
+    const scope = await this.getApprovalScope(tx, approvalReq);
+    const authorized = roleAssignments.some((assignment) => {
+      if (step.approverType === 'department_head') {
+        return assignment.scopeType === 'department' && assignment.scopeId === scope.departmentId;
+      }
+      if (assignment.scopeType === 'department') return assignment.scopeId === scope.departmentId;
+      if (assignment.scopeType === 'project') return assignment.scopeId === scope.projectId;
+      if (assignment.scopeType === 'entity') return assignment.scopeId === scope.entityId;
+      return false;
+    });
+    if (!authorized)
+      throw new ForbiddenException('The current approval step is assigned elsewhere');
+  }
+
   async hasCompletedRequiredApproval(
     entityType: 'requisition' | 'purchase_order',
     entityId: string,
@@ -596,9 +694,14 @@ export class ApprovalEngineService {
         throw new BadRequestException('The current approval step is no longer configured');
       }
       if (currentRuleStep && !currentRuleStep.approverId) {
-        throw new BadRequestException('The current approval step has no assigned approver');
-      }
-      if (currentRuleStep?.approverId && currentRuleStep.approverId !== actorId) {
+        await this.assertDynamicRuleApprover(
+          tx,
+          approvalReq,
+          currentRuleStep,
+          actorId,
+          organizationId,
+        );
+      } else if (currentRuleStep?.approverId && currentRuleStep.approverId !== actorId) {
         const delegatee =
           this.delegations && organizationId
             ? await this.delegations.getActiveDelegatee(
