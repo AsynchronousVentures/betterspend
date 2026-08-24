@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { sanctionsEntries, sanctionsScreenings, vendors } from '@betterspend/db';
+import { sanctionsImportRowSchema } from '@betterspend/shared';
 import { AuditService } from '../audit/audit.service';
 import { SettingsService } from '../settings/settings.service';
 
@@ -115,7 +116,12 @@ export class RiskScreeningService {
     const entries = await this.loadEntries();
     let flagged = 0;
     for (const vendor of orgVendors) {
-      const result = await this.screenVendorWithEntries(organizationId, vendor.id, screenedBy, entries);
+      const result = await this.screenVendorWithEntries(
+        organizationId,
+        vendor.id,
+        screenedBy,
+        entries,
+      );
       if (result.status === 'flagged') flagged += 1;
     }
     return { screened: orgVendors.length, flagged };
@@ -140,14 +146,15 @@ export class RiskScreeningService {
       // Matching depends only on the vendor's name, which is immutable here;
       // the status decision always uses the locked row.
       const manuallyReviewed = vendor.sanctionsStatus === 'manually_reviewed';
-      const vendorMatches = manuallyReviewed ? null : await this.matchVendorName(vendor.name, entries);
-      const nextStatus = manuallyReviewed ? 'manually_reviewed' : vendorMatches!.length > 0 ? 'flagged' : 'clear';
+      const vendorMatches = await this.matchVendorName(vendor.name, entries);
+      const nextStatus =
+        vendorMatches.length > 0 ? 'flagged' : manuallyReviewed ? 'manually_reviewed' : 'clear';
 
       await tx.insert(sanctionsScreenings).values({
         organizationId,
         vendorId,
-        result: vendorMatches && vendorMatches.length > 0 ? 'flagged' : 'clear',
-        matchCount: vendorMatches ?? [],
+        result: vendorMatches.length > 0 ? 'flagged' : 'clear',
+        matchCount: vendorMatches,
         screenedBy: screenedBy ?? null,
       });
 
@@ -156,8 +163,7 @@ export class RiskScreeningService {
         .set({
           sanctionsStatus: nextStatus,
           sanctionsCheckedAt: new Date(),
-          sanctionsNote:
-            nextStatus === 'manually_reviewed' ? (vendor.sanctionsNote ?? null) : null,
+          sanctionsNote: nextStatus === 'manually_reviewed' ? (vendor.sanctionsNote ?? null) : null,
           updatedAt: new Date(),
         })
         .where(eq(vendors.id, vendorId));
@@ -167,13 +173,15 @@ export class RiskScreeningService {
       void this.audit
         .log(organizationId, screenedBy ?? null, 'vendor', vendorId, 'sanctions_screening', {
           result: nextStatus,
-          matchCount: vendorMatches?.length ?? 0,
+          matchCount: vendorMatches.length,
         })
         .catch((error: unknown) =>
-          this.logger.warn(`Audit log failed for ${vendorId} screening: ${error instanceof Error ? error.message : error}`),
+          this.logger.warn(
+            `Audit log failed for ${vendorId} screening: ${error instanceof Error ? error.message : error}`,
+          ),
         );
 
-      return { vendorId, status: nextStatus, matches: vendorMatches ?? [] };
+      return { vendorId, status: nextStatus, matches: vendorMatches };
     });
   }
 
@@ -229,7 +237,10 @@ export class RiskScreeningService {
    * POs for flagged vendors; returns a warning string when flagged but only
    * warning-level enforcement is set.
    */
-  async checkVendorForPo(organizationId: string, vendor: { id: string; name: string; sanctionsStatus?: string | null }): Promise<string | null> {
+  async checkVendorForPo(
+    organizationId: string,
+    vendor: { id: string; name: string; sanctionsStatus?: string | null },
+  ): Promise<string | null> {
     const [current] = await this.db
       .select({ sanctionsStatus: vendors.sanctionsStatus })
       .from(vendors)
@@ -337,25 +348,39 @@ function levenshteinDistance(a: string, b: string): number {
  * that fail are counted and reported so silent data loss is visible.
  */
 function parseSdnCsv(csv: string): {
-  entries: Array<{ externalId: string | null; entityName: string; entryType: string | null; raw: Record<string, unknown> }>;
+  entries: Array<{
+    externalId: string | null;
+    entityName: string;
+    entryType: string | null;
+    raw: Record<string, unknown>;
+  }>;
   skipped: number;
 } {
   const lines = csv.split(/\r?\n/).filter((line) => line.trim().length > 0);
-  const entries: Array<{ externalId: string | null; entityName: string; entryType: string | null; raw: Record<string, unknown> }> = [];
+  const entries: Array<{
+    externalId: string | null;
+    entityName: string;
+    entryType: string | null;
+    raw: Record<string, unknown>;
+  }> = [];
   let skipped = 0;
   for (const line of lines) {
     const cells = splitCsvLine(line);
     const candidate = cells[1]?.trim() ?? '';
     // Header row or malformed line: names are non-empty alphabetic-ish values
     // and never the literal header token.
-    const looksLikeName = candidate.length > 1 && /[A-Za-z\u00C0-\u024F]/.test(candidate) && !/^sdn_name$/i.test(candidate);
-    if (cells.length >= 2 && looksLikeName) {
-      entries.push({
-        externalId: cells[0] || null,
-        entityName: candidate.slice(0, 500),
-        entryType: cells[2] ?? null,
-        raw: { cells },
-      });
+    const looksLikeName =
+      candidate.length > 1 &&
+      /[A-Za-z\u00C0-\u024F]/.test(candidate) &&
+      !/^sdn_name$/i.test(candidate);
+    const parsed = sanctionsImportRowSchema.safeParse({
+      externalId: cells[0] || null,
+      entityName: candidate.slice(0, 500),
+      entryType: cells[2] ?? null,
+      raw: { cells },
+    });
+    if (cells.length >= 2 && looksLikeName && parsed.success) {
+      entries.push(parsed.data);
     } else {
       skipped += 1;
     }

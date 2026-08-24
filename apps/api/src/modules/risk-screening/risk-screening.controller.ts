@@ -1,5 +1,15 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Req, UnauthorizedException } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Req,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { manualSanctionsReviewSchema, sanctionsIngestRequestSchema } from '@betterspend/shared';
 import type { Request } from 'express';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RiskScreeningService } from './risk-screening.service';
@@ -31,10 +41,7 @@ export class RiskScreeningController {
   @Post('vendors/:vendorId/screen')
   @Roles('admin', 'approver', 'finance')
   @ApiOperation({ summary: 'Re-screen a single vendor against sanctions entries' })
-  screenVendor(
-    @Param('vendorId', ParseUUIDPipe) vendorId: string,
-    @Req() req: Request,
-  ) {
+  screenVendor(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Req() req: Request) {
     const { organizationId, userId } = this.requireSession(req);
     return this.riskScreeningService.screenVendor(organizationId, vendorId, userId);
   }
@@ -52,23 +59,22 @@ export class RiskScreeningController {
   @ApiOperation({ summary: 'Record a manual review decision for a flagged vendor' })
   manualReview(
     @Param('vendorId', ParseUUIDPipe) vendorId: string,
-    @Body() body: { note?: string },
+    @Body() body: unknown,
     @Req() req: Request,
   ) {
     const { organizationId, userId } = this.requireSession(req);
-    return this.riskScreeningService.manualReview(organizationId, vendorId, userId, String(body?.note ?? ''));
+    const { note } = manualSanctionsReviewSchema.parse(body);
+    return this.riskScreeningService.manualReview(organizationId, vendorId, userId, note);
   }
 
   @Post('ingest')
   @Roles('admin')
   @ApiOperation({ summary: 'Download and replace the local sanctions list for a source' })
-  ingest(
-    @Body() body: { source?: string },
-    @Req() req: Request,
-  ) {
+  ingest(@Body() body: unknown, @Req() req: Request) {
     // URLs are server-controlled per source; request bodies cannot point the
     // fetch at arbitrary hosts.
     const { organizationId, userId } = this.requireSession(req);
-    return this.riskScreeningService.ingest(organizationId, userId, body?.source ?? 'ofac_sdn');
+    const { source = 'ofac_sdn' } = sanctionsIngestRequestSchema.parse(body);
+    return this.riskScreeningService.ingest(organizationId, userId, source);
   }
 }
