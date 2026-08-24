@@ -277,13 +277,15 @@ export function isEncryptedPdf(content: Buffer): boolean {
 
   for (const trailer of trailerMarkers) {
     const dictionary = pdfDictionaryAt(tail, tail.indexOf('<<', trailer.index));
-    if (dictionary) structuralDictionaries.push(dictionary);
+    if (!dictionary) return true;
+    structuralDictionaries.push(dictionary);
   }
 
   for (const xrefMarker of xrefMarkers) {
     const dictionaryStart = pdfEnclosingDictionaryStart(tail, xrefMarker.index!);
     const dictionary = pdfDictionaryAt(tail, dictionaryStart);
-    if (dictionary) structuralDictionaries.push(dictionary);
+    if (!dictionary) return true;
+    structuralDictionaries.push(dictionary);
   }
 
   return structuralDictionaries.some((dictionary) =>
