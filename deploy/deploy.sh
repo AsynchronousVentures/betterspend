@@ -3,7 +3,9 @@ set -euo pipefail
 
 DEPLOY_DIR="${BETTERSPEND_DEPLOY_DIR:-/opt/betterspend}"
 ENV_FILE="${ENV_FILE:-.env.production}"
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
+PRODUCTION_ENV_FILE="${PRODUCTION_ENV_FILE:-$ENV_FILE}"
+COMPOSE_BASE_FILE="${COMPOSE_BASE_FILE:-compose.yaml}"
+COMPOSE_PROD_FILE="${COMPOSE_PROD_FILE:-compose.prod.yaml}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-betterspend}"
 IMAGE_TAG="${1:-${IMAGE_TAG:-}}"
 
@@ -19,14 +21,14 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-export COMPOSE_PROJECT_NAME IMAGE_TAG
+export COMPOSE_PROJECT_NAME IMAGE_TAG PRODUCTION_ENV_FILE
 
 compose() {
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_BASE_FILE" -f "$COMPOSE_PROD_FILE" "$@"
 }
 
 compose_with_migrate_profile() {
-  docker compose --profile migrate --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  docker compose --profile migrate --env-file "$ENV_FILE" -f "$COMPOSE_BASE_FILE" -f "$COMPOSE_PROD_FILE" "$@"
 }
 
 echo "Pulling BetterSpend images for $IMAGE_TAG..."

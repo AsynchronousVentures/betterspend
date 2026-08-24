@@ -125,8 +125,10 @@ betterspend/
 │   ├── ui/                Shared React component library
 │   └── config/            Shared ESLint, TS, Tailwind configs
 ├── docker/                App and migrator Dockerfiles
-├── deploy/                Production Compose, Caddy, deploy scripts
-├── docker-compose.yml
+├── deploy/                Caddy and production deployment scripts
+├── compose.yaml           Shared infrastructure
+├── compose.override.yaml  Local development configuration
+├── compose.prod.yaml      Production configuration
 └── turbo.json
 ```
 
