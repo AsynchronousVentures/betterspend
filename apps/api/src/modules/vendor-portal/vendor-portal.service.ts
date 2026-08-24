@@ -12,6 +12,7 @@ import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import {
   vendorPortalTokens,
+  vendorPortalSessions,
   vendors,
   purchaseOrders,
   invoices,
@@ -25,6 +26,7 @@ import { SequenceService } from '../../common/services/sequence.service';
 import { MatchingService } from '../invoices/matching.service';
 import { VendorsService } from '../vendors/vendors.service';
 import { CatalogService } from '../catalog/catalog.service';
+import { hashPortalSessionToken, PORTAL_SESSION_TTL_MS } from './vendor-portal-session';
 
 export interface SubmitInvoiceInput {
   purchaseOrderId: string;
@@ -88,9 +90,7 @@ export class VendorPortalService {
 
     const vendorEmail = (vendor.contactInfo as any)?.email;
     if (!vendorEmail) {
-      this.logger.warn(
-        `Vendor ${vendorId} has no contact email; access link generated: ${portalLink}`,
-      );
+      this.logger.warn(`Vendor ${vendorId} has no contact email; portal access link was not sent`);
       return { success: true };
     }
 
@@ -125,24 +125,80 @@ export class VendorPortalService {
         })
         .catch((err) => this.logger.error(`Failed to send vendor portal email: ${err}`));
     } else {
-      this.logger.log(`Vendor portal link for ${vendor.name} (${vendorEmail}): ${portalLink}`);
+      this.logger.warn(
+        `SMTP is not configured; vendor portal access link for vendor ${vendorId} was not sent`,
+      );
     }
 
     return { success: true };
   }
 
-  async validateTokenContext(token: string): Promise<{ vendorId: string; organizationId: string }> {
-    const record = await this.db.query.vendorPortalTokens.findFirst({
-      where: (t, { and, eq, gt }) =>
-        and(eq(t.token, token), eq(t.used, false), gt(t.expiresAt, new Date())),
+  async exchangeLinkToken(token: string): Promise<{ sessionToken: string; expiresAt: Date }> {
+    if (!token) throw new UnauthorizedException('Portal link token is required');
+
+    const now = new Date();
+    const sessionToken = randomBytes(32).toString('hex');
+    const expiresAt = new Date(now.getTime() + PORTAL_SESSION_TTL_MS);
+
+    return this.db.transaction(async (tx) => {
+      const record = await tx.query.vendorPortalTokens.findFirst({
+        where: (t, { and, eq, gt }) =>
+          and(eq(t.token, token), eq(t.used, false), gt(t.expiresAt, now)),
+      });
+      if (!record) throw new UnauthorizedException('Invalid or expired portal link');
+
+      const consumed = await tx
+        .update(vendorPortalTokens)
+        .set({ used: true })
+        .where(
+          and(
+            eq(vendorPortalTokens.id, record.id),
+            eq(vendorPortalTokens.used, false),
+            gt(vendorPortalTokens.expiresAt, now),
+          ),
+        )
+        .returning({ id: vendorPortalTokens.id });
+      if (consumed.length !== 1) {
+        throw new UnauthorizedException('Invalid or expired portal link');
+      }
+
+      await tx.insert(vendorPortalSessions).values({
+        vendorId: record.vendorId,
+        tokenHash: hashPortalSessionToken(sessionToken),
+        expiresAt,
+      });
+
+      return { sessionToken, expiresAt };
     });
-    if (!record) throw new UnauthorizedException('Invalid or expired portal token');
+  }
+
+  async validateSessionContext(
+    sessionToken: string,
+  ): Promise<{ vendorId: string; organizationId: string }> {
+    if (!sessionToken) throw new UnauthorizedException('Vendor portal session is required');
+
+    const record = await this.db.query.vendorPortalSessions.findFirst({
+      where: (session, { eq }) => eq(session.tokenHash, hashPortalSessionToken(sessionToken)),
+    });
+    if (!record || record.revokedAt || record.expiresAt <= new Date()) {
+      throw new UnauthorizedException('Invalid or expired vendor portal session');
+    }
+
     const vendor = await this.db.query.vendors.findFirst({
       where: (v, { eq }) => eq(v.id, record.vendorId),
       columns: { organizationId: true },
     });
-    if (!vendor) throw new UnauthorizedException('Invalid portal token vendor');
+    if (!vendor) throw new UnauthorizedException('Invalid vendor portal session');
     return { vendorId: record.vendorId, organizationId: vendor.organizationId };
+  }
+
+  async revokeSession(sessionToken: string): Promise<void> {
+    if (!sessionToken) return;
+
+    await this.db
+      .update(vendorPortalSessions)
+      .set({ revokedAt: new Date() })
+      .where(eq(vendorPortalSessions.tokenHash, hashPortalSessionToken(sessionToken)));
   }
 
   async getVendorDashboard(vendorId: string, orgId: string) {

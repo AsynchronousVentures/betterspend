@@ -2,6 +2,7 @@ import postgres from 'postgres';
 
 const EXPECTED_TABLES = [
   'vendor_portal_tokens',
+  'vendor_portal_sessions',
   'notifications',
   'integration_connections',
   'sync_records',
@@ -11,6 +12,13 @@ const EXPECTED_FOREIGN_KEYS = [
   {
     name: 'vendor_portal_tokens_vendor_id_vendors_id_fk',
     child: 'vendor_portal_tokens',
+    parent: 'vendors',
+    childColumns: ['vendor_id'],
+    parentColumns: ['id'],
+  },
+  {
+    name: 'vendor_portal_sessions_vendor_id_vendors_id_fk',
+    child: 'vendor_portal_sessions',
     parent: 'vendors',
     childColumns: ['vendor_id'],
     parentColumns: ['id'],

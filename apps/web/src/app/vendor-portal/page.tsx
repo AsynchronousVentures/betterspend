@@ -6,6 +6,7 @@ import {
   type FormEvent,
   type ReactNode,
   useEffect,
+  useRef,
   useState,
 } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -219,12 +220,10 @@ function Field({ label, children, hint }: { label: string; children: ReactNode; 
 }
 
 function SubmitInvoiceModal({
-  token,
   purchaseOrders,
   onClose,
   onSuccess,
 }: {
-  token: string;
   purchaseOrders: any[];
   onClose: () => void;
   onSuccess: () => void;
@@ -286,7 +285,7 @@ function SubmitInvoiceModal({
     setSubmitting(true);
     setError('');
     try {
-      await api.vendorPortal.submitInvoice(token, {
+      await api.vendorPortal.submitInvoice({
         purchaseOrderId: selectedPoId,
         invoiceNumber: invoiceNumber.trim(),
         invoiceDate,
@@ -489,9 +488,9 @@ function SubmitInvoiceModal({
 
 function VendorPortalContent() {
   const searchParams = useSearchParams();
-  const token = searchParams.get('token') ?? '';
+  const linkToken = searchParams.get('token') ?? '';
 
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [data, setData] = useState<VendorPortalData | null>(null);
   const [activeTab, setActiveTab] = useState<PortalTab>('overview');
@@ -516,42 +515,70 @@ function VendorPortalContent() {
   const [proposalSaving, setProposalSaving] = useState(false);
   const [bulkUploadMessage, setBulkUploadMessage] = useState('');
   const [messagePoId, setMessagePoId] = useState('');
+  const initializationRef = useRef<{
+    linkToken: string;
+    promise: Promise<[VendorPortalData, any, any]>;
+  } | null>(null);
 
   useEffect(() => {
-    if (!token) return;
-    setLoading(true);
-    api.vendorPortal
-      .dashboard(token)
-      .then((result) => setData(result as VendorPortalData))
-      .catch((dashboardError) => setError(dashboardError.message || 'Failed to load portal data.'))
-      .finally(() => setLoading(false));
+    let cancelled = false;
 
-    api.vendorPortal
-      .catalog(token)
-      .then(setCatalogData)
-      .catch(() => {});
-    api.vendorPortal
-      .onboarding(token)
-      .then((result) => {
-        setOnboardingData(result);
-        if (result?.latestSubmission) {
+    if (!initializationRef.current || initializationRef.current.linkToken !== linkToken) {
+      initializationRef.current = {
+        linkToken,
+        promise: (async () => {
+          if (linkToken) {
+            window.history.replaceState(null, '', window.location.pathname);
+            await api.vendorPortal.exchangeSession(linkToken);
+          }
+
+          return Promise.all([
+            api.vendorPortal.dashboard(),
+            api.vendorPortal.catalog(),
+            api.vendorPortal.onboarding(),
+          ]) as Promise<[VendorPortalData, any, any]>;
+        })(),
+      };
+    }
+
+    setLoading(true);
+    setError('');
+    initializationRef.current.promise
+      .then(([dashboard, catalog, onboarding]) => {
+        if (cancelled) return;
+
+        setData(dashboard);
+        setCatalogData(catalog);
+        setOnboardingData(onboarding);
+        if (onboarding?.latestSubmission) {
           setOnboardingForm({
-            companyInfo: result.latestSubmission.companyInfo ?? { legalName: '', taxId: '' },
-            responses: result.latestSubmission.responses ?? {},
-            documentLinks: result.latestSubmission.documentLinks ?? {
+            companyInfo: onboarding.latestSubmission.companyInfo ?? { legalName: '', taxId: '' },
+            responses: onboarding.latestSubmission.responses ?? {},
+            documentLinks: onboarding.latestSubmission.documentLinks ?? {
               w9: '',
               coi: '',
               banking: '',
             },
-            bankingDetails: result.latestSubmission.bankingDetails ?? {
+            bankingDetails: onboarding.latestSubmission.bankingDetails ?? {
               accountName: '',
               lastFour: '',
             },
           });
         }
       })
-      .catch(() => {});
-  }, [token, submitSuccess]);
+      .catch((sessionError: any) => {
+        if (!cancelled) {
+          setError(sessionError.message || 'Failed to load portal data.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [linkToken]);
 
   useEffect(() => {
     const pos = data?.purchaseOrders ?? [];
@@ -563,26 +590,15 @@ function VendorPortalContent() {
   }, [data, messagePoId]);
 
   async function reloadDashboard() {
-    if (!token) return;
     setLoading(true);
     try {
-      const result = await api.vendorPortal.dashboard(token);
+      const result = await api.vendorPortal.dashboard();
       setData(result as VendorPortalData);
     } catch (dashboardError: any) {
       setError(dashboardError.message || 'Failed to load portal data.');
     } finally {
       setLoading(false);
     }
-  }
-
-  if (!token) {
-    return (
-      <EmptyPortalState
-        icon={<ShieldCheck className="h-10 w-10" />}
-        title="Vendor Portal Access Required"
-        description="Use the secure access link sent by your buyer. If your link expired, contact the buyer and request a fresh portal token."
-      />
-    );
   }
 
   if (loading) {
@@ -628,7 +644,7 @@ function VendorPortalContent() {
     setError('');
     setBulkUploadMessage('');
     try {
-      await api.vendorPortal.submitPriceProposal(token, {
+      await api.vendorPortal.submitPriceProposal({
         itemId: proposalForm.itemId,
         proposedPrice: parseFloat(proposalForm.proposedPrice),
         effectiveDate: proposalForm.effectiveDate
@@ -637,7 +653,7 @@ function VendorPortalContent() {
         note: proposalForm.note || undefined,
       });
       setProposalForm({ itemId: '', proposedPrice: '', effectiveDate: '', note: '' });
-      setCatalogData(await api.vendorPortal.catalog(token));
+      setCatalogData(await api.vendorPortal.catalog());
     } catch (proposalError: any) {
       setError(proposalError.message || 'Failed to submit price proposal.');
     } finally {
@@ -683,8 +699,8 @@ function VendorPortalContent() {
         };
       });
 
-      const result = await api.vendorPortal.submitBulkPriceProposals(token, rows);
-      setCatalogData(await api.vendorPortal.catalog(token));
+      const result = await api.vendorPortal.submitBulkPriceProposals(rows);
+      setCatalogData(await api.vendorPortal.catalog());
       setBulkUploadMessage(
         `${result.createdCount} proposal(s) created, ${result.errorCount} error(s).`,
       );
@@ -697,12 +713,12 @@ function VendorPortalContent() {
   }
 
   async function saveOnboarding(submit: boolean) {
-    if (!token || !onboardingData?.questionnaire) return;
+    if (!onboardingData?.questionnaire) return;
     setOnboardingSaving(true);
     setOnboardingMessage('');
     setError('');
     try {
-      await api.vendorPortal.submitOnboarding(token, {
+      await api.vendorPortal.submitOnboarding({
         questionnaireId: onboardingData.questionnaire.id,
         companyInfo: onboardingForm.companyInfo,
         responses: onboardingForm.responses,
@@ -710,7 +726,7 @@ function VendorPortalContent() {
         bankingDetails: onboardingForm.bankingDetails,
         submit,
       });
-      const refreshed = await api.vendorPortal.onboarding(token);
+      const refreshed = await api.vendorPortal.onboarding();
       setOnboardingData(refreshed);
       setOnboardingMessage(submit ? 'Onboarding submitted for buyer review.' : 'Draft saved.');
     } catch (saveError: any) {
@@ -893,7 +909,7 @@ function VendorPortalContent() {
                     ))}
                   </Select>
                   {messagePoId ? (
-                    <MessageThread threadType="po" threadId={messagePoId} portalToken={token} />
+                    <MessageThread threadType="po" threadId={messagePoId} portal />
                   ) : null}
                 </>
               )}
@@ -1379,7 +1395,6 @@ function VendorPortalContent() {
 
       {showInvoiceModal ? (
         <SubmitInvoiceModal
-          token={token}
           purchaseOrders={purchaseOrders}
           onClose={() => setShowInvoiceModal(false)}
           onSuccess={() => {

@@ -16,18 +16,18 @@ interface Message {
 
 /**
  * Append-only conversation attached to a procurement record. Buyers post
- * through the authenticated API; the vendor portal posts through its token.
+ * through the authenticated API; the vendor portal uses its scoped session.
  * Polls lightly so replies from the other side show up without a refresh.
  */
 export function MessageThread({
   threadType,
   threadId,
-  portalToken,
+  portal = false,
   recipientVendorId,
 }: {
   threadType: MessageThreadType;
   threadId: string;
-  portalToken?: string;
+  portal?: boolean;
   recipientVendorId?: string;
 }) {
   const [messages, setMessages] = useState<Message[] | null>(null);
@@ -36,21 +36,21 @@ export function MessageThread({
   const [error, setError] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const loadVersion = useRef(0);
-  const threadKey = `${portalToken ?? 'buyer'}:${threadType}:${threadId}:${recipientVendorId ?? 'broadcast'}`;
+  const threadKey = `${portal ? 'portal' : 'buyer'}:${threadType}:${threadId}:${recipientVendorId ?? 'broadcast'}`;
   const activeThreadKey = useRef(threadKey);
   activeThreadKey.current = threadKey;
 
   const load = useCallback(async () => {
     const version = ++loadVersion.current;
     try {
-      const data = portalToken
-        ? await api.vendorPortal.listMessages(portalToken, threadType, threadId)
+      const data = portal
+        ? await api.vendorPortal.listMessages(threadType, threadId)
         : await api.messages.list(threadType, threadId);
       if (version === loadVersion.current) setMessages(data);
     } catch {
       if (version === loadVersion.current) setError('Failed to load messages.');
     }
-  }, [portalToken, threadType, threadId]);
+  }, [portal, threadType, threadId]);
 
   useEffect(() => {
     // Drop the previous conversation immediately so a slow or failed request
@@ -75,8 +75,8 @@ export function MessageThread({
     setSending(true);
     setError('');
     try {
-      if (portalToken) {
-        await api.vendorPortal.postMessage(portalToken, threadType, threadId, body);
+      if (portal) {
+        await api.vendorPortal.postMessage(threadType, threadId, body);
       } else {
         await api.messages.post(threadType, threadId, body, recipientVendorId);
       }
@@ -136,7 +136,7 @@ export function MessageThread({
         <Textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder={portalToken ? 'Reply to the buyer...' : 'Message the supplier...'}
+          placeholder={portal ? 'Reply to the buyer...' : 'Message the supplier...'}
           rows={3}
         />
         <div className="flex justify-end">

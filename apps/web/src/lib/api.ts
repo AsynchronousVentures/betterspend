@@ -97,6 +97,25 @@ async function apiFetchForm<T>(path: string, options?: RequestInit): Promise<T> 
   return res.json();
 }
 
+async function vendorPortalFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}/api/v1${path}`, {
+    ...options,
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...options?.headers,
+    },
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ message: 'Request failed' }));
+    throw new Error(error.message || `HTTP ${res.status}`);
+  }
+
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
 export type AiProviderId = 'anthropic' | 'openai' | 'openrouter';
 
 export interface AiProviderStatus {
@@ -857,33 +876,36 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ vendorId }),
       }),
-    dashboard: (token: string) =>
-      apiFetch<any>(`/vendor-portal/dashboard?token=${encodeURIComponent(token)}`),
-    getPo: (poId: string, token: string) =>
-      apiFetch<any>(`/vendor-portal/po/${poId}?token=${encodeURIComponent(token)}`),
-    submitInvoice: (token: string, data: any) =>
-      apiFetch<any>(`/vendor-portal/invoice?token=${encodeURIComponent(token)}`, {
+    exchangeSession: (token: string) =>
+      vendorPortalFetch<{ success: boolean }>('/vendor-portal/session', {
+        method: 'POST',
+        body: JSON.stringify({ token }),
+      }),
+    revokeSession: () =>
+      vendorPortalFetch<{ success: boolean }>('/vendor-portal/session/revoke', {
+        method: 'POST',
+      }),
+    dashboard: () => vendorPortalFetch<any>('/vendor-portal/dashboard'),
+    getPo: (poId: string) => vendorPortalFetch<any>(`/vendor-portal/po/${poId}`),
+    submitInvoice: (data: any) =>
+      vendorPortalFetch<any>('/vendor-portal/invoice', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    listInvoices: (token: string) =>
-      apiFetch<any[]>(`/vendor-portal/invoices?token=${encodeURIComponent(token)}`),
-    catalog: (token: string) =>
-      apiFetch<any>(`/vendor-portal/catalog?token=${encodeURIComponent(token)}`),
-    onboarding: (token: string) =>
-      apiFetch<any>(`/vendor-portal/onboarding?token=${encodeURIComponent(token)}`),
-    submitOnboarding: (token: string, data: unknown) =>
-      apiFetch<any>(`/vendor-portal/onboarding?token=${encodeURIComponent(token)}`, {
+    listInvoices: () => vendorPortalFetch<any[]>('/vendor-portal/invoices'),
+    catalog: () => vendorPortalFetch<any>('/vendor-portal/catalog'),
+    onboarding: () => vendorPortalFetch<any>('/vendor-portal/onboarding'),
+    submitOnboarding: (data: unknown) =>
+      vendorPortalFetch<any>('/vendor-portal/onboarding', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    submitPriceProposal: (token: string, data: any) =>
-      apiFetch<any>(`/vendor-portal/catalog/price-proposals?token=${encodeURIComponent(token)}`, {
+    submitPriceProposal: (data: any) =>
+      vendorPortalFetch<any>('/vendor-portal/catalog/price-proposals', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
     submitBulkPriceProposals: (
-      token: string,
       rows: Array<{
         itemId?: string;
         sku?: string;
@@ -892,22 +914,19 @@ export const api = {
         note?: string;
       }>,
     ) =>
-      apiFetch<any>(
-        `/vendor-portal/catalog/price-proposals/bulk?token=${encodeURIComponent(token)}`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ rows }),
-        },
+      vendorPortalFetch<any>('/vendor-portal/catalog/price-proposals/bulk', {
+        method: 'POST',
+        body: JSON.stringify({ rows }),
+      }),
+    listMessages: (threadType: MessageThreadType, threadId: string) =>
+      vendorPortalFetch<unknown>(`/vendor-portal/messages/${threadType}/${threadId}`).then(
+        (value) => messageSchema.array().parse(value),
       ),
-    listMessages: (token: string, threadType: MessageThreadType, threadId: string) =>
-      apiFetch<unknown>(
-        `/vendor-portal/messages/${threadType}/${threadId}?token=${encodeURIComponent(token)}`,
-      ).then((value) => messageSchema.array().parse(value)),
-    postMessage: (token: string, threadType: MessageThreadType, threadId: string, body: string) =>
-      apiFetch<unknown>(
-        `/vendor-portal/messages/${threadType}/${threadId}?token=${encodeURIComponent(token)}`,
-        { method: 'POST', body: JSON.stringify({ body }) },
-      ).then((value) => messageSchema.parse(value)),
+    postMessage: (threadType: MessageThreadType, threadId: string, body: string) =>
+      vendorPortalFetch<unknown>(`/vendor-portal/messages/${threadType}/${threadId}`, {
+        method: 'POST',
+        body: JSON.stringify({ body }),
+      }).then((value) => messageSchema.parse(value)),
   },
   riskScreening: {
     list: () =>
