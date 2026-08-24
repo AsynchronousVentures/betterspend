@@ -23,6 +23,7 @@ const EXPECTED_COLUMNS = [
 const EXPECTED_TRIGGERS = [
   'workflow_definition_versions_immutable',
   'workflow_definitions_published_version_owner',
+  'email_intake_messages_append_only',
 ] as const;
 
 const EXPECTED_FOREIGN_KEYS = [
