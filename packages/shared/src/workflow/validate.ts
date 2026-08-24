@@ -170,7 +170,7 @@ function findCyclePaths(nodeIds: string[], outgoing: Map<string, string[]>): str
 
 function topologicalSort(
   nodeIds: string[],
-  edges: WorkflowEdge[],
+  edges: Pick<WorkflowEdge, 'sourceNodeId' | 'targetNodeId'>[],
 ): { order: string[] | null; cyclePaths: string[][] } {
   const indegree = new Map(nodeIds.map((nodeId) => [nodeId, 0]));
   const outgoing = new Map(nodeIds.map((nodeId) => [nodeId, [] as string[]]));
@@ -524,9 +524,18 @@ export function validateWorkflowGraph(input: unknown): WorkflowValidationResult 
     }
   }
 
+  const enabledNodeIds = new Set(
+    graph.nodes.filter((node) => !node.disabled).map((node) => node.id),
+  );
+  const enabledEdges = [...enabledNodeIds].flatMap((sourceNodeId) =>
+    reachableEnabledTargets(sourceNodeId, nodeById, outgoingEdges).map((targetNodeId) => ({
+      sourceNodeId,
+      targetNodeId,
+    })),
+  );
   const { order, cyclePaths } = topologicalSort(
-    graph.nodes.map((node) => node.id),
-    graph.edges,
+    [...enabledNodeIds],
+    enabledEdges,
   );
   for (const cyclePath of cyclePaths) {
     issues.push({

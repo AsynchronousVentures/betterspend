@@ -108,6 +108,43 @@ describe('validateWorkflowGraph', () => {
     ]);
   });
 
+  it('omits disabled nodes from the execution order', () => {
+    const graph = validGraph();
+    graph.nodes.push({
+      id: 'disabled-notice',
+      name: 'Disabled notice',
+      type: 'notify',
+      disabled: true,
+      config: {
+        channels: ['email'],
+        recipients: [{ type: 'role', role: 'admin', scope: 'global' }],
+        message: 'Review required',
+      },
+    });
+    const financeEdge = graph.edges.find((edge) => edge.id === 'finance-to-approved');
+    if (!financeEdge) throw new Error('Expected finance edge fixture');
+    financeEdge.targetNodeId = 'disabled-notice';
+    graph.edges.push({
+      id: 'disabled-to-approved',
+      sourceNodeId: 'disabled-notice',
+      sourceHandle: 'out',
+      targetNodeId: 'approved',
+      targetHandle: 'in',
+      isDefault: false,
+    });
+
+    const result = validateWorkflowGraph(graph);
+
+    assert.equal(result.valid, true);
+    assert.deepEqual(result.topologicalOrder, [
+      'start',
+      'amount-check',
+      'finance',
+      'approved',
+      'rejected',
+    ]);
+  });
+
   it('reports invalid node config paths from the shared Zod schema', () => {
     const graph = validGraph();
     const invalidGraph = {
