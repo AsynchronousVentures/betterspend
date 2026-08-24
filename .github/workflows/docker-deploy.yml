@@ -173,26 +173,40 @@ jobs:
       - name: Typecheck web
         run: pnpm --filter @betterspend/web exec tsc --noEmit --incremental false
 
-      - name: Build API
-        run: pnpm --filter @betterspend/api build
-
-      - name: Build web
-        run: pnpm --filter @betterspend/web build
-
       - name: Validate Compose files
         run: |
           CREDENTIAL_ENCRYPTION_KEY="$(openssl rand -base64 32)" docker compose --profile app --profile tools config >/dev/null
           PRODUCTION_ENV_FILE=.env.production.example IMAGE_TAG=sha-ci \
             docker compose --profile migrate --env-file .env.production.example -f compose.yaml -f compose.prod.yaml config >/dev/null
 
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v2
+
       - name: Build API image
-        run: docker build -f docker/api.Dockerfile -t betterspend-api:ci .
+        uses: useblacksmith/build-push-action@v2
+        with:
+          context: .
+          file: docker/api.Dockerfile
+          platforms: linux/amd64
+          push: false
 
       - name: Build web image
-        run: docker build --build-arg NEXT_PUBLIC_API_URL=https://example.com -f docker/web.Dockerfile -t betterspend-web:ci .
+        uses: useblacksmith/build-push-action@v2
+        with:
+          context: .
+          file: docker/web.Dockerfile
+          platforms: linux/amd64
+          push: false
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || 'http://localhost:4001' }}
 
       - name: Build migrator image
-        run: docker build -f docker/migrator.Dockerfile -t betterspend-migrator:ci .
+        uses: useblacksmith/build-push-action@v2
+        with:
+          context: .
+          file: docker/migrator.Dockerfile
+          platforms: linux/amd64
+          push: false
 
   validate:
     name: Validate
