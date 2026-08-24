@@ -1,9 +1,20 @@
-import { pgTable, uuid, varchar, boolean, jsonb, timestamp, text, integer } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  varchar,
+  boolean,
+  jsonb,
+  timestamp,
+  text,
+  integer,
+} from 'drizzle-orm/pg-core';
 import { organizations, legalEntities } from './organizations';
 
 export const vendors = pgTable('vendors', {
   id: uuid('id').primaryKey().defaultRandom(),
-  organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+  organizationId: uuid('organization_id')
+    .notNull()
+    .references(() => organizations.id),
   entityId: uuid('entity_id').references(() => legalEntities.id),
   name: varchar('name', { length: 255 }).notNull(),
   code: varchar('code', { length: 50 }),
@@ -26,13 +37,19 @@ export const vendors = pgTable('vendors', {
   sustainabilityCertifications: jsonb('sustainability_certifications').default([]), // ['iso14001', 'b_corp', 'fair_trade', 'fsc']
   esgNotes: text('esg_notes'),
   diversityVerifiedAt: timestamp('diversity_verified_at', { withTimezone: true }),
+  // Sanctions / adverse-media screening: untested | clear | flagged | manually_reviewed
+  sanctionsStatus: varchar('sanctions_status', { length: 20 }).notNull().default('untested'),
+  sanctionsCheckedAt: timestamp('sanctions_checked_at', { withTimezone: true }),
+  sanctionsNote: text('sanctions_note'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const catalogItems = pgTable('catalog_items', {
   id: uuid('id').primaryKey().defaultRandom(),
-  organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+  organizationId: uuid('organization_id')
+    .notNull()
+    .references(() => organizations.id),
   vendorId: uuid('vendor_id').references(() => vendors.id),
   sku: varchar('sku', { length: 100 }),
   name: varchar('name', { length: 255 }).notNull(),

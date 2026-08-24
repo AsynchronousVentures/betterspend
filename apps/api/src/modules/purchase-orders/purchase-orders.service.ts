@@ -1,5 +1,11 @@
-import { Injectable, Inject, Optional, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, sql } from 'drizzle-orm';
+import {
+  Injectable,
+  Inject,
+  Optional,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
+import { and, eq, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import { SequenceService } from '../../common/services/sequence.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
@@ -8,8 +14,17 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { ContractComplianceService } from './contract-compliance.service';
 import { EntitiesService } from '../entities/entities.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
+import { RiskScreeningService } from '../risk-screening/risk-screening.service';
 import type { Db } from '@betterspend/db';
-import { purchaseOrders, poLines, poVersions, blanketReleases, requisitions } from '@betterspend/db';
+import {
+  auditLog,
+  purchaseOrders,
+  poLines,
+  poVersions,
+  blanketReleases,
+  requisitions,
+  vendors,
+} from '@betterspend/db';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 import { z } from 'zod';
@@ -29,31 +44,39 @@ const createPoSchema = z.object({
   blanketStartDate: z.string().datetime().optional(),
   blanketEndDate: z.string().datetime().optional(),
   blanketTotalLimit: z.number().optional(),
-  lines: z.array(z.object({
-    description: z.string().min(1),
-    quantity: z.number().positive(),
-    unitOfMeasure: z.string().default('each'),
-    unitPrice: z.number().nonnegative(),
-    glAccount: z.string().optional(),
-    taxCodeId: z.string().uuid().optional(),
-    taxInclusive: z.boolean().optional(),
-    catalogItemId: z.string().uuid().optional(),
-    requisitionLineId: z.string().uuid().optional(),
-  })).min(1),
+  lines: z
+    .array(
+      z.object({
+        description: z.string().min(1),
+        quantity: z.number().positive(),
+        unitOfMeasure: z.string().default('each'),
+        unitPrice: z.number().nonnegative(),
+        glAccount: z.string().optional(),
+        taxCodeId: z.string().uuid().optional(),
+        taxInclusive: z.boolean().optional(),
+        catalogItemId: z.string().uuid().optional(),
+        requisitionLineId: z.string().uuid().optional(),
+      }),
+    )
+    .min(1),
 });
 
 const changeOrderSchema = z.object({
   changeReason: z.string().min(1),
-  lines: z.array(z.object({
-    id: z.string().uuid().optional(), // existing line ID to update
-    description: z.string().min(1),
-    quantity: z.number().positive(),
-    unitOfMeasure: z.string().default('each'),
-    unitPrice: z.number().nonnegative(),
-    glAccount: z.string().optional(),
-    taxCodeId: z.string().uuid().optional(),
-    taxInclusive: z.boolean().optional(),
-  })).optional(),
+  lines: z
+    .array(
+      z.object({
+        id: z.string().uuid().optional(), // existing line ID to update
+        description: z.string().min(1),
+        quantity: z.number().positive(),
+        unitOfMeasure: z.string().default('each'),
+        unitPrice: z.number().nonnegative(),
+        glAccount: z.string().optional(),
+        taxCodeId: z.string().uuid().optional(),
+        taxInclusive: z.boolean().optional(),
+      }),
+    )
+    .optional(),
   notes: z.string().optional(),
   paymentTerms: z.string().optional(),
 });
@@ -81,9 +104,15 @@ export class PurchaseOrdersService {
     @Optional() private readonly contractCompliance: ContractComplianceService,
     private readonly entitiesService: EntitiesService,
     private readonly exchangeRatesService: ExchangeRatesService,
+    private readonly riskScreening: RiskScreeningService,
   ) {}
 
-  private calculateLineTax(quantity: number, unitPrice: number, ratePercent: number, taxInclusive: boolean): LineTaxSnapshot {
+  private calculateLineTax(
+    quantity: number,
+    unitPrice: number,
+    ratePercent: number,
+    taxInclusive: boolean,
+  ): LineTaxSnapshot {
     const rawAmount = quantity * unitPrice;
     if (taxInclusive) {
       const subtotal = ratePercent > 0 ? rawAmount / (1 + ratePercent / 100) : rawAmount;
@@ -115,7 +144,10 @@ export class PurchaseOrdersService {
     return new Map(records.map((record) => [record.id, record]));
   }
 
-  async findAll(organizationId: string, filters?: { status?: string; vendorId?: string; entityId?: string }) {
+  async findAll(
+    organizationId: string,
+    filters?: { status?: string; vendorId?: string; entityId?: string },
+  ) {
     return this.db.query.purchaseOrders.findMany({
       where: (po, { and, eq }) => {
         const conditions = [eq(po.organizationId, organizationId)];
@@ -147,11 +179,14 @@ export class PurchaseOrdersService {
     if (!vendor) {
       throw new NotFoundException(`Vendor ${input.vendorId} not found`);
     }
-    if (['pending_review', 'changes_requested'].includes(vendor.onboardingStatus ?? 'not_started')) {
+    if (
+      ['pending_review', 'changes_requested'].includes(vendor.onboardingStatus ?? 'not_started')
+    ) {
       throw new BadRequestException(
         `Vendor onboarding is ${vendor.onboardingStatus.replace(/_/g, ' ')} and must be approved before a PO can be created`,
       );
     }
+    const sanctionsWarning = await this.riskScreening.checkVendorForPo(organizationId, vendor);
     const currency = input.currency ?? 'USD';
     const taxCodeMap = await this.getTaxCodeMap(
       organizationId,
@@ -178,44 +213,57 @@ export class PurchaseOrdersService {
       const lineAmounts = input.lines.map((line) => {
         const taxCode = line.taxCodeId ? taxCodeMap.get(line.taxCodeId) : null;
         const ratePercent = taxCode ? parseFloat(String(taxCode.ratePercent ?? '0')) : 0;
-        return this.calculateLineTax(line.quantity, line.unitPrice, ratePercent, !!line.taxInclusive);
+        return this.calculateLineTax(
+          line.quantity,
+          line.unitPrice,
+          ratePercent,
+          !!line.taxInclusive,
+        );
       });
       const subtotal = lineAmounts.reduce((sum, line) => sum + line.subtotal, 0);
       const taxAmount = lineAmounts.reduce((sum, line) => sum + line.taxAmount, 0);
       const totalAmount = lineAmounts.reduce((sum, line) => sum + line.totalAmount, 0);
-      const { baseCurrency, exchangeRate, baseAmount } = await this.exchangeRatesService.convertToBase(
-        organizationId,
-        totalAmount,
-        currency,
-        input.exchangeRate,
-      );
+      const { baseCurrency, exchangeRate, baseAmount } =
+        await this.exchangeRatesService.convertToBase(
+          organizationId,
+          totalAmount,
+          currency,
+          input.exchangeRate,
+        );
 
-      const [po] = await tx.insert(purchaseOrders).values({
-        organizationId,
-        entityId: input.entityId ?? null,
-        vendorId: input.vendorId,
-        requisitionId: input.requisitionId,
-        number,
-        version: 1,
-        poType: input.poType ?? 'standard',
-        status: 'draft',
-        paymentTerms: input.paymentTerms,
-        currency,
-        baseCurrency,
-        exchangeRate: String(exchangeRate),
-        notes: input.notes,
-        shippingAddress: input.shippingAddress ?? {},
-        billingAddress: input.billingAddress ?? {},
-        subtotal: String(subtotal.toFixed(2)),
-        taxAmount: String(taxAmount.toFixed(2)),
-        totalAmount: String(totalAmount.toFixed(2)),
-        baseSubtotal: String(this.exchangeRatesService.roundMoney(subtotal * exchangeRate).toFixed(2)),
-        baseTaxAmount: String(this.exchangeRatesService.roundMoney(taxAmount * exchangeRate).toFixed(2)),
-        baseTotalAmount: String(baseAmount),
-        blanketStartDate: input.blanketStartDate ? new Date(input.blanketStartDate) : null,
-        blanketEndDate: input.blanketEndDate ? new Date(input.blanketEndDate) : null,
-        blanketTotalLimit: input.blanketTotalLimit ? String(input.blanketTotalLimit) : null,
-      }).returning();
+      const [po] = await tx
+        .insert(purchaseOrders)
+        .values({
+          organizationId,
+          entityId: input.entityId ?? null,
+          vendorId: input.vendorId,
+          requisitionId: input.requisitionId,
+          number,
+          version: 1,
+          poType: input.poType ?? 'standard',
+          status: 'draft',
+          paymentTerms: input.paymentTerms,
+          currency,
+          baseCurrency,
+          exchangeRate: String(exchangeRate),
+          notes: input.notes,
+          shippingAddress: input.shippingAddress ?? {},
+          billingAddress: input.billingAddress ?? {},
+          subtotal: String(subtotal.toFixed(2)),
+          taxAmount: String(taxAmount.toFixed(2)),
+          totalAmount: String(totalAmount.toFixed(2)),
+          baseSubtotal: String(
+            this.exchangeRatesService.roundMoney(subtotal * exchangeRate).toFixed(2),
+          ),
+          baseTaxAmount: String(
+            this.exchangeRatesService.roundMoney(taxAmount * exchangeRate).toFixed(2),
+          ),
+          baseTotalAmount: String(baseAmount),
+          blanketStartDate: input.blanketStartDate ? new Date(input.blanketStartDate) : null,
+          blanketEndDate: input.blanketEndDate ? new Date(input.blanketEndDate) : null,
+          blanketTotalLimit: input.blanketTotalLimit ? String(input.blanketTotalLimit) : null,
+        })
+        .returning();
 
       await tx.insert(poLines).values(
         input.lines.map((l, i) => {
@@ -234,31 +282,54 @@ export class PurchaseOrdersService {
             totalPrice: String(amounts.totalAmount.toFixed(2)),
             exchangeRate: String(exchangeRate),
             baseUnitPrice: String(this.exchangeRatesService.roundMoney(l.unitPrice * exchangeRate)),
-            baseTotalPrice: String(this.exchangeRatesService.roundMoney(amounts.totalAmount * exchangeRate)),
+            baseTotalPrice: String(
+              this.exchangeRatesService.roundMoney(amounts.totalAmount * exchangeRate),
+            ),
             glAccount: l.glAccount,
             catalogItemId: l.catalogItemId,
             requisitionLineId: l.requisitionLineId,
             contractComplianceStatus: cr?.status ?? null,
-            contractComplianceDeltaPercent: cr?.deltaPercent != null ? String(cr.deltaPercent) : null,
+            contractComplianceDeltaPercent:
+              cr?.deltaPercent != null ? String(cr.deltaPercent) : null,
             matchedContractId: cr?.contractId ?? null,
-            contractedUnitPrice: cr?.contractedUnitPrice != null ? String(cr.contractedUnitPrice) : null,
+            contractedUnitPrice:
+              cr?.contractedUnitPrice != null ? String(cr.contractedUnitPrice) : null,
           };
         }),
       );
 
       // If created from a requisition, mark it as converted
       if (input.requisitionId) {
-        await tx.update(requisitions)
+        await tx
+          .update(requisitions)
           .set({ status: 'converted', updatedAt: new Date() })
           .where(eq(requisitions.id, input.requisitionId));
       }
+
+      if (sanctionsWarning) {
+        await tx.insert(auditLog).values({
+          organizationId,
+          userId: issuedBy,
+          entityType: 'vendor',
+          entityId: vendor.id,
+          action: 'po_sanctions_warning',
+          changes: { poNumber: number, warning: sanctionsWarning },
+        });
+      }
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: issuedBy,
+        entityType: 'purchase_order',
+        entityId: po.id,
+        action: 'created',
+        changes: { number, totalAmount: po.totalAmount },
+      });
 
       return po.id;
     });
 
     const created = await this.findOne(createdId, organizationId);
-    this.audit.log(organizationId, null, 'purchase_order', createdId, 'created', { internalNumber: (created as any).internalNumber, totalAmount: (created as any).totalAmount }).catch(() => {});
-    return created;
+    return sanctionsWarning ? { ...created, sanctionsWarning } : created;
   }
 
   async issue(id: string, organizationId: string, issuedBy: string) {
@@ -267,27 +338,67 @@ export class PurchaseOrdersService {
       throw new BadRequestException(`Cannot issue a PO with status "${po.status}"`);
     }
 
-    const [updated] = await this.db.update(purchaseOrders)
-      .set({ status: 'issued', issuedBy, issuedAt: new Date(), updatedAt: new Date() })
-      .where(eq(purchaseOrders.id, id))
-      .returning();
-    this.webhookEvents.emit(organizationId, 'po.issued', { purchaseOrder: updated });
-    this.audit.log(organizationId, issuedBy ?? null, 'purchase_order', id, 'issued', { totalAmount: updated.totalAmount }).catch(() => {});
-    if (this.notifications) {
-      this.notifications.create(
+    // Re-check at issuance: the vendor may have been flagged after the draft
+    // was created, and issuance is the moment the commitment becomes real.
+    const updated = await this.db.transaction(async (tx) => {
+      const [issueVendor] = await tx
+        .select()
+        .from(vendors)
+        .where(and(eq(vendors.id, po.vendorId), eq(vendors.organizationId, organizationId)))
+        .for('update');
+      if (!issueVendor) throw new NotFoundException(`Vendor ${po.vendorId} not found`);
+      const sanctionsWarning = await this.riskScreening.checkVendorStatusForPo(
         organizationId,
-        DEMO_ADMIN_USER_ID,
-        'po_issued',
-        'Purchase Order Issued',
-        `Purchase Order ${updated.number} has been issued to the vendor.`,
-        'purchase_order',
-        id,
-      ).catch(() => {});
+        issueVendor,
+      );
+      const [issued] = await tx
+        .update(purchaseOrders)
+        .set({ status: 'issued', issuedBy, issuedAt: new Date(), updatedAt: new Date() })
+        .where(eq(purchaseOrders.id, id))
+        .returning();
+      if (sanctionsWarning) {
+        await tx.insert(auditLog).values({
+          organizationId,
+          userId: issuedBy,
+          entityType: 'vendor',
+          entityId: issueVendor.id,
+          action: 'po_sanctions_warning',
+          changes: { poNumber: po.number, warning: sanctionsWarning },
+        });
+      }
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: issuedBy,
+        entityType: 'purchase_order',
+        entityId: id,
+        action: 'issued',
+        changes: { totalAmount: issued.totalAmount },
+      });
+      return issued;
+    });
+    this.webhookEvents.emit(organizationId, 'po.issued', { purchaseOrder: updated });
+    if (this.notifications) {
+      this.notifications
+        .create(
+          organizationId,
+          DEMO_ADMIN_USER_ID,
+          'po_issued',
+          'Purchase Order Issued',
+          `Purchase Order ${updated.number} has been issued to the vendor.`,
+          'purchase_order',
+          id,
+        )
+        .catch(() => {});
     }
     return updated;
   }
 
-  async createChangeOrder(id: string, organizationId: string, changedBy: string, input: ChangeOrderInput) {
+  async createChangeOrder(
+    id: string,
+    organizationId: string,
+    changedBy: string,
+    input: ChangeOrderInput,
+  ) {
     const po = await this.findOne(id, organizationId);
 
     if (['closed', 'cancelled'].includes(po.status)) {
@@ -320,7 +431,12 @@ export class PurchaseOrdersService {
         const lineAmounts = input.lines.map((line) => {
           const taxCode = line.taxCodeId ? taxCodeMap.get(line.taxCodeId) : null;
           const ratePercent = taxCode ? parseFloat(String(taxCode.ratePercent ?? '0')) : 0;
-          return this.calculateLineTax(line.quantity, line.unitPrice, ratePercent, !!line.taxInclusive);
+          return this.calculateLineTax(
+            line.quantity,
+            line.unitPrice,
+            ratePercent,
+            !!line.taxInclusive,
+          );
         });
         const subtotal = lineAmounts.reduce((sum, line) => sum + line.subtotal, 0);
         const taxAmount = lineAmounts.reduce((sum, line) => sum + line.taxAmount, 0);
@@ -361,13 +477,19 @@ export class PurchaseOrdersService {
               unitPrice: String(l.unitPrice),
               totalPrice: String(amounts.totalAmount.toFixed(2)),
               exchangeRate: String(exchangeRate),
-              baseUnitPrice: String(this.exchangeRatesService.roundMoney(l.unitPrice * exchangeRate)),
-              baseTotalPrice: String(this.exchangeRatesService.roundMoney(amounts.totalAmount * exchangeRate)),
+              baseUnitPrice: String(
+                this.exchangeRatesService.roundMoney(l.unitPrice * exchangeRate),
+              ),
+              baseTotalPrice: String(
+                this.exchangeRatesService.roundMoney(amounts.totalAmount * exchangeRate),
+              ),
               glAccount: l.glAccount,
               contractComplianceStatus: cr?.status ?? null,
-              contractComplianceDeltaPercent: cr?.deltaPercent != null ? String(cr.deltaPercent) : null,
+              contractComplianceDeltaPercent:
+                cr?.deltaPercent != null ? String(cr.deltaPercent) : null,
               matchedContractId: cr?.contractId ?? null,
-              contractedUnitPrice: cr?.contractedUnitPrice != null ? String(cr.contractedUnitPrice) : null,
+              contractedUnitPrice:
+                cr?.contractedUnitPrice != null ? String(cr.contractedUnitPrice) : null,
             };
           }),
         );
@@ -375,29 +497,34 @@ export class PurchaseOrdersService {
         const subtotalStr = String(subtotal.toFixed(2));
         const taxAmountStr = String(taxAmount.toFixed(2));
         const totalAmountStr = String(totalAmount.toFixed(2));
-        await tx.update(purchaseOrders).set({
-          version: newVersion,
-          notes: input.notes ?? po.notes,
-          paymentTerms: input.paymentTerms ?? po.paymentTerms,
-          subtotal: subtotalStr,
-          taxAmount: taxAmountStr,
-          totalAmount: totalAmountStr,
-          baseSubtotal: String(baseSubtotal),
-          baseTaxAmount: String(baseTaxAmount),
-          baseTotalAmount: String(baseTotalAmount),
-          status: 'draft', // Change orders reset to draft for re-approval
-          updatedAt: new Date(),
-        }).where(eq(purchaseOrders.id, id));
+        await tx
+          .update(purchaseOrders)
+          .set({
+            version: newVersion,
+            notes: input.notes ?? po.notes,
+            paymentTerms: input.paymentTerms ?? po.paymentTerms,
+            subtotal: subtotalStr,
+            taxAmount: taxAmountStr,
+            totalAmount: totalAmountStr,
+            baseSubtotal: String(baseSubtotal),
+            baseTaxAmount: String(baseTaxAmount),
+            baseTotalAmount: String(baseTotalAmount),
+            status: 'draft', // Change orders reset to draft for re-approval
+            updatedAt: new Date(),
+          })
+          .where(eq(purchaseOrders.id, id));
       } else {
-        await tx.update(purchaseOrders).set({
-          version: newVersion,
-          notes: input.notes ?? po.notes,
-          paymentTerms: input.paymentTerms ?? po.paymentTerms,
-          status: 'draft',
-          updatedAt: new Date(),
-        }).where(eq(purchaseOrders.id, id));
+        await tx
+          .update(purchaseOrders)
+          .set({
+            version: newVersion,
+            notes: input.notes ?? po.notes,
+            paymentTerms: input.paymentTerms ?? po.paymentTerms,
+            status: 'draft',
+            updatedAt: new Date(),
+          })
+          .where(eq(purchaseOrders.id, id));
       }
-
     });
 
     return this.findOne(id, organizationId);
@@ -408,7 +535,8 @@ export class PurchaseOrdersService {
     if (['closed', 'cancelled', 'received', 'invoiced'].includes(po.status)) {
       throw new BadRequestException(`Cannot cancel a ${po.status} PO`);
     }
-    const [updated] = await this.db.update(purchaseOrders)
+    const [updated] = await this.db
+      .update(purchaseOrders)
       .set({ status: 'cancelled', updatedAt: new Date() })
       .where(eq(purchaseOrders.id, id))
       .returning();
@@ -433,9 +561,15 @@ export class PurchaseOrdersService {
     });
   }
 
-  async createRelease(blanketPoId: string, organizationId: string, releasedBy: string, input: { amount: number; description?: string }) {
+  async createRelease(
+    blanketPoId: string,
+    organizationId: string,
+    releasedBy: string,
+    input: { amount: number; description?: string },
+  ) {
     const po = await this.findOne(blanketPoId, organizationId);
-    if (po.poType !== 'blanket') throw new BadRequestException('Releases can only be created against blanket POs');
+    if (po.poType !== 'blanket')
+      throw new BadRequestException('Releases can only be created against blanket POs');
     if (!['issued', 'approved', 'partially_received'].includes(po.status)) {
       throw new BadRequestException('Blanket PO must be issued or approved to create releases');
     }
@@ -443,7 +577,9 @@ export class PurchaseOrdersService {
     const limit = po.blanketTotalLimit ? parseFloat(po.blanketTotalLimit) : null;
     const released = parseFloat(po.blanketReleasedAmount ?? '0');
     if (limit !== null && released + input.amount > limit) {
-      throw new BadRequestException(`Release amount $${input.amount} would exceed blanket limit $${limit} (released so far: $${released})`);
+      throw new BadRequestException(
+        `Release amount $${input.amount} would exceed blanket limit $${limit} (released so far: $${released})`,
+      );
     }
 
     // Get next release number
@@ -452,17 +588,21 @@ export class PurchaseOrdersService {
     });
     const releaseNumber = existing.length + 1;
 
-    const [release] = await this.db.insert(blanketReleases).values({
-      blanketPoId,
-      releaseNumber,
-      amount: String(input.amount),
-      description: input.description ?? null,
-      status: 'approved',
-      releasedBy,
-    }).returning();
+    const [release] = await this.db
+      .insert(blanketReleases)
+      .values({
+        blanketPoId,
+        releaseNumber,
+        amount: String(input.amount),
+        description: input.description ?? null,
+        status: 'approved',
+        releasedBy,
+      })
+      .returning();
 
     // Update accumulated released amount
-    await this.db.update(purchaseOrders)
+    await this.db
+      .update(purchaseOrders)
       .set({
         blanketReleasedAmount: String(released + input.amount),
         updatedAt: new Date(),
@@ -480,18 +620,25 @@ export class PurchaseOrdersService {
     if (!release) throw new NotFoundException(`Release ${releaseId} not found`);
     if (release.status === 'cancelled') return release;
 
-    const [updated] = await this.db.update(blanketReleases)
+    const [updated] = await this.db
+      .update(blanketReleases)
       .set({ status: 'cancelled', updatedAt: new Date() })
       .where(eq(blanketReleases.id, releaseId))
       .returning();
 
     // Subtract from released amount
-    const po = await this.db.query.purchaseOrders.findFirst({ where: eq(purchaseOrders.id, blanketPoId) });
+    const po = await this.db.query.purchaseOrders.findFirst({
+      where: eq(purchaseOrders.id, blanketPoId),
+    });
     if (po) {
       const released = parseFloat(po.blanketReleasedAmount ?? '0');
       const amount = parseFloat(release.amount);
-      await this.db.update(purchaseOrders)
-        .set({ blanketReleasedAmount: String(Math.max(0, released - amount)), updatedAt: new Date() })
+      await this.db
+        .update(purchaseOrders)
+        .set({
+          blanketReleasedAmount: String(Math.max(0, released - amount)),
+          updatedAt: new Date(),
+        })
         .where(eq(purchaseOrders.id, blanketPoId));
     }
 
@@ -502,9 +649,15 @@ export class PurchaseOrdersService {
     const po = await this.findOne(id, organizationId);
     const lines = po.lines ?? [];
     const totalLines = lines.length;
-    const compliantLines = lines.filter((l: any) => l.contractComplianceStatus === 'compliant').length;
-    const deviationLines = lines.filter((l: any) => l.contractComplianceStatus === 'deviation').length;
-    const noContractLines = lines.filter((l: any) => l.contractComplianceStatus === 'no_contract' || !l.contractComplianceStatus).length;
+    const compliantLines = lines.filter(
+      (l: any) => l.contractComplianceStatus === 'compliant',
+    ).length;
+    const deviationLines = lines.filter(
+      (l: any) => l.contractComplianceStatus === 'deviation',
+    ).length;
+    const noContractLines = lines.filter(
+      (l: any) => l.contractComplianceStatus === 'no_contract' || !l.contractComplianceStatus,
+    ).length;
 
     return {
       purchaseOrderId: id,
@@ -536,7 +689,12 @@ export class PurchaseOrdersService {
     description?: string,
   ) {
     if (!this.contractCompliance) {
-      return { status: 'no_contract', deltaPercent: null, contractId: null, contractedUnitPrice: null };
+      return {
+        status: 'no_contract',
+        deltaPercent: null,
+        contractId: null,
+        contractedUnitPrice: null,
+      };
     }
     return this.contractCompliance.checkCompliance(
       organizationId,

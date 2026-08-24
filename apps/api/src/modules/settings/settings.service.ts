@@ -2,7 +2,7 @@ import { Injectable, Inject } from '@nestjs/common';
 import { eq, and } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { systemSettings } from '@betterspend/db';
+import { auditLog, systemSettings } from '@betterspend/db';
 import { DEFAULT_SETTINGS, type SettingKey } from '@betterspend/shared';
 
 @Injectable()
@@ -39,11 +39,42 @@ export class SettingsService {
       });
   }
 
-  async updateMany(organizationId: string, settings: Record<string, string>): Promise<Record<string, string>> {
+  async updateMany(
+    organizationId: string,
+    settings: Record<string, string>,
+  ): Promise<Record<string, string>> {
     // Upsert each key
     for (const [key, value] of Object.entries(settings)) {
       await this.upsert(organizationId, key, value);
     }
+    return this.getAll(organizationId);
+  }
+
+  async updateManyWithAudit(
+    organizationId: string,
+    userId: string,
+    settings: Record<string, string>,
+    action: string,
+  ): Promise<Record<string, string>> {
+    await this.db.transaction(async (tx) => {
+      for (const [key, value] of Object.entries(settings)) {
+        await tx
+          .insert(systemSettings)
+          .values({ organizationId, key, value })
+          .onConflictDoUpdate({
+            target: [systemSettings.organizationId, systemSettings.key],
+            set: { value, updatedAt: new Date() },
+          });
+      }
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId,
+        entityType: 'organization_settings',
+        entityId: organizationId,
+        action,
+        changes: settings,
+      });
+    });
     return this.getAll(organizationId);
   }
 

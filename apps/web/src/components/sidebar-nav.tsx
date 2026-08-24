@@ -4,13 +4,46 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect, useCallback } from 'react';
 import {
-  LayoutDashboard, ClipboardList, ShoppingCart, Megaphone,
-  RefreshCw, BookOpen, PackageCheck, Boxes, Receipt, Inbox,
-  ScanLine, CheckSquare, SlidersHorizontal, ArrowLeftRight,
-  PiggyBank, ShieldAlert, Percent, Clock, Link2, Upload,
-  CreditCard, BarChart2, FileBarChart2, Building2, Star, Leaf, UserPlus,
-  ScrollText, KeyRound, Users, FolderTree, Briefcase, Building,
-  Zap, History, Settings, ChevronRight, Puzzle, Sparkles, ShieldCheck,
+  LayoutDashboard,
+  ClipboardList,
+  ShoppingCart,
+  Megaphone,
+  RefreshCw,
+  BookOpen,
+  PackageCheck,
+  Boxes,
+  Receipt,
+  Inbox,
+  ScanLine,
+  CheckSquare,
+  SlidersHorizontal,
+  ArrowLeftRight,
+  PiggyBank,
+  ShieldAlert,
+  Percent,
+  Clock,
+  Link2,
+  Upload,
+  CreditCard,
+  BarChart2,
+  FileBarChart2,
+  Building2,
+  Star,
+  Leaf,
+  UserPlus,
+  ScrollText,
+  KeyRound,
+  Users,
+  FolderTree,
+  Briefcase,
+  Building,
+  Zap,
+  History,
+  Settings,
+  ChevronRight,
+  Puzzle,
+  Sparkles,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { signOut } from '../lib/auth-client';
@@ -31,57 +64,58 @@ function isGroup(entry: NavEntry): entry is NavGroup {
 }
 
 const NAV_ICONS: Record<string, LucideIcon> = {
-  'Dashboard':                LayoutDashboard,
-  'Start Request':            Sparkles,
-  'Requisitions':             ClipboardList,
-  'Purchase Orders':          ShoppingCart,
-  'RFQ / Sourcing':           Megaphone,
-  'Recurring POs':            RefreshCw,
-  'Catalog':                  BookOpen,
-  'Receiving':                PackageCheck,
-  'Inventory':                Boxes,
-  'Invoices':                 Receipt,
-  'Intake Queue':             Inbox,
-  'OCR Jobs':                 ScanLine,
-  'Pending Approvals':        CheckSquare,
-  'Approval Rules':           SlidersHorizontal,
-  'Delegations':              ArrowLeftRight,
-  'Budgets':                  PiggyBank,
-  'Spend Guard':              ShieldAlert,
-  'Tax Codes':                Percent,
-  'AP Aging':                 Clock,
-  'Payment Runs':             CreditCard,
-  'GL Integration':           Link2,
-  'Add-ons':                  Puzzle,
-  'GL Export Jobs':           Upload,
-  'Analytics':                BarChart2,
-  'Reports':                  FileBarChart2,
-  'Vendors':                  Building2,
-  'Supplier Scorecard':       Star,
+  Dashboard: LayoutDashboard,
+  'Start Request': Sparkles,
+  Requisitions: ClipboardList,
+  'Purchase Orders': ShoppingCart,
+  'RFQ / Sourcing': Megaphone,
+  'Recurring POs': RefreshCw,
+  Catalog: BookOpen,
+  Receiving: PackageCheck,
+  Inventory: Boxes,
+  Invoices: Receipt,
+  'Intake Queue': Inbox,
+  'OCR Jobs': ScanLine,
+  'Pending Approvals': CheckSquare,
+  'Approval Rules': SlidersHorizontal,
+  Delegations: ArrowLeftRight,
+  Budgets: PiggyBank,
+  'Spend Guard': ShieldAlert,
+  'Risk Screening': ShieldCheck,
+  'Tax Codes': Percent,
+  'AP Aging': Clock,
+  'Payment Runs': CreditCard,
+  'GL Integration': Link2,
+  'Add-ons': Puzzle,
+  'GL Export Jobs': Upload,
+  Analytics: BarChart2,
+  Reports: FileBarChart2,
+  Vendors: Building2,
+  'Supplier Scorecard': Star,
   'Supplier Diversity & ESG': Leaf,
-  'Vendor Onboarding':        UserPlus,
-  'Contracts':                ScrollText,
-  'Software Licenses':        KeyRound,
-  'Users':                    Users,
-  'Departments':              FolderTree,
-  'Projects':                 Briefcase,
-  'Entities':                 Building,
-  'Webhooks':                 Zap,
-  'Audit Log':                History,
-  'Compliance':               ShieldCheck,
-  'Settings':                 Settings,
-  'Workspace Settings':       Settings,
-  'Currencies':               ArrowLeftRight,
+  'Vendor Onboarding': UserPlus,
+  Contracts: ScrollText,
+  'Software Licenses': KeyRound,
+  Users: Users,
+  Departments: FolderTree,
+  Projects: Briefcase,
+  Entities: Building,
+  Webhooks: Zap,
+  'Audit Log': History,
+  Compliance: ShieldCheck,
+  Settings: Settings,
+  'Workspace Settings': Settings,
+  Currencies: ArrowLeftRight,
 };
 
 const GROUP_ICONS: Record<string, LucideIcon> = {
-  'Procurement':         ShoppingCart,
-  'Operations':          PackageCheck,
-  'Approvals':           CheckSquare,
-  'Finance':             PiggyBank,
+  Procurement: ShoppingCart,
+  Operations: PackageCheck,
+  Approvals: CheckSquare,
+  Finance: PiggyBank,
   'Analytics & Reports': BarChart2,
-  'Organization':        Building2,
-  'System':              Settings,
+  Organization: Building2,
+  System: Settings,
 };
 
 const NAV_CONFIG: NavEntry[] = [
@@ -144,6 +178,7 @@ const NAV_CONFIG: NavEntry[] = [
       { label: 'Supplier Scorecard', href: '/supplier-scorecard' },
       { label: 'Supplier Diversity & ESG', href: '/supplier-diversity' },
       { label: 'Vendor Onboarding', href: '/vendors/onboarding' },
+      { label: 'Risk Screening', href: '/risk-screening' },
       { label: 'Contracts', href: '/contracts' },
       { label: 'Software Licenses', href: '/software-licenses' },
       { label: 'Users', href: '/users' },
@@ -276,14 +311,19 @@ export default function SidebarNav({
               size={15}
               className={cn(
                 'shrink-0 transition-colors',
-                active ? 'text-sidebar-accent' : 'text-sidebar-muted/70 group-hover:text-sidebar-foreground',
+                active
+                  ? 'text-sidebar-accent'
+                  : 'text-sidebar-muted/70 group-hover:text-sidebar-foreground',
               )}
             />
           ) : null}
           {!collapsed ? <span className="truncate text-sm">{item.label}</span> : null}
         </span>
         {badge != null && badge > 0 ? (
-          <Badge variant="destructive" className="h-5 min-w-5 justify-center rounded-full px-1.5 text-[10px]">
+          <Badge
+            variant="destructive"
+            className="h-5 min-w-5 justify-center rounded-full px-1.5 text-[10px]"
+          >
             {badge > 99 ? '99+' : badge}
           </Badge>
         ) : null}
@@ -306,7 +346,9 @@ export default function SidebarNav({
           className={cn(
             'flex w-full items-center justify-between rounded-md px-3 py-1.5 transition-colors',
             collapsed && 'justify-center px-2',
-            hasActiveChild ? 'text-sidebar-foreground' : 'text-sidebar-muted hover:text-sidebar-foreground',
+            hasActiveChild
+              ? 'text-sidebar-foreground'
+              : 'text-sidebar-muted hover:text-sidebar-foreground',
           )}
         >
           <span className="flex items-center gap-2.5">
@@ -319,18 +361,29 @@ export default function SidebarNav({
               ) : null
             ) : (
               <>
-                <span className="text-[10px] font-semibold uppercase tracking-[0.2em]">{group.label}</span>
+                <span className="text-[10px] font-semibold uppercase tracking-[0.2em]">
+                  {group.label}
+                </span>
                 {!open && groupBadge > 0 ? (
-                  <Badge variant="destructive" className="h-5 min-w-5 rounded-full px-1.5 text-[10px]">
+                  <Badge
+                    variant="destructive"
+                    className="h-5 min-w-5 rounded-full px-1.5 text-[10px]"
+                  >
                     {groupBadge > 99 ? '99+' : groupBadge}
                   </Badge>
                 ) : null}
               </>
             )}
           </span>
-          {!collapsed ? <ChevronRight className={cn('size-3.5 transition-transform', open && 'rotate-90')} /> : null}
+          {!collapsed ? (
+            <ChevronRight className={cn('size-3.5 transition-transform', open && 'rotate-90')} />
+          ) : null}
         </button>
-        {open ? <div className="space-y-0.5">{group.children.map((child) => renderLink(child, true))}</div> : null}
+        {open ? (
+          <div className="space-y-0.5">
+            {group.children.map((child) => renderLink(child, true))}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -338,13 +391,24 @@ export default function SidebarNav({
   return (
     <>
       <nav className="flex-1 space-y-2 overflow-y-auto px-3 py-3">
-        {NAV_CONFIG.map((entry) => (isGroup(entry) ? renderGroup(entry) : renderLink(entry, false)))}
+        {NAV_CONFIG.map((entry) =>
+          isGroup(entry) ? renderGroup(entry) : renderLink(entry, false),
+        )}
       </nav>
 
       <SidebarAccount collapsed={collapsed} onSignOut={handleSignOut} />
 
-      <div className={cn('border-t border-sidebar-border px-4 py-4 text-sidebar-muted', collapsed ? 'text-center' : 'text-left')}>
-        {!collapsed ? <div className="text-[11px] leading-5 text-sidebar-muted/90">{branding.copyright_text}</div> : null}
+      <div
+        className={cn(
+          'border-t border-sidebar-border px-4 py-4 text-sidebar-muted',
+          collapsed ? 'text-center' : 'text-left',
+        )}
+      >
+        {!collapsed ? (
+          <div className="text-[11px] leading-5 text-sidebar-muted/90">
+            {branding.copyright_text}
+          </div>
+        ) : null}
         <div className="mt-1 text-[11px] uppercase tracking-[0.2em] text-sidebar-muted/70">
           {collapsed ? `v${appReleaseVersion}` : `Version ${appReleaseVersion}`}
         </div>

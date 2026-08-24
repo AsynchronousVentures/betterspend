@@ -1,4 +1,11 @@
-import { messageSchema, type MessageThreadType } from '@betterspend/shared';
+import {
+  messageSchema,
+  sanctionsIngestResultSchema,
+  screenAllVendorsResultSchema,
+  type MessageThreadType,
+  vendorScreeningResultSchema,
+  vendorScreeningStatusSchema,
+} from '@betterspend/shared';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001';
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
@@ -901,6 +908,30 @@ export const api = {
         `/vendor-portal/messages/${threadType}/${threadId}?token=${encodeURIComponent(token)}`,
         { method: 'POST', body: JSON.stringify({ body }) },
       ).then((value) => messageSchema.parse(value)),
+  },
+  riskScreening: {
+    list: () =>
+      apiFetch<unknown>('/risk-screening').then((value) =>
+        vendorScreeningStatusSchema.array().parse(value),
+      ),
+    screenVendor: (vendorId: string) =>
+      apiFetch<unknown>(`/risk-screening/vendors/${vendorId}/screen`, {
+        method: 'POST',
+      }).then((value) => vendorScreeningResultSchema.parse(value)),
+    screenAll: () =>
+      apiFetch<unknown>('/risk-screening/screen-all', { method: 'POST' }).then((value) =>
+        screenAllVendorsResultSchema.parse(value),
+      ),
+    manualReview: (vendorId: string, note: string) =>
+      apiFetch<unknown>(`/risk-screening/vendors/${vendorId}/manual-review`, {
+        method: 'POST',
+        body: JSON.stringify({ note }),
+      }).then((value) => vendorScreeningStatusSchema.parse(value)),
+    ingest: (source?: string) =>
+      apiFetch<unknown>('/risk-screening/ingest', {
+        method: 'POST',
+        body: JSON.stringify(source ? { source } : {}),
+      }).then((value) => sanctionsIngestResultSchema.parse(value)),
   },
   notifications: {
     list: (params?: {
