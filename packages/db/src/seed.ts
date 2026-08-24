@@ -15,6 +15,7 @@ async function seed() {
   console.log('Seeding database...');
 
   // Clear existing demo data (idempotent re-seed)
+  await db.execute(sql`DELETE FROM messages WHERE organization_id = ${DEMO_ORG_ID}`);
   await db.execute(sql`DELETE FROM user_roles WHERE user_id IN (${DEMO_ADMIN_ID}, ${DEMO_REQUESTER_ID}, ${DEMO_APPROVER_ID})`);
   await db.execute(sql`DELETE FROM users WHERE organization_id = ${DEMO_ORG_ID}`);
   await db.execute(sql`DELETE FROM departments WHERE organization_id = ${DEMO_ORG_ID}`);
