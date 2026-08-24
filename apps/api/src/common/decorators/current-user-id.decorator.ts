@@ -1,15 +1,18 @@
-import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import { createParamDecorator, ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import type { Request } from 'express';
+import { DEMO_USER_ID, isDemoModeEnabled } from '../demo-mode';
 
-const DEMO_USER_ID = '00000000-0000-0000-0000-000000000002';
+export function resolveCurrentUserId(req: Request): string {
+  if (req.authUser?.id) return req.authUser.id;
+  if (!isDemoModeEnabled()) throw new UnauthorizedException('Authentication required');
+
+  const header = req.headers['x-user-id'];
+  return typeof header === 'string' && header ? header : DEMO_USER_ID;
+}
 
 export const CurrentUserId = createParamDecorator(
   (_data: unknown, ctx: ExecutionContext): string => {
     const req = ctx.switchToHttp().getRequest<Request>();
-    // Use session user's ID if available (after SessionGuard runs)
-    if (req.authUser?.id) return req.authUser.id;
-    // Fallback: explicit header (useful for testing / Swagger)
-    const header = req.headers['x-user-id'];
-    return (typeof header === 'string' && header) ? header : DEMO_USER_ID;
+    return resolveCurrentUserId(req);
   },
 );

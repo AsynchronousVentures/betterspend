@@ -28,8 +28,8 @@ export class SettingsController {
   @Get('branding')
   @Public()
   @ApiOperation({ summary: 'Get public branding settings (no auth required)' })
-  getBranding(@CurrentOrgId() orgId: string) {
-    return this.settingsService.getBranding(orgId);
+  getBranding() {
+    return this.settingsService.getPublicBranding();
   }
 
   @Put('branding')

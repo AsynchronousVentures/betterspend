@@ -17,7 +17,6 @@ import { ApiTags, ApiOperation, ApiConsumes, ApiBody, ApiQuery } from '@nestjs/s
 import { DocumentsService } from './documents.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
-import { Public } from '../../common/decorators/public.decorator';
 
 @ApiTags('documents')
 @Controller('documents')
@@ -25,7 +24,6 @@ export class DocumentsController {
   constructor(private readonly documentsService: DocumentsService) {}
 
   @Post('upload')
-  @Public()
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 50 * 1024 * 1024 } }))
   @ApiOperation({ summary: 'Upload a document and attach it to an entity' })
@@ -56,7 +54,6 @@ export class DocumentsController {
   }
 
   @Get()
-  @Public()
   @ApiOperation({ summary: 'List documents, optionally filtered by entity' })
   @ApiQuery({ name: 'entityType', required: false })
   @ApiQuery({ name: 'entityId', required: false })
@@ -69,23 +66,15 @@ export class DocumentsController {
   }
 
   @Get(':id/download')
-  @Public()
   @ApiOperation({ summary: 'Get a presigned download URL for a document' })
-  getDownloadUrl(
-    @CurrentOrgId() orgId: string,
-    @Param('id') id: string,
-  ) {
+  getDownloadUrl(@CurrentOrgId() orgId: string, @Param('id') id: string) {
     return this.documentsService.getDownloadUrl(orgId, id);
   }
 
   @Delete(':id')
-  @Public()
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a document from storage and the database' })
-  delete(
-    @CurrentOrgId() orgId: string,
-    @Param('id') id: string,
-  ) {
+  delete(@CurrentOrgId() orgId: string, @Param('id') id: string) {
     return this.documentsService.delete(orgId, id);
   }
 }

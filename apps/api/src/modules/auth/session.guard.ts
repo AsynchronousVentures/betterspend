@@ -13,6 +13,7 @@ import type { AuthInstance, AuthSession, AuthUser } from '../../auth/auth.instan
 import { DB_TOKEN } from '../../database/database.module';
 import { and, eq, gt, inArray } from 'drizzle-orm';
 import * as schema from '@betterspend/db';
+import { isDemoModeEnabled } from '../../common/demo-mode';
 
 // Extend Express Request to carry our user type
 declare global {
@@ -71,7 +72,10 @@ export class SessionGuard implements CanActivate {
         else if (value !== undefined) headers.set(name, value);
       }
       const cookieSession = await this.auth.api.getSession({ headers });
-      if (!cookieSession) throw new UnauthorizedException('Authentication required');
+      if (!cookieSession) {
+        if (isDemoModeEnabled()) return true;
+        throw new UnauthorizedException('Authentication required');
+      }
       session = cookieSession.session;
       user = cookieSession.user;
     }

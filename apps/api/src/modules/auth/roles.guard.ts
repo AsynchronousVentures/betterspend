@@ -1,4 +1,10 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { PERMISSIONS_KEY } from '../../common/decorators/permissions.decorator';
@@ -9,8 +15,7 @@ import {
   normalizePermissions,
   type PermissionKey,
 } from '../../common/permissions';
-
-const DEMO_ADMIN_ID = '00000000-0000-0000-0000-000000000002';
+import { isDemoModeEnabled } from '../../common/demo-mode';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -26,18 +31,21 @@ export class RolesGuard implements CanActivate {
       ctx.getClass(),
     ]);
 
-    // No @Roles() or @Permissions() — allow any authenticated (or demo) user through
-    if ((!requiredRoles || requiredRoles.length === 0) && (!requiredPermissions || requiredPermissions.length === 0)) {
+    // Authentication is SessionGuard's responsibility when no authorization metadata is present.
+    if (
+      (!requiredRoles || requiredRoles.length === 0) &&
+      (!requiredPermissions || requiredPermissions.length === 0)
+    ) {
       return true;
     }
 
     const req = ctx.switchToHttp().getRequest<Request>();
     const { authUser } = req;
 
-    // Demo mode: no session present. Allow the demo admin fallback to pass.
-    // Real unauthenticated requests will have been blocked by SessionGuard already
-    // when a token was presented; no-token requests fall through in soft-auth mode.
-    if (!authUser || authUser.id === DEMO_ADMIN_ID) return true;
+    if (!authUser) {
+      if (isDemoModeEnabled()) return true;
+      throw new UnauthorizedException('Authentication required');
+    }
 
     // Global admin always passes, regardless of what roles or permissions are required
     const isAdmin = authUser.roles?.some((r) => r.role === 'admin');
@@ -54,7 +62,9 @@ export class RolesGuard implements CanActivate {
     }
 
     if (requiredPermissions?.length) {
-      const hasPermissions = requiredPermissions.every((permission) => grantedPermissions.has(permission));
+      const hasPermissions = requiredPermissions.every((permission) =>
+        grantedPermissions.has(permission),
+      );
       if (!hasPermissions) {
         throw new ForbiddenException(`Requires permissions: ${requiredPermissions.join(', ')}`);
       }
@@ -72,9 +82,7 @@ export class RolesGuard implements CanActivate {
     });
 
     if (!hasRole && !hasCompatibleCustomRole) {
-      throw new ForbiddenException(
-        `Requires one of: ${requiredRoles.join(', ')}`,
-      );
+      throw new ForbiddenException(`Requires one of: ${requiredRoles.join(', ')}`);
     }
 
     return true;

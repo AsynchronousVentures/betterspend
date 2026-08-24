@@ -22,8 +22,6 @@ import { MessagesService, parseThreadType } from '../messages/messages.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 
-const DEMO_ORG_ID = '00000000-0000-0000-0000-000000000001';
-
 @ApiTags('vendor-portal')
 @Controller('vendor-portal')
 export class VendorPortalController {
@@ -47,8 +45,8 @@ export class VendorPortalController {
   @ApiOperation({ summary: 'Get vendor dashboard data via portal token' })
   async getDashboard(@Query('token') token: string) {
     if (!token) throw new UnauthorizedException('Token is required');
-    const vendorId = await this.vendorPortalService.validateToken(token);
-    return this.vendorPortalService.getVendorDashboard(vendorId, DEMO_ORG_ID);
+    const { vendorId, organizationId } = await this.vendorPortalService.validateTokenContext(token);
+    return this.vendorPortalService.getVendorDashboard(vendorId, organizationId);
   }
 
   /** Public: get PO details for vendor */
@@ -57,8 +55,8 @@ export class VendorPortalController {
   @ApiOperation({ summary: 'Get purchase order details for vendor via portal token' })
   async getPo(@Param('poId') poId: string, @Query('token') token: string) {
     if (!token) throw new UnauthorizedException('Token is required');
-    const vendorId = await this.vendorPortalService.validateToken(token);
-    return this.vendorPortalService.getPurchaseOrderForVendor(poId, vendorId, DEMO_ORG_ID);
+    const { vendorId, organizationId } = await this.vendorPortalService.validateTokenContext(token);
+    return this.vendorPortalService.getPurchaseOrderForVendor(poId, vendorId, organizationId);
   }
 
   /** Public: submit invoice against a PO */
@@ -68,8 +66,8 @@ export class VendorPortalController {
   @HttpCode(HttpStatus.CREATED)
   async submitInvoice(@Query('token') token: string, @Body() body: SubmitInvoiceInput) {
     if (!token) throw new UnauthorizedException('Token is required');
-    const vendorId = await this.vendorPortalService.validateToken(token);
-    return this.vendorPortalService.submitInvoice(vendorId, DEMO_ORG_ID, body);
+    const { vendorId, organizationId } = await this.vendorPortalService.validateTokenContext(token);
+    return this.vendorPortalService.submitInvoice(vendorId, organizationId, body);
   }
 
   /** Public: list vendor's invoices */
@@ -78,8 +76,8 @@ export class VendorPortalController {
   @ApiOperation({ summary: 'List invoices for vendor via portal token' })
   async listInvoices(@Query('token') token: string) {
     if (!token) throw new UnauthorizedException('Token is required');
-    const vendorId = await this.vendorPortalService.validateToken(token);
-    return this.vendorPortalService.listVendorInvoices(vendorId, DEMO_ORG_ID);
+    const { vendorId, organizationId } = await this.vendorPortalService.validateTokenContext(token);
+    return this.vendorPortalService.listVendorInvoices(vendorId, organizationId);
   }
 
   @Get('catalog')
@@ -87,8 +85,8 @@ export class VendorPortalController {
   @ApiOperation({ summary: 'List vendor catalog items and price proposals via portal token' })
   async listCatalog(@Query('token') token: string) {
     if (!token) throw new UnauthorizedException('Token is required');
-    const vendorId = await this.vendorPortalService.validateToken(token);
-    return this.vendorPortalService.listVendorCatalog(vendorId, DEMO_ORG_ID);
+    const { vendorId, organizationId } = await this.vendorPortalService.validateTokenContext(token);
+    return this.vendorPortalService.listVendorCatalog(vendorId, organizationId);
   }
 
   @Get('onboarding')
@@ -98,8 +96,8 @@ export class VendorPortalController {
   })
   async getOnboarding(@Query('token') token: string) {
     if (!token) throw new UnauthorizedException('Token is required');
-    const vendorId = await this.vendorPortalService.validateToken(token);
-    return this.vendorPortalService.getVendorOnboarding(vendorId, DEMO_ORG_ID);
+    const { vendorId, organizationId } = await this.vendorPortalService.validateTokenContext(token);
+    return this.vendorPortalService.getVendorOnboarding(vendorId, organizationId);
   }
 
   @Get('messages/:threadType/:threadId')
@@ -159,8 +157,8 @@ export class VendorPortalController {
     },
   ) {
     if (!token) throw new UnauthorizedException('Token is required');
-    const vendorId = await this.vendorPortalService.validateToken(token);
-    return this.vendorPortalService.submitVendorOnboarding(vendorId, DEMO_ORG_ID, body ?? {});
+    const { vendorId, organizationId } = await this.vendorPortalService.validateTokenContext(token);
+    return this.vendorPortalService.submitVendorOnboarding(vendorId, organizationId, body ?? {});
   }
 
   @Post('catalog/price-proposals')
@@ -172,8 +170,8 @@ export class VendorPortalController {
     @Body() body: SubmitCatalogPriceProposalInput,
   ) {
     if (!token) throw new UnauthorizedException('Token is required');
-    const vendorId = await this.vendorPortalService.validateToken(token);
-    return this.vendorPortalService.submitCatalogPriceProposal(vendorId, DEMO_ORG_ID, body);
+    const { vendorId, organizationId } = await this.vendorPortalService.validateTokenContext(token);
+    return this.vendorPortalService.submitCatalogPriceProposal(vendorId, organizationId, body);
   }
 
   @Post('catalog/price-proposals/bulk')
@@ -185,10 +183,10 @@ export class VendorPortalController {
     @Body() body: { rows?: BulkCatalogPriceProposalRow[] },
   ) {
     if (!token) throw new UnauthorizedException('Token is required');
-    const vendorId = await this.vendorPortalService.validateToken(token);
+    const { vendorId, organizationId } = await this.vendorPortalService.validateTokenContext(token);
     return this.vendorPortalService.submitBulkCatalogPriceProposals(
       vendorId,
-      DEMO_ORG_ID,
+      organizationId,
       Array.isArray(body?.rows) ? body.rows : [],
     );
   }
