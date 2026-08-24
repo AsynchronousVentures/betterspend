@@ -239,7 +239,7 @@ export function isEncryptedPdf(content: Buffer): boolean {
 export function sanitizeAttachmentFilename(filename: string): string {
   const normalized = filename
     .normalize('NFKC')
-    .replace(/[\\/\0]/g, '_')
+    .replace(/[\\/\u0000-\u001f\u007f]/g, '_')
     .replace(/\s+/g, ' ')
     .trim();
   return (normalized || 'attachment').slice(0, 255);

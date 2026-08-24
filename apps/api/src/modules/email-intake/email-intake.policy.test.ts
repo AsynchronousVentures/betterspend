@@ -7,6 +7,7 @@ import {
   decideAttachment,
   extractInvoiceNumberHint,
   normalizeSesReceipt,
+  sanitizeAttachmentFilename,
 } from './email-intake.policy';
 
 const passVerdicts = { spam: 'PASS', virus: 'PASS', spf: 'PASS', dkim: 'PASS', dmarc: 'PASS' };
@@ -142,5 +143,9 @@ describe('email intake policy', () => {
       'INV-2026/0042',
     );
     assert.equal(extractInvoiceNumberHint('Monthly statement'), null);
+  });
+
+  it('removes path separators and control characters from attachment names', () => {
+    assert.equal(sanitizeAttachmentFilename('../invoice\n2026.pdf'), '.._invoice_2026.pdf');
   });
 });
