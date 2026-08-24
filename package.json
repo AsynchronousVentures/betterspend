@@ -18,9 +18,13 @@
     "release:push": "git push origin main --follow-tags"
   },
   "devDependencies": {
-    "turbo": "^2.10.11",
-    "prettier": "^3.9.6",
+    "@eslint/eslintrc": "^3.3.6",
     "@types/node": "^22.0.0",
-    "typescript": "^5.7.0"
+    "eslint": "^9.39.5",
+    "eslint-config-next": "15.5.21",
+    "prettier": "^3.9.6",
+    "turbo": "^2.10.11",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.67.0"
   }
 }

@@ -6,7 +6,7 @@
     "dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/main",
-    "lint": "eslint \"{src,apps,libs}/**/*.ts\"",
+    "lint": "eslint src --max-warnings 0",
     "test": "jest && tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit"
   },

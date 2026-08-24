@@ -6,6 +6,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "lint": "eslint src --max-warnings 0",
     "db:generate": "drizzle-kit generate",
     "db:validate-history": "tsx src/validate-migration-history.ts",
     "db:migrate": "tsx src/migrate.ts",

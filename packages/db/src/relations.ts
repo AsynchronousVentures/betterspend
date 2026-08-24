@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm';
-import { organizations, legalEntities, departments, projects } from './schema/organizations';
+import { organizations, legalEntities, departments } from './schema/organizations';
 import { customRoles, users, userRoles } from './schema/users';
 import { requisitionTemplates } from './schema/requisition-templates';
 import { vendors, catalogItems } from './schema/vendors';

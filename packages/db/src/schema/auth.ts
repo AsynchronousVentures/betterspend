@@ -3,7 +3,7 @@
  * The `users` table is used as the "user" model (by field mapping).
  * These tables store sessions, OAuth accounts, and verification tokens.
  */
-import { pgTable, uuid, varchar, boolean, text, timestamp } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp } from 'drizzle-orm/pg-core';
 import { users } from './users';
 
 export const authSessions = pgTable('auth_sessions', {

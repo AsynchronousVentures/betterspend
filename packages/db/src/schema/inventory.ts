@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, integer, numeric, timestamp, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, numeric, timestamp, jsonb } from 'drizzle-orm/pg-core';
 import { organizations } from './organizations';
 
 export const inventoryItems = pgTable('inventory_items', {
