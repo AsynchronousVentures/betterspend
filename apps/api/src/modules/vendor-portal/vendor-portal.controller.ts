@@ -111,9 +111,10 @@ export class VendorPortalController {
     @Query('token') token: string,
   ) {
     if (!token) throw new UnauthorizedException('Token is required');
-    const vendorId = await this.vendorPortalService.validateToken(token);
+    const { vendorId, organizationId } =
+      await this.vendorPortalService.validateTokenContext(token);
     return this.messagesService.listAsVendor(
-      DEMO_ORG_ID,
+      organizationId,
       vendorId,
       parseThreadType(threadType),
       threadId,
@@ -131,10 +132,11 @@ export class VendorPortalController {
     @Body() body: unknown,
   ) {
     if (!token) throw new UnauthorizedException('Token is required');
-    const vendorId = await this.vendorPortalService.validateToken(token);
+    const { vendorId, organizationId } =
+      await this.vendorPortalService.validateTokenContext(token);
     const parsed = postMessageSchema.omit({ recipientVendorId: true }).parse(body);
     return this.messagesService.postAsVendor(
-      DEMO_ORG_ID,
+      organizationId,
       vendorId,
       parseThreadType(threadType),
       threadId,

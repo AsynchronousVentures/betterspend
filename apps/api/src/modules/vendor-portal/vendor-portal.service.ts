@@ -130,12 +130,23 @@ export class VendorPortalService {
   }
 
   async validateToken(token: string): Promise<string> {
+    return (await this.validateTokenContext(token)).vendorId;
+  }
+
+  async validateTokenContext(
+    token: string,
+  ): Promise<{ vendorId: string; organizationId: string }> {
     const record = await this.db.query.vendorPortalTokens.findFirst({
       where: (t, { and, eq, gt }) =>
         and(eq(t.token, token), eq(t.used, false), gt(t.expiresAt, new Date())),
     });
     if (!record) throw new UnauthorizedException('Invalid or expired portal token');
-    return record.vendorId;
+    const vendor = await this.db.query.vendors.findFirst({
+      where: (v, { eq }) => eq(v.id, record.vendorId),
+      columns: { organizationId: true },
+    });
+    if (!vendor) throw new UnauthorizedException('Invalid portal token vendor');
+    return { vendorId: record.vendorId, organizationId: vendor.organizationId };
   }
 
   async getVendorDashboard(vendorId: string, orgId: string) {
