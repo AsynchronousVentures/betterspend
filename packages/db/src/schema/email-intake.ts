@@ -141,11 +141,11 @@ export const emailIntakeAttachments = pgTable(
     index('email_intake_attachments_org_hash_idx').on(table.organizationId, table.contentHash),
     check(
       'email_intake_attachments_status_check',
-      sql`${table.status} IN ('accepted', 'duplicate', 'rejected')`,
+      sql`${table.status} IN ('pending', 'accepted', 'duplicate', 'rejected')`,
     ),
     check(
       'email_intake_attachments_outcome_check',
-      sql`(${table.status} = 'accepted' AND ${table.storageKey} IS NOT NULL AND ${table.rejectionReason} IS NULL) OR (${table.status} <> 'accepted' AND ${table.storageKey} IS NULL AND ${table.rejectionReason} IS NOT NULL)`,
+      sql`(${table.status} IN ('pending', 'accepted') AND ${table.storageKey} IS NOT NULL AND ${table.rejectionReason} IS NULL) OR (${table.status} IN ('duplicate', 'rejected') AND ${table.storageKey} IS NULL AND ${table.rejectionReason} IS NOT NULL)`,
     ),
   ],
 );

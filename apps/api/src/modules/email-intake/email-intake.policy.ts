@@ -117,7 +117,7 @@ export function normalizeSesReceipt(payload: unknown): NormalizedSesReceipt {
     throw new Error('Recipient address is too long');
   }
 
-  const receivedAtValue = root.receivedAt ?? mail?.timestamp ?? new Date().toISOString();
+  const receivedAtValue = root.receivedAt ?? mail?.timestamp;
   const receivedAt = requiredString(receivedAtValue, 'receivedAt', 100);
   if (Number.isNaN(Date.parse(receivedAt))) throw new Error('receivedAt must be an ISO timestamp');
 
@@ -209,8 +209,8 @@ export function allowsAttachmentPromotion(verdicts: SesAuthVerdicts): boolean {
   return verdicts.virus === 'PASS';
 }
 
-export function allowsAutomaticReply(dmarcVerdict: string, autoSubmitted: unknown): boolean {
-  if (dmarcVerdict !== 'PASS') return false;
+export function allowsAutomaticReply(verdicts: SesAuthVerdicts, autoSubmitted: unknown): boolean {
+  if (verdicts.spf !== 'PASS' || verdicts.dmarc !== 'PASS') return false;
   if (autoSubmitted === undefined) return true;
   const values = Array.isArray(autoSubmitted) ? autoSubmitted : [autoSubmitted];
   return (
@@ -248,7 +248,70 @@ function detectedContentType(content: Buffer): string | null {
 
 export function isEncryptedPdf(content: Buffer): boolean {
   if (detectedContentType(content) !== 'application/pdf') return false;
-  return /\/Encrypt\b/.test(content.toString('latin1'));
+  const tail = content.subarray(Math.max(0, content.length - 128 * 1024)).toString('latin1');
+  const structuralDictionaries: string[] = [];
+  const startXref = tail.lastIndexOf('startxref');
+  const structuralEnd = startXref >= 0 ? startXref : tail.length;
+
+  const trailer = tail.lastIndexOf('trailer', structuralEnd);
+  if (trailer >= 0) {
+    const dictionary = pdfDictionaryAt(tail, tail.indexOf('<<', trailer));
+    if (dictionary) structuralDictionaries.push(dictionary);
+  }
+
+  const xrefMarkers = [...tail.slice(0, structuralEnd).matchAll(/\/Type\s*\/XRef\b/g)];
+  const xrefMarker = xrefMarkers.at(-1);
+  if (xrefMarker?.index !== undefined) {
+    const dictionary = pdfDictionaryAt(tail, tail.lastIndexOf('<<', xrefMarker.index));
+    if (dictionary) structuralDictionaries.push(dictionary);
+  }
+
+  return structuralDictionaries.some((dictionary) => /\/Encrypt\b/.test(dictionary));
+}
+
+function pdfDictionaryAt(source: string, start: number): string | null {
+  if (start < 0 || source.slice(start, start + 2) !== '<<') return null;
+  let depth = 0;
+  let literalDepth = 0;
+  let escaped = false;
+
+  const end = Math.min(source.length - 1, start + 64 * 1024);
+  for (let index = start; index < end; index += 1) {
+    const character = source[index]!;
+    if (literalDepth > 0) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === '(') {
+        literalDepth += 1;
+      } else if (character === ')') {
+        literalDepth -= 1;
+      }
+      continue;
+    }
+    if (character === '(') {
+      literalDepth = 1;
+      continue;
+    }
+    if (character === '%') {
+      const newline = source.indexOf('\n', index + 1);
+      if (newline < 0) return null;
+      index = newline;
+      continue;
+    }
+    if (source.slice(index, index + 2) === '<<') {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+    if (source.slice(index, index + 2) === '>>') {
+      depth -= 1;
+      index += 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+  }
+  return null;
 }
 
 export function sanitizeAttachmentFilename(filename: string): string {

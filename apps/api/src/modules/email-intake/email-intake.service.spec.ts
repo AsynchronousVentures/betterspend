@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { EmailIntakeService } from './email-intake.service';
 
 const organizationId = '00000000-0000-0000-0000-000000000001';
@@ -69,5 +69,89 @@ describe('EmailIntakeService receipt enqueueing', () => {
     });
     expect(remove).toHaveBeenCalledTimes(1);
     expect(harness.add).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a queue receipt whose security verdicts are not webhook-signed', async () => {
+    const harness = serviceWith();
+
+    await expect(
+      harness.service.processSesReceipt({ receipt: receipt(), signature: '0'.repeat(64) }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(harness.findAddresses).not.toHaveBeenCalled();
+  });
+});
+
+describe('EmailIntakeService attachment promotion', () => {
+  it('leaves the durable attachment pending when object upload fails', async () => {
+    const findAttachment = jest
+      .fn()
+      .mockResolvedValueOnce({
+        status: 'pending',
+        contentHash: 'a'.repeat(64),
+        storageKey: 'email-intake/attachments/org/message/attachment',
+      })
+      .mockResolvedValueOnce(undefined);
+    const insert = jest.fn();
+    const update = jest.fn();
+    const transaction = jest.fn(async (callback) =>
+      callback({
+        execute: jest.fn(),
+        query: { emailIntakeAttachments: { findFirst: findAttachment } },
+        insert,
+        update,
+      }),
+    );
+    const upload = jest.fn().mockRejectedValue(new Error('S3 unavailable'));
+    const service = new EmailIntakeService(
+      { transaction } as never,
+      {} as never,
+      { exists: jest.fn().mockResolvedValue(false), upload } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    await expect(
+      service['promotePendingAttachments']({
+        organizationId,
+        messageId: '00000000-0000-0000-0000-000000000041',
+        sourceEmail: 'billing@vendor.test',
+        subject: 'Invoice 123',
+        body: 'Invoice 123',
+        vendorName: 'Vendor',
+        riskScore: 10,
+        riskSignals: ['sender:known_vendor'],
+        outcomes: [
+          {
+            id: '00000000-0000-0000-0000-000000000051',
+            filename: 'invoice.pdf',
+            contentType: 'application/pdf',
+            contentHash: 'a'.repeat(64),
+            sizeBytes: 8,
+            status: 'pending',
+            rejectionReason: null,
+            storageKey: 'email-intake/attachments/org/message/attachment',
+            intakeItemId: null,
+            invoiceNumberHint: '123',
+          },
+        ],
+        attachments: [
+          {
+            id: '00000000-0000-0000-0000-000000000051',
+            content: Buffer.from('%PDF-1'),
+            decision: {
+              status: 'accepted',
+              filename: 'invoice.pdf',
+              contentType: 'application/pdf',
+              contentHash: 'a'.repeat(64),
+            },
+            invoiceNumberHint: '123',
+          },
+        ],
+      }),
+    ).rejects.toThrow('S3 unavailable');
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(insert).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
   });
 });

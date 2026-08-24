@@ -4,7 +4,7 @@
 
 Each organization receives one random 160-bit local part from `GET /api/v1/email-intake/address`. The address uses `EMAIL_INTAKE_DOMAIN` and cannot be chosen by an admin or inferred from the organization slug.
 
-AWS SES writes raw MIME objects to the application S3 bucket under `EMAIL_INTAKE_RAW_PREFIX`. The API merges a 90-day expiration rule for that prefix with the bucket's existing lifecycle rules. Its AWS credentials need `s3:GetObject`, `s3:GetLifecycleConfiguration`, and `s3:PutLifecycleConfiguration` access.
+AWS SES writes raw MIME objects to the application S3 bucket under `EMAIL_INTAKE_RAW_PREFIX`. The API merges a 90-day expiration rule for that prefix with the bucket's existing lifecycle rules. Its AWS credentials need `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:GetLifecycleConfiguration`, and `s3:PutLifecycleConfiguration` access.
 
 After the S3 receipt action, a Lambda or API Gateway integration posts the SES receipt event to:
 
@@ -13,7 +13,7 @@ POST /api/v1/email-intake/ses-receipt
 X-Email-Intake-Secret: <EMAIL_INTAKE_WEBHOOK_SECRET>
 ```
 
-Set `rawStorageKey` on the event to `EMAIL_INTAKE_RAW_PREFIX + mail.messageId`. The endpoint also accepts `messageId`, `source`, `recipients`, `subject`, `receivedAt`, `rawStorageKey`, and a `verdicts` object directly. It queues work and returns HTTP 202. It never follows SNS subscription URLs.
+Set `rawStorageKey` on the event to `EMAIL_INTAKE_RAW_PREFIX + mail.messageId`. The endpoint also accepts `messageId`, `source`, `recipients`, `subject`, `receivedAt`, `rawStorageKey`, and a `verdicts` object directly. It queues work and returns HTTP 202. It never follows SNS subscription URLs. The endpoint HMAC-signs the normalized receipt, and the worker rejects modified Redis payloads.
 
 Use this receipt-rule order:
 
@@ -31,8 +31,8 @@ Accepted file hashes are deduplicated exactly within the organization. A normali
 ## Durable records
 
 - `email_intake_messages` stores the raw object key, envelope and header sender, recipients, SES verdicts, risk decision, and final attachment counts. A database trigger blocks updates and deletes.
-- `email_intake_attachments` stores one accepted, duplicate, or rejected outcome for every non-inline attachment.
+- `email_intake_attachments` stores one pending, accepted, duplicate, or rejected outcome for every non-inline attachment.
 - Accepted attachments create the existing `email_intake_items` review records and are stored under `email-intake/attachments/`.
-- The message, attachment intents, and audit entry are committed together before attachment upload. A retry resumes missing deterministic object keys without creating orphan variants.
+- The message, pending attachment intents, and audit entry are committed together before attachment upload. A pending attachment becomes accepted and creates a review item only after its deterministic S3 object exists. Upload failures remain retryable and do not participate in exact-hash deduplication.
 
 The channel never creates vendors, invoices, or requisitions automatically. Extraction and draft conversion remain separate stages behind human review.

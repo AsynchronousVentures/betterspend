@@ -61,6 +61,17 @@ describe('email intake policy', () => {
     assert.equal(receipt.verdicts.spam, 'PASS');
   });
 
+  it('rejects receipt metadata without an authoritative timestamp', () => {
+    assert.throws(() =>
+      normalizeSesReceipt({
+        messageId: 'ses-untimed',
+        source: 'ap@vendor.test',
+        recipients: ['opaque@inbound.test'],
+        rawStorageKey: 'email-intake/raw/ses-untimed',
+      }),
+    );
+  });
+
   it('ranks known vendor senders ahead of employees and unknown senders', () => {
     const vendorDomains = new Set(['vendor.test']);
     const employeeDomains = new Set(['buyer.test']);
@@ -106,11 +117,12 @@ describe('email intake policy', () => {
   });
 
   it('allows automatic replies only for DMARC-aligned human mail', () => {
-    assert.equal(allowsAutomaticReply('PASS', undefined), true);
-    assert.equal(allowsAutomaticReply('PASS', 'no'), true);
-    assert.equal(allowsAutomaticReply('FAIL', undefined), false);
-    assert.equal(allowsAutomaticReply('PASS', 'auto-replied'), false);
-    assert.equal(allowsAutomaticReply('PASS', {}), false);
+    assert.equal(allowsAutomaticReply(passVerdicts, undefined), true);
+    assert.equal(allowsAutomaticReply(passVerdicts, 'no'), true);
+    assert.equal(allowsAutomaticReply({ ...passVerdicts, spf: 'FAIL' }, undefined), false);
+    assert.equal(allowsAutomaticReply({ ...passVerdicts, dmarc: 'FAIL' }, undefined), false);
+    assert.equal(allowsAutomaticReply(passVerdicts, 'auto-replied'), false);
+    assert.equal(allowsAutomaticReply(passVerdicts, {}), false);
   });
 
   it('accepts allowed document bytes and ignores inline images', () => {
@@ -148,7 +160,19 @@ describe('email intake policy', () => {
       0,
     );
     const encrypted = decideAttachment(
-      { filename: 'locked.pdf', content: Buffer.from('%PDF-1.7\n/Encrypt 2 0 R') },
+      {
+        filename: 'locked.pdf',
+        content: Buffer.from('%PDF-1.7\ntrailer\n<< /Size 3 /Encrypt 2 0 R >>\nstartxref\n0'),
+      },
+      0,
+    );
+    const mentionsEncryption = decideAttachment(
+      {
+        filename: 'guide.pdf',
+        content: Buffer.from(
+          '%PDF-1.7\n1 0 obj\n<< /Title (How /Encrypt works) >>\nendobj\ntrailer\n<< /Size 2 >>',
+        ),
+      },
       0,
     );
     const oversized = decideAttachment(
@@ -170,6 +194,7 @@ describe('email intake policy', () => {
 
     assert.equal(zip.status === 'rejected' && zip.reason, 'archive_not_allowed');
     assert.equal(encrypted.status === 'rejected' && encrypted.reason, 'encrypted_pdf');
+    assert.equal(mentionsEncryption.status, 'accepted');
     assert.equal(oversized.status === 'rejected' && oversized.reason, 'attachment_too_large');
     assert.equal(excess.status === 'rejected' && excess.reason, 'attachment_count_exceeded');
     assert.equal(prefixedPdf.status === 'rejected' && prefixedPdf.reason, 'archive_not_allowed');

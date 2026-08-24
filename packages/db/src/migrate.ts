@@ -39,6 +39,12 @@ type LegalEntityIndexState = {
   indexIsValid: boolean;
 };
 
+type EmailIntakeIndexState = {
+  emailIntakeItemsTableExists: boolean;
+  indexExists: boolean;
+  indexIsValid: boolean;
+};
+
 /** Build the parent key without blocking writes before transactional migrations add its FK. */
 async function prepareVendorOrganizationIndex(client: postgres.Sql): Promise<void> {
   const [state] = await client<IndexState[]>`
@@ -84,6 +90,30 @@ async function prepareLegalEntityOrganizationIndex(client: postgres.Sql): Promis
   await client`
     CREATE UNIQUE INDEX CONCURRENTLY "legal_entities_id_organization_id_unique"
     ON "legal_entities" ("id", "organization_id")
+  `;
+}
+
+/** Build the email-intake parent key concurrently before its tenant-scoped FK is added. */
+async function prepareEmailIntakeItemOrganizationIndex(client: postgres.Sql): Promise<void> {
+  const [state] = await client<EmailIntakeIndexState[]>`
+    SELECT
+      to_regclass('public.email_intake_items') IS NOT NULL AS "emailIntakeItemsTableExists",
+      to_regclass('public.email_intake_items_id_org_unique') IS NOT NULL AS "indexExists",
+      COALESCE(index_state.indisvalid, false) AS "indexIsValid"
+    FROM (VALUES (1)) AS singleton(value)
+    LEFT JOIN pg_class AS index_class
+      ON index_class.oid = to_regclass('public.email_intake_items_id_org_unique')
+    LEFT JOIN pg_index AS index_state ON index_state.indexrelid = index_class.oid
+  `;
+
+  if (!state?.emailIntakeItemsTableExists || state.indexIsValid) return;
+
+  if (state.indexExists) {
+    await client`DROP INDEX CONCURRENTLY "email_intake_items_id_org_unique"`;
+  }
+  await client`
+    CREATE UNIQUE INDEX CONCURRENTLY "email_intake_items_id_org_unique"
+    ON "email_intake_items" ("id", "organization_id")
   `;
 }
 
@@ -194,6 +224,7 @@ async function main(): Promise<void> {
     migrationLockAcquired = true;
     await prepareVendorOrganizationIndex(client);
     await prepareLegalEntityOrganizationIndex(client);
+    await prepareEmailIntakeItemOrganizationIndex(client);
     const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
     await migrateLegacyConnections(client);

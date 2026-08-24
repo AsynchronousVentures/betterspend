@@ -8,6 +8,9 @@ const EXPECTED_TABLES = [
   'sync_records',
   'workflow_definitions',
   'workflow_definition_versions',
+  'email_intake_addresses',
+  'email_intake_messages',
+  'email_intake_attachments',
 ] as const;
 
 const EXPECTED_COLUMNS = [
@@ -120,6 +123,27 @@ const EXPECTED_FOREIGN_KEYS = [
     parent: 'workflow_definition_versions',
     childColumns: ['definition_version_id'],
     parentColumns: ['id'],
+  },
+  {
+    name: 'email_intake_attachments_message_org_fk',
+    child: 'email_intake_attachments',
+    parent: 'email_intake_messages',
+    childColumns: ['message_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'email_intake_attachments_item_org_fk',
+    child: 'email_intake_attachments',
+    parent: 'email_intake_items',
+    childColumns: ['email_intake_item_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'email_intake_messages_vendor_org_fk',
+    child: 'email_intake_messages',
+    parent: 'vendors',
+    childColumns: ['vendor_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
   },
 ] as const;
 
