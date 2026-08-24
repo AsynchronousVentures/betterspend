@@ -1,5 +1,18 @@
-import { pgTable, uuid, varchar, numeric, integer, timestamp } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  varchar,
+  numeric,
+  integer,
+  timestamp,
+  jsonb,
+  uniqueIndex,
+  index,
+} from 'drizzle-orm/pg-core';
 import { organizations, legalEntities } from './organizations';
+import { requisitions } from './requisitions';
+import { purchaseOrders } from './purchase-orders';
+import { invoices } from './invoices';
 
 export const budgets = pgTable('budgets', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -42,3 +55,42 @@ export const budgetPeriods = pgTable('budget_periods', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Append-only staged commitment ledger. Current balances are the sum of each delta column. */
+export const budgetCommitmentEvents = pgTable(
+  'budget_commitment_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+    budgetId: uuid('budget_id').notNull().references(() => budgets.id),
+    requisitionId: uuid('requisition_id').references(() => requisitions.id),
+    purchaseOrderId: uuid('purchase_order_id').references(() => purchaseOrders.id),
+    invoiceId: uuid('invoice_id').references(() => invoices.id),
+    eventKey: varchar('event_key', { length: 255 }).notNull(),
+    eventType: varchar('event_type', { length: 50 }).notNull(),
+    baseReservedDelta: numeric('base_reserved_delta', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    baseCommittedDelta: numeric('base_committed_delta', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    baseExpendedDelta: numeric('base_expended_delta', { precision: 14, scale: 2 })
+      .notNull()
+      .default('0'),
+    reason: varchar('reason', { length: 255 }).notNull(),
+    metadata: jsonb('metadata').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    organizationEventKey: uniqueIndex('budget_commitment_events_org_key_uniq').on(
+      table.organizationId,
+      table.eventKey,
+    ),
+    budgetCreatedAt: index('budget_commitment_events_budget_created_idx').on(
+      table.budgetId,
+      table.createdAt,
+    ),
+    requisition: index('budget_commitment_events_requisition_idx').on(table.requisitionId),
+    purchaseOrder: index('budget_commitment_events_purchase_order_idx').on(table.purchaseOrderId),
+  }),
+);

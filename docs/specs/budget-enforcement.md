@@ -21,7 +21,7 @@ Purchase orders without a linked requisition have no department field in the cur
 remain allowed in this slice, with an explicit `no_department` decision recorded in the issuance
 audit entry. Department scope for PO-first orders remains part of the later scope-resolution work.
 
-Project and GL-account scope resolution, durable encumbrance records, release and reversal events, and requester-facing budget UI remain in #118 and #119.
+Project and GL-account scope resolution and requester-facing budget UI remain outside this department-budget slice.
 
 ## Module interface
 
@@ -42,7 +42,7 @@ Org settings provide defaults:
 
 Each budget can override either setting. A null budget value inherits the org setting.
 
-`approved_only` counts approved requisitions. `include_pending` also counts submitted and pending-approval requisitions. A converted requisition remains a commitment until its PO has an approved invoice, at which point invoice posting moves the amount into budget spend. The requisition being converted into the PO under evaluation is excluded during that transition.
+`approved_only` counts reserved requisitions and issued PO commitments from the append-only commitment ledger. `include_pending` also counts submitted and pending-approval requisitions. Invoice approval moves its posted amount from committed to expended while the existing budget spend total records the expense. The requisition and PO under evaluation are excluded during their own transition.
 
 ## Owner approval
 
@@ -56,7 +56,7 @@ For a PO, the first issue attempt moves the draft to `pending_approval`. The sta
 
 All comparisons use the organization's base currency. Persisted decimal amounts and exchange rates are converted with fixed-point integer math, then returned as two-decimal strings. Budget base totals and base spend are used when present.
 
-The matching budget row is locked while a requisition submission or PO issuance evaluates and commits its state transition. Requisition status, approval request, and approval actions share that transaction. Converted requisitions retain only the amount not covered by approved invoices. This prevents concurrent requests and partial invoices from distorting the remaining amount. #118 will replace the read-time requisition approximation with an event-backed encumbrance ledger without changing the enforcement interface.
+The matching budget row is locked while a requisition submission or PO issuance evaluates and commits its state transition. Requisition status, approval request, approval actions, and commitment events share that transaction. The event ledger records reserved, committed, and expended deltas, including cancellation, rejection, change-order reduction, and partial-invoice releases. This prevents concurrent requests and partial invoices from distorting the remaining amount without widening the enforcement interface.
 
 ## Failure behavior
 

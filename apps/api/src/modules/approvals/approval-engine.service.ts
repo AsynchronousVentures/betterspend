@@ -22,6 +22,7 @@ import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ApprovalDelegationsService } from '../approval-delegations/approval-delegations.service';
 import { SettingsService } from '../settings/settings.service';
+import { BudgetsService } from '../budgets/budgets.service';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 // System user ID used for auto-approval actions (must be a valid UUID in users table)
@@ -42,6 +43,7 @@ export class ApprovalEngineService {
     @Optional() private readonly notifications: NotificationsService,
     @Optional() private readonly delegations: ApprovalDelegationsService,
     @Optional() private readonly settingsService: SettingsService,
+    @Optional() private readonly budgets?: BudgetsService,
   ) {}
 
   // Evaluate a JSONB condition expression against an entity object
@@ -216,6 +218,7 @@ export class ApprovalEngineService {
             .update(requisitions)
             .set({ status: 'approved', updatedAt: new Date() })
             .where(eq(requisitions.id, entityId));
+          await this.budgets?.recordRequisitionApproval(tx, entityId);
         } else {
           await tx
             .update(purchaseOrders)
@@ -538,6 +541,7 @@ export class ApprovalEngineService {
         .update(requisitions)
         .set({ status: 'approved', updatedAt: new Date() })
         .where(eq(requisitions.id, entityId));
+      await this.budgets?.recordRequisitionApproval(tx, entityId);
 
       return req.id;
     });
@@ -841,11 +845,19 @@ export class ApprovalEngineService {
   ) {
     if (entityType === 'requisition') {
       await tx.update(requisitions).set({ status, updatedAt }).where(eq(requisitions.id, entityId));
+      if (status === 'approved') {
+        await this.budgets?.recordRequisitionApproval(tx, entityId);
+      } else {
+        await this.budgets?.releaseRequisition(tx, entityId, 'rejected');
+      }
     } else if (entityType === 'purchase_order') {
       await tx
         .update(purchaseOrders)
         .set({ status, updatedAt })
         .where(eq(purchaseOrders.id, entityId));
+      if (status === 'rejected') {
+        await this.budgets?.releasePurchaseOrder(tx, entityId, 'rejected');
+      }
     }
   }
 

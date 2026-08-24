@@ -592,6 +592,11 @@ export class InvoicesService {
               req.createdAt.getUTCFullYear(),
               tx,
             );
+            await this.budgets.expenseInvoice(
+              tx,
+              id,
+              convertMoney(spendAmount, String(approved.exchangeRate ?? '1')),
+            );
           }
         }
       }

@@ -232,11 +232,15 @@ export class RequisitionsService {
       throw new BadRequestException(`Cannot cancel a ${req.status} requisition`);
     }
 
-    const [updated] = await this.db
-      .update(requisitions)
-      .set({ status: 'cancelled', updatedAt: new Date() })
-      .where(eq(requisitions.id, id))
-      .returning();
+    const updated = await this.db.transaction(async (tx) => {
+      const [transitioned] = await tx
+        .update(requisitions)
+        .set({ status: 'cancelled', updatedAt: new Date() })
+        .where(and(eq(requisitions.id, id), eq(requisitions.organizationId, organizationId)))
+        .returning();
+      await this.budgets.releaseRequisition(tx, id, 'cancelled');
+      return transitioned;
+    });
     this.audit.log(organizationId, null, 'requisition', id, 'cancelled').catch(() => {});
     return updated;
   }

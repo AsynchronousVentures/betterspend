@@ -13,7 +13,11 @@ import type { WebhookEventService } from '../webhooks/webhook-event.service';
 import type { MatchingService } from './matching.service';
 import { InvoicesService } from './invoices.service';
 
-function createService(recordSpend: BudgetsService['recordSpend'], matchStatus = 'full_match') {
+function createService(
+  recordSpend: BudgetsService['recordSpend'],
+  matchStatus = 'full_match',
+  expenseInvoice: BudgetsService['expenseInvoice'] = async () => {},
+) {
   const approved = {
     id: 'invoice-1',
     organizationId: 'organization-1',
@@ -68,7 +72,7 @@ function createService(recordSpend: BudgetsService['recordSpend'], matchStatus =
   } as unknown as Db;
   const webhookEvents = { emit() {} } as unknown as WebhookEventService;
   const glExport = { enqueue() {} } as unknown as GlExportService;
-  const budgets = { recordSpend } as unknown as BudgetsService;
+  const budgets = { recordSpend, expenseInvoice } as unknown as BudgetsService;
   const audit = { log: async () => {} } as unknown as AuditService;
 
   return {
@@ -124,5 +128,24 @@ describe('InvoicesService approval budget accounting', () => {
       /full three-way match/,
     );
     assert.equal(spendRecorded, false);
+  });
+
+  it('moves approved invoice spend out of the PO commitment in the same transaction', async () => {
+    let expensed: { invoiceId: string; baseAmount: string; executor: DbTransaction } | undefined;
+    const { service, transaction } = createService(
+      async () => ({ updated: true, budgetId: 'budget-1' }),
+      'full_match',
+      async (executor, invoiceId, baseAmount) => {
+        expensed = { executor, invoiceId, baseAmount };
+      },
+    );
+
+    await service.approve('invoice-1', 'organization-1', 'approver-1');
+
+    assert.deepEqual(expensed, {
+      executor: transaction,
+      invoiceId: 'invoice-1',
+      baseAmount: '100.00',
+    });
   });
 });
