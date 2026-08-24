@@ -3,7 +3,7 @@ name: Docker CI/CD
 # Flow:
 #   PR                -> review gate + fast CI in parallel -> validate result
 #   merge group       -> full CI -> validate result
-#   push to main      -> full CI -> validate result -> publish immutable images
+#   push to main      -> full CI -> validate result -> publish immutable images + latest aliases
 #   push v* tag       -> full CI -> validate result -> publish -> deploy
 #   workflow_dispatch -> full CI -> validate result (manual re-check / republish)
 #
@@ -200,8 +200,6 @@ jobs:
           file: docker/web.Dockerfile
           platforms: linux/amd64
           push: false
-          build-args: |
-            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || 'http://localhost:4001' }}
 
       - name: Build migrator image
         uses: useblacksmith/build-push-action@v2
@@ -257,18 +255,18 @@ jobs:
         id: image_settings
         env:
           GHCR_IMAGE_NAMESPACE: ${{ vars.GHCR_IMAGE_NAMESPACE }}
-          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
           namespace="${GHCR_IMAGE_NAMESPACE:-$REPOSITORY_OWNER}"
           namespace="$(printf '%s' "$namespace" | tr '[:upper:]' '[:lower:]')"
           test -n "$namespace"
-          web_api_url="${NEXT_PUBLIC_API_URL:-http://localhost:4001}"
           {
             printf 'api_tag=%s/%s/betterspend-api:%s\n' "$REGISTRY" "$namespace" "$IMAGE_TAG"
             printf 'web_tag=%s/%s/betterspend-web:%s\n' "$REGISTRY" "$namespace" "$IMAGE_TAG"
             printf 'migrator_tag=%s/%s/betterspend-migrator:%s\n' "$REGISTRY" "$namespace" "$IMAGE_TAG"
-            printf 'web_api_url=%s\n' "$web_api_url"
+            printf 'api_latest_tag=%s/%s/betterspend-api:latest\n' "$REGISTRY" "$namespace"
+            printf 'web_latest_tag=%s/%s/betterspend-web:latest\n' "$REGISTRY" "$namespace"
+            printf 'migrator_latest_tag=%s/%s/betterspend-migrator:latest\n' "$REGISTRY" "$namespace"
           } >> "$GITHUB_OUTPUT"
 
       - name: Setup Blacksmith Builder
@@ -330,8 +328,6 @@ jobs:
           file: docker/web.Dockerfile
           platforms: linux/amd64
           push: true
-          build-args: |
-            NEXT_PUBLIC_API_URL=${{ steps.image_settings.outputs.web_api_url }}
           tags: ${{ steps.image_settings.outputs.web_tag }}
 
       - name: Build and push migrator image
@@ -343,6 +339,24 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.image_settings.outputs.migrator_tag }}
+
+      - name: Update latest image aliases
+        if: github.ref == 'refs/heads/main'
+        env:
+          API_TAG: ${{ steps.image_settings.outputs.api_tag }}
+          API_LATEST_TAG: ${{ steps.image_settings.outputs.api_latest_tag }}
+          WEB_TAG: ${{ steps.image_settings.outputs.web_tag }}
+          WEB_LATEST_TAG: ${{ steps.image_settings.outputs.web_latest_tag }}
+          MIGRATOR_TAG: ${{ steps.image_settings.outputs.migrator_tag }}
+          MIGRATOR_LATEST_TAG: ${{ steps.image_settings.outputs.migrator_latest_tag }}
+        run: |
+          for image in API WEB MIGRATOR; do
+            source_variable="${image}_TAG"
+            latest_variable="${image}_LATEST_TAG"
+            docker buildx imagetools create \
+              --tag "${!latest_variable}" \
+              "${!source_variable}"
+          done
 
   deploy-preflight:
     name: Deploy Preflight

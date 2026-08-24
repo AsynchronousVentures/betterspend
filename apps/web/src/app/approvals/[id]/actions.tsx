@@ -2,8 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001/api/v1';
+import { apiUrl } from '../../../lib/api-url';
 
 interface ApprovalDetailActionsProps {
   id: string;
@@ -23,7 +22,7 @@ export default function ApprovalDetailActions({ id, status }: ApprovalDetailActi
     setError('');
     setLoading('approve');
     try {
-      const res = await fetch(`${API_URL}/approvals/${id}/approve`, {
+      const res = await fetch(apiUrl(`/api/v1/approvals/${id}/approve`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ comment: '' }),
@@ -52,7 +51,7 @@ export default function ApprovalDetailActions({ id, status }: ApprovalDetailActi
     setError('');
     setLoading('reject');
     try {
-      const res = await fetch(`${API_URL}/approvals/${id}/reject`, {
+      const res = await fetch(apiUrl(`/api/v1/approvals/${id}/reject`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ comment: rejectReason.trim() }),

@@ -6,8 +6,8 @@ import {
   vendorScreeningResultSchema,
   vendorScreeningStatusSchema,
 } from '@betterspend/shared';
+import { apiUrl } from './api-url';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001';
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 
 function getCookie(name: string): string | undefined {
@@ -50,7 +50,7 @@ function withEntityBody(data: unknown): unknown {
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const token = getCookie('bs_token');
-  const res = await fetch(`${API_BASE}/api/v1${path}`, {
+  const res = await fetch(apiUrl(`/api/v1${path}`), {
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -78,7 +78,7 @@ async function apiFetchForm<T>(path: string, options?: RequestInit): Promise<T> 
   const headers = new Headers(options?.headers);
   if (token) headers.set('Authorization', `Bearer ${token}`);
 
-  const res = await fetch(`${API_BASE}/api/v1${path}`, {
+  const res = await fetch(apiUrl(`/api/v1${path}`), {
     ...options,
     headers,
   });
@@ -98,7 +98,7 @@ async function apiFetchForm<T>(path: string, options?: RequestInit): Promise<T> 
 }
 
 async function vendorPortalFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}/api/v1${path}`, {
+  const res = await fetch(apiUrl(`/api/v1${path}`), {
     ...options,
     credentials: 'include',
     headers: {
@@ -520,7 +520,7 @@ export const api = {
       }),
     pdf: (id: string) => {
       const token = getCookie('bs_token');
-      return fetch(`${API_BASE}/api/v1/purchase-orders/${id}/pdf`, {
+      return fetch(apiUrl(`/api/v1/purchase-orders/${id}/pdf`), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
     },
@@ -655,7 +655,7 @@ export const api = {
     },
     downloadAuditPackage: (data: { framework?: string; from?: string; to?: string }) => {
       const token = getCookie('bs_token');
-      return fetch(`${API_BASE}/api/v1/compliance/audit-package`, {
+      return fetch(apiUrl('/api/v1/compliance/audit-package'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -672,7 +672,7 @@ export const api = {
     download: (type: string, params?: Record<string, string>) => {
       const q = new URLSearchParams(params ?? {});
       const token = getCookie('bs_token');
-      const url = `${API_BASE}/api/v1/reports/${type}${q.toString() ? '?' + q : ''}`;
+      const url = apiUrl(`/api/v1/reports/${type}${q.toString() ? '?' + q : ''}`);
       return fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     },
     customReport: (params: {
@@ -698,7 +698,7 @@ export const api = {
         if (v) filtered[k] = v;
       }
       const token = getCookie('bs_token');
-      const url = `${API_BASE}/api/v1/reports/custom?` + new URLSearchParams(filtered);
+      const url = apiUrl(`/api/v1/reports/custom?${new URLSearchParams(filtered)}`);
       return fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     },
     savedReports: {
@@ -711,7 +711,7 @@ export const api = {
   auth: {
     changePassword: (data: { currentPassword: string; newPassword: string }) => {
       const token = getCookie('bs_token');
-      return fetch(`${API_BASE}/api/auth/change-password`, {
+      return fetch(apiUrl('/api/auth/change-password'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1073,7 +1073,7 @@ export const api = {
     download: (type: string, params?: { from?: string; to?: string }) => {
       const q = new URLSearchParams({ format: 'csv', ...(params ?? {}) });
       const token = getCookie('bs_token');
-      const url = `${API_BASE}/api/v1/export/${type}?${q}`;
+      const url = apiUrl(`/api/v1/export/${type}?${q}`);
       return fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     },
     json: (

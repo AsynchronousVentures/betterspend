@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Bot, FileStack, Plus, Sparkles } from 'lucide-react';
 import { api } from '../../../lib/api';
+import { apiUrl } from '../../../lib/api-url';
 import { PageHeader } from '../../../components/page-header';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge } from '../../../components/ui/badge';
@@ -263,7 +264,7 @@ function NewRequisitionContent() {
     setAiLoading(true);
     setAiMsg('');
     try {
-      const response = await fetch('/api/v1/requisitions/ai-parse', {
+      const response = await fetch(apiUrl('/api/v1/requisitions/ai-parse'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

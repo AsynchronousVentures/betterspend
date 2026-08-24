@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiUrl } from './api-url';
 
 export interface BrandingSettings {
   app_name: string;
@@ -62,8 +63,7 @@ export function useBranding(): BrandingSettings {
     const cached = loadCache();
     if (cached) setBranding(cached);
 
-    const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001';
-    fetch(`${API_BASE}/api/v1/settings/branding`)
+    fetch(apiUrl('/api/v1/settings/branding'))
       .then((r) => r.ok ? r.json() : null)
       .then((data: BrandingSettings | null) => {
         if (data) {
