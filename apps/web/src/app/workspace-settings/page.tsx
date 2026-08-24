@@ -14,6 +14,7 @@ import { getSession } from '../../lib/auth-client';
 import { api } from '../../lib/api';
 import { appReleaseVersion } from '../../lib/release';
 import { invalidateBrandingCache } from '../../lib/branding';
+import { apiBaseUrlLabel } from '../../lib/api-url';
 import { PageHeader } from '../../components/page-header';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
@@ -560,7 +561,7 @@ function SettingsContent() {
             </CardHeader>
             <CardContent>
               <InfoRow label="Organization ID" value={session?.user?.organizationId ?? 'Unknown'} mono />
-              <InfoRow label="API Base URL" value={process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001'} mono />
+              <InfoRow label="API Base URL" value={apiBaseUrlLabel} mono />
               <InfoRow label="Frontend Version" value={appReleaseVersion} />
               <InfoRow label="License" value="MIT License" />
               <InfoRow label="Source Code" value="github.com/AsyncronousVentures/betterspend" mono />

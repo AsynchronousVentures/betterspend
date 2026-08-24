@@ -2,8 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001';
+import { apiUrl } from '../../../lib/api-url';
 
 interface POActionsProps {
   id: string;
@@ -29,7 +28,7 @@ export default function POActions({ id, status, pdfUrl }: POActionsProps) {
     setActionError('');
     setLoading('issue');
     try {
-      const res = await fetch(`${API_URL}/purchase-orders/${id}/issue`, {
+      const res = await fetch(apiUrl(`/api/v1/purchase-orders/${id}/issue`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -53,7 +52,7 @@ export default function POActions({ id, status, pdfUrl }: POActionsProps) {
     setChangeError('');
     setChangeSubmitting(true);
     try {
-      const res = await fetch(`${API_URL}/purchase-orders/${id}/change-order`, {
+      const res = await fetch(apiUrl(`/api/v1/purchase-orders/${id}/change-order`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ changeReason: changeReason.trim() }),

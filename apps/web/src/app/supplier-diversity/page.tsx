@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Leaf, ShieldCheck, Sprout, Users2 } from 'lucide-react';
 import { api } from '../../lib/api';
+import { apiUrl } from '../../lib/api-url';
 import { PageHeader } from '../../components/page-header';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
@@ -71,7 +72,7 @@ export default function SupplierDiversityPage() {
     setLoading(true);
     try {
       const [sum, vendorList] = await Promise.all([
-        fetch('/api/v1/vendors/diversity/summary', {
+        fetch(apiUrl('/api/v1/vendors/diversity/summary'), {
           headers: { 'x-org-id': '00000000-0000-0000-0000-000000000001' },
         }).then((response) => response.json()),
         api.vendors.list(),
@@ -99,7 +100,7 @@ export default function SupplierDiversityPage() {
   async function saveEdit(id: string) {
     setSaving(true);
     try {
-      await fetch(`/api/v1/vendors/${id}/esg`, {
+      await fetch(apiUrl(`/api/v1/vendors/${id}/esg`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
