@@ -1,6 +1,9 @@
+import { evaluateGateState } from './review-gate-policy.mjs';
+
 const requiredEnvironment = [
   'GATE_HEAD_SHA',
   'GATE_PR_NUMBER',
+  'GATE_PR_AUTHOR',
   'GITHUB_REPOSITORY',
   'GITHUB_TOKEN',
 ];
@@ -14,10 +17,11 @@ for (const name of requiredEnvironment) {
 const [owner, repository] = process.env.GITHUB_REPOSITORY.split('/');
 const headSha = process.env.GATE_HEAD_SHA;
 const pullRequestNumber = Number(process.env.GATE_PR_NUMBER);
+const pullRequestAuthor = process.env.GATE_PR_AUTHOR;
 const token = process.env.GITHUB_TOKEN;
 const pollIntervalMs = Number(process.env.GATE_POLL_INTERVAL_MS ?? 10_000);
+const startupGraceMs = Number(process.env.GATE_STARTUP_GRACE_MS ?? 60_000);
 const timeoutMs = Number(process.env.GATE_TIMEOUT_MS ?? 15 * 60_000);
-const requiredMacroscopeChecks = ['Macroscope - Correctness Check', 'Macroscope - Security review'];
 
 if (!owner || !repository) {
   throw new Error('GITHUB_REPOSITORY must have the form owner/repository');
@@ -146,17 +150,6 @@ async function getUnresolvedCodeRabbitThreads() {
   return unresolvedThreads;
 }
 
-function latestByName(items, getName) {
-  const latestItems = new Map();
-  for (const item of items) {
-    const name = getName(item).toLowerCase();
-    if (!latestItems.has(name)) {
-      latestItems.set(name, item);
-    }
-  }
-  return latestItems;
-}
-
 async function getGateState() {
   const [checkRunItems, statusItems] = await Promise.all([
     githubPaginatedRequest(
@@ -169,40 +162,7 @@ async function getGateState() {
     ),
   ]);
 
-  const checkRuns = latestByName(checkRunItems, (checkRun) => checkRun.name);
-  const statuses = latestByName(statusItems, (status) => status.context);
-
-  const blockers = [];
-  const pending = [];
-
-  for (const name of requiredMacroscopeChecks) {
-    const checkRun = checkRuns.get(name.toLowerCase());
-    if (!checkRun || checkRun.status !== 'completed') {
-      pending.push(name);
-    } else if (checkRun.conclusion !== 'success') {
-      blockers.push(`${name}: ${checkRun.conclusion}`);
-    }
-  }
-
-  const codeRabbitStatus = statuses.get('coderabbit');
-  const codeRabbitCheckRun = checkRuns.get('coderabbit');
-  if (codeRabbitStatus) {
-    if (codeRabbitStatus.state === 'pending') {
-      pending.push('CodeRabbit');
-    } else if (codeRabbitStatus.state !== 'success') {
-      blockers.push(`CodeRabbit: ${codeRabbitStatus.state}`);
-    }
-  } else if (codeRabbitCheckRun) {
-    if (codeRabbitCheckRun.status !== 'completed') {
-      pending.push('CodeRabbit');
-    } else if (codeRabbitCheckRun.conclusion !== 'success') {
-      blockers.push(`CodeRabbit: ${codeRabbitCheckRun.conclusion}`);
-    }
-  } else {
-    pending.push('CodeRabbit');
-  }
-
-  return { blockers, pending };
+  return evaluateGateState({ checkRunItems, pullRequestAuthor, statusItems });
 }
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -215,9 +175,10 @@ while (Date.now() - startedAt < timeoutMs) {
   const state = await getGateState();
   const summary = JSON.stringify(state);
   if (summary !== previousSummary) {
+    const waitingFor = [...state.pending, ...state.missing.map((name) => `${name} to start`)];
     console.log(
-      state.pending.length
-        ? `Waiting for: ${state.pending.join(', ')}`
+      waitingFor.length
+        ? `Waiting for: ${waitingFor.join(', ')}`
         : 'External review checks completed',
     );
     previousSummary = summary;
@@ -227,7 +188,13 @@ while (Date.now() - startedAt < timeoutMs) {
     throw new Error(`Review gate blocked by ${state.blockers.join(', ')}`);
   }
 
-  if (!state.pending.length) {
+  if (state.missing.length && Date.now() - startedAt >= startupGraceMs) {
+    throw new Error(
+      `Review checks did not start within ${Math.round(startupGraceMs / 1_000)} seconds: ${state.missing.join(', ')}`,
+    );
+  }
+
+  if (!state.missing.length && !state.pending.length) {
     const unresolvedThreads = await getUnresolvedCodeRabbitThreads();
     if (unresolvedThreads.length) {
       for (const thread of unresolvedThreads) {

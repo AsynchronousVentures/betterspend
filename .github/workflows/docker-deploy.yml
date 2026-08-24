@@ -47,10 +47,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Test review gate policy
+        run: node --test .github/scripts/review-gate-policy.test.mjs
+
       - name: Wait for external reviews
         env:
           GATE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GATE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          GATE_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node .github/scripts/wait-for-review-gate.mjs
 
