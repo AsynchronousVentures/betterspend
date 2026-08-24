@@ -18,8 +18,10 @@ export const WORKFLOW_VALIDATION_CODES = [
   'multiple_default_edges',
   'missing_branch_condition',
   'zero_resolvers',
+  'duplicate_resolver',
   'invalid_quorum',
   'invalid_separation_of_duties',
+  'domain_trigger_mismatch',
   'missing_parent_node',
   'dead_end',
   'terminal_has_outgoing_edge',
@@ -70,10 +72,10 @@ function findDuplicateIds(values: Array<{ id: string }>): string[] {
   return [...duplicates].sort();
 }
 
-function resolverIdentity(resolver: ApproverResolver): string | null {
+function resolverIdentity(resolver: ApproverResolver): string {
   if (resolver.type === 'user') return `user:${resolver.userId}`;
   if (resolver.type === 'role') return `role:${resolver.scope}:${resolver.role}`;
-  return null;
+  return `manager_chain:${resolver.maxLevels}`;
 }
 
 function validateSeparationOfDuties(
@@ -101,12 +103,10 @@ function validateSeparationOfDuties(
     });
   }
 
-  const primaryIdentities = new Set(
-    resolvers.map(resolverIdentity).filter((value): value is string => value !== null),
-  );
+  const primaryIdentities = new Set(resolvers.map(resolverIdentity));
   const duplicateFallback = config.fallbackResolvers.find((resolver) => {
     const identity = resolverIdentity(resolver);
-    return identity !== null && primaryIdentities.has(identity);
+    return primaryIdentities.has(identity);
   });
   if (duplicateFallback) {
     issues.push({
@@ -272,6 +272,20 @@ export function validateWorkflowGraph(input: unknown): WorkflowValidationResult 
       path: ['entryNodeId'],
       nodeIds: [graph.entryNodeId],
     });
+  } else {
+    const expectedEvent = {
+      requisition: 'requisition_submitted',
+      invoice: 'invoice_submitted',
+      po_change: 'po_change_submitted',
+    } as const;
+    if (entryNode.config.event !== expectedEvent[graph.domain]) {
+      issues.push({
+        code: 'domain_trigger_mismatch',
+        message: `Workflow domain ${graph.domain} cannot use trigger ${entryNode.config.event}`,
+        path: ['nodes', entryNode.id, 'config', 'event'],
+        nodeIds: [entryNode.id],
+      });
+    }
   }
 
   const outgoingEdges = new Map<string, WorkflowEdge[]>();
@@ -371,6 +385,18 @@ export function validateWorkflowGraph(input: unknown): WorkflowValidationResult 
     }
 
     if (node.type === 'approver_group' || node.type === 'resolver') {
+      const resolverIdentities = node.config.resolvers.map(resolverIdentity);
+      const duplicateResolverIdentities = resolverIdentities.filter(
+        (identity, index) => resolverIdentities.indexOf(identity) !== index,
+      );
+      if (duplicateResolverIdentities.length > 0) {
+        issues.push({
+          code: 'duplicate_resolver',
+          message: `Approval node ${node.id} contains duplicate resolvers`,
+          path: ['nodes', node.id, 'config', 'resolvers'],
+          nodeIds: [node.id],
+        });
+      }
       if (node.config.resolvers.length === 0) {
         issues.push({
           code: 'zero_resolvers',
@@ -382,7 +408,8 @@ export function validateWorkflowGraph(input: unknown): WorkflowValidationResult 
       if (
         node.type === 'approver_group' &&
         node.config.quorum.type === 'count' &&
-        node.config.quorum.count > node.config.resolvers.length
+        node.config.resolvers.every((resolver) => resolver.type === 'user') &&
+        node.config.quorum.count > new Set(resolverIdentities).size
       ) {
         issues.push({
           code: 'invalid_quorum',

@@ -27,22 +27,29 @@ export const workflowConditionSchema: z.ZodType<WorkflowCondition> = z.lazy(() =
   ]),
 );
 
+export const workflowMoneySchema = z.object({
+  amount: z
+    .string()
+    .regex(/^(0|[1-9]\d*)(\.\d{1,2})?$/, 'Amount must be a non-negative decimal string'),
+  currency: z.string().regex(/^[A-Z]{3}$/, 'Currency must be a three-letter ISO code'),
+});
+
 export const approverResolverSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('user'),
     userId: z.string().uuid(),
-    spendLimit: z.number().nonnegative().optional(),
+    spendLimit: workflowMoneySchema.optional(),
   }),
   z.object({
     type: z.literal('role'),
     role: z.string().trim().min(1).max(50),
     scope: z.enum(['global', 'department', 'project', 'entity']).default('global'),
-    spendLimit: z.number().nonnegative().optional(),
+    spendLimit: workflowMoneySchema.optional(),
   }),
   z.object({
     type: z.literal('manager_chain'),
     maxLevels: z.number().int().positive().max(20).default(10),
-    spendLimit: z.number().nonnegative().optional(),
+    spendLimit: workflowMoneySchema.optional(),
   }),
 ]);
 
@@ -168,7 +175,10 @@ export const collectFormNodeSchema = z.object({
           required: z.boolean().default(false),
         }),
       )
-      .min(1),
+      .min(1)
+      .refine((fields) => new Set(fields.map((field) => field.key)).size === fields.length, {
+        message: 'Field keys must be unique',
+      }),
   }),
 });
 

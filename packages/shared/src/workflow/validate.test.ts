@@ -30,7 +30,13 @@ function validGraph() {
         type: 'approver_group',
         config: {
           execution: 'parallel',
-          resolvers: [{ type: 'user', userId: PRIMARY_APPROVER_ID }],
+          resolvers: [
+            {
+              type: 'user',
+              userId: PRIMARY_APPROVER_ID,
+              spendLimit: { amount: '1000.00', currency: 'USD' },
+            },
+          ],
           quorum: { type: 'all' },
           separationOfDuties: {
             enabled: true,
@@ -177,6 +183,72 @@ describe('validateWorkflowGraph', () => {
     ];
 
     assert.ok(issueCodes(graph).includes('invalid_separation_of_duties'));
+  });
+
+  it('rejects repeated primary and manager-chain fallback resolvers', () => {
+    const graph = validGraph();
+    const finance = graph.nodes[2];
+    if (finance.type !== 'approver_group') throw new Error('Expected approver group fixture');
+    finance.config.resolvers = [
+      { type: 'manager_chain', maxLevels: 3 },
+      { type: 'manager_chain', maxLevels: 3 },
+    ];
+    finance.config.separationOfDuties.fallbackResolvers = [{ type: 'manager_chain', maxLevels: 3 }];
+
+    const codes = issueCodes(graph);
+
+    assert.ok(codes.includes('duplicate_resolver'));
+    assert.ok(codes.includes('invalid_separation_of_duties'));
+  });
+
+  it('defers count quorum bounds when a resolver expands dynamically', () => {
+    const graph = validGraph();
+    const finance = graph.nodes[2];
+    if (finance.type !== 'approver_group') throw new Error('Expected approver group fixture');
+    finance.config.resolvers = [{ type: 'manager_chain', maxLevels: 3 }];
+    finance.config.quorum = { type: 'count', count: 2 };
+    finance.config.separationOfDuties.fallbackResolvers = [{ type: 'role', role: 'finance' }];
+
+    const result = validateWorkflowGraph(graph);
+
+    assert.equal(result.valid, true);
+  });
+
+  it('requires the workflow domain to match its entry trigger event', () => {
+    const graph = validGraph();
+    const entry = graph.nodes[0];
+    if (entry.type !== 'trigger') throw new Error('Expected trigger fixture');
+    entry.config.event = 'requisition_submitted';
+
+    assert.ok(issueCodes(graph).includes('domain_trigger_mismatch'));
+  });
+
+  it('rejects duplicate collect-form field keys', () => {
+    const graph = validGraph();
+    const input = {
+      ...graph,
+      nodes: graph.nodes.map((node) =>
+        node.id === 'finance'
+          ? {
+              id: 'finance',
+              name: 'Collect details',
+              type: 'collect_form',
+              config: {
+                fields: [
+                  { key: 'cost_center', label: 'Cost center', type: 'text' },
+                  { key: 'cost_center', label: 'Cost center again', type: 'text' },
+                ],
+              },
+            }
+          : node,
+      ),
+    };
+
+    const result = validateWorkflowGraph(input);
+
+    assert.equal(result.valid, false);
+    assert.equal(result.graph, null);
+    assert.ok(result.issues.some((issue) => issue.message === 'Field keys must be unique'));
   });
 
   it('detects invalid handles and edges that reference missing nodes', () => {
