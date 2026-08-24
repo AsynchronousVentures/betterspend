@@ -1,4 +1,5 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001';
+import { apiUrl } from './api-url';
+
 const SESSION_COOKIE = 'bs_token';
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60; // 7 days in seconds
 
@@ -18,7 +19,7 @@ function clearToken() {
 }
 
 export async function signIn(email: string, password: string): Promise<SignInResult> {
-  const res = await fetch(`${API_BASE}/api/auth/sign-in/email`, {
+  const res = await fetch(apiUrl('/api/auth/sign-in/email'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
@@ -30,7 +31,7 @@ export async function signIn(email: string, password: string): Promise<SignInRes
 }
 
 export async function signUp(email: string, password: string, name: string): Promise<SignInResult> {
-  const res = await fetch(`${API_BASE}/api/auth/sign-up/email`, {
+  const res = await fetch(apiUrl('/api/auth/sign-up/email'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password, name }),
@@ -43,14 +44,14 @@ export async function signUp(email: string, password: string, name: string): Pro
 
 export async function signOut(): Promise<void> {
   clearToken();
-  await fetch(`${API_BASE}/api/auth/sign-out`, {
+  await fetch(apiUrl('/api/auth/sign-out'), {
     method: 'POST',
     credentials: 'include',
   }).catch(() => {}); // best-effort API sign-out
 }
 
 export async function getSession() {
-  const res = await fetch(`${API_BASE}/api/auth/get-session`, {
+  const res = await fetch(apiUrl('/api/auth/get-session'), {
     credentials: 'include',
   });
   if (!res.ok) return null;

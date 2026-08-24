@@ -2,8 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001';
+import { apiUrl } from '../../../lib/api-url';
 
 interface RequisitionActionsProps {
   id: string;
@@ -19,7 +18,7 @@ export default function RequisitionActions({ id, status }: RequisitionActionsPro
     setError('');
     setLoading(action);
     try {
-      const res = await fetch(`${API_URL}/requisitions/${id}/${action}`, {
+      const res = await fetch(apiUrl(`/api/v1/requisitions/${id}/${action}`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });

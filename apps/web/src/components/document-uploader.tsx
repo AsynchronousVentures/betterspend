@@ -5,8 +5,7 @@ import { Download, FileText, Loader2, Trash2, Upload, X } from 'lucide-react';
 import { Alert, AlertDescription } from './ui/alert';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4001';
+import { apiUrl } from '../lib/api-url';
 
 function getCookie(name: string): string | undefined {
   if (typeof document === 'undefined') return undefined;
@@ -61,7 +60,7 @@ export function DocumentUploader({ entityType, entityId, label = 'Documents', on
     try {
       const token = getCookie('bs_token');
       const res = await fetch(
-        `${API_BASE}/api/v1/documents?entityType=${encodeURIComponent(entityType)}&entityId=${encodeURIComponent(entityId)}`,
+        apiUrl(`/api/v1/documents?entityType=${encodeURIComponent(entityType)}&entityId=${encodeURIComponent(entityId)}`),
         { headers: token ? { Authorization: `Bearer ${token}` } : {} },
       );
       if (!res.ok) throw new Error(`Failed to load documents (${res.status})`);
@@ -92,7 +91,7 @@ export function DocumentUploader({ entityType, entityId, label = 'Documents', on
       form.append('entityType', entityType);
       form.append('entityId', entityId);
 
-      const res = await fetch(`${API_BASE}/api/v1/documents/upload`, {
+      const res = await fetch(apiUrl('/api/v1/documents/upload'), {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: form,
@@ -116,7 +115,7 @@ export function DocumentUploader({ entityType, entityId, label = 'Documents', on
     setError('');
     try {
       const token = getCookie('bs_token');
-      const res = await fetch(`${API_BASE}/api/v1/documents/${doc.id}/download`, {
+      const res = await fetch(apiUrl(`/api/v1/documents/${doc.id}/download`), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error(`Download failed (${res.status})`);
@@ -133,7 +132,7 @@ export function DocumentUploader({ entityType, entityId, label = 'Documents', on
     setError('');
     try {
       const token = getCookie('bs_token');
-      const res = await fetch(`${API_BASE}/api/v1/documents/${doc.id}`, {
+      const res = await fetch(apiUrl(`/api/v1/documents/${doc.id}`), {
         method: 'DELETE',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });

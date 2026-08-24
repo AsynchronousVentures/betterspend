@@ -16,7 +16,7 @@ COPY packages/shared/package.json packages/shared/package.json
 RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
-ARG NEXT_PUBLIC_API_URL=http://localhost:4001
+ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 COPY apps/web apps/web
 COPY packages/shared packages/shared
