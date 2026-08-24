@@ -27,6 +27,36 @@ type LegacyRow = {
   value: string | null;
 };
 
+type IndexState = {
+  vendorsTableExists: boolean;
+  indexExists: boolean;
+  indexIsValid: boolean;
+};
+
+/** Build the parent key without blocking writes before transactional migrations add its FK. */
+async function prepareVendorOrganizationIndex(client: postgres.Sql): Promise<void> {
+  const [state] = await client<IndexState[]>`
+    SELECT
+      to_regclass('public.vendors') IS NOT NULL AS "vendorsTableExists",
+      to_regclass('public.vendors_id_organization_id_unique') IS NOT NULL AS "indexExists",
+      COALESCE(index_state.indisvalid, false) AS "indexIsValid"
+    FROM (VALUES (1)) AS singleton(value)
+    LEFT JOIN pg_class AS index_class
+      ON index_class.oid = to_regclass('public.vendors_id_organization_id_unique')
+    LEFT JOIN pg_index AS index_state ON index_state.indexrelid = index_class.oid
+  `;
+
+  if (!state?.vendorsTableExists || state.indexIsValid) return;
+
+  if (state.indexExists) {
+    await client`DROP INDEX CONCURRENTLY "vendors_id_organization_id_unique"`;
+  }
+  await client`
+    CREATE UNIQUE INDEX CONCURRENTLY "vendors_id_organization_id_unique"
+    ON "vendors" ("id", "organization_id")
+  `;
+}
+
 function expiryDate(value: string | undefined): Date | null {
   const milliseconds = Number(value);
   return Number.isFinite(milliseconds) && milliseconds > 0 ? new Date(milliseconds) : null;
@@ -132,6 +162,7 @@ async function main(): Promise<void> {
   try {
     await client`SELECT pg_advisory_lock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
     migrationLockAcquired = true;
+    await prepareVendorOrganizationIndex(client);
     const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
     await migrateLegacyConnections(client);

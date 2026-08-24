@@ -7,43 +7,48 @@ import {
   timestamp,
   text,
   integer,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { organizations, legalEntities } from './organizations';
 
-export const vendors = pgTable('vendors', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  organizationId: uuid('organization_id')
-    .notNull()
-    .references(() => organizations.id),
-  entityId: uuid('entity_id').references(() => legalEntities.id),
-  name: varchar('name', { length: 255 }).notNull(),
-  code: varchar('code', { length: 50 }),
-  taxId: varchar('tax_id', { length: 100 }),
-  paymentTerms: varchar('payment_terms', { length: 100 }),
-  address: jsonb('address').default({}),
-  contactInfo: jsonb('contact_info').default({}),
-  status: varchar('status', { length: 20 }).notNull().default('active'), // active|inactive|blocked
-  onboardingStatus: varchar('onboarding_status', { length: 30 }).notNull().default('not_started'), // not_started|pending_review|changes_requested|approved
-  onboardingRiskScore: integer('onboarding_risk_score').notNull().default(0),
-  onboardingRiskLevel: varchar('onboarding_risk_level', { length: 20 }).notNull().default('low'),
-  onboardingApprovedAt: timestamp('onboarding_approved_at', { withTimezone: true }),
-  onboardingLastSubmittedAt: timestamp('onboarding_last_submitted_at', { withTimezone: true }),
-  punchoutEnabled: boolean('punchout_enabled').notNull().default(false),
-  punchoutConfig: jsonb('punchout_config'),
-  // Supplier diversity & ESG fields
-  diversityCategories: jsonb('diversity_categories').default([]), // ['minority_owned', 'women_owned', 'veteran_owned', 'small_business', 'lgbtq_owned', 'disability_owned']
-  esgRating: varchar('esg_rating', { length: 10 }), // A+, A, B+, B, C, D (null = not rated)
-  carbonFootprintTons: varchar('carbon_footprint_tons', { length: 20 }), // annual CO2 tons (string/numeric)
-  sustainabilityCertifications: jsonb('sustainability_certifications').default([]), // ['iso14001', 'b_corp', 'fair_trade', 'fsc']
-  esgNotes: text('esg_notes'),
-  diversityVerifiedAt: timestamp('diversity_verified_at', { withTimezone: true }),
-  // Sanctions / adverse-media screening: untested | clear | flagged | manually_reviewed
-  sanctionsStatus: varchar('sanctions_status', { length: 20 }).notNull().default('untested'),
-  sanctionsCheckedAt: timestamp('sanctions_checked_at', { withTimezone: true }),
-  sanctionsNote: text('sanctions_note'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const vendors = pgTable(
+  'vendors',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id),
+    entityId: uuid('entity_id').references(() => legalEntities.id),
+    name: varchar('name', { length: 255 }).notNull(),
+    code: varchar('code', { length: 50 }),
+    taxId: varchar('tax_id', { length: 100 }),
+    paymentTerms: varchar('payment_terms', { length: 100 }),
+    address: jsonb('address').default({}),
+    contactInfo: jsonb('contact_info').default({}),
+    status: varchar('status', { length: 20 }).notNull().default('active'), // active|inactive|blocked
+    onboardingStatus: varchar('onboarding_status', { length: 30 }).notNull().default('not_started'), // not_started|pending_review|changes_requested|approved
+    onboardingRiskScore: integer('onboarding_risk_score').notNull().default(0),
+    onboardingRiskLevel: varchar('onboarding_risk_level', { length: 20 }).notNull().default('low'),
+    onboardingApprovedAt: timestamp('onboarding_approved_at', { withTimezone: true }),
+    onboardingLastSubmittedAt: timestamp('onboarding_last_submitted_at', { withTimezone: true }),
+    punchoutEnabled: boolean('punchout_enabled').notNull().default(false),
+    punchoutConfig: jsonb('punchout_config'),
+    // Supplier diversity & ESG fields
+    diversityCategories: jsonb('diversity_categories').default([]), // ['minority_owned', 'women_owned', 'veteran_owned', 'small_business', 'lgbtq_owned', 'disability_owned']
+    esgRating: varchar('esg_rating', { length: 10 }), // A+, A, B+, B, C, D (null = not rated)
+    carbonFootprintTons: varchar('carbon_footprint_tons', { length: 20 }), // annual CO2 tons (string/numeric)
+    sustainabilityCertifications: jsonb('sustainability_certifications').default([]), // ['iso14001', 'b_corp', 'fair_trade', 'fsc']
+    esgNotes: text('esg_notes'),
+    diversityVerifiedAt: timestamp('diversity_verified_at', { withTimezone: true }),
+    // Sanctions / adverse-media screening: untested | clear | flagged | manually_reviewed
+    sanctionsStatus: varchar('sanctions_status', { length: 20 }).notNull().default('untested'),
+    sanctionsCheckedAt: timestamp('sanctions_checked_at', { withTimezone: true }),
+    sanctionsNote: text('sanctions_note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('vendors_id_organization_id_unique').on(table.id, table.organizationId)],
+);
 
 export const catalogItems = pgTable('catalog_items', {
   id: uuid('id').primaryKey().defaultRandom(),

@@ -267,6 +267,13 @@
       "when": 1787583428421,
       "tag": "0037_canonicalize_migration_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1787599423069,
+      "tag": "20260824192343_vendor_portal_sessions",
+      "breakpoints": true
     }
   ]
 }
