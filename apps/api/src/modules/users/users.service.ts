@@ -68,7 +68,7 @@ export class UsersService {
   ) {
     await this.findOne(userId, organizationId);
     let roleName = data.role ?? 'custom';
-    let customRoleId: string | null = data.customRoleId ?? null;
+    const customRoleId: string | null = data.customRoleId ?? null;
 
     if (customRoleId) {
       await this.findCustomRole(customRoleId, organizationId);

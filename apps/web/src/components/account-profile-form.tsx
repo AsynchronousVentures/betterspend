@@ -168,7 +168,6 @@ export function AccountProfileForm() {
         <div className="flex items-center gap-4">
           <div className="flex size-16 items-center justify-center overflow-hidden rounded-full bg-muted text-foreground">
             {account.avatarUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
               <img src={account.avatarUrl} alt={account.name} className="size-full object-cover" />
             ) : (
               <span className="text-lg font-semibold">{initial}</span>

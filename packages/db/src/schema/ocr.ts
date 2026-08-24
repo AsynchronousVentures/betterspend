@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, integer, jsonb, timestamp } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, jsonb, timestamp } from 'drizzle-orm/pg-core';
 import { organizations } from './organizations';
 
 export const ocrJobs = pgTable('ocr_jobs', {
