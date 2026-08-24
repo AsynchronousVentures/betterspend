@@ -1,4 +1,7 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { lookup } from 'node:dns/promises';
+import { request } from 'node:https';
+import { isIP } from 'node:net';
 import { and, eq, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
@@ -60,18 +63,18 @@ export class RiskScreeningService {
       throw new BadRequestException(`Unsupported sanctions source "${source}"`);
     }
 
-    let response: Response;
+    let csv: string;
     try {
-      response = await fetchSanctionsSource(listUrl, RiskScreeningService.INGEST_TIMEOUT_MS);
+      csv = await downloadSanctionsSource(
+        listUrl,
+        RiskScreeningService.INGEST_TIMEOUT_MS,
+        RiskScreeningService.MAX_INGEST_BYTES,
+      );
     } catch (error) {
       throw new Error(
         `Failed to download sanctions list from ${listUrl}: ${error instanceof Error ? error.message : error}`,
       );
     }
-    if (!response.ok) {
-      throw new Error(`Sanctions list download failed with HTTP ${response.status}`);
-    }
-    const csv = await readResponseTextWithLimit(response, RiskScreeningService.MAX_INGEST_BYTES);
     const { entries: rows, skipped } = parseSdnCsv(csv);
     if (
       rows.length < RiskScreeningService.MIN_INGEST_ENTRIES ||
@@ -389,43 +392,40 @@ function levenshteinDistance(a: string, b: string): number {
   return previous[b.length];
 }
 
-async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
-  const contentLength = Number(response.headers.get('content-length'));
-  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-    throw new Error(`Sanctions list exceeds the ${maxBytes}-byte limit`);
-  }
-  if (!response.body) return '';
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let totalBytes = 0;
-  let text = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    totalBytes += value.byteLength;
-    if (totalBytes > maxBytes) {
-      await reader.cancel();
-      throw new Error(`Sanctions list exceeds the ${maxBytes}-byte limit`);
-    }
-    text += decoder.decode(value, { stream: true });
-  }
-  return text + decoder.decode();
-}
-
 const TRUSTED_SANCTIONS_REDIRECT_HOSTS = new Set([
   'sanctionslistservice.ofac.treas.gov',
   'wc2h-sls-prod-public-published.s3.us-gov-west-1.amazonaws.com',
 ]);
 
-async function fetchSanctionsSource(sourceUrl: string, timeoutMs: number): Promise<Response> {
-  const signal = AbortSignal.timeout(timeoutMs);
+async function downloadSanctionsSource(
+  sourceUrl: string,
+  timeoutMs: number,
+  maxBytes: number,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
   let currentUrl = new URL(sourceUrl);
   for (let redirectCount = 0; redirectCount <= 2; redirectCount++) {
-    const response = await fetch(currentUrl, { redirect: 'manual', signal });
-    if (response.status < 300 || response.status >= 400) return response;
+    assertSafeHttpsUrl(currentUrl);
+    const addresses = await lookup(currentUrl.hostname, { all: true, verbatim: true });
+    if (addresses.length === 0 || addresses.some(({ address }) => !isGlobalIp(address))) {
+      throw new Error(`Sanctions source ${currentUrl.hostname} resolved to a non-global address`);
+    }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) throw new Error('Sanctions source download timed out');
+    const pinnedAddress =
+      addresses.find(({ family }) => family === 4) ?? addresses[0];
+    const response = await requestPinned(
+      currentUrl,
+      pinnedAddress as { address: string; family: 4 | 6 },
+      remainingMs,
+      maxBytes,
+    );
+    if (response.statusCode >= 200 && response.statusCode < 300) return response.body;
+    if (response.statusCode < 300 || response.statusCode >= 400) {
+      throw new Error(`Sanctions list download failed with HTTP ${response.statusCode}`);
+    }
 
-    const location = response.headers.get('location');
+    const location = response.location;
     if (!location) throw new Error('Sanctions source returned a redirect without a location');
     const nextUrl = new URL(location, currentUrl);
     if (
@@ -437,6 +437,106 @@ async function fetchSanctionsSource(sourceUrl: string, timeoutMs: number): Promi
     currentUrl = nextUrl;
   }
   throw new Error('Sanctions source exceeded the redirect limit');
+}
+
+function assertSafeHttpsUrl(url: URL): void {
+  if (url.protocol !== 'https:' || (url.port !== '' && url.port !== '443')) {
+    throw new Error('Sanctions sources must use HTTPS on port 443');
+  }
+  if (url.username || url.password) {
+    throw new Error('Sanctions source URLs cannot contain credentials');
+  }
+}
+
+function isGlobalIp(address: string): boolean {
+  const family = isIP(address);
+  if (family === 4) {
+    const [a, b, c] = address.split('.').map(Number);
+    return !(
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 0 && c === 0) ||
+      (a === 192 && b === 0 && c === 2) ||
+      (a === 192 && b === 88 && c === 99) ||
+      (a === 192 && b === 168) ||
+      (a === 198 && (b === 18 || b === 19)) ||
+      (a === 198 && b === 51 && c === 100) ||
+      (a === 203 && b === 0 && c === 113) ||
+      a >= 224
+    );
+  }
+  if (family === 6) {
+    const normalized = address.toLowerCase();
+    return !(
+      normalized === '::' ||
+      normalized === '::1' ||
+      normalized.startsWith('::ffff:') ||
+      normalized.startsWith('fc') ||
+      normalized.startsWith('fd') ||
+      /^fe[89ab]/.test(normalized) ||
+      normalized.startsWith('ff') ||
+      normalized.startsWith('100:') ||
+      normalized.startsWith('2001:') ||
+      normalized.startsWith('2002:') ||
+      normalized.startsWith('64:ff9b:1:')
+    );
+  }
+  return false;
+}
+
+function requestPinned(
+  url: URL,
+  pinned: { address: string; family: 4 | 6 },
+  timeoutMs: number,
+  maxBytes: number,
+): Promise<{ statusCode: number; location?: string; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      url,
+      {
+        servername: url.hostname,
+        lookup: (_hostname, _options, callback) => {
+          callback(null, pinned.address, pinned.family);
+        },
+      },
+      (response) => {
+        const statusCode = response.statusCode ?? 0;
+        const location = response.headers.location;
+        if (statusCode < 200 || statusCode >= 300) {
+          response.resume();
+          resolve({ statusCode, location, body: '' });
+          return;
+        }
+        const contentLength = Number(response.headers['content-length']);
+        if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+          response.destroy();
+          reject(new Error(`Sanctions list exceeds the ${maxBytes}-byte limit`));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let totalBytes = 0;
+        response.on('data', (chunk: Buffer) => {
+          totalBytes += chunk.byteLength;
+          if (totalBytes > maxBytes) {
+            response.destroy(new Error(`Sanctions list exceeds the ${maxBytes}-byte limit`));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        response.on('end', () => {
+          resolve({ statusCode, location, body: Buffer.concat(chunks).toString('utf8') });
+        });
+        response.on('error', reject);
+      },
+    );
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('Sanctions source download timed out')));
+    req.on('error', reject);
+    req.end();
+  });
 }
 
 /**
