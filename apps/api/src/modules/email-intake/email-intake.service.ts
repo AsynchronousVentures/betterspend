@@ -10,15 +10,17 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { simpleParser } from 'mailparser';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   auditLog,
   emailIntakeAddresses,
   emailIntakeAttachments,
   emailIntakeItems,
   emailIntakeMessages,
+  userRoles,
+  users,
 } from '@betterspend/db';
 import type { Db } from '@betterspend/db';
 import { DB_TOKEN } from '../../database/database.module';
@@ -89,11 +91,16 @@ export class EmailIntakeService implements OnModuleInit {
     if (!configured) return;
     this.intakeDomain();
     this.webhookSecret();
-    await this.storage.ensureExpirationRule(
-      RAW_RETENTION_RULE_ID,
-      this.rawStoragePrefix(),
-      RAW_RETENTION_DAYS,
-    );
+    await this.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended('betterspend:email-intake-lifecycle', 0))`,
+      );
+      await this.storage.ensureExpirationRule(
+        RAW_RETENTION_RULE_ID,
+        this.rawStoragePrefix(),
+        RAW_RETENTION_DAYS,
+      );
+    });
     this.logger.log(`Raw email retention configured for ${RAW_RETENTION_DAYS} days`);
   }
 
@@ -114,16 +121,34 @@ export class EmailIntakeService implements OnModuleInit {
     return item;
   }
 
-  async getInboundAddress(organizationId: string): Promise<{ address: string }> {
+  async getInboundAddress(organizationId: string, userId: string): Promise<{ address: string }> {
     const domain = this.intakeDomain();
     let row = await this.db.query.emailIntakeAddresses.findFirst({
       where: (address, { eq }) => eq(address.organizationId, organizationId),
     });
     if (!row) {
-      await this.db
-        .insert(emailIntakeAddresses)
-        .values({ organizationId, token: randomBytes(20).toString('hex') })
-        .onConflictDoNothing({ target: emailIntakeAddresses.organizationId });
+      row = await this.db.transaction(async (tx) => {
+        const [created] = await tx
+          .insert(emailIntakeAddresses)
+          .values({ organizationId, token: randomBytes(20).toString('hex') })
+          .onConflictDoNothing({ target: emailIntakeAddresses.organizationId })
+          .returning();
+        if (created) {
+          await tx.insert(auditLog).values({
+            organizationId,
+            userId,
+            entityType: 'email_intake_address',
+            entityId: created.id,
+            action: 'created',
+          });
+          return created;
+        }
+        return tx.query.emailIntakeAddresses.findFirst({
+          where: (address, { eq }) => eq(address.organizationId, organizationId),
+        });
+      });
+    }
+    if (!row) {
       row = await this.db.query.emailIntakeAddresses.findFirst({
         where: (address, { eq }) => eq(address.organizationId, organizationId),
       });
@@ -181,22 +206,33 @@ export class EmailIntakeService implements OnModuleInit {
       throw new BadRequestException('rawStorageKey is outside the configured SES prefix');
     }
     const organizationId = await this.resolveReceiptOrganization(receipt.recipients);
+    const messageId = this.stableUuid('message', organizationId, receipt.messageId);
 
-    const existing = await this.db.query.emailIntakeMessages.findFirst({
+    const persisted = await this.db.query.emailIntakeMessages.findFirst({
       where: (message, { and, eq }) =>
         and(
           eq(message.organizationId, organizationId),
           eq(message.sesMessageId, receipt.messageId),
         ),
-      columns: { id: true },
+      columns: {
+        rawStorageKey: true,
+        sourceEmail: true,
+        envelopeSource: true,
+        subject: true,
+      },
     });
-    if (existing) return;
 
-    const rawMime = await this.storage.getBuffer(receipt.rawStorageKey);
-    if (rawMime.length === 0) throw new Error(`Raw MIME object ${receipt.rawStorageKey} is empty`);
+    const rawStorageKey = persisted?.rawStorageKey ?? receipt.rawStorageKey;
+    const rawMime = await this.storage.getBuffer(rawStorageKey);
+    if (rawMime.length === 0) throw new Error(`Raw MIME object ${rawStorageKey} is empty`);
     const parsed = await simpleParser(rawMime, { skipImageLinks: true });
-    const sourceEmail = (parsed.from?.value[0]?.address?.trim() || receipt.source).slice(0, 255);
-    const subject = (parsed.subject || receipt.subject).trim().slice(0, 500);
+    const sourceEmail = (
+      persisted?.sourceEmail ||
+      parsed.from?.value[0]?.address?.trim() ||
+      receipt.source
+    ).slice(0, 255);
+    const subject = (persisted?.subject || parsed.subject || receipt.subject).trim().slice(0, 500);
+    const envelopeSource = persisted?.envelopeSource ?? receipt.source;
     const body = this.messageBody(parsed.text).slice(0, 100_000);
 
     let topLevelIndex = 0;
@@ -213,9 +249,10 @@ export class EmailIntakeService implements OnModuleInit {
         topLevelIndex,
       );
       if (decision.status === 'ignored') continue;
+      const attachmentIndex = topLevelIndex;
       topLevelIndex += 1;
       attachments.push({
-        id: randomUUID(),
+        id: this.stableUuid('attachment', messageId, String(attachmentIndex)),
         content: attachment.content,
         decision,
         invoiceNumberHint: extractInvoiceNumberHint(subject, body, attachment.filename),
@@ -224,7 +261,7 @@ export class EmailIntakeService implements OnModuleInit {
 
     const { classification, vendorId, vendorName } = await this.resolveSender(
       organizationId,
-      sourceEmail,
+      envelopeSource,
     );
     const existingInvoiceNumbers = vendorId
       ? await this.db.query.invoices.findMany({
@@ -244,223 +281,249 @@ export class EmailIntakeService implements OnModuleInit {
     const initialRisk = assessSenderRisk(classification, receipt.verdicts, fuzzyDuplicate);
     if (attachments.length === 0) initialRisk.signals.push('attachments:none');
 
-    const messageId = randomUUID();
-    const uploadedKeys: string[] = [];
-    let outcomes: StoredAttachmentOutcome[] = [];
-    let messageStatus: 'accepted' | 'partial' | 'rejected' | 'duplicate' = 'rejected';
+    const result = await this.db.transaction(async (tx) => {
+      // Serializing by organization closes the exact-hash dedupe race without a global lock.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${organizationId}, 0))`);
 
-    try {
-      const result = await this.db.transaction(async (tx) => {
-        // Serializing by organization closes the exact-hash dedupe race without a global lock.
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${organizationId}, 0))`);
-
-        const repeated = await tx.query.emailIntakeMessages.findFirst({
-          where: (message, { and, eq }) =>
+      const repeated = await tx.query.emailIntakeMessages.findFirst({
+        where: (message, { and, eq }) =>
+          and(
+            eq(message.organizationId, organizationId),
+            eq(message.sesMessageId, receipt.messageId),
+          ),
+        columns: { id: true, status: true, riskScore: true },
+      });
+      if (repeated) {
+        const existingOutcomes = await tx.query.emailIntakeAttachments.findMany({
+          where: (attachment, { and, eq }) =>
             and(
-              eq(message.organizationId, organizationId),
-              eq(message.sesMessageId, receipt.messageId),
+              eq(attachment.organizationId, organizationId),
+              eq(attachment.messageId, repeated.id),
             ),
-          columns: { id: true },
         });
-        if (repeated)
-          return { repeated: true as const, outcomes: [], status: 'duplicate' as const };
+        return {
+          repeated: true as const,
+          outcomes: existingOutcomes.map((attachment) => ({
+            id: attachment.id,
+            filename: attachment.filename,
+            contentType: attachment.contentType,
+            contentHash: attachment.contentHash,
+            sizeBytes: attachment.sizeBytes,
+            status: this.attachmentStatus(attachment.status),
+            rejectionReason: attachment.rejectionReason,
+            storageKey: attachment.storageKey,
+            intakeItemId: attachment.emailIntakeItemId,
+            invoiceNumberHint: attachment.invoiceNumberHint,
+          })),
+          status: this.messageStatus(repeated.status),
+          riskScore: repeated.riskScore,
+        };
+      }
 
-        const acceptableHashes = attachments.flatMap((attachment) =>
-          attachment.decision.status === 'accepted' ? [attachment.decision.contentHash] : [],
-        );
-        const priorHashes =
-          acceptableHashes.length > 0
-            ? await tx.query.emailIntakeAttachments.findMany({
-                where: (attachment, { and, eq, inArray }) =>
-                  and(
-                    eq(attachment.organizationId, organizationId),
-                    eq(attachment.status, 'accepted'),
-                    inArray(attachment.contentHash, acceptableHashes),
-                  ),
-                columns: { contentHash: true },
-              })
-            : [];
-        const seenHashes = new Set(priorHashes.map((attachment) => attachment.contentHash));
+      const acceptableHashes = attachments.flatMap((attachment) =>
+        attachment.decision.status === 'accepted' ? [attachment.decision.contentHash] : [],
+      );
+      const priorHashes =
+        acceptableHashes.length > 0
+          ? await tx.query.emailIntakeAttachments.findMany({
+              where: (attachment, { and, eq, inArray }) =>
+                and(
+                  eq(attachment.organizationId, organizationId),
+                  eq(attachment.status, 'accepted'),
+                  inArray(attachment.contentHash, acceptableHashes),
+                ),
+              columns: { contentHash: true },
+            })
+          : [];
+      const seenHashes = new Set(priorHashes.map((attachment) => attachment.contentHash));
 
-        const storedOutcomes: StoredAttachmentOutcome[] = [];
-        for (const attachment of attachments) {
-          const hash =
-            attachment.decision.status === 'accepted'
-              ? attachment.decision.contentHash
-              : createHash('sha256').update(attachment.content).digest('hex');
-          if (attachment.decision.status === 'rejected') {
-            storedOutcomes.push({
-              id: attachment.id,
-              filename: attachment.decision.filename,
-              contentType: attachment.decision.contentType,
-              contentHash: hash,
-              sizeBytes: attachment.content.length,
-              status: 'rejected',
-              rejectionReason: attachment.decision.reason,
-              storageKey: null,
-              intakeItemId: null,
-              invoiceNumberHint: attachment.invoiceNumberHint,
-            });
-            continue;
-          }
-          if (seenHashes.has(hash)) {
-            storedOutcomes.push({
-              id: attachment.id,
-              filename: attachment.decision.filename,
-              contentType: attachment.decision.contentType,
-              contentHash: hash,
-              sizeBytes: attachment.content.length,
-              status: 'duplicate',
-              rejectionReason: 'duplicate_file_hash',
-              storageKey: null,
-              intakeItemId: null,
-              invoiceNumberHint: attachment.invoiceNumberHint,
-            });
-            continue;
-          }
-
-          const intakeItemId = randomUUID();
-          const storageKey = `email-intake/attachments/${organizationId}/${messageId}/${attachment.id}/${attachment.decision.filename}`;
-          await this.storage.upload(
-            storageKey,
-            attachment.content,
-            attachment.decision.contentType,
-          );
-          uploadedKeys.push(storageKey);
-          seenHashes.add(hash);
+      const storedOutcomes: StoredAttachmentOutcome[] = [];
+      for (const attachment of attachments) {
+        const hash =
+          attachment.decision.status === 'accepted'
+            ? attachment.decision.contentHash
+            : createHash('sha256').update(attachment.content).digest('hex');
+        if (attachment.decision.status === 'rejected') {
           storedOutcomes.push({
             id: attachment.id,
             filename: attachment.decision.filename,
             contentType: attachment.decision.contentType,
             contentHash: hash,
             sizeBytes: attachment.content.length,
-            status: 'accepted',
-            rejectionReason: null,
-            storageKey,
-            intakeItemId,
+            status: 'rejected',
+            rejectionReason: attachment.decision.reason,
+            storageKey: null,
+            intakeItemId: null,
             invoiceNumberHint: attachment.invoiceNumberHint,
           });
+          continue;
+        }
+        if (seenHashes.has(hash)) {
+          storedOutcomes.push({
+            id: attachment.id,
+            filename: attachment.decision.filename,
+            contentType: attachment.decision.contentType,
+            contentHash: hash,
+            sizeBytes: attachment.content.length,
+            status: 'duplicate',
+            rejectionReason: 'duplicate_file_hash',
+            storageKey: null,
+            intakeItemId: null,
+            invoiceNumberHint: attachment.invoiceNumberHint,
+          });
+          continue;
         }
 
-        const acceptedCount = storedOutcomes.filter(
-          (attachment) => attachment.status === 'accepted',
-        ).length;
-        const duplicateCount = storedOutcomes.filter(
-          (attachment) => attachment.status === 'duplicate',
-        ).length;
-        const rejectedCount = storedOutcomes.filter(
-          (attachment) => attachment.status === 'rejected',
-        ).length;
-        const status: 'accepted' | 'partial' | 'rejected' | 'duplicate' =
-          acceptedCount > 0 && (duplicateCount > 0 || rejectedCount > 0)
-            ? 'partial'
-            : acceptedCount > 0
-              ? 'accepted'
-              : duplicateCount > 0 && rejectedCount === 0
-                ? 'duplicate'
-                : 'rejected';
-        const riskSignals = [...initialRisk.signals];
-        if (duplicateCount > 0) riskSignals.push('duplicate:file_hash');
-
-        await tx.insert(emailIntakeMessages).values({
-          id: messageId,
-          organizationId,
-          sesMessageId: receipt.messageId,
-          rawStorageKey: receipt.rawStorageKey,
-          sourceEmail,
-          envelopeSource: receipt.source,
-          recipients: receipt.recipients,
-          subject,
-          receivedAt: new Date(receipt.receivedAt),
-          authVerdicts: receipt.verdicts,
-          senderClassification: classification,
-          vendorId,
-          riskScore: initialRisk.score,
-          riskSignals,
-          status,
+        const intakeItemId = this.stableUuid('item', attachment.id);
+        const storageKey = `email-intake/attachments/${organizationId}/${messageId}/${attachment.id}`;
+        seenHashes.add(hash);
+        storedOutcomes.push({
+          id: attachment.id,
+          filename: attachment.decision.filename,
+          contentType: attachment.decision.contentType,
+          contentHash: hash,
+          sizeBytes: attachment.content.length,
+          status: 'accepted',
+          rejectionReason: null,
+          storageKey,
+          intakeItemId,
+          invoiceNumberHint: attachment.invoiceNumberHint,
         });
+      }
 
-        const accepted = storedOutcomes.filter(
-          (
-            attachment,
-          ): attachment is StoredAttachmentOutcome & { intakeItemId: string; storageKey: string } =>
-            attachment.status === 'accepted' &&
-            attachment.intakeItemId !== null &&
-            attachment.storageKey !== null,
-        );
-        if (accepted.length > 0) {
-          const detected = this.detectIntakeType(subject, body);
-          await tx.insert(emailIntakeItems).values(
-            accepted.map((attachment) => ({
-              id: attachment.intakeItemId,
-              organizationId,
-              sourceEmail,
-              subject,
-              body,
-              detectedType: detected.detectedType,
-              extractedVendorName: vendorName ?? detected.vendorName,
-              extractedTotal: detected.total,
-              extractedCurrency: detected.total ? 'USD' : null,
-              rawPayload: {
-                source: 'ses',
-                emailIntakeMessageId: messageId,
-                attachmentId: attachment.id,
-                filename: attachment.filename,
-                contentHash: attachment.contentHash,
-                storageKey: attachment.storageKey,
-                invoiceNumberHint: attachment.invoiceNumberHint,
-                riskScore: initialRisk.score,
-                riskSignals,
-              },
-            })),
-          );
-        }
+      const acceptedCount = storedOutcomes.filter(
+        (attachment) => attachment.status === 'accepted',
+      ).length;
+      const duplicateCount = storedOutcomes.filter(
+        (attachment) => attachment.status === 'duplicate',
+      ).length;
+      const rejectedCount = storedOutcomes.filter(
+        (attachment) => attachment.status === 'rejected',
+      ).length;
+      const status: 'accepted' | 'partial' | 'rejected' | 'duplicate' =
+        acceptedCount > 0 && (duplicateCount > 0 || rejectedCount > 0)
+          ? 'partial'
+          : acceptedCount > 0
+            ? 'accepted'
+            : duplicateCount > 0 && rejectedCount === 0
+              ? 'duplicate'
+              : 'rejected';
+      const riskSignals = [...initialRisk.signals];
+      if (duplicateCount > 0) riskSignals.push('duplicate:file_hash');
 
-        if (storedOutcomes.length > 0) {
-          await tx.insert(emailIntakeAttachments).values(
-            storedOutcomes.map((attachment) => ({
-              id: attachment.id,
-              organizationId,
-              messageId,
-              emailIntakeItemId: attachment.intakeItemId,
-              filename: attachment.filename,
-              contentType: attachment.contentType,
-              sizeBytes: attachment.sizeBytes,
-              contentHash: attachment.contentHash,
-              storageKey: attachment.storageKey,
-              status: attachment.status,
-              rejectionReason: attachment.rejectionReason,
-              invoiceNumberHint: attachment.invoiceNumberHint,
-            })),
-          );
-        }
-
-        await tx.insert(auditLog).values({
-          organizationId,
-          userId: null,
-          entityType: 'email_intake_message',
-          entityId: messageId,
-          action: 'received',
-          metadata: {
-            sesMessageId: receipt.messageId,
-            status,
-            acceptedAttachments: acceptedCount,
-            duplicateAttachments: duplicateCount,
-            rejectedAttachments: rejectedCount,
-            riskScore: initialRisk.score,
-            riskSignals,
-          },
-        });
-
-        return { repeated: false as const, outcomes: storedOutcomes, status };
+      await tx.insert(emailIntakeMessages).values({
+        id: messageId,
+        organizationId,
+        sesMessageId: receipt.messageId,
+        rawStorageKey: receipt.rawStorageKey,
+        sourceEmail,
+        envelopeSource: receipt.source,
+        recipients: receipt.recipients,
+        subject,
+        receivedAt: new Date(receipt.receivedAt),
+        authVerdicts: receipt.verdicts,
+        senderClassification: classification,
+        vendorId,
+        riskScore: initialRisk.score,
+        riskSignals,
+        status,
       });
 
-      if (result.repeated) return;
-      outcomes = result.outcomes;
-      messageStatus = result.status;
-    } catch (error: unknown) {
-      await Promise.allSettled(uploadedKeys.map((key) => this.storage.delete(key)));
-      throw error;
+      const accepted = storedOutcomes.filter(
+        (
+          attachment,
+        ): attachment is StoredAttachmentOutcome & { intakeItemId: string; storageKey: string } =>
+          attachment.status === 'accepted' &&
+          attachment.intakeItemId !== null &&
+          attachment.storageKey !== null,
+      );
+      if (accepted.length > 0) {
+        const detected = this.detectIntakeType(subject, body);
+        await tx.insert(emailIntakeItems).values(
+          accepted.map((attachment) => ({
+            id: attachment.intakeItemId,
+            organizationId,
+            sourceEmail,
+            subject,
+            body,
+            detectedType: detected.detectedType,
+            extractedVendorName: vendorName ?? detected.vendorName,
+            extractedTotal: detected.total,
+            extractedCurrency: detected.total ? 'USD' : null,
+            rawPayload: {
+              source: 'ses',
+              emailIntakeMessageId: messageId,
+              attachmentId: attachment.id,
+              filename: attachment.filename,
+              contentHash: attachment.contentHash,
+              storageKey: attachment.storageKey,
+              invoiceNumberHint: attachment.invoiceNumberHint,
+              riskScore: initialRisk.score,
+              riskSignals,
+            },
+          })),
+        );
+      }
+
+      if (storedOutcomes.length > 0) {
+        await tx.insert(emailIntakeAttachments).values(
+          storedOutcomes.map((attachment) => ({
+            id: attachment.id,
+            organizationId,
+            messageId,
+            emailIntakeItemId: attachment.intakeItemId,
+            filename: attachment.filename,
+            contentType: attachment.contentType,
+            sizeBytes: attachment.sizeBytes,
+            contentHash: attachment.contentHash,
+            storageKey: attachment.storageKey,
+            status: attachment.status,
+            rejectionReason: attachment.rejectionReason,
+            invoiceNumberHint: attachment.invoiceNumberHint,
+          })),
+        );
+      }
+
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: null,
+        entityType: 'email_intake_message',
+        entityId: messageId,
+        action: 'received',
+        metadata: {
+          sesMessageId: receipt.messageId,
+          status,
+          acceptedAttachments: acceptedCount,
+          duplicateAttachments: duplicateCount,
+          rejectedAttachments: rejectedCount,
+          riskScore: initialRisk.score,
+          riskSignals,
+        },
+      });
+
+      return {
+        repeated: false as const,
+        outcomes: storedOutcomes,
+        status,
+        riskScore: initialRisk.score,
+      };
+    });
+
+    for (const outcome of result.outcomes) {
+      if (outcome.status !== 'accepted' || !outcome.storageKey) continue;
+      if (await this.storage.exists(outcome.storageKey)) continue;
+      const prepared = attachments.find((attachment) => attachment.id === outcome.id);
+      if (!prepared || prepared.decision.status !== 'accepted') {
+        throw new Error(`Raw MIME no longer contains accepted attachment ${outcome.id}`);
+      }
+      if (prepared.decision.contentHash !== outcome.contentHash) {
+        throw new Error(`Raw MIME attachment ${outcome.id} no longer matches its committed hash`);
+      }
+      await this.storage.upload(
+        outcome.storageKey,
+        prepared.content,
+        prepared.decision.contentType,
+      );
     }
 
     await this.notifyIntake(
@@ -468,10 +531,10 @@ export class EmailIntakeService implements OnModuleInit {
       messageId,
       sourceEmail,
       subject,
-      messageStatus,
-      initialRisk.score,
+      result.status,
+      result.riskScore,
     );
-    await this.replyToRejectedAttachments(organizationId, sourceEmail, subject, outcomes);
+    await this.replyToRejectedAttachments(organizationId, envelopeSource, subject, result.outcomes);
   }
 
   async create(organizationId: string, input: CreateEmailIntakeInput) {
@@ -516,6 +579,31 @@ export class EmailIntakeService implements OnModuleInit {
       .where(and(eq(emailIntakeItems.id, id), eq(emailIntakeItems.organizationId, organizationId)))
       .returning();
     return updated;
+  }
+
+  private stableUuid(...parts: string[]): string {
+    const bytes = createHash('sha256').update(parts.join('\0')).digest().subarray(0, 16);
+    bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+    bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+    const hex = bytes.toString('hex');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+
+  private attachmentStatus(value: string): StoredAttachmentOutcome['status'] {
+    if (value === 'accepted' || value === 'duplicate' || value === 'rejected') return value;
+    throw new Error(`Invalid persisted email attachment status: ${value}`);
+  }
+
+  private messageStatus(value: string): 'accepted' | 'partial' | 'rejected' | 'duplicate' {
+    if (
+      value === 'accepted' ||
+      value === 'partial' ||
+      value === 'rejected' ||
+      value === 'duplicate'
+    ) {
+      return value;
+    }
+    throw new Error(`Invalid persisted email message status: ${value}`);
   }
 
   private rawStoragePrefix(): string {
@@ -647,15 +735,35 @@ export class EmailIntakeService implements OnModuleInit {
     riskScore: number,
   ): Promise<void> {
     try {
-      const admin = await this.db.query.users.findFirst({
-        where: (user, { and, eq }) =>
-          and(eq(user.organizationId, organizationId), eq(user.isActive, true)),
-        orderBy: (user, { asc }) => asc(user.createdAt),
+      const existing = await this.db.query.notifications.findFirst({
+        where: (notification, { and, eq }) =>
+          and(
+            eq(notification.organizationId, organizationId),
+            eq(notification.type, 'email_intake'),
+            eq(notification.entityType, 'email_intake'),
+            eq(notification.entityId, entityId),
+          ),
+        columns: { id: true },
       });
-      if (admin) {
+      if (existing) return;
+
+      const [recipient] = await this.db
+        .select({ id: users.id })
+        .from(users)
+        .innerJoin(userRoles, eq(userRoles.userId, users.id))
+        .where(
+          and(
+            eq(users.organizationId, organizationId),
+            eq(users.isActive, true),
+            inArray(userRoles.role, ['admin', 'finance']),
+          ),
+        )
+        .orderBy(users.createdAt)
+        .limit(1);
+      if (recipient) {
         await this.notificationsService.create(
           organizationId,
-          admin.id,
+          recipient.id,
           'email_intake',
           `New email intake ${status}`,
           `${sourceEmail} sent "${subject}" for review (risk ${riskScore}/100).`,
@@ -688,10 +796,11 @@ export class EmailIntakeService implements OnModuleInit {
 
     const settings = await this.settingsService.getAll(organizationId);
     const smtpHost = settings.smtp_host || '';
+    if (!smtpHost) return;
     const lines = rejections.map(
       (attachment) => `${attachment.filename}: ${this.rejectionCopy(attachment.rejectionReason!)}`,
     );
-    await this.mailService.sendMail(
+    const sent = await this.mailService.sendMail(
       {
         host: smtpHost,
         port: Number.parseInt(settings.smtp_port || '587', 10),
@@ -709,6 +818,7 @@ export class EmailIntakeService implements OnModuleInit {
           .join('')}</ul><p>Please resend each invoice as a PDF, PNG, JPG, or WebP file.</p>`,
       },
     );
+    if (!sent) throw new Error('Rejected email attachment reply was not delivered');
   }
 
   private rejectionCopy(reason: string): string {

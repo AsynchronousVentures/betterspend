@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
+import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { EmailIntakeService } from './email-intake.service';
 
@@ -27,8 +28,8 @@ export class EmailIntakeController {
 
   @Get('address')
   @ApiOperation({ summary: 'Get the organization inbound email address' })
-  address(@CurrentOrgId() orgId: string) {
-    return this.emailIntakeService.getInboundAddress(orgId);
+  address(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
+    return this.emailIntakeService.getInboundAddress(orgId, userId);
   }
 
   @Public()

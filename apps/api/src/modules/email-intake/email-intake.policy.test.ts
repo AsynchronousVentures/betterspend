@@ -107,6 +107,18 @@ describe('email intake policy', () => {
       decideAttachment({ filename: 'logo.png', cid: 'logo', content: Buffer.from('ignored') }, 0),
       { status: 'ignored', reason: 'inline_attachment' },
     );
+    assert.equal(
+      decideAttachment(
+        {
+          filename: 'invoice.pdf',
+          cid: 'invoice',
+          contentDisposition: 'attachment',
+          content: pdf,
+        },
+        0,
+      ).status,
+      'accepted',
+    );
   });
 
   it('rejects archives, encrypted PDFs, oversized files, and excess attachments', () => {
@@ -130,11 +142,21 @@ describe('email intake policy', () => {
       { filename: 'eleven.pdf', content: Buffer.from('%PDF-1.7') },
       10,
     );
+    const prefixedPdf = decideAttachment(
+      { filename: 'prefixed.pdf', content: Buffer.from('PK\x03\x04padding%PDF-1.7') },
+      0,
+    );
+    const tar = Buffer.alloc(300);
+    tar.write('%PDF-', 0, 'ascii');
+    tar.write('ustar', 257, 'ascii');
+    const tarDecision = decideAttachment({ filename: 'invoice.pdf', content: tar }, 0);
 
     assert.equal(zip.status === 'rejected' && zip.reason, 'archive_not_allowed');
     assert.equal(encrypted.status === 'rejected' && encrypted.reason, 'encrypted_pdf');
     assert.equal(oversized.status === 'rejected' && oversized.reason, 'attachment_too_large');
     assert.equal(excess.status === 'rejected' && excess.reason, 'attachment_count_exceeded');
+    assert.equal(prefixedPdf.status === 'rejected' && prefixedPdf.reason, 'archive_not_allowed');
+    assert.equal(tarDecision.status === 'rejected' && tarDecision.reason, 'archive_not_allowed');
   });
 
   it('extracts an invoice number hint for fuzzy duplicate checks', () => {

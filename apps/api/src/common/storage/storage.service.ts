@@ -3,6 +3,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   DeleteObjectCommand,
   CreateBucketCommand,
   GetBucketLifecycleConfigurationCommand,
@@ -99,11 +100,25 @@ export class StorageService implements OnModuleInit {
     return Buffer.concat(chunks);
   }
 
+  async exists(key: string): Promise<boolean> {
+    try {
+      await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      return true;
+    } catch (error: unknown) {
+      const status =
+        error && typeof error === 'object' && '$metadata' in error
+          ? (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode
+          : undefined;
+      if (status === 404) return false;
+      throw error;
+    }
+  }
+
   async delete(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
-  /** Merge a prefix-specific expiry rule without replacing unrelated bucket lifecycle rules. */
+  /** Merge a prefix-specific expiry rule. The caller must serialize read-modify-write calls. */
   async ensureExpirationRule(id: string, prefix: string, days: number): Promise<void> {
     let rules: LifecycleRule[] = [];
     try {

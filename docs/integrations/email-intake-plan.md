@@ -33,6 +33,6 @@ Accepted file hashes are deduplicated exactly within the organization. A normali
 - `email_intake_messages` stores the raw object key, envelope and header sender, recipients, SES verdicts, risk decision, and final attachment counts. A database trigger blocks updates and deletes.
 - `email_intake_attachments` stores one accepted, duplicate, or rejected outcome for every non-inline attachment.
 - Accepted attachments create the existing `email_intake_items` review records and are stored under `email-intake/attachments/`.
-- The message and its audit entry are committed together. Uploaded attachment objects are deleted if that transaction fails.
+- The message, attachment intents, and audit entry are committed together before attachment upload. A retry resumes missing deterministic object keys without creating orphan variants.
 
 The channel never creates vendors, invoices, or requisitions automatically. Extraction and draft conversion remain separate stages behind human review.

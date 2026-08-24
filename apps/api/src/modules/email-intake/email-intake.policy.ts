@@ -210,12 +210,13 @@ function archiveMagic(content: Buffer): boolean {
     content.subarray(0, 2).equals(Buffer.from([0x1f, 0x8b])) ||
     content.subarray(0, 2).equals(Buffer.from('PK')) ||
     content.subarray(0, 6).equals(Buffer.from('Rar!\x1a\x07', 'binary')) ||
-    content.subarray(0, 6).equals(Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]))
+    content.subarray(0, 6).equals(Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])) ||
+    content.subarray(257, 262).toString('ascii') === 'ustar'
   );
 }
 
 function detectedContentType(content: Buffer): string | null {
-  if (content.subarray(0, 1024).indexOf(Buffer.from('%PDF-')) >= 0) return 'application/pdf';
+  if (content.subarray(0, 5).toString('ascii') === '%PDF-') return 'application/pdf';
   if (
     content.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
   ) {
@@ -249,7 +250,8 @@ export function decideAttachment(
   attachment: IntakeAttachmentCandidate,
   topLevelIndex: number,
 ): AttachmentDecision {
-  if (attachment.cid || attachment.contentDisposition?.toLowerCase() === 'inline') {
+  const disposition = attachment.contentDisposition?.toLowerCase();
+  if (disposition === 'inline' || (attachment.cid && !disposition?.startsWith('attachment'))) {
     return { status: 'ignored', reason: 'inline_attachment' };
   }
 
