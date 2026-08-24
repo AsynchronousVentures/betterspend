@@ -45,7 +45,6 @@ export interface CreateEmailIntakeInput {
 }
 
 export interface EmailIntakeJobData {
-  organizationId: string;
   receipt: NormalizedSesReceipt;
 }
 
@@ -146,24 +145,7 @@ export class EmailIntakeService implements OnModuleInit {
       throw new BadRequestException('rawStorageKey is outside the configured SES prefix');
     }
 
-    const domain = this.intakeDomain();
-    const tokens = receipt.recipients.flatMap((recipient) => {
-      const normalized = recipient.trim().toLowerCase();
-      const at = normalized.lastIndexOf('@');
-      if (at <= 0 || normalized.slice(at + 1) !== domain) return [];
-      return [normalized.slice(0, at)];
-    });
-    if (tokens.length === 0)
-      throw new BadRequestException('Receipt has no BetterSpend intake recipient');
-
-    const addresses = await this.db.query.emailIntakeAddresses.findMany({
-      where: (address, { inArray }) => inArray(address.token, [...new Set(tokens)]),
-    });
-    const organizationIds = [...new Set(addresses.map((address) => address.organizationId))];
-    if (organizationIds.length !== 1) {
-      throw new BadRequestException('Receipt does not resolve to exactly one organization');
-    }
-    const organizationId = organizationIds[0]!;
+    const organizationId = await this.resolveReceiptOrganization(receipt.recipients);
 
     const existing = await this.db.query.emailIntakeMessages.findFirst({
       where: (message, { and, eq }) =>
@@ -180,7 +162,7 @@ export class EmailIntakeService implements OnModuleInit {
       .digest('hex');
     await this.intakeQueue.add(
       'process-ses-receipt',
-      { organizationId, receipt },
+      { receipt },
       {
         jobId,
         attempts: 5,
@@ -192,7 +174,14 @@ export class EmailIntakeService implements OnModuleInit {
     return { accepted: true, duplicate: false, jobId };
   }
 
-  async processSesReceipt({ organizationId, receipt }: EmailIntakeJobData): Promise<void> {
+  async processSesReceipt(jobData: EmailIntakeJobData): Promise<void> {
+    // Redis is a transport, not an authority. Revalidate and re-resolve the tenant at the sink.
+    const receipt = normalizeSesReceipt(jobData.receipt);
+    if (!receipt.rawStorageKey.startsWith(this.rawStoragePrefix())) {
+      throw new BadRequestException('rawStorageKey is outside the configured SES prefix');
+    }
+    const organizationId = await this.resolveReceiptOrganization(receipt.recipients);
+
     const existing = await this.db.query.emailIntakeMessages.findFirst({
       where: (message, { and, eq }) =>
         and(
@@ -555,6 +544,28 @@ export class EmailIntakeService implements OnModuleInit {
     if (!timingSafeEqual(expectedHash, providedHash)) {
       throw new UnauthorizedException('Invalid email intake secret');
     }
+  }
+
+  private async resolveReceiptOrganization(recipients: string[]): Promise<string> {
+    const domain = this.intakeDomain();
+    const tokens = recipients.flatMap((recipient) => {
+      const normalized = recipient.trim().toLowerCase();
+      const at = normalized.lastIndexOf('@');
+      if (at <= 0 || normalized.slice(at + 1) !== domain) return [];
+      return [normalized.slice(0, at)];
+    });
+    if (tokens.length === 0) {
+      throw new BadRequestException('Receipt has no BetterSpend intake recipient');
+    }
+
+    const addresses = await this.db.query.emailIntakeAddresses.findMany({
+      where: (address, { inArray }) => inArray(address.token, [...new Set(tokens)]),
+    });
+    const organizationIds = [...new Set(addresses.map((address) => address.organizationId))];
+    if (organizationIds.length !== 1) {
+      throw new BadRequestException('Receipt does not resolve to exactly one organization');
+    }
+    return organizationIds[0]!;
   }
 
   private webhookSecret(): string {

@@ -12,7 +12,7 @@ export class EmailIntakeProcessor extends WorkerHost {
   }
 
   async process(job: Job<EmailIntakeJobData>): Promise<void> {
-    this.logger.log(`Processing SES message ${job.data.receipt.messageId}`);
+    this.logger.log(`Processing email intake job ${job.id ?? 'without id'}`);
     await this.emailIntakeService.processSesReceipt(job.data);
   }
 }
