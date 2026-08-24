@@ -532,8 +532,8 @@ export class InvoicesService {
         .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)))
         .for('update');
       if (!lockedInvoice) throw new NotFoundException(`Invoice ${id} not found`);
-      if (lockedInvoice.matchStatus === 'exception') {
-        throw new BadRequestException('Cannot approve invoice with unresolved exceptions');
+      if (lockedInvoice.matchStatus !== 'full_match') {
+        throw new BadRequestException('Invoice requires a full three-way match before approval');
       }
       if (lockedInvoice.status === 'approved' || lockedInvoice.status === 'paid') {
         return {
@@ -556,7 +556,7 @@ export class InvoicesService {
             eq(invoices.organizationId, organizationId),
             ne(invoices.status, 'approved'),
             ne(invoices.status, 'paid'),
-            ne(invoices.matchStatus, 'exception'),
+            eq(invoices.matchStatus, 'full_match'),
           ),
         )
         .returning({ id: invoices.id });

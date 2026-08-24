@@ -13,13 +13,13 @@ import type { WebhookEventService } from '../webhooks/webhook-event.service';
 import type { MatchingService } from './matching.service';
 import { InvoicesService } from './invoices.service';
 
-function createService(recordSpend: BudgetsService['recordSpend']) {
+function createService(recordSpend: BudgetsService['recordSpend'], matchStatus = 'full_match') {
   const approved = {
     id: 'invoice-1',
     organizationId: 'organization-1',
     purchaseOrderId: 'po-1',
     status: 'approved',
-    matchStatus: 'full_match',
+    matchStatus,
     totalAmount: '125.00',
     exchangeRate: '1',
     internalNumber: 'INV-2026-0001',
@@ -110,5 +110,19 @@ describe('InvoicesService approval budget accounting', () => {
     );
     assert.equal(receivedBaseAmount, '100.00');
     assert.equal(receivedTransaction, transaction);
+  });
+
+  it('rejects partial matches before posting budget spend', async () => {
+    let spendRecorded = false;
+    const { service } = createService(async () => {
+      spendRecorded = true;
+      return { updated: true, budgetId: 'budget-1' };
+    }, 'partial_match');
+
+    await assert.rejects(
+      service.approve('invoice-1', 'organization-1', 'approver-1'),
+      /full three-way match/,
+    );
+    assert.equal(spendRecorded, false);
   });
 });
