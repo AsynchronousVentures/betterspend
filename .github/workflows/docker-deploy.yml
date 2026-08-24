@@ -2,6 +2,7 @@ name: Docker CI/CD
 
 # Flow:
 #   PR                -> review gate + fast CI in parallel -> validate result
+#   merge group       -> full CI -> validate result
 #   push to main      -> full CI -> validate result -> publish immutable images
 #   push v* tag       -> full CI -> validate result -> publish -> deploy
 #   workflow_dispatch -> full CI -> validate result (manual re-check / republish)
@@ -11,6 +12,9 @@ name: Docker CI/CD
 
 on:
   pull_request:
+  merge_group:
+    types:
+      - checks_requested
   push:
     branches:
       - main
@@ -25,7 +29,7 @@ permissions:
 
 concurrency:
   group: betterspend-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
 
 env:
   IMAGE_TAG: sha-${{ github.sha }}
@@ -107,6 +111,8 @@ jobs:
 
   full-ci:
     name: Full CI
+    # Merge groups validate GitHub's combined queue SHA. Pushes retain the
+    # same proof for administrators who bypass the pull request rule.
     if: github.event_name != 'pull_request'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     services:
