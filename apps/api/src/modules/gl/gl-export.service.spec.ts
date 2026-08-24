@@ -122,6 +122,7 @@ describe('GlExportService', () => {
             predicate = options.where(row, {
               and: (...parts: unknown[]) => ['and', ...parts],
               eq: (left: unknown, right: unknown) => ['eq', left, right],
+              or: (...parts: unknown[]) => ['or', ...parts],
             });
             return [];
           }),
