@@ -1,5 +1,5 @@
 {
-  "id": "c6b5b399-ab61-4e09-88b3-95d75efa0c3c",
+  "id": "bedd9838-cd01-439a-8b47-9f9f3cef5769",
   "prevId": "05bbe11a-b998-4d8f-b00c-57875b894f99",
   "version": "7",
   "dialect": "postgresql",
@@ -3384,19 +3384,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "invoices_created_by_users_id_fk": {
-          "name": "invoices_created_by_users_id_fk",
-          "tableFrom": "invoices",
-          "tableTo": "users",
-          "columnsFrom": [
-            "created_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "invoices_approved_by_users_id_fk": {
           "name": "invoices_approved_by_users_id_fk",
           "tableFrom": "invoices",
@@ -3406,6 +3393,21 @@
           ],
           "columnsTo": [
             "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "invoices_created_by_organization_fk": {
+          "name": "invoices_created_by_organization_fk",
+          "tableFrom": "invoices",
+          "tableTo": "users",
+          "columnsFrom": [
+            "created_by",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"

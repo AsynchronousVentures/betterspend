@@ -562,6 +562,18 @@ export class InvoicesService {
         lockedInvoice.submissionSource !== 'vendor_portal' &&
         !lockedInvoice.createdBy;
       if (unknownInternalMaker) {
+        await tx.insert(auditLog).values({
+          organizationId,
+          userId: approverId,
+          entityType: 'invoice',
+          entityId: id,
+          action: 'approval_blocked_unknown_creator',
+          changes: {
+            preventInvoiceSelfApproval: true,
+            reason: 'unknown_creator',
+            fallbackApproverId: null,
+          },
+        });
         return {
           blocked: {
             reason: 'unknown_creator' as const,
@@ -588,10 +600,23 @@ export class InvoicesService {
           maker?.departmentId ?? null,
           candidates,
         );
+        const fallbackApprover = fallback ? { id: fallback.id, name: fallback.name } : null;
+        await tx.insert(auditLog).values({
+          organizationId,
+          userId: approverId,
+          entityType: 'invoice',
+          entityId: id,
+          action: 'self_approval_blocked',
+          changes: {
+            preventInvoiceSelfApproval: true,
+            reason: 'self_approval',
+            fallbackApproverId: fallbackApprover?.id ?? null,
+          },
+        });
         return {
           blocked: {
             reason: 'self_approval' as const,
-            fallbackApprover: fallback ? { id: fallback.id, name: fallback.name } : null,
+            fallbackApprover,
           },
         };
       }
@@ -656,20 +681,6 @@ export class InvoicesService {
     if ('blocked' in result && result.blocked) {
       const fallbackApprover = result.blocked.fallbackApprover;
       const unknownCreator = result.blocked.reason === 'unknown_creator';
-      await this.audit
-        .log(
-          organizationId,
-          approverId,
-          'invoice',
-          id,
-          unknownCreator ? 'approval_blocked_unknown_creator' : 'self_approval_blocked',
-          {
-            preventInvoiceSelfApproval: true,
-            reason: result.blocked.reason,
-            fallbackApproverId: fallbackApprover?.id ?? null,
-          },
-        )
-        .catch(() => {});
       throw new ForbiddenException({
         code: unknownCreator
           ? 'INVOICE_CREATOR_UNKNOWN'

@@ -367,8 +367,8 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   }),
   vendor: one(vendors, { fields: [invoices.vendorId], references: [vendors.id] }),
   creator: one(users, {
-    fields: [invoices.createdBy],
-    references: [users.id],
+    fields: [invoices.createdBy, invoices.organizationId],
+    references: [users.id, users.organizationId],
     relationName: 'invoiceCreator',
   }),
   lines: many(invoiceLines),

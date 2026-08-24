@@ -21,6 +21,7 @@ function createService(
     createdBy?: string | null;
     makerCheckerEnabled?: boolean;
     submissionSource?: 'internal' | 'legacy' | 'vendor_portal';
+    blockedAuditFails?: boolean;
   } = {},
 ) {
   const auditActions: string[] = [];
@@ -82,6 +83,15 @@ function createService(
               return { returning: async () => [{ id: 'invoice-1' }] };
             },
           };
+        },
+      };
+    },
+    insert(table: unknown) {
+      return {
+        values: async (values: { action?: string }) => {
+          if (table !== auditLog) return;
+          if (options.blockedAuditFails) throw new Error('audit write failed');
+          if (values.action) auditActions.push(values.action);
         },
       };
     },
@@ -253,6 +263,19 @@ describe('InvoicesService approval budget accounting', () => {
     await service.approve('invoice-1', 'organization-1', 'approver-1');
 
     assert.equal(spendRecorded, true);
+  });
+
+  it('propagates blocked-approval audit failures', async () => {
+    const { service } = createService(
+      async () => ({ updated: true, budgetId: 'budget-1' }),
+      'full_match',
+      { createdBy: 'maker-1', blockedAuditFails: true },
+    );
+
+    await assert.rejects(
+      service.approve('invoice-1', 'organization-1', 'maker-1'),
+      /audit write failed/,
+    );
   });
 });
 
