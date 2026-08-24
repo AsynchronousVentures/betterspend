@@ -65,7 +65,7 @@ ghcr.io/<namespace>/betterspend-web:sha-<commit>
 ghcr.io/<namespace>/betterspend-migrator:sha-<commit>
 ```
 
-Pushing a `v*` tag runs validation, publishes the immutable `sha-<commit>` images, synchronizes the explicit deployment file list to `/opt/betterspend`, and invokes `./deploy.sh sha-<commit>` over SSH. The deploy script backs up PostgreSQL, runs migrations, restarts the application containers, and smoke-checks production. Deployments are serialized by the workflow's production concurrency group.
+Pushing a `v*` tag runs validation, publishes the immutable `sha-<commit>` images, synchronizes the explicit deployment file list to `/opt/betterspend`, and invokes `./deploy.sh sha-<commit>` over SSH. Publish jobs for the same commit are serialized, and the workflow skips any image tag that already exists rather than overwriting it. Registry administrators must preserve that `sha-*` immutability convention for any out-of-band operations. The deploy script backs up PostgreSQL, runs migrations, restarts the application containers, and smoke-checks production. Deployments are serialized by the workflow's production concurrency group.
 
 Tag-driven deployment never synchronizes `.env.production` and does not use `rsync --delete`; production secrets remain server-side.
 

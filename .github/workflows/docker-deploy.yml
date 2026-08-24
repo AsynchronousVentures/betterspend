@@ -88,11 +88,14 @@ jobs:
 
   publish:
     name: Publish Images
-    # Every merge to main produces deployable artifacts; a tag re-publishes
-    # the exact commit being released (no-op cache hit if identical).
+    # Every merge to main produces deployable artifacts. Publishing for the
+    # same commit is serialized, and existing sha-* tags are never replaced.
     if: github.event_name == 'push'
     needs: validate
     runs-on: ubuntu-latest
+    concurrency:
+      group: publish-${{ github.sha }}
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -128,7 +131,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check for existing immutable images
+        id: existing_images
+        env:
+          API_TAG: ${{ steps.image_settings.outputs.api_tag }}
+          WEB_TAG: ${{ steps.image_settings.outputs.web_tag }}
+          MIGRATOR_TAG: ${{ steps.image_settings.outputs.migrator_tag }}
+        run: |
+          for image in API WEB MIGRATOR; do
+            tag_variable="${image}_TAG"
+            tag="${!tag_variable}"
+            output_name="$(printf '%s' "$image" | tr '[:upper:]' '[:lower:]')_exists"
+            if docker buildx imagetools inspect "$tag" >/dev/null 2>&1; then
+              printf '%s=true\n' "$output_name" >> "$GITHUB_OUTPUT"
+            else
+              printf '%s=false\n' "$output_name" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
       - name: Build and push API image
+        if: steps.existing_images.outputs.api_exists != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -138,6 +160,7 @@ jobs:
           tags: ${{ steps.image_settings.outputs.api_tag }}
 
       - name: Build and push web image
+        if: steps.existing_images.outputs.web_exists != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -149,6 +172,7 @@ jobs:
           tags: ${{ steps.image_settings.outputs.web_tag }}
 
       - name: Build and push migrator image
+        if: steps.existing_images.outputs.migrator_exists != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
