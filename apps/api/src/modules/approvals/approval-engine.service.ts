@@ -6,7 +6,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { eq, and, sql, gte, lte } from 'drizzle-orm';
+import { eq, and, sql, gte, inArray, lte } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
 import {
@@ -43,7 +43,7 @@ export class ApprovalEngineService {
     @Optional() private readonly notifications: NotificationsService,
     @Optional() private readonly delegations: ApprovalDelegationsService,
     @Optional() private readonly settingsService: SettingsService,
-    @Optional() private readonly budgets?: BudgetsService,
+    private readonly budgets: BudgetsService,
   ) {}
 
   // Evaluate a JSONB condition expression against an entity object
@@ -220,7 +220,7 @@ export class ApprovalEngineService {
             .where(
               and(eq(requisitions.id, entityId), eq(requisitions.organizationId, organizationId)),
             );
-          await this.budgets?.recordRequisitionApproval(tx, organizationId, entityId);
+          await this.budgets.recordRequisitionApproval(tx, organizationId, entityId);
         } else {
           await tx
             .update(purchaseOrders)
@@ -548,7 +548,7 @@ export class ApprovalEngineService {
         .update(requisitions)
         .set({ status: 'approved', updatedAt: new Date() })
         .where(and(eq(requisitions.id, entityId), eq(requisitions.organizationId, organizationId)));
-      await this.budgets?.recordRequisitionApproval(tx, organizationId, entityId);
+      await this.budgets.recordRequisitionApproval(tx, organizationId, entityId);
 
       return req.id;
     });
@@ -876,24 +876,46 @@ export class ApprovalEngineService {
     updatedAt: Date,
   ) {
     if (entityType === 'requisition') {
-      await tx
+      const [transitioned] = await tx
         .update(requisitions)
         .set({ status, updatedAt })
-        .where(and(eq(requisitions.id, entityId), eq(requisitions.organizationId, organizationId)));
+        .where(
+          and(
+            eq(requisitions.id, entityId),
+            eq(requisitions.organizationId, organizationId),
+            status === 'rejected'
+              ? inArray(requisitions.status, ['submitted', 'pending_approval', 'approved'])
+              : undefined,
+          ),
+        )
+        .returning({ id: requisitions.id });
+      if (!transitioned) {
+        throw new BadRequestException('Requisition status changed before approval completed');
+      }
       if (status === 'approved') {
-        await this.budgets?.recordRequisitionApproval(tx, organizationId, entityId);
+        await this.budgets.recordRequisitionApproval(tx, organizationId, entityId);
       } else {
-        await this.budgets?.releaseRequisition(tx, organizationId, entityId, 'rejected');
+        await this.budgets.releaseRequisition(tx, organizationId, entityId, 'rejected');
       }
     } else if (entityType === 'purchase_order') {
-      await tx
+      const [transitioned] = await tx
         .update(purchaseOrders)
         .set({ status, updatedAt })
         .where(
-          and(eq(purchaseOrders.id, entityId), eq(purchaseOrders.organizationId, organizationId)),
-        );
+          and(
+            eq(purchaseOrders.id, entityId),
+            eq(purchaseOrders.organizationId, organizationId),
+            status === 'rejected'
+              ? inArray(purchaseOrders.status, ['draft', 'pending_approval', 'approved'])
+              : undefined,
+          ),
+        )
+        .returning({ id: purchaseOrders.id });
+      if (!transitioned) {
+        throw new BadRequestException('Purchase order status changed before approval completed');
+      }
       if (status === 'rejected') {
-        await this.budgets?.releasePurchaseOrder(tx, organizationId, entityId, 'rejected');
+        await this.budgets.releasePurchaseOrder(tx, organizationId, entityId, 'rejected');
       }
     }
   }

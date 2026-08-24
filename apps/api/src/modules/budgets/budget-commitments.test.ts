@@ -49,6 +49,16 @@ describe('budget commitment stages', () => {
       { reserved: '0.00', committed: '-70.00', expended: '0.00' },
     );
   });
+
+  it('releases a requisition reservation without erasing live PO commitments', () => {
+    assert.deepEqual(
+      commitmentDeltas(
+        { reserved: '20.00', committed: '100.00', expended: '30.00' },
+        { reserved: '0.00', committed: '100.00', expended: '30.00' },
+      ),
+      { reserved: '-20.00', committed: '0.00', expended: '0.00' },
+    );
+  });
 });
 
 describe('invoice commitment amounts', () => {

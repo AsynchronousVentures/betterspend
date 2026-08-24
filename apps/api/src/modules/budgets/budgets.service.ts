@@ -902,7 +902,7 @@ export class BudgetsService {
       ),
       eventType: BUDGET_COMMITMENT_EVENT_TYPE.REQUISITION_RELEASED,
       reason: `Requisition ${reason}`,
-      desired: { reserved: '0', committed: '0', expended: current.expended },
+      desired: { reserved: '0', committed: current.committed, expended: current.expended },
     });
   }
 

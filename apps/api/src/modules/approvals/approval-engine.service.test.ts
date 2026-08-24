@@ -64,7 +64,9 @@ function createService(
       return {
         set(values: Record<string, unknown>) {
           updateValues.push(values);
-          return { where: async () => [] };
+          return {
+            where: () => ({ returning: async () => [{ id: 'transitioned-entity' }] }),
+          };
         },
       };
     },
