@@ -896,12 +896,7 @@ export const api = {
       apiFetch<unknown>(
         `/vendor-portal/messages/${threadType}/${threadId}?token=${encodeURIComponent(token)}`,
       ).then((value) => messageSchema.array().parse(value)),
-    postMessage: (
-      token: string,
-      threadType: MessageThreadType,
-      threadId: string,
-      body: string,
-    ) =>
+    postMessage: (token: string, threadType: MessageThreadType, threadId: string, body: string) =>
       apiFetch<unknown>(
         `/vendor-portal/messages/${threadType}/${threadId}?token=${encodeURIComponent(token)}`,
         { method: 'POST', body: JSON.stringify({ body }) },

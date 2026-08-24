@@ -1,6 +1,13 @@
 'use client';
 
-import { Suspense, type ChangeEvent, type FormEvent, type ReactNode, useEffect, useState } from 'react';
+import {
+  Suspense,
+  type ChangeEvent,
+  type FormEvent,
+  type ReactNode,
+  useEffect,
+  useState,
+} from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   ClipboardCheck,
@@ -127,7 +134,11 @@ function PortalShell({
             </div>
           </div>
           {onSubmitInvoice ? (
-            <Button type="button" onClick={onSubmitInvoice} className="gap-2 bg-sky-500 text-white hover:bg-sky-400">
+            <Button
+              type="button"
+              onClick={onSubmitInvoice}
+              className="gap-2 bg-sky-500 text-white hover:bg-sky-400"
+            >
               <ReceiptText className="h-4 w-4" />
               Submit Invoice
             </Button>
@@ -181,9 +192,13 @@ function VendorStatCard({
   return (
     <Card className="rounded-lg border-border/70 bg-card/90">
       <CardContent className="flex items-center gap-4 p-5">
-        <div className={cn('flex h-12 w-12 items-center justify-center rounded-lg', tone)}>{icon}</div>
+        <div className={cn('flex h-12 w-12 items-center justify-center rounded-lg', tone)}>
+          {icon}
+        </div>
         <div className="space-y-1">
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            {label}
+          </div>
           <div className="text-xl font-semibold tracking-[-0.03em] text-foreground">{value}</div>
         </div>
       </CardContent>
@@ -191,18 +206,12 @@ function VendorStatCard({
   );
 }
 
-function Field({
-  label,
-  children,
-  hint,
-}: {
-  label: string;
-  children: ReactNode;
-  hint?: string;
-}) {
+function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
     <label className="grid gap-2">
-      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</span>
+      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </span>
       {children}
       {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
     </label>
@@ -229,7 +238,8 @@ function SubmitInvoiceModal({
   const [error, setError] = useState('');
 
   const issuedPOs = purchaseOrders.filter(
-    (po: any) => po.status === 'issued' || po.status === 'partially_received' || po.status === 'received',
+    (po: any) =>
+      po.status === 'issued' || po.status === 'partially_received' || po.status === 'received',
   );
 
   function addLine() {
@@ -241,10 +251,12 @@ function SubmitInvoiceModal({
 
   function removeLine(index: number) {
     setLines((current) =>
-      current.filter((_, lineIndex) => lineIndex !== index).map((line, lineIndex) => ({
-        ...line,
-        lineNumber: lineIndex + 1,
-      })),
+      current
+        .filter((_, lineIndex) => lineIndex !== index)
+        .map((line, lineIndex) => ({
+          ...line,
+          lineNumber: lineIndex + 1,
+        })),
     );
   }
 
@@ -312,7 +324,13 @@ function SubmitInvoiceModal({
               Invoice against an issued PO and send the line-level detail directly into matching.
             </p>
           </div>
-          <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Close modal">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            aria-label="Close modal"
+          >
             <X className="h-5 w-5" />
           </Button>
         </div>
@@ -327,15 +345,25 @@ function SubmitInvoiceModal({
           <Card className="rounded-lg">
             <CardHeader>
               <CardTitle className="text-base">Invoice details</CardTitle>
-              <CardDescription>Choose the PO and provide your reference numbers and dates.</CardDescription>
+              <CardDescription>
+                Choose the PO and provide your reference numbers and dates.
+              </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
               <div className="md:col-span-2">
                 <Field
                   label="Purchase Order"
-                  hint={issuedPOs.length === 0 ? 'No issued purchase orders are currently available to invoice against.' : undefined}
+                  hint={
+                    issuedPOs.length === 0
+                      ? 'No issued purchase orders are currently available to invoice against.'
+                      : undefined
+                  }
                 >
-                  <Select required value={selectedPoId} onChange={(event) => setSelectedPoId(event.target.value)}>
+                  <Select
+                    required
+                    value={selectedPoId}
+                    onChange={(event) => setSelectedPoId(event.target.value)}
+                  >
                     <option value="">Select a PO...</option>
                     {issuedPOs.map((po: any) => (
                       <option key={po.id} value={po.id}>
@@ -354,10 +382,19 @@ function SubmitInvoiceModal({
                 />
               </Field>
               <Field label="Invoice Date">
-                <Input required type="date" value={invoiceDate} onChange={(event) => setInvoiceDate(event.target.value)} />
+                <Input
+                  required
+                  type="date"
+                  value={invoiceDate}
+                  onChange={(event) => setInvoiceDate(event.target.value)}
+                />
               </Field>
               <Field label="Due Date">
-                <Input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
+                <Input
+                  type="date"
+                  value={dueDate}
+                  onChange={(event) => setDueDate(event.target.value)}
+                />
               </Field>
             </CardContent>
           </Card>
@@ -366,7 +403,9 @@ function SubmitInvoiceModal({
             <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <CardTitle className="text-base">Line items</CardTitle>
-                <CardDescription>Line details will be used during match and exception handling.</CardDescription>
+                <CardDescription>
+                  Line details will be used during match and exception handling.
+                </CardDescription>
               </div>
               <Button type="button" variant="outline" onClick={addLine}>
                 Add Line
@@ -393,7 +432,9 @@ function SubmitInvoiceModal({
                       min="0.001"
                       step="any"
                       value={line.quantity}
-                      onChange={(event) => updateLine(index, 'quantity', parseFloat(event.target.value) || 0)}
+                      onChange={(event) =>
+                        updateLine(index, 'quantity', parseFloat(event.target.value) || 0)
+                      }
                     />
                   </Field>
                   <Field label="Unit Price">
@@ -403,7 +444,9 @@ function SubmitInvoiceModal({
                       min="0"
                       step="0.01"
                       value={line.unitPrice}
-                      onChange={(event) => updateLine(index, 'unitPrice', parseFloat(event.target.value) || 0)}
+                      onChange={(event) =>
+                        updateLine(index, 'unitPrice', parseFloat(event.target.value) || 0)
+                      }
                     />
                   </Field>
                   <div className="flex items-end">
@@ -430,7 +473,11 @@ function SubmitInvoiceModal({
               Cancel
             </Button>
             <Button type="submit" disabled={submitting || issuedPOs.length === 0} className="gap-2">
-              {submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {submitting ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
               {submitting ? 'Submitting...' : 'Submit Invoice'}
             </Button>
           </div>
@@ -479,7 +526,10 @@ function VendorPortalContent() {
       .catch((dashboardError) => setError(dashboardError.message || 'Failed to load portal data.'))
       .finally(() => setLoading(false));
 
-    api.vendorPortal.catalog(token).then(setCatalogData).catch(() => {});
+    api.vendorPortal
+      .catalog(token)
+      .then(setCatalogData)
+      .catch(() => {});
     api.vendorPortal
       .onboarding(token)
       .then((result) => {
@@ -488,8 +538,15 @@ function VendorPortalContent() {
           setOnboardingForm({
             companyInfo: result.latestSubmission.companyInfo ?? { legalName: '', taxId: '' },
             responses: result.latestSubmission.responses ?? {},
-            documentLinks: result.latestSubmission.documentLinks ?? { w9: '', coi: '', banking: '' },
-            bankingDetails: result.latestSubmission.bankingDetails ?? { accountName: '', lastFour: '' },
+            documentLinks: result.latestSubmission.documentLinks ?? {
+              w9: '',
+              coi: '',
+              banking: '',
+            },
+            bankingDetails: result.latestSubmission.bankingDetails ?? {
+              accountName: '',
+              lastFour: '',
+            },
           });
         }
       })
@@ -609,7 +666,9 @@ function VendorPortalContent() {
       const headers = parseCsvLine(lines[0]).map((value) => value.toLowerCase());
       const rows = lines.slice(1).map((line) => {
         const values = parseCsvLine(line);
-        const row = Object.fromEntries(headers.map((header, index) => [header, values[index] ?? '']));
+        const row = Object.fromEntries(
+          headers.map((header, index) => [header, values[index] ?? '']),
+        );
         const proposedPrice = Number(row.proposedprice ?? row.proposed_price ?? '');
         if (!Number.isFinite(proposedPrice)) {
           throw new Error(`Invalid proposed price in row: ${line}`);
@@ -626,7 +685,9 @@ function VendorPortalContent() {
 
       const result = await api.vendorPortal.submitBulkPriceProposals(token, rows);
       setCatalogData(await api.vendorPortal.catalog(token));
-      setBulkUploadMessage(`${result.createdCount} proposal(s) created, ${result.errorCount} error(s).`);
+      setBulkUploadMessage(
+        `${result.createdCount} proposal(s) created, ${result.errorCount} error(s).`,
+      );
     } catch (uploadError: any) {
       setError(uploadError.message || 'Failed to import CSV proposals.');
     } finally {
@@ -719,7 +780,9 @@ function VendorPortalContent() {
             <Card className="rounded-[28px]">
               <CardHeader>
                 <CardTitle className="text-xl">Your account</CardTitle>
-                <CardDescription>Reference details your buyer is using for PO and invoice operations.</CardDescription>
+                <CardDescription>
+                  Reference details your buyer is using for PO and invoice operations.
+                </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 {vendor.taxId ? (
@@ -759,7 +822,9 @@ function VendorPortalContent() {
           <Card className="overflow-hidden rounded-[28px]">
             <CardHeader>
               <CardTitle className="text-xl">Purchase orders</CardTitle>
-              <CardDescription>Orders issued to your company, including received and partially received work.</CardDescription>
+              <CardDescription>
+                Orders issued to your company, including received and partially received work.
+              </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
               {purchaseOrders.length === 0 ? (
@@ -779,12 +844,18 @@ function VendorPortalContent() {
                   <TableBody>
                     {purchaseOrders.map((po: any) => (
                       <TableRow key={po.id}>
-                        <TableCell className="font-semibold text-foreground">{po.internalNumber}</TableCell>
+                        <TableCell className="font-semibold text-foreground">
+                          {po.internalNumber}
+                        </TableCell>
                         <TableCell>
                           <StatusBadge value={po.status} />
                         </TableCell>
-                        <TableCell className="text-muted-foreground">{fmt(po.totalAmount, po.currency)}</TableCell>
-                        <TableCell className="text-muted-foreground">{fmtDate(po.issuedAt)}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {fmt(po.totalAmount, po.currency)}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {fmtDate(po.issuedAt)}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -799,8 +870,8 @@ function VendorPortalContent() {
             <CardHeader>
               <CardTitle className="text-xl">Messages</CardTitle>
               <CardDescription>
-                Talk directly with your buyer about a purchase order. The full conversation is kept on
-                the order record.
+                Talk directly with your buyer about a purchase order. The full conversation is kept
+                on the order record.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -841,7 +912,9 @@ function VendorPortalContent() {
             <Card className="overflow-hidden rounded-[28px]">
               <CardHeader>
                 <CardTitle className="text-xl">Invoice submissions</CardTitle>
-                <CardDescription>Track invoice intake, match status, and buyer-side processing.</CardDescription>
+                <CardDescription>
+                  Track invoice intake, match status, and buyer-side processing.
+                </CardDescription>
               </CardHeader>
               <CardContent className="p-0">
                 {invoiceList.length === 0 ? (
@@ -863,8 +936,12 @@ function VendorPortalContent() {
                     <TableBody>
                       {invoiceList.map((invoice: any) => (
                         <TableRow key={invoice.id}>
-                          <TableCell className="font-semibold text-foreground">{invoice.internalNumber}</TableCell>
-                          <TableCell className="text-muted-foreground">{invoice.invoiceNumber}</TableCell>
+                          <TableCell className="font-semibold text-foreground">
+                            {invoice.internalNumber}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {invoice.invoiceNumber}
+                          </TableCell>
                           <TableCell>
                             <StatusBadge value={invoice.status} />
                           </TableCell>
@@ -878,7 +955,9 @@ function VendorPortalContent() {
                           <TableCell className="text-muted-foreground">
                             {fmt(invoice.totalAmount, invoice.currency)}
                           </TableCell>
-                          <TableCell className="text-muted-foreground">{fmtDate(invoice.invoiceDate)}</TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {fmtDate(invoice.invoiceDate)}
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -895,7 +974,8 @@ function VendorPortalContent() {
               <CardHeader>
                 <CardTitle className="text-xl">Supplier onboarding questionnaire</CardTitle>
                 <CardDescription>
-                  Complete the current questionnaire and keep document links and banking support current.
+                  Complete the current questionnaire and keep document links and banking support
+                  current.
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4">
@@ -922,7 +1002,10 @@ function VendorPortalContent() {
                   />
                 </Field>
                 {(onboardingData?.questionnaire?.questions ?? []).map((question: any) => (
-                  <Field key={question.id} label={`${question.label}${question.required ? ' *' : ''}`}>
+                  <Field
+                    key={question.id}
+                    label={`${question.label}${question.required ? ' *' : ''}`}
+                  >
                     {question.type === 'yes_no' ? (
                       <Select
                         value={onboardingForm.responses?.[question.id] ?? ''}
@@ -1002,7 +1085,10 @@ function VendorPortalContent() {
                       onChange={(event) =>
                         setOnboardingForm((current: any) => ({
                           ...current,
-                          bankingDetails: { ...current.bankingDetails, accountName: event.target.value },
+                          bankingDetails: {
+                            ...current.bankingDetails,
+                            accountName: event.target.value,
+                          },
                         }))
                       }
                     />
@@ -1013,17 +1099,29 @@ function VendorPortalContent() {
                       onChange={(event) =>
                         setOnboardingForm((current: any) => ({
                           ...current,
-                          bankingDetails: { ...current.bankingDetails, lastFour: event.target.value },
+                          bankingDetails: {
+                            ...current.bankingDetails,
+                            lastFour: event.target.value,
+                          },
                         }))
                       }
                     />
                   </Field>
                 </div>
                 <div className="flex justify-end gap-3">
-                  <Button type="button" variant="outline" onClick={() => saveOnboarding(false)} disabled={onboardingSaving}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => saveOnboarding(false)}
+                    disabled={onboardingSaving}
+                  >
                     Save Draft
                   </Button>
-                  <Button type="button" onClick={() => saveOnboarding(true)} disabled={onboardingSaving}>
+                  <Button
+                    type="button"
+                    onClick={() => saveOnboarding(true)}
+                    disabled={onboardingSaving}
+                  >
                     {onboardingSaving ? 'Submitting...' : 'Submit for Review'}
                   </Button>
                 </div>
@@ -1034,16 +1132,22 @@ function VendorPortalContent() {
               <Card className="rounded-[28px]">
                 <CardHeader>
                   <CardTitle className="text-xl">Current status</CardTitle>
-                  <CardDescription>Buyer review, risk scoring, and the latest submission state.</CardDescription>
+                  <CardDescription>
+                    Buyer review, risk scoring, and the latest submission state.
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-3 text-sm text-muted-foreground">
                   <div className="flex items-center justify-between gap-4 rounded-lg border border-border/70 bg-background/70 px-4 py-3">
                     <span>Status</span>
-                    <Badge variant="outline">{String(vendor.onboardingStatus ?? 'not_started').replace(/_/g, ' ')}</Badge>
+                    <Badge variant="outline">
+                      {String(vendor.onboardingStatus ?? 'not_started').replace(/_/g, ' ')}
+                    </Badge>
                   </div>
                   <div className="flex items-center justify-between gap-4 rounded-lg border border-border/70 bg-background/70 px-4 py-3">
                     <span>Risk score</span>
-                    <span className="font-medium text-foreground">{vendor.onboardingRiskScore ?? 0}</span>
+                    <span className="font-medium text-foreground">
+                      {vendor.onboardingRiskScore ?? 0}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between gap-4 rounded-lg border border-border/70 bg-background/70 px-4 py-3">
                     <span>Risk level</span>
@@ -1077,8 +1181,8 @@ function VendorPortalContent() {
                   <CardTitle className="text-xl">Review coverage</CardTitle>
                 </CardHeader>
                 <CardContent className="text-sm leading-6 text-muted-foreground">
-                  Buyers review your questionnaire answers, tax forms, insurance documents, and banking
-                  support before issuing new purchase orders.
+                  Buyers review your questionnaire answers, tax forms, insurance documents, and
+                  banking support before issuing new purchase orders.
                 </CardContent>
               </Card>
             </div>
@@ -1090,7 +1194,9 @@ function VendorPortalContent() {
             <Card className="overflow-hidden rounded-[28px]">
               <CardHeader>
                 <CardTitle className="text-xl">Buyer catalog</CardTitle>
-                <CardDescription>Assigned catalog items and their current commercial terms.</CardDescription>
+                <CardDescription>
+                  Assigned catalog items and their current commercial terms.
+                </CardDescription>
               </CardHeader>
               <CardContent className="p-0">
                 {!catalogData || catalogData.items.length === 0 ? (
@@ -1110,12 +1216,16 @@ function VendorPortalContent() {
                     <TableBody>
                       {catalogData.items.map((item) => (
                         <TableRow key={item.id}>
-                          <TableCell className="font-semibold text-foreground">{item.name}</TableCell>
+                          <TableCell className="font-semibold text-foreground">
+                            {item.name}
+                          </TableCell>
                           <TableCell className="text-muted-foreground">{item.sku ?? '—'}</TableCell>
                           <TableCell className="text-muted-foreground">
                             {fmt(item.unitPrice, item.currency)}
                           </TableCell>
-                          <TableCell className="text-muted-foreground">{item.category ?? '—'}</TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {item.category ?? '—'}
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1128,7 +1238,9 @@ function VendorPortalContent() {
               <Card className="rounded-[28px]">
                 <CardHeader>
                   <CardTitle className="text-xl">Submit price update</CardTitle>
-                  <CardDescription>Propose a price change for a specific catalog item.</CardDescription>
+                  <CardDescription>
+                    Propose a price change for a specific catalog item.
+                  </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <form onSubmit={submitPriceProposal} className="grid gap-4">
@@ -1156,7 +1268,10 @@ function VendorPortalContent() {
                         step="0.01"
                         value={proposalForm.proposedPrice}
                         onChange={(event) =>
-                          setProposalForm((current) => ({ ...current, proposedPrice: event.target.value }))
+                          setProposalForm((current) => ({
+                            ...current,
+                            proposedPrice: event.target.value,
+                          }))
                         }
                       />
                     </Field>
@@ -1165,7 +1280,10 @@ function VendorPortalContent() {
                         type="date"
                         value={proposalForm.effectiveDate}
                         onChange={(event) =>
-                          setProposalForm((current) => ({ ...current, effectiveDate: event.target.value }))
+                          setProposalForm((current) => ({
+                            ...current,
+                            effectiveDate: event.target.value,
+                          }))
                         }
                       />
                     </Field>
@@ -1192,7 +1310,8 @@ function VendorPortalContent() {
                     Bulk CSV Upload
                   </CardTitle>
                   <CardDescription>
-                    Upload a CSV with `itemId` or `sku`, `proposedPrice`, and optional `effectiveDate` and `note` columns.
+                    Upload a CSV with `itemId` or `sku`, `proposedPrice`, and optional
+                    `effectiveDate` and `note` columns.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-3">
@@ -1218,7 +1337,9 @@ function VendorPortalContent() {
               <Card className="rounded-[28px]">
                 <CardHeader>
                   <CardTitle className="text-xl">Proposal history</CardTitle>
-                  <CardDescription>Recent supplier-submitted price proposals and buyer outcomes.</CardDescription>
+                  <CardDescription>
+                    Recent supplier-submitted price proposals and buyer outcomes.
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-3">
                   {!catalogData || catalogData.proposals.length === 0 ? (
@@ -1227,10 +1348,15 @@ function VendorPortalContent() {
                     </div>
                   ) : (
                     catalogData.proposals.map((proposal) => (
-                      <div key={proposal.id} className="rounded-[22px] border border-border/70 bg-background/70 p-4">
+                      <div
+                        key={proposal.id}
+                        className="rounded-[22px] border border-border/70 bg-background/70 p-4"
+                      >
                         <div className="flex items-start justify-between gap-4">
                           <div className="space-y-1">
-                            <div className="font-semibold text-foreground">{proposal.item?.name}</div>
+                            <div className="font-semibold text-foreground">
+                              {proposal.item?.name}
+                            </div>
                             <div className="text-sm text-muted-foreground">
                               {fmt(proposal.currentPrice, proposal.item?.currency ?? 'USD')} {'->'}{' '}
                               {fmt(proposal.proposedPrice, proposal.item?.currency ?? 'USD')}

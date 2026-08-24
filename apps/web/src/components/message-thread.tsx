@@ -110,9 +110,7 @@ export function MessageThread({
               <div
                 key={message.id}
                 className={`rounded-lg border px-3 py-2 ${
-                  fromVendor
-                    ? 'border-border/70 bg-muted/30'
-                    : 'border-primary/25 bg-primary/5'
+                  fromVendor ? 'border-border/70 bg-muted/30' : 'border-primary/25 bg-primary/5'
                 }`}
               >
                 <div className="flex items-baseline justify-between gap-3">
