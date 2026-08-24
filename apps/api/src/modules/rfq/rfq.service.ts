@@ -535,6 +535,20 @@ export class RfqService {
       );
     }
 
+    const seenLineIds = new Set<string>();
+    const duplicateLineIds = dto.lines
+      .filter(({ rfqLineId }) => {
+        if (seenLineIds.has(rfqLineId)) return true;
+        seenLineIds.add(rfqLineId);
+        return false;
+      })
+      .map(({ rfqLineId }) => rfqLineId);
+    if (duplicateLineIds.length > 0) {
+      throw new BadRequestException(
+        `Response lines must quote each RFQ line once: ${duplicateLineIds.join(', ')}`,
+      );
+    }
+
     const fractionalCentLines = dto.lines.filter(
       (line) =>
         !Number.isFinite(line.unitPrice) || Number(line.unitPrice.toFixed(2)) !== line.unitPrice,
