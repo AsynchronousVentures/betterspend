@@ -1,18 +1,16 @@
 name: Docker CI/CD
 
 # Flow:
-#   PR              -> review gate + CI in parallel -> validate result
-#   push to main    -> CI -> validate result -> publish immutable images
-#   push v* tag     -> CI -> validate result -> publish -> deploy
-#   workflow_dispatch -> CI -> validate result (manual re-check / republish)
+#   PR                -> review gate + fast CI in parallel -> validate result
+#   push to main      -> full CI -> validate result -> publish immutable images
+#   push v* tag       -> full CI -> validate result -> publish -> deploy
+#   workflow_dispatch -> full CI -> validate result (manual re-check / republish)
 #
 # Releases are tags. Any merge to main is instantly deployable because its
 # images are already in GHCR under sha-<sha>; tagging just promotes it.
 
 on:
   pull_request:
-    branches:
-      - main
   push:
     branches:
       - main
@@ -55,8 +53,61 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node .github/scripts/wait-for-review-gate.mjs
 
-  ci:
-    name: CI Validation
+  fast-ci:
+    name: Fast CI
+    if: github.event_name == 'pull_request'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.15.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run lint
+        run: pnpm lint
+
+      - name: Run tests
+        run: pnpm test -- --runInBand
+
+      - name: Build shared package
+        run: pnpm --filter @betterspend/shared build
+
+      - name: Build database package
+        run: pnpm --filter @betterspend/db build
+
+      - name: Typecheck API
+        run: pnpm --filter @betterspend/api typecheck
+
+      - name: Typecheck web
+        run: pnpm --filter @betterspend/web exec tsc --noEmit --incremental false
+
+      - name: Build API
+        run: pnpm --filter @betterspend/api build
+
+      - name: Build web
+        run: pnpm --filter @betterspend/web build
+
+      - name: Validate Compose files
+        run: |
+          CREDENTIAL_ENCRYPTION_KEY="$(openssl rand -base64 32)" docker compose --profile app --profile tools config >/dev/null
+          PRODUCTION_ENV_FILE=.env.production.example IMAGE_TAG=sha-ci \
+            docker compose --profile migrate --env-file .env.production.example -f compose.yaml -f compose.prod.yaml config >/dev/null
+
+  full-ci:
+    name: Full CI
+    if: github.event_name != 'pull_request'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     services:
       postgres:
@@ -89,6 +140,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Run lint
+        run: pnpm lint
 
       - name: Run tests
         run: pnpm test -- --runInBand
@@ -137,26 +191,33 @@ jobs:
   validate:
     name: Validate
     if: always()
-    needs: [review-gate, ci]
+    needs: [review-gate, fast-ci, full-ci]
     runs-on: ubuntu-latest
     steps:
       - name: Report validation result
         env:
-          CI_RESULT: ${{ needs.ci.result }}
+          FAST_CI_RESULT: ${{ needs.fast-ci.result }}
+          FULL_CI_RESULT: ${{ needs.full-ci.result }}
           EVENT_NAME: ${{ github.event_name }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           REVIEW_GATE_RESULT: ${{ needs.review-gate.result }}
         run: |
-          test "$CI_RESULT" = "success"
-          if [ "$EVENT_NAME" = "pull_request" ] && [ "$PR_AUTHOR" != "dependabot[bot]" ]; then
-            test "$REVIEW_GATE_RESULT" = "success"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            test "$FAST_CI_RESULT" = "success"
+            test "$FULL_CI_RESULT" = "skipped"
+            if [ "$PR_AUTHOR" != "dependabot[bot]" ]; then
+              test "$REVIEW_GATE_RESULT" = "success"
+            fi
+          else
+            test "$FAST_CI_RESULT" = "skipped"
+            test "$FULL_CI_RESULT" = "success"
           fi
 
   publish:
     name: Publish Images
     # Every merge to main produces deployable artifacts. Publishing for the
     # same commit is serialized, and existing sha-* tags are never replaced.
-    if: github.event_name == 'push'
+    if: always() && github.event_name == 'push' && needs.validate.result == 'success'
     needs: validate
     runs-on: blacksmith-4vcpu-ubuntu-2404
     concurrency:
