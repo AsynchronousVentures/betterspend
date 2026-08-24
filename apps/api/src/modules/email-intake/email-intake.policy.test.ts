@@ -200,6 +200,15 @@ describe('email intake policy', () => {
       },
       0,
     );
+    const encryptedEscapedXref = decideAttachment(
+      {
+        filename: 'locked-escaped-xref.pdf',
+        content: Buffer.from(
+          '%PDF-1.7\n5 0 obj\n<< /Ty#70e /XR#65f /Encr#79pt 2 0 R >>\nstream\nendstream\nstartxref\n0',
+        ),
+      },
+      0,
+    );
     const oversized = decideAttachment(
       { filename: 'huge.pdf', content: Buffer.alloc(MAX_EMAIL_ATTACHMENT_BYTES + 1, 1) },
       0,
@@ -246,6 +255,13 @@ describe('email intake policy', () => {
       },
       0,
     );
+    const embeddedTar = Buffer.alloc(700);
+    embeddedTar.write('%PDF-', 0, 'ascii');
+    embeddedTar.write('ustar', 337, 'ascii');
+    const pdfTarPolyglot = decideAttachment(
+      { filename: 'polyglot-tar.pdf', content: embeddedTar },
+      0,
+    );
 
     assert.equal(zip.status === 'rejected' && zip.reason, 'archive_not_allowed');
     assert.equal(encrypted.status === 'rejected' && encrypted.reason, 'encrypted_pdf');
@@ -259,6 +275,10 @@ describe('email intake policy', () => {
     );
     assert.equal(
       encryptedEscapedName.status === 'rejected' && encryptedEscapedName.reason,
+      'encrypted_pdf',
+    );
+    assert.equal(
+      encryptedEscapedXref.status === 'rejected' && encryptedEscapedXref.reason,
       'encrypted_pdf',
     );
     assert.equal(mentionsEncryption.status, 'accepted');
@@ -276,6 +296,10 @@ describe('email intake policy', () => {
     );
     assert.equal(
       pdfRarPolyglot.status === 'rejected' && pdfRarPolyglot.reason,
+      'archive_not_allowed',
+    );
+    assert.equal(
+      pdfTarPolyglot.status === 'rejected' && pdfTarPolyglot.reason,
       'archive_not_allowed',
     );
   });

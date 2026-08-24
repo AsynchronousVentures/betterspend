@@ -222,12 +222,13 @@ export function allowsAutomaticReply(verdicts: SesAuthVerdicts, autoSubmitted: u
 function archiveMagic(content: Buffer): boolean {
   const rarSignature = Buffer.from('Rar!\x1a\x07', 'binary');
   const sevenZipSignature = Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]);
+  const tarSignature = Buffer.from('ustar');
   return (
     content.subarray(0, 2).equals(Buffer.from([0x1f, 0x8b])) ||
     content.subarray(0, 2).equals(Buffer.from('PK')) ||
     content.includes(rarSignature) ||
     content.includes(sevenZipSignature) ||
-    content.subarray(257, 262).toString('ascii') === 'ustar' ||
+    content.indexOf(tarSignature, 257) >= 257 ||
     hasZipEndOfCentralDirectory(content)
   );
 }
@@ -270,16 +271,17 @@ export function isEncryptedPdf(content: Buffer): boolean {
   const startXref = tail.lastIndexOf('startxref');
   const structuralEnd = startXref >= 0 ? startXref : tail.length;
 
-  const trailer = tail.lastIndexOf('trailer', structuralEnd);
-  if (trailer >= 0) {
-    const dictionary = pdfDictionaryAt(tail, tail.indexOf('<<', trailer));
+  const trailerMarkers = [...tail.slice(0, structuralEnd).matchAll(/\btrailer\b/g)];
+  const xrefMarkers = [...tail.slice(0, structuralEnd).matchAll(pdfXrefTypePattern())];
+  if (trailerMarkers.length + xrefMarkers.length > 128) return true;
+
+  for (const trailer of trailerMarkers) {
+    const dictionary = pdfDictionaryAt(tail, tail.indexOf('<<', trailer.index));
     if (dictionary) structuralDictionaries.push(dictionary);
   }
 
-  const xrefMarkers = [...tail.slice(0, structuralEnd).matchAll(/\/Type\s*\/XRef\b/g)];
-  const xrefMarker = xrefMarkers.at(-1);
-  if (xrefMarker?.index !== undefined) {
-    const dictionaryStart = pdfEnclosingDictionaryStart(tail, xrefMarker.index);
+  for (const xrefMarker of xrefMarkers) {
+    const dictionaryStart = pdfEnclosingDictionaryStart(tail, xrefMarker.index!);
     const dictionary = pdfDictionaryAt(tail, dictionaryStart);
     if (dictionary) structuralDictionaries.push(dictionary);
   }
@@ -287,6 +289,23 @@ export function isEncryptedPdf(content: Buffer): boolean {
   return structuralDictionaries.some((dictionary) =>
     /\/Encrypt\b/.test(decodePdfNameEscapes(dictionary)),
   );
+}
+
+function pdfXrefTypePattern(): RegExp {
+  const character = (literal: string, hex: string) => `(?:${literal}|#${hex})`;
+  const type = [
+    character('T', '54'),
+    character('y', '79'),
+    character('p', '70'),
+    character('e', '65'),
+  ].join('');
+  const xref = [
+    character('X', '58'),
+    character('R', '52'),
+    character('e', '65'),
+    character('f', '66'),
+  ].join('');
+  return new RegExp(`/${type}\\s*/${xref}(?=[\\s/<>()\\[\\]{}%]|$)`, 'g');
 }
 
 function decodePdfNameEscapes(value: string): string {
