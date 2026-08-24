@@ -5,8 +5,11 @@ import {
   GetObjectCommand,
   DeleteObjectCommand,
   CreateBucketCommand,
+  GetBucketLifecycleConfigurationCommand,
   HeadBucketCommand,
+  PutBucketLifecycleConfigurationCommand,
 } from '@aws-sdk/client-s3';
+import type { LifecycleRule } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 @Injectable()
@@ -98,5 +101,45 @@ export class StorageService implements OnModuleInit {
 
   async delete(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+
+  /** Merge a prefix-specific expiry rule without replacing unrelated bucket lifecycle rules. */
+  async ensureExpirationRule(id: string, prefix: string, days: number): Promise<void> {
+    let rules: LifecycleRule[] = [];
+    try {
+      const current = await this.client.send(
+        new GetBucketLifecycleConfigurationCommand({ Bucket: this.bucket }),
+      );
+      rules = current.Rules ?? [];
+    } catch (error: unknown) {
+      const name = error instanceof Error ? error.name : '';
+      if (name !== 'NoSuchLifecycleConfiguration' && name !== 'NoSuchConfiguration') {
+        throw error;
+      }
+    }
+
+    const desired = {
+      ID: id,
+      Status: 'Enabled' as const,
+      Filter: { Prefix: prefix },
+      Expiration: { Days: days },
+    };
+    const existing = rules.find((rule) => rule.ID === id);
+    if (
+      existing?.Status === desired.Status &&
+      existing.Filter?.Prefix === prefix &&
+      existing.Expiration?.Days === days
+    ) {
+      return;
+    }
+
+    await this.client.send(
+      new PutBucketLifecycleConfigurationCommand({
+        Bucket: this.bucket,
+        LifecycleConfiguration: {
+          Rules: [...rules.filter((rule) => rule.ID !== id), desired],
+        },
+      }),
+    );
   }
 }
