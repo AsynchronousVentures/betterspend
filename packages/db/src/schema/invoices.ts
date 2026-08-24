@@ -34,6 +34,7 @@ export const invoices = pgTable('invoices', {
   documentId: uuid('document_id'),
   matchStatus: varchar('match_status', { length: 20 }).notNull().default('unmatched'),
   matchDetails: jsonb('match_details').default({}),
+  createdBy: uuid('created_by').references(() => users.id),
   approvedBy: uuid('approved_by').references(() => users.id),
   approvedAt: timestamp('approved_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

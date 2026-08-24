@@ -9,11 +9,17 @@ import type { ExchangeRatesService } from '../exchange-rates/exchange-rates.serv
 import type { GlExportService } from '../gl/gl-export.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { SpendGuardService } from '../spend-guard/spend-guard.service';
+import type { SettingsService } from '../settings/settings.service';
 import type { WebhookEventService } from '../webhooks/webhook-event.service';
 import type { MatchingService } from './matching.service';
 import { InvoicesService } from './invoices.service';
 
-function createService(recordSpend: BudgetsService['recordSpend'], matchStatus = 'full_match') {
+function createService(
+  recordSpend: BudgetsService['recordSpend'],
+  matchStatus = 'full_match',
+  options: { createdBy?: string; makerCheckerEnabled?: boolean } = {},
+) {
+  const auditActions: string[] = [];
   const approved = {
     id: 'invoice-1',
     organizationId: 'organization-1',
@@ -23,6 +29,7 @@ function createService(recordSpend: BudgetsService['recordSpend'], matchStatus =
     totalAmount: '125.00',
     exchangeRate: '1',
     internalNumber: 'INV-2026-0001',
+    createdBy: options.createdBy ?? 'maker-1',
     lines: [{ taxAmount: '25.00', taxCode: { isRecoverable: true } }],
   };
   const transaction = {
@@ -37,6 +44,18 @@ function createService(recordSpend: BudgetsService['recordSpend'], matchStatus =
           departmentId: 'department-1',
           createdAt: new Date('2026-03-01T00:00:00Z'),
         }),
+      },
+      users: {
+        findFirst: async () => ({ id: 'maker-1', departmentId: 'finance' }),
+        findMany: async () => [
+          {
+            id: 'fallback-1',
+            name: 'Independent Approver',
+            departmentId: 'operations',
+            isActive: true,
+            userRoles: [{ role: 'approver', scopeType: 'global', customRole: null }],
+          },
+        ],
       },
     },
     select() {
@@ -69,7 +88,20 @@ function createService(recordSpend: BudgetsService['recordSpend'], matchStatus =
   const webhookEvents = { emit() {} } as unknown as WebhookEventService;
   const glExport = { enqueue() {} } as unknown as GlExportService;
   const budgets = { recordSpend } as unknown as BudgetsService;
-  const audit = { log: async () => {} } as unknown as AuditService;
+  const audit = {
+    log: async (
+      _organizationId: string,
+      _userId: string | null,
+      _entityType: string,
+      _entityId: string,
+      action: string,
+    ) => {
+      auditActions.push(action);
+    },
+  } as unknown as AuditService;
+  const settings = {
+    get: async () => (options.makerCheckerEnabled === false ? 'false' : 'true'),
+  } as unknown as SettingsService;
 
   return {
     service: new InvoicesService(
@@ -84,8 +116,10 @@ function createService(recordSpend: BudgetsService['recordSpend'], matchStatus =
       undefined as unknown as EntitiesService,
       undefined as unknown as ExchangeRatesService,
       undefined as unknown as SpendGuardService,
+      settings,
     ),
     transaction: transaction as unknown as DbTransaction,
+    auditActions,
   };
 }
 
@@ -124,5 +158,50 @@ describe('InvoicesService approval budget accounting', () => {
       /full three-way match/,
     );
     assert.equal(spendRecorded, false);
+  });
+
+  it('blocks the invoice maker and records the independent fallback', async () => {
+    let spendRecorded = false;
+    const { service, auditActions } = createService(
+      async () => {
+        spendRecorded = true;
+        return { updated: true, budgetId: 'budget-1' };
+      },
+      'full_match',
+      { createdBy: 'maker-1' },
+    );
+
+    await assert.rejects(
+      service.approve('invoice-1', 'organization-1', 'maker-1'),
+      (error: unknown) => {
+        assert.ok(error && typeof error === 'object' && 'getResponse' in error);
+        const response = (error as { getResponse(): unknown }).getResponse();
+        assert.deepEqual(response, {
+          code: 'INVOICE_SELF_APPROVAL_BLOCKED',
+          message:
+            'Invoice creators cannot approve their own invoices. Route this invoice to Independent Approver.',
+          fallbackApprover: { id: 'fallback-1', name: 'Independent Approver' },
+        });
+        return true;
+      },
+    );
+    assert.equal(spendRecorded, false);
+    assert.deepEqual(auditActions, ['self_approval_blocked']);
+  });
+
+  it('allows self-approval only when an admin disables the policy', async () => {
+    let spendRecorded = false;
+    const { service } = createService(
+      async () => {
+        spendRecorded = true;
+        return { updated: true, budgetId: 'budget-1' };
+      },
+      'full_match',
+      { createdBy: 'maker-1', makerCheckerEnabled: false },
+    );
+
+    await service.approve('invoice-1', 'organization-1', 'maker-1');
+
+    assert.equal(spendRecorded, true);
   });
 });

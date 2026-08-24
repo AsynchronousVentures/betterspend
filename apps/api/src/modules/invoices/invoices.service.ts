@@ -4,6 +4,7 @@ import {
   Optional,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { eq, and, ne, isNull, lte, gte, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
@@ -20,6 +21,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EntitiesService } from '../entities/entities.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { SpendGuardService } from '../spend-guard/spend-guard.service';
+import { SettingsService } from '../settings/settings.service';
+import { resolveIndependentInvoiceApprover } from './invoice-approval-policy';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 
@@ -87,6 +90,7 @@ export class InvoicesService {
     private readonly entitiesService: EntitiesService,
     private readonly exchangeRatesService: ExchangeRatesService,
     private readonly spendGuard: SpendGuardService,
+    private readonly settingsService: SettingsService,
   ) {}
 
   private calculateLineTax(
@@ -157,7 +161,7 @@ export class InvoicesService {
     return this.findOneWithExecutor(id, organizationId, this.db);
   }
 
-  async create(organizationId: string, input: CreateInvoiceInput) {
+  async create(organizationId: string, createdBy: string, input: CreateInvoiceInput) {
     let resolvedEntityId = input.entityId ?? null;
     let resolvedCurrency = input.currency ?? 'USD';
     let resolvedExchangeRate = input.exchangeRate ?? null;
@@ -218,6 +222,7 @@ export class InvoicesService {
           purchaseOrderId: input.purchaseOrderId ?? null,
           entityId: resolvedEntityId,
           vendorId: input.vendorId,
+          createdBy,
           invoiceNumber: input.invoiceNumber,
           internalNumber,
           invoiceDate: new Date(input.invoiceDate),
@@ -542,6 +547,37 @@ export class InvoicesService {
         };
       }
 
+      const makerCheckerEnabled =
+        (await this.settingsService.get(organizationId, 'prevent_invoice_self_approval', tx)) !==
+        'false';
+      if (
+        makerCheckerEnabled &&
+        lockedInvoice.createdBy &&
+        lockedInvoice.createdBy === approverId
+      ) {
+        const [maker, candidates] = await Promise.all([
+          tx.query.users.findFirst({
+            where: (user, { and, eq }) =>
+              and(eq(user.id, approverId), eq(user.organizationId, organizationId)),
+          }),
+          tx.query.users.findMany({
+            where: (user, { and, eq }) =>
+              and(eq(user.organizationId, organizationId), eq(user.isActive, true)),
+            with: { userRoles: { with: { customRole: true } } },
+          }),
+        ]);
+        const fallback = resolveIndependentInvoiceApprover(
+          approverId,
+          maker?.departmentId ?? null,
+          candidates,
+        );
+        return {
+          blocked: {
+            fallbackApprover: fallback ? { id: fallback.id, name: fallback.name } : null,
+          },
+        };
+      }
+
       const [transitioned] = await tx
         .update(invoices)
         .set({
@@ -598,6 +634,23 @@ export class InvoicesService {
 
       return { approved, transitioned: true };
     });
+
+    if ('blocked' in result && result.blocked) {
+      const fallbackApprover = result.blocked.fallbackApprover;
+      await this.audit
+        .log(organizationId, approverId, 'invoice', id, 'self_approval_blocked', {
+          preventInvoiceSelfApproval: true,
+          fallbackApproverId: fallbackApprover?.id ?? null,
+        })
+        .catch(() => {});
+      throw new ForbiddenException({
+        code: 'INVOICE_SELF_APPROVAL_BLOCKED',
+        message: fallbackApprover
+          ? `Invoice creators cannot approve their own invoices. Route this invoice to ${fallbackApprover.name}.`
+          : 'Invoice creators cannot approve their own invoices. No independent global invoice approver is configured.',
+        fallbackApprover,
+      });
+    }
 
     const { approved, transitioned } = result;
     if (!transitioned) return approved;

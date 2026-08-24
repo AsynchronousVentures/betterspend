@@ -18,6 +18,7 @@ export const SETTING_KEYS = [
   'auto_approve_threshold',
   'auto_approve_require_budget_check',
   'auto_approve_notify_manager',
+  'prevent_invoice_self_approval',
   'budget_enforcement_mode',
   'budget_pending_requisition_policy',
   'catalog_auto_approve_price_change_pct',
@@ -46,6 +47,7 @@ export const DEFAULT_SETTINGS: Record<SettingKey, string> = {
   auto_approve_threshold: '0',
   auto_approve_require_budget_check: 'false',
   auto_approve_notify_manager: 'true',
+  prevent_invoice_self_approval: 'true',
   budget_enforcement_mode: 'hard_stop',
   budget_pending_requisition_policy: 'approved_only',
   catalog_auto_approve_price_change_pct: '0',
@@ -87,6 +89,7 @@ export const approvalPolicySettingsSchema = z.object({
     .optional(),
   auto_approve_require_budget_check: z.enum(['true', 'false']).optional(),
   auto_approve_notify_manager: z.enum(['true', 'false']).optional(),
+  prevent_invoice_self_approval: z.enum(['true', 'false']).optional(),
   budget_enforcement_mode: z.enum(['hard_stop', 'owner_approval', 'visibility_only']).optional(),
   budget_pending_requisition_policy: z.enum(['approved_only', 'include_pending']).optional(),
   // Percentage (0-100). Supplier catalog price changes within this percent are
