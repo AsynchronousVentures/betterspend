@@ -194,6 +194,52 @@ describe('OAuthService', () => {
     expect(second?.accessToken).toBe('rotated-access');
   });
 
+  it('single-flights concurrent refreshes after QBO rejects a still-current token', async () => {
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
+      provider: 'qbo',
+      realmId: 'realm-1',
+      realmName: null,
+      accessTokenEncrypted: crypto.encrypt('rejected-access'),
+      refreshTokenEncrypted: crypto.encrypt('refresh-token'),
+      accessExpiresAt: new Date(Date.now() + 3_600_000),
+      status: 'active',
+      scopes: 'com.intuit.quickbooks.accounting',
+      connectedByUserId: userId,
+      lastSyncAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const db = {
+      query: {
+        integrationConnections: {
+          findFirst: jest.fn(async () => ({ ...connection })),
+        },
+      },
+      update: jest.fn(() => ({
+        set: jest.fn((values: Record<string, unknown>) => ({
+          where: jest.fn(async () => {
+            Object.assign(connection, values);
+          }),
+        })),
+      })),
+    } as unknown as Db;
+    mockedAxios.post.mockResolvedValue({
+      data: { access_token: 'rotated-access', refresh_token: 'rotated-refresh', expires_in: 3600 },
+    });
+    const service = new OAuthService(db, crypto, new FakeOAuthRedis() as never);
+
+    const [first, second] = await Promise.all([
+      service.refreshQboToken(organizationId, 'rejected-access'),
+      service.refreshQboToken(organizationId, 'rejected-access'),
+    ]);
+
+    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+    expect(first?.accessToken).toBe('rotated-access');
+    expect(second?.accessToken).toBe('rotated-access');
+  });
+
   it('keeps an active connection retryable after a transient refresh failure', async () => {
     const connection = {
       id: '00000000-0000-0000-0000-000000000010',

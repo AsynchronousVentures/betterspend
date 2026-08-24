@@ -33,6 +33,12 @@ type TokenResponse = {
 
 type ConnectionRow = typeof integrationConnections.$inferSelect;
 
+export type QboToken = {
+  accessToken: string;
+  realmId: string;
+  connectionId: string;
+};
+
 @Injectable()
 export class OAuthService {
   private readonly logger = new Logger(OAuthService.name);
@@ -99,16 +105,33 @@ export class OAuthService {
     );
   }
 
-  async getQboToken(
-    organizationId: string,
-  ): Promise<{ accessToken: string; realmId: string; connectionId: string } | null> {
+  async getQboToken(organizationId: string): Promise<QboToken | null> {
     const connection = await this.getValidConnection(organizationId, 'qbo');
-    if (!connection?.accessTokenEncrypted) return null;
-    return {
-      accessToken: this.crypto.decrypt(connection.accessTokenEncrypted),
-      realmId: connection.realmId,
-      connectionId: connection.id,
-    };
+    return this.toQboToken(connection);
+  }
+
+  /** Rotates a rejected QBO token once, while concurrent callers share the same refresh. */
+  async refreshQboToken(
+    organizationId: string,
+    rejectedAccessToken: string,
+  ): Promise<QboToken | null> {
+    const connection = await this.findConnection(organizationId, 'qbo');
+    if (!connection || connection.status !== 'active') return null;
+
+    await this.refreshConnection(connection.id, 'qbo', rejectedAccessToken);
+    return this.toQboToken(await this.findConnectionById(connection.id));
+  }
+
+  async markQboReconnectRequired(connectionId: string): Promise<void> {
+    await this.db
+      .update(integrationConnections)
+      .set({ status: INTEGRATION_CONNECTION_STATUS.RECONNECT_REQUIRED, updatedAt: new Date() })
+      .where(
+        and(
+          eq(integrationConnections.id, connectionId),
+          eq(integrationConnections.provider, 'qbo'),
+        ),
+      );
   }
 
   async getXeroToken(
@@ -261,12 +284,25 @@ export class OAuthService {
     return connection?.status === 'active' ? connection : null;
   }
 
-  private async refreshConnection(connectionId: string, provider: OAuthProvider): Promise<void> {
+  private async refreshConnection(
+    connectionId: string,
+    provider: OAuthProvider,
+    rejectedAccessToken?: string,
+  ): Promise<void> {
     await this.oauthRedis.withLock(`refresh:${connectionId}`, async () => {
       const connection = await this.findConnectionById(connectionId);
       if (!connection || connection.status !== 'active') return;
-      if (connection.accessExpiresAt && Date.now() < connection.accessExpiresAt.getTime() - 60_000)
+      const accessToken = connection.accessTokenEncrypted
+        ? this.crypto.decrypt(connection.accessTokenEncrypted)
+        : null;
+      if (rejectedAccessToken) {
+        if (accessToken !== rejectedAccessToken) return;
+      } else if (
+        connection.accessExpiresAt &&
+        Date.now() < connection.accessExpiresAt.getTime() - 60_000
+      ) {
         return;
+      }
       if (!connection.refreshTokenEncrypted)
         throw new BadRequestException('Connection has no refresh token');
 
@@ -394,6 +430,21 @@ export class OAuthService {
     return this.db.query.integrationConnections.findFirst({
       where: (connection) => eq(connection.id, id),
     });
+  }
+
+  private toQboToken(connection: ConnectionRow | null | undefined): QboToken | null {
+    if (
+      !connection?.accessTokenEncrypted ||
+      connection.provider !== 'qbo' ||
+      connection.status !== INTEGRATION_CONNECTION_STATUS.ACTIVE
+    ) {
+      return null;
+    }
+    return {
+      accessToken: this.crypto.decrypt(connection.accessTokenEncrypted),
+      realmId: connection.realmId,
+      connectionId: connection.id,
+    };
   }
 
   private redirectUri(provider: OAuthProvider): string {

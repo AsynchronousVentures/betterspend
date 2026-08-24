@@ -8,6 +8,7 @@ import { syncRecords, type Db } from '@betterspend/db';
 import { DB_TOKEN } from '../../database/database.module';
 import { GlMappingsService } from './gl-mappings.service';
 import { OAuthService } from './oauth.service';
+import { QboClientService, QboConnectionRequiredError } from './qbo-client.service';
 
 export type GlTargetSystem = 'qbo' | 'xero';
 
@@ -48,6 +49,7 @@ export class GlExportService {
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly glMappingsService: GlMappingsService,
     private readonly oauthService: OAuthService,
+    private readonly qboClient: QboClientService,
     @InjectQueue('gl-export') private readonly glQueue: Queue,
   ) {}
 
@@ -334,9 +336,6 @@ export class GlExportService {
     payload: GlExportPayload,
     requestId: string,
   ): Promise<SendOutcome> {
-    const tokens = await this.oauthService.getQboToken(organizationId);
-    if (!tokens) return { kind: 'pending', reason: 'QBO is not connected' };
-
     const lineItems = payload.lines
       .filter((line) => !line.unmapped && line.externalAccountCode)
       .map((line) => ({
@@ -348,28 +347,31 @@ export class GlExportService {
     if (lineItems.length === 0)
       return { kind: 'pending', reason: 'No mapped QBO lines are available' };
 
-    const baseUrl = process.env.QBO_API_URL || 'https://quickbooks.api.intuit.com';
-    const response = await axios.post<{ Bill?: { Id?: string } }>(
-      `${baseUrl}/v3/company/${tokens.realmId}/bill?requestid=${encodeURIComponent(requestId)}`,
-      {
-        VendorRef: { name: payload.vendorName },
-        TxnDate: payload.invoiceDate.split('T')[0],
-        DueDate: payload.dueDate?.split('T')[0],
-        DocNumber: payload.invoiceNumber,
-        CurrencyRef: { value: payload.currency },
-        Line: lineItems,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${tokens.accessToken}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
+    let response;
+    try {
+      response = await this.qboClient.request<{ Bill?: { Id?: string } }>({
+        organizationId,
+        method: 'POST',
+        path: 'bill',
+        requestId,
+        data: {
+          VendorRef: { name: payload.vendorName },
+          TxnDate: payload.invoiceDate.split('T')[0],
+          DueDate: payload.dueDate?.split('T')[0],
+          DocNumber: payload.invoiceNumber,
+          CurrencyRef: { value: payload.currency },
+          Line: lineItems,
         },
-      },
-    );
+      });
+    } catch (error: unknown) {
+      if (error instanceof QboConnectionRequiredError) {
+        return { kind: 'pending', reason: 'QBO is not connected' };
+      }
+      throw error;
+    }
     const externalId = response.data.Bill?.Id;
     if (!externalId) throw new Error('QBO did not return a Bill ID');
-    return { kind: 'synced', externalId, connectionId: tokens.connectionId };
+    return { kind: 'synced', externalId, connectionId: response.connectionId };
   }
 
   private async sendToXero(
