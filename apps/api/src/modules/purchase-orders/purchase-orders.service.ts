@@ -155,7 +155,6 @@ export class PurchaseOrdersService {
       );
     }
     const sanctionsWarning = await this.riskScreening.checkVendorForPo(organizationId, vendor);
-    const number = await this.sequenceService.next(organizationId, 'purchase_order');
     const currency = input.currency ?? 'USD';
     const taxCodeMap = await this.getTaxCodeMap(
       organizationId,
