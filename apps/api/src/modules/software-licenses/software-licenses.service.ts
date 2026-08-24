@@ -166,14 +166,11 @@ export class SoftwareLicensesService {
     let renewalRef: RenewalRef | null = null;
 
     if (action === 'renew') {
-      const currentRenewal = license.renewalDate ? new Date(license.renewalDate) : new Date();
-      if (license.billingCycle === 'monthly') {
-        currentRenewal.setMonth(currentRenewal.getMonth() + 1);
-      } else {
-        currentRenewal.setFullYear(currentRenewal.getFullYear() + 1);
-      }
-      updates.renewalDate = currentRenewal;
-      updates.status = 'active';
+      // Creating a requisition starts the procurement process; it does not
+      // prove that the renewal was approved or purchased. Keep the current
+      // renewal date and due status until the approved procurement outcome
+      // is explicitly linked back to this license.
+      updates.status = 'renewal_due';
       renewalRef = await this.createRenewalRequisition(license, userId, actionNote);
     } else if (action === 'renegotiate') {
       updates.status = 'renewal_due';
@@ -186,7 +183,8 @@ export class SoftwareLicensesService {
     if (renewalRef) {
       // Append atomically in SQL so concurrent actions cannot overwrite each
       // other's reference via a stale in-memory snapshot.
-      updates.renewalRefs = sql`COALESCE(${softwareLicenses.renewalRefs}, '[]'::jsonb) || ${JSON.stringify([renewalRef])}::jsonb` as unknown as RenewalRef[];
+      updates.renewalRefs =
+        sql`COALESCE(${softwareLicenses.renewalRefs}, '[]'::jsonb) || ${JSON.stringify([renewalRef])}::jsonb` as unknown as RenewalRef[];
     }
 
     await this.db
