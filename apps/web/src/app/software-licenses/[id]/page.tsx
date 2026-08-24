@@ -125,6 +125,9 @@ export default function SoftwareLicenseDetailPage({
         ).toISOString(),
       )
     : '—';
+  const renewalRefs = Array.isArray(license.renewalRefs)
+    ? (license.renewalRefs as Array<{ action: string; kind: string; id: string; number: string; at: string }>)
+    : [];
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -292,7 +295,33 @@ export default function SoftwareLicenseDetailPage({
                   {actionLoading === 'cancel' ? 'Processing...' : 'Prepare Cancellation'}
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground">
+                Renew drafts a requisition for the next term and routes it for approval. Renegotiate
+                issues an RFQ to the vendor for competing pricing.
+              </p>
             </div>
+
+            {renewalRefs.length > 0 ? (
+              <div className="space-y-2 rounded-lg border border-border/70 bg-background/70 p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Renewal Workflow
+                </div>
+                {renewalRefs.map((ref, index) => (
+                  <div key={`${ref.id}-${index}`} className="flex items-center justify-between gap-3 text-sm">
+                    <Link
+                      href={ref.kind === 'requisition' ? `/requisitions/${ref.id}` : `/rfq/${ref.id}`}
+                      className="font-medium text-primary underline-offset-4 hover:underline"
+                    >
+                      {ref.number}
+                    </Link>
+                    <span className="text-muted-foreground">
+                      {ref.action === 'renew' ? 'Renewal requisition' : 'Renegotiation RFQ'} ·{' '}
+                      {new Date(ref.at).toLocaleDateString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       </div>

@@ -152,7 +152,6 @@ export class PurchaseOrdersService {
         `Vendor onboarding is ${vendor.onboardingStatus.replace(/_/g, ' ')} and must be approved before a PO can be created`,
       );
     }
-    const number = await this.sequenceService.next(organizationId, 'purchase_order');
     const currency = input.currency ?? 'USD';
     const taxCodeMap = await this.getTaxCodeMap(
       organizationId,
@@ -175,6 +174,7 @@ export class PurchaseOrdersService {
       : input.lines.map(() => null);
 
     const createdId = await this.db.transaction(async (tx) => {
+      const number = await this.sequenceService.next(organizationId, 'purchase_order', tx);
       const lineAmounts = input.lines.map((line) => {
         const taxCode = line.taxCodeId ? taxCodeMap.get(line.taxCodeId) : null;
         const ratePercent = taxCode ? parseFloat(String(taxCode.ratePercent ?? '0')) : 0;

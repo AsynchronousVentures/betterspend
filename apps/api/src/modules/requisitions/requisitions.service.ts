@@ -46,9 +46,8 @@ export class RequisitionsService {
   }
 
   async create(organizationId: string, requesterId: string, input: CreateRequisitionInput) {
-    const number = await this.sequenceService.next(organizationId, 'requisition');
-
     const createdId = await this.db.transaction(async (tx) => {
+      const number = await this.sequenceService.next(organizationId, 'requisition', tx);
       const totalAmount = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
 
       const [req] = await tx

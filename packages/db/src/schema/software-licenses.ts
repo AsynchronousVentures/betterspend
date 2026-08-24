@@ -7,6 +7,7 @@ import {
   numeric,
   boolean,
   timestamp,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 import { organizations } from './organizations';
 import { vendors } from './vendors';
@@ -34,6 +35,9 @@ export const softwareLicenses = pgTable('software_licenses', {
   renewalLeadDays: integer('renewal_lead_days').notNull().default(30),
   ownerUserId: uuid('owner_user_id').references(() => users.id),
   notes: text('notes'),
+  // Procurement artifacts created by renewal actions, newest last:
+  // [{ action, kind: 'requisition'|'rfq', id, number, at }]
+  renewalRefs: jsonb('renewal_refs').notNull().default([]),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

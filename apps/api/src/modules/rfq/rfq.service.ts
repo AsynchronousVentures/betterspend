@@ -3,8 +3,16 @@ import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import {
-  rfqRequests, rfqLines, rfqInvitations, rfqResponses, rfqResponseLines,
-  vendors, users, sequences, purchaseOrders, poLines,
+  rfqRequests,
+  rfqLines,
+  rfqInvitations,
+  rfqResponses,
+  rfqResponseLines,
+  vendors,
+  users,
+  sequences,
+  purchaseOrders,
+  poLines,
 } from '@betterspend/db';
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
@@ -17,14 +25,17 @@ export class RfqService {
     private readonly settingsService: SettingsService,
   ) {}
 
-  private async sendDecisionEmail(orgId: string, params: {
-    vendorId: string;
-    rfqNumber: string;
-    rfqTitle?: string | null;
-    status: 'accepted' | 'rejected';
-    reason?: string;
-    purchaseOrderNumber?: string;
-  }) {
+  private async sendDecisionEmail(
+    orgId: string,
+    params: {
+      vendorId: string;
+      rfqNumber: string;
+      rfqTitle?: string | null;
+      status: 'accepted' | 'rejected';
+      reason?: string;
+      purchaseOrderNumber?: string;
+    },
+  ) {
     const vendor = await this.db.query.vendors.findFirst({
       where: (v, { and, eq }) => and(eq(v.organizationId, orgId), eq(v.id, params.vendorId)),
     });
@@ -36,60 +47,65 @@ export class RfqService {
     if (!smtpHost) return;
 
     const appName = settings['app_name'] || 'BetterSpend';
-    const subject = params.status === 'accepted'
-      ? `[${appName}] RFQ ${params.rfqNumber} Awarded`
-      : `[${appName}] RFQ ${params.rfqNumber} Update`;
-    const summary = params.status === 'accepted'
-      ? `Your response for RFQ ${params.rfqNumber} has been selected.`
-      : `Your response for RFQ ${params.rfqNumber} was not selected.`;
-    const detail = params.status === 'accepted' && params.purchaseOrderNumber
-      ? `Purchase order ${params.purchaseOrderNumber} has been created from the award decision.`
-      : params.reason
-        ? `Reason: ${params.reason}`
-        : 'Thank you for participating in the sourcing event.';
+    const subject =
+      params.status === 'accepted'
+        ? `[${appName}] RFQ ${params.rfqNumber} Awarded`
+        : `[${appName}] RFQ ${params.rfqNumber} Update`;
+    const summary =
+      params.status === 'accepted'
+        ? `Your response for RFQ ${params.rfqNumber} has been selected.`
+        : `Your response for RFQ ${params.rfqNumber} was not selected.`;
+    const detail =
+      params.status === 'accepted' && params.purchaseOrderNumber
+        ? `Purchase order ${params.purchaseOrderNumber} has been created from the award decision.`
+        : params.reason
+          ? `Reason: ${params.reason}`
+          : 'Thank you for participating in the sourcing event.';
+    const safeVendorName = escapeHtml(vendor.name);
+    const safeSummary = escapeHtml(summary);
+    const safeTitle = params.rfqTitle ? escapeHtml(params.rfqTitle) : null;
+    const safeDetail = escapeHtml(detail);
+    const safeAppName = escapeHtml(appName);
 
-    await this.mailService.sendMail({
-      host: smtpHost,
-      port: parseInt(settings['smtp_port'] || '587', 10),
-      secure: settings['smtp_secure'] === 'true',
-      user: settings['smtp_user'] || '',
-      pass: settings['smtp_pass'] || '',
-      from: settings['smtp_from'] || `noreply@${smtpHost}`,
-    }, {
-      to: vendorEmail,
-      subject,
-      html: `
+    await this.mailService.sendMail(
+      {
+        host: smtpHost,
+        port: parseInt(settings['smtp_port'] || '587', 10),
+        secure: settings['smtp_secure'] === 'true',
+        user: settings['smtp_user'] || '',
+        pass: settings['smtp_pass'] || '',
+        from: settings['smtp_from'] || `noreply@${smtpHost}`,
+      },
+      {
+        to: vendorEmail,
+        subject,
+        html: `
         <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
           <h2 style="color:#0f172a">${params.status === 'accepted' ? 'RFQ Awarded' : 'RFQ Response Update'}</h2>
-          <p>Dear ${vendor.name},</p>
-          <p>${summary}</p>
-          ${params.rfqTitle ? `<p><strong>${params.rfqTitle}</strong></p>` : ''}
-          <p>${detail}</p>
+          <p>Dear ${safeVendorName},</p>
+          <p>${safeSummary}</p>
+          ${safeTitle ? `<p><strong>${safeTitle}</strong></p>` : ''}
+          <p>${safeDetail}</p>
           <hr style="margin:24px 0;border:none;border-top:1px solid #e2e8f0">
-          <p style="color:#94a3b8;font-size:12px">This is an automated notification from ${appName}.</p>
+          <p style="color:#94a3b8;font-size:12px">This is an automated notification from ${safeAppName}.</p>
         </div>
       `,
-      text: `${summary}\n\n${detail}`,
-    });
+        text: `${summary}\n\n${detail}`,
+      },
+    );
   }
 
   private async nextNumber(orgId: string): Promise<string> {
     const year = new Date().getFullYear();
-    const rows = await this.db
-      .update(sequences)
-      .set({ lastValue: sql`${sequences.lastValue} + 1`, updatedAt: new Date() })
-      .where(and(eq(sequences.organizationId, orgId), eq(sequences.entityType, 'rfq'), eq(sequences.year, year)))
-      .returning();
-    if (!rows.length) {
-      await this.db.insert(sequences).values({
-        organizationId: orgId,
-        entityType: 'rfq',
-        year,
-        lastValue: 1,
-      });
-      return `RFQ-${year}-0001`;
-    }
-    return `RFQ-${year}-${String(rows[0].lastValue).padStart(4, '0')}`;
+    const [sequence] = await this.db
+      .insert(sequences)
+      .values({ organizationId: orgId, entityType: 'rfq', year, lastValue: 1 })
+      .onConflictDoUpdate({
+        target: [sequences.organizationId, sequences.entityType, sequences.year],
+        set: { lastValue: sql`${sequences.lastValue} + 1`, updatedAt: new Date() },
+      })
+      .returning({ lastValue: sequences.lastValue });
+    return `RFQ-${year}-${String(sequence.lastValue).padStart(4, '0')}`;
   }
 
   private async nextPoNumber(orgId: string): Promise<string> {
@@ -97,7 +113,13 @@ export class RfqService {
     const rows = await this.db
       .update(sequences)
       .set({ lastValue: sql`${sequences.lastValue} + 1`, updatedAt: new Date() })
-      .where(and(eq(sequences.organizationId, orgId), eq(sequences.entityType, 'purchase_order'), eq(sequences.year, year)))
+      .where(
+        and(
+          eq(sequences.organizationId, orgId),
+          eq(sequences.entityType, 'purchase_order'),
+          eq(sequences.year, year),
+        ),
+      )
       .returning();
     if (!rows.length) {
       await this.db.insert(sequences).values({
@@ -219,19 +241,32 @@ export class RfqService {
       awardedVendor: row.awardedVendor,
       lines,
       invitations: invitations.map((i) => ({ ...i.inv, vendor: i.vendor })),
-      responses: responses.map((r) => ({ ...r.res, vendor: r.vendor, lines: linesByResponseId[r.res.id] ?? [] })),
+      responses: responses.map((r) => ({
+        ...r.res,
+        vendor: r.vendor,
+        lines: linesByResponseId[r.res.id] ?? [],
+      })),
     };
   }
 
-  async create(orgId: string, userId: string, dto: {
-    title: string;
-    description?: string;
-    dueDate?: string;
-    currency?: string;
-    notes?: string;
-    lines: Array<{ description: string; quantity: number; unitOfMeasure?: string; targetPrice?: number }>;
-    vendorIds?: string[];
-  }) {
+  async create(
+    orgId: string,
+    userId: string,
+    dto: {
+      title: string;
+      description?: string;
+      dueDate?: string;
+      currency?: string;
+      notes?: string;
+      lines: Array<{
+        description: string;
+        quantity: number;
+        unitOfMeasure?: string;
+        targetPrice?: number;
+      }>;
+      vendorIds?: string[];
+    },
+  ) {
     const number = await this.nextNumber(orgId);
 
     const [rfq] = await this.db
@@ -262,21 +297,25 @@ export class RfqService {
     }
 
     if (dto.vendorIds?.length) {
-      await this.db.insert(rfqInvitations).values(
-        dto.vendorIds.map((vendorId) => ({ rfqId: rfq.id, vendorId })),
-      );
+      await this.db
+        .insert(rfqInvitations)
+        .values(dto.vendorIds.map((vendorId) => ({ rfqId: rfq.id, vendorId })));
     }
 
     return this.findOne(orgId, rfq.id);
   }
 
-  async update(orgId: string, id: string, dto: {
-    title?: string;
-    description?: string;
-    dueDate?: string;
-    notes?: string;
-    status?: string;
-  }) {
+  async update(
+    orgId: string,
+    id: string,
+    dto: {
+      title?: string;
+      description?: string;
+      dueDate?: string;
+      notes?: string;
+      status?: string;
+    },
+  ) {
     const [rfq] = await this.db
       .update(rfqRequests)
       .set({
@@ -389,7 +428,11 @@ export class RfqService {
 
       await tx
         .update(rfqRequests)
-        .set({ status: 'awarded', awardedVendorId: response.response.vendorId, updatedAt: new Date() })
+        .set({
+          status: 'awarded',
+          awardedVendorId: response.response.vendorId,
+          updatedAt: new Date(),
+        })
         .where(eq(rfqRequests.id, id));
     });
 
@@ -414,7 +457,8 @@ export class RfqService {
           rfqTitle: rfq.title,
           status: 'rejected',
           reason: 'Another response was selected for award.',
-        })),
+        }),
+      ),
     ]);
 
     const updatedRfq = await this.findOne(orgId, id);
@@ -428,7 +472,8 @@ export class RfqService {
   async rejectResponse(orgId: string, rfqId: string, responseId: string, reason: string) {
     if (!reason.trim()) throw new BadRequestException('Rejection reason is required');
     const rfq = await this.findOne(orgId, rfqId);
-    if (rfq.status === 'awarded') throw new BadRequestException('Cannot reject responses after the RFQ has been awarded');
+    if (rfq.status === 'awarded')
+      throw new BadRequestException('Cannot reject responses after the RFQ has been awarded');
 
     const [response] = await this.db
       .select()
@@ -441,7 +486,9 @@ export class RfqService {
       .update(rfqResponses)
       .set({
         status: 'rejected',
-        notes: response.notes ? `${response.notes}\n\nRejected: ${reason.trim()}` : `Rejected: ${reason.trim()}`,
+        notes: response.notes
+          ? `${response.notes}\n\nRejected: ${reason.trim()}`
+          : `Rejected: ${reason.trim()}`,
       })
       .where(eq(rfqResponses.id, responseId));
 
@@ -456,16 +503,64 @@ export class RfqService {
     return this.findOne(orgId, rfqId);
   }
 
-  async submitResponse(orgId: string, rfqId: string, dto: {
-    vendorId: string;
-    notes?: string;
-    validUntil?: string;
-    lines: Array<{ rfqLineId: string; unitPrice: number; leadTimeDays?: number; notes?: string }>;
-  }) {
+  async submitResponse(
+    orgId: string,
+    rfqId: string,
+    dto: {
+      vendorId: string;
+      notes?: string;
+      validUntil?: string;
+      lines: Array<{ rfqLineId: string; unitPrice: number; leadTimeDays?: number; notes?: string }>;
+    },
+  ) {
     const rfq = await this.findOne(orgId, rfqId);
     if (rfq.status !== 'open') throw new BadRequestException('RFQ is not open for responses');
 
-    const totalAmount = dto.lines.reduce((sum, l) => sum + l.unitPrice, 0);
+    const rfqLinesList = await this.db.select().from(rfqLines).where(eq(rfqLines.rfqId, rfqId));
+    const lineMap = Object.fromEntries(rfqLinesList.map((l) => [l.id, l]));
+
+    // A response may only quote lines that belong to this RFQ; otherwise an
+    // award could copy a foreign line's description and quantity into a PO.
+    const unknownLineIds = dto.lines.filter((l) => !lineMap[l.rfqLineId]);
+    if (unknownLineIds.length > 0) {
+      throw new BadRequestException(
+        `Response lines reference items outside this RFQ: ${unknownLineIds.map((l) => l.rfqLineId).join(', ')}`,
+      );
+    }
+
+    const seenLineIds = new Set<string>();
+    const duplicateLineIds = dto.lines
+      .filter(({ rfqLineId }) => {
+        if (seenLineIds.has(rfqLineId)) return true;
+        seenLineIds.add(rfqLineId);
+        return false;
+      })
+      .map(({ rfqLineId }) => rfqLineId);
+    if (duplicateLineIds.length > 0) {
+      throw new BadRequestException(
+        `Response lines must quote each RFQ line once: ${duplicateLineIds.join(', ')}`,
+      );
+    }
+
+    const fractionalCentLines = dto.lines.filter(
+      (line) =>
+        !Number.isFinite(line.unitPrice) || Number(line.unitPrice.toFixed(2)) !== line.unitPrice,
+    );
+    if (fractionalCentLines.length > 0) {
+      throw new BadRequestException(
+        `Response line unit prices must use at most two decimal places: ${fractionalCentLines
+          .map((line) => line.rfqLineId)
+          .join(', ')}`,
+      );
+    }
+
+    // Normalize once so the response total, persisted lines, and any awarded
+    // PO all use the exact same quantity-aware values.
+    const normalizedLines = dto.lines.map((line) => ({
+      ...line,
+      lineTotal: Math.round(line.unitPrice * Number(lineMap[line.rfqLineId].quantity) * 100) / 100,
+    }));
+    const totalAmount = normalizedLines.reduce((sum, line) => sum + line.lineTotal, 0);
 
     const [response] = await this.db
       .insert(rfqResponses)
@@ -478,27 +573,16 @@ export class RfqService {
       })
       .returning();
 
-    // Get rfq lines to compute total price
-    const rfqLinesList = await this.db
-      .select()
-      .from(rfqLines)
-      .where(eq(rfqLines.rfqId, rfqId));
-    const lineMap = Object.fromEntries(rfqLinesList.map((l) => [l.id, l]));
-
     if (dto.lines.length) {
       await this.db.insert(rfqResponseLines).values(
-        dto.lines.map((l) => {
-          const rfqLine = lineMap[l.rfqLineId];
-          const qty = rfqLine ? Number(rfqLine.quantity) : 1;
-          return {
-            responseId: response.id,
-            rfqLineId: l.rfqLineId,
-            unitPrice: String(l.unitPrice),
-            totalPrice: String(l.unitPrice * qty),
-            leadTimeDays: l.leadTimeDays,
-            notes: l.notes,
-          };
-        }),
+        normalizedLines.map((line) => ({
+          responseId: response.id,
+          rfqLineId: line.rfqLineId,
+          unitPrice: String(line.unitPrice),
+          totalPrice: String(line.lineTotal),
+          leadTimeDays: line.leadTimeDays,
+          notes: line.notes,
+        })),
       );
     }
 
@@ -510,4 +594,17 @@ export class RfqService {
 
     return response;
   }
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    };
+    return entities[character] ?? character;
+  });
 }

@@ -223,10 +223,10 @@ export class VendorPortalService {
       throw new ForbiddenException(`Invoice number ${data.invoiceNumber} already exists for this vendor`);
     }
 
-    const internalNumber = await this.sequenceService.next(orgId, 'invoice');
     const subtotal = data.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
 
     const invoiceId = await this.db.transaction(async (tx) => {
+      const internalNumber = await this.sequenceService.next(orgId, 'invoice', tx);
       const [inv] = await tx.insert(invoices).values({
         organizationId: orgId,
         purchaseOrderId: data.purchaseOrderId,

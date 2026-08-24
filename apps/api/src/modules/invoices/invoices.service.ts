@@ -179,7 +179,6 @@ export class InvoicesService {
       );
     }
 
-    const internalNumber = await this.sequenceService.next(organizationId, 'invoice');
     const taxCodeMap = await this.getTaxCodeMap(
       organizationId,
       input.lines.map((line) => line.taxCodeId).filter((value): value is string => !!value),
@@ -202,6 +201,7 @@ export class InvoicesService {
       );
 
     const invoiceId = await this.db.transaction(async (tx) => {
+      const internalNumber = await this.sequenceService.next(organizationId, 'invoice', tx);
       const [inv] = await tx
         .insert(invoices)
         .values({

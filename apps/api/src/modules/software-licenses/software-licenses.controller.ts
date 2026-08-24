@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Get, Param, ParseUUIDPipe, Patch
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { softwareLicenseSchema } from '@betterspend/shared';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
+import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { SoftwareLicensesService } from './software-licenses.service';
 
 @ApiTags('software-licenses')
@@ -80,11 +81,12 @@ export class SoftwareLicensesController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: { action?: 'renew' | 'renegotiate' | 'cancel'; note?: string },
     @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
   ) {
     const action = body?.action;
     if (!action || !['renew', 'renegotiate', 'cancel'].includes(action)) {
       throw new BadRequestException('Valid action is required');
     }
-    return this.softwareLicensesService.applyRenewalAction(id, orgId, action, body.note);
+    return this.softwareLicensesService.applyRenewalAction(id, orgId, userId, action, body.note);
   }
 }
