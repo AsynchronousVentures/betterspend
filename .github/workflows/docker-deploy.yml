@@ -72,8 +72,8 @@ jobs:
         image: postgres:18-alpine
         env:
           POSTGRES_USER: betterspend
-          POSTGRES_PASSWORD: betterspend
           POSTGRES_DB: betterspend_test
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         options: >-
@@ -104,7 +104,7 @@ jobs:
 
       - name: Verify clean database migrations
         env:
-          DATABASE_URL: postgresql://betterspend:betterspend@127.0.0.1:5432/betterspend_test
+          DATABASE_URL: postgresql://betterspend@127.0.0.1:5432/betterspend_test
         run: |
           pnpm --filter @betterspend/db db:migrate
           pnpm --filter @betterspend/db db:verify-migrations
