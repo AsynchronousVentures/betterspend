@@ -528,14 +528,14 @@ function VendorPortalContent() {
         linkToken,
         promise: (async () => {
           if (linkToken) {
-            window.history.replaceState(null, '', window.location.pathname);
             await api.vendorPortal.exchangeSession(linkToken);
+            window.history.replaceState(null, '', window.location.pathname);
           }
 
           return Promise.all([
             api.vendorPortal.dashboard(),
-            api.vendorPortal.catalog(),
-            api.vendorPortal.onboarding(),
+            api.vendorPortal.catalog().catch(() => null),
+            api.vendorPortal.onboarding().catch(() => null),
           ]) as Promise<[VendorPortalData, any, any]>;
         })(),
       };
