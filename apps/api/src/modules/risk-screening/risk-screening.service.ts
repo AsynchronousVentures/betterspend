@@ -42,7 +42,7 @@ export class RiskScreeningService {
    * into an SSRF primitive or a tenant-controlled data swap.
    */
   private static readonly INGEST_SOURCES: Record<string, string> = {
-    ofac_sdn: 'https://www.treasury.gov/ofac/downloads/sdn.csv',
+    ofac_sdn: 'https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV',
   };
   private static readonly INGEST_TIMEOUT_MS = 30_000;
   private static readonly MAX_INGEST_BYTES = 25 * 1024 * 1024;
@@ -62,10 +62,7 @@ export class RiskScreeningService {
 
     let response: Response;
     try {
-      response = await fetch(listUrl, {
-        redirect: 'error',
-        signal: AbortSignal.timeout(RiskScreeningService.INGEST_TIMEOUT_MS),
-      });
+      response = await fetchSanctionsSource(listUrl, RiskScreeningService.INGEST_TIMEOUT_MS);
     } catch (error) {
       throw new Error(
         `Failed to download sanctions list from ${listUrl}: ${error instanceof Error ? error.message : error}`,
@@ -414,6 +411,32 @@ async function readResponseTextWithLimit(response: Response, maxBytes: number): 
     text += decoder.decode(value, { stream: true });
   }
   return text + decoder.decode();
+}
+
+const TRUSTED_SANCTIONS_REDIRECT_HOSTS = new Set([
+  'sanctionslistservice.ofac.treas.gov',
+  'wc2h-sls-prod-public-published.s3.us-gov-west-1.amazonaws.com',
+]);
+
+async function fetchSanctionsSource(sourceUrl: string, timeoutMs: number): Promise<Response> {
+  const signal = AbortSignal.timeout(timeoutMs);
+  let currentUrl = new URL(sourceUrl);
+  for (let redirectCount = 0; redirectCount <= 2; redirectCount++) {
+    const response = await fetch(currentUrl, { redirect: 'manual', signal });
+    if (response.status < 300 || response.status >= 400) return response;
+
+    const location = response.headers.get('location');
+    if (!location) throw new Error('Sanctions source returned a redirect without a location');
+    const nextUrl = new URL(location, currentUrl);
+    if (
+      nextUrl.protocol !== 'https:' ||
+      !TRUSTED_SANCTIONS_REDIRECT_HOSTS.has(nextUrl.hostname.toLowerCase())
+    ) {
+      throw new Error(`Sanctions source redirected to untrusted host ${nextUrl.hostname}`);
+    }
+    currentUrl = nextUrl;
+  }
+  throw new Error('Sanctions source exceeded the redirect limit');
 }
 
 /**
