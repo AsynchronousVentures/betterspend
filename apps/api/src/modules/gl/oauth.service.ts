@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import axios from 'axios';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { auditLog, integrationConnections, type Db } from '@betterspend/db';
 import { INTEGRATION_CONNECTION_STATUS } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
@@ -294,9 +294,8 @@ export class OAuthService {
     await this.oauthRedis.withLock(`refresh:${connectionId}`, async () => {
       const connection = await this.findConnectionById(connectionId);
       if (!connection || connection.status !== 'active') return;
-      const accessToken = connection.accessTokenEncrypted
-        ? this.crypto.decrypt(connection.accessTokenEncrypted)
-        : null;
+      const encryptedAccessToken = connection.accessTokenEncrypted;
+      const accessToken = encryptedAccessToken ? this.crypto.decrypt(encryptedAccessToken) : null;
       if (rejectedAccessToken) {
         if (accessToken !== rejectedAccessToken) return;
       } else if (
@@ -325,7 +324,16 @@ export class OAuthService {
             status: 'active',
             updatedAt: new Date(),
           })
-          .where(eq(integrationConnections.id, connectionId));
+          .where(
+            and(
+              eq(integrationConnections.id, connectionId),
+              eq(integrationConnections.provider, provider),
+              eq(integrationConnections.status, INTEGRATION_CONNECTION_STATUS.ACTIVE),
+              encryptedAccessToken
+                ? eq(integrationConnections.accessTokenEncrypted, encryptedAccessToken)
+                : isNull(integrationConnections.accessTokenEncrypted),
+            ),
+          );
       } catch (error: unknown) {
         if (this.isInvalidRefreshToken(error)) {
           await this.transitionToReconnectRequired(connection, 'invalid_refresh_token');

@@ -151,13 +151,15 @@ describe('OAuthService', () => {
   });
 
   it('single-flights concurrent refreshes and lets waiters read the rotated token', async () => {
+    let refreshPredicate: unknown;
+    const expiredAccessEncrypted = crypto.encrypt('expired-access');
     const connection = {
       id: '00000000-0000-0000-0000-000000000010',
       organizationId,
       provider: 'qbo',
       realmId: 'realm-1',
       realmName: null,
-      accessTokenEncrypted: crypto.encrypt('expired-access'),
+      accessTokenEncrypted: expiredAccessEncrypted,
       refreshTokenEncrypted: crypto.encrypt('refresh-token'),
       accessExpiresAt: new Date(0),
       status: 'active',
@@ -175,7 +177,8 @@ describe('OAuthService', () => {
       },
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => ({
-          where: jest.fn(async () => {
+          where: jest.fn(async (condition: unknown) => {
+            refreshPredicate = condition;
             Object.assign(connection, values);
           }),
         })),
@@ -194,6 +197,9 @@ describe('OAuthService', () => {
     expect(mockedAxios.post).toHaveBeenCalledTimes(1);
     expect(first?.accessToken).toBe('rotated-access');
     expect(second?.accessToken).toBe('rotated-access');
+    const query = new PgDialect().sqlToQuery(refreshPredicate as never);
+    expect(query.sql).toContain('"access_token_enc" =');
+    expect(query.params).toContain(expiredAccessEncrypted);
   });
 
   it('single-flights concurrent refreshes after QBO rejects a still-current token', async () => {
