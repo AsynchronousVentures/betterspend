@@ -136,10 +136,13 @@ async function main(): Promise<void> {
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
     await migrateLegacyConnections(client);
   } finally {
-    if (migrationLockAcquired) {
-      await client`SELECT pg_advisory_unlock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
+    try {
+      if (migrationLockAcquired) {
+        await client`SELECT pg_advisory_unlock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
+      }
+    } finally {
+      await client.end();
     }
-    await client.end();
   }
 }
 
