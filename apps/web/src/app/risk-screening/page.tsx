@@ -152,11 +152,20 @@ export default function RiskScreeningPage() {
         description="Screen suppliers against public sanctions lists before they receive purchase orders."
         actions={
           <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={runIngest} disabled={ingestBusy}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={runIngest}
+              disabled={ingestBusy || screenAllBusy || busyVendorId !== null}
+            >
               <ShieldCheck className="h-4 w-4" />
               {ingestBusy ? 'Importing...' : 'Import Sanctions List'}
             </Button>
-            <Button type="button" onClick={runScreenAll} disabled={screenAllBusy}>
+            <Button
+              type="button"
+              onClick={runScreenAll}
+              disabled={screenAllBusy || ingestBusy || busyVendorId !== null}
+            >
               {screenAllBusy ? 'Screening...' : 'Re-screen All Vendors'}
             </Button>
           </div>
@@ -222,8 +231,12 @@ export default function RiskScreeningPage() {
               <Button type="button" variant="outline" onClick={() => { setReviewVendor(null); setReviewNote(''); }}>
                 Cancel
               </Button>
-              <Button type="button" onClick={submitManualReview} disabled={!reviewNote.trim()}>
-                Save Decision
+              <Button
+                type="button"
+                onClick={submitManualReview}
+                disabled={!reviewNote.trim() || busyVendorId === reviewVendor.id}
+              >
+                {busyVendorId === reviewVendor.id ? 'Saving...' : 'Save Decision'}
               </Button>
             </div>
           </CardContent>
@@ -275,7 +288,7 @@ export default function RiskScreeningPage() {
                           size="sm"
                           variant="outline"
                           onClick={() => rescreen(vendor)}
-                          disabled={busyVendorId === vendor.id}
+                          disabled={busyVendorId !== null || ingestBusy || screenAllBusy}
                         >
                           {busyVendorId === vendor.id ? '...' : 'Re-screen'}
                         </Button>
@@ -283,8 +296,11 @@ export default function RiskScreeningPage() {
                           type="button"
                           size="sm"
                           variant="ghost"
-                          onClick={() => setReviewVendor(vendor)}
-                          disabled={busyVendorId === vendor.id}
+                          onClick={() => {
+                            setReviewVendor(vendor);
+                            setReviewNote('');
+                          }}
+                          disabled={busyVendorId !== null || ingestBusy || screenAllBusy}
                         >
                           Manual Review
                         </Button>

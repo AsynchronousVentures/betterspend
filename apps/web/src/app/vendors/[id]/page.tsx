@@ -148,7 +148,12 @@ export default function VendorDetailPage() {
     setScreeningBusy(true);
     try {
       const result = await api.riskScreening.screenVendor(id);
-      setVendor(await api.vendors.get(id));
+      try {
+        setVendor(await api.vendors.get(id));
+      } catch {
+        toast('Screening completed, but vendor details could not be refreshed', 'error');
+        return;
+      }
       toast(
         result.status === 'flagged'
           ? `Flagged with ${result.matches.length} potential match(es)`
