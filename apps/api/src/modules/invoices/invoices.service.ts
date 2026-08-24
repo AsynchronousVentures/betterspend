@@ -9,7 +9,7 @@ import {
 import { eq, and, ne, isNull, lte, gte, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
-import { invoices, invoiceLines, purchaseOrders, requisitions } from '@betterspend/db';
+import { auditLog, invoices, invoiceLines, purchaseOrders, requisitions } from '@betterspend/db';
 import { SequenceService } from '../../common/services/sequence.service';
 import { MatchingService } from './matching.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
@@ -223,6 +223,7 @@ export class InvoicesService {
           entityId: resolvedEntityId,
           vendorId: input.vendorId,
           createdBy,
+          submissionSource: 'internal',
           invoiceNumber: input.invoiceNumber,
           internalNumber,
           invoiceDate: new Date(input.invoiceDate),
@@ -279,6 +280,18 @@ export class InvoicesService {
         );
       }
 
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: createdBy,
+        entityType: 'invoice',
+        entityId: inv.id,
+        action: 'created',
+        changes: {
+          invoiceNumber: input.invoiceNumber,
+          totalAmount: totalAmount.toFixed(2),
+        },
+      });
+
       return inv.id;
     });
 
@@ -298,12 +311,6 @@ export class InvoicesService {
     }
 
     const created = await this.findOne(invoiceId, organizationId);
-    this.audit
-      .log(organizationId, null, 'invoice', invoiceId, 'created', {
-        invoiceNumber: input.invoiceNumber,
-        totalAmount: (created as any).totalAmount,
-      })
-      .catch(() => {});
     if (input.purchaseOrderId) {
       const matchSt = (created as any).matchStatus;
       if (matchSt === 'exception') {
@@ -550,11 +557,21 @@ export class InvoicesService {
       const makerCheckerEnabled =
         (await this.settingsService.get(organizationId, 'prevent_invoice_self_approval', tx)) !==
         'false';
-      if (
+      const unknownInternalMaker =
         makerCheckerEnabled &&
-        lockedInvoice.createdBy &&
-        lockedInvoice.createdBy === approverId
-      ) {
+        lockedInvoice.submissionSource !== 'vendor_portal' &&
+        !lockedInvoice.createdBy;
+      if (unknownInternalMaker) {
+        return {
+          blocked: {
+            reason: 'unknown_creator' as const,
+            fallbackApprover: null,
+          },
+        };
+      }
+
+      const selfApproval = makerCheckerEnabled && lockedInvoice.createdBy === approverId;
+      if (selfApproval) {
         const [maker, candidates] = await Promise.all([
           tx.query.users.findFirst({
             where: (user, { and, eq }) =>
@@ -573,6 +590,7 @@ export class InvoicesService {
         );
         return {
           blocked: {
+            reason: 'self_approval' as const,
             fallbackApprover: fallback ? { id: fallback.id, name: fallback.name } : null,
           },
         };
@@ -637,17 +655,30 @@ export class InvoicesService {
 
     if ('blocked' in result && result.blocked) {
       const fallbackApprover = result.blocked.fallbackApprover;
+      const unknownCreator = result.blocked.reason === 'unknown_creator';
       await this.audit
-        .log(organizationId, approverId, 'invoice', id, 'self_approval_blocked', {
-          preventInvoiceSelfApproval: true,
-          fallbackApproverId: fallbackApprover?.id ?? null,
-        })
+        .log(
+          organizationId,
+          approverId,
+          'invoice',
+          id,
+          unknownCreator ? 'approval_blocked_unknown_creator' : 'self_approval_blocked',
+          {
+            preventInvoiceSelfApproval: true,
+            reason: result.blocked.reason,
+            fallbackApproverId: fallbackApprover?.id ?? null,
+          },
+        )
         .catch(() => {});
       throw new ForbiddenException({
-        code: 'INVOICE_SELF_APPROVAL_BLOCKED',
-        message: fallbackApprover
-          ? `Invoice creators cannot approve their own invoices. Route this invoice to ${fallbackApprover.name}.`
-          : 'Invoice creators cannot approve their own invoices. No independent global invoice approver is configured.',
+        code: unknownCreator
+          ? 'INVOICE_CREATOR_UNKNOWN'
+          : 'INVOICE_SELF_APPROVAL_BLOCKED',
+        message: unknownCreator
+          ? 'This invoice has no authoritative creator record. Approval is blocked while maker-checker policy is enabled.'
+          : fallbackApprover
+            ? `Invoice creators cannot approve their own invoices. Route this invoice to ${fallbackApprover.name}.`
+            : 'Invoice creators cannot approve their own invoices. No independent global invoice approver is configured.',
         fallbackApprover,
       });
     }

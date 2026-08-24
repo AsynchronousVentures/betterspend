@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { Db, DbTransaction } from '@betterspend/db';
+import { auditLog, invoices, type Db, type DbTransaction } from '@betterspend/db';
 import type { SequenceService } from '../../common/services/sequence.service';
 import type { AuditService } from '../audit/audit.service';
 import type { BudgetsService } from '../budgets/budgets.service';
@@ -17,7 +17,11 @@ import { InvoicesService } from './invoices.service';
 function createService(
   recordSpend: BudgetsService['recordSpend'],
   matchStatus = 'full_match',
-  options: { createdBy?: string; makerCheckerEnabled?: boolean } = {},
+  options: {
+    createdBy?: string | null;
+    makerCheckerEnabled?: boolean;
+    submissionSource?: 'internal' | 'legacy' | 'vendor_portal';
+  } = {},
 ) {
   const auditActions: string[] = [];
   const approved = {
@@ -29,7 +33,8 @@ function createService(
     totalAmount: '125.00',
     exchangeRate: '1',
     internalNumber: 'INV-2026-0001',
-    createdBy: options.createdBy ?? 'maker-1',
+    createdBy: options.createdBy === undefined ? 'maker-1' : options.createdBy,
+    submissionSource: options.submissionSource ?? 'internal',
     lines: [{ taxAmount: '25.00', taxCode: { isRecoverable: true } }],
   };
   const transaction = {
@@ -203,5 +208,129 @@ describe('InvoicesService approval budget accounting', () => {
     await service.approve('invoice-1', 'organization-1', 'maker-1');
 
     assert.equal(spendRecorded, true);
+  });
+
+  it('fails closed when a legacy invoice has no authoritative creator', async () => {
+    let spendRecorded = false;
+    const { service, auditActions } = createService(
+      async () => {
+        spendRecorded = true;
+        return { updated: true, budgetId: 'budget-1' };
+      },
+      'full_match',
+      { createdBy: null, submissionSource: 'legacy' },
+    );
+
+    await assert.rejects(
+      service.approve('invoice-1', 'organization-1', 'approver-1'),
+      (error: unknown) => {
+        assert.ok(error && typeof error === 'object' && 'getResponse' in error);
+        const response = (error as { getResponse(): unknown }).getResponse();
+        assert.deepEqual(response, {
+          code: 'INVOICE_CREATOR_UNKNOWN',
+          message:
+            'This invoice has no authoritative creator record. Approval is blocked while maker-checker policy is enabled.',
+          fallbackApprover: null,
+        });
+        return true;
+      },
+    );
+    assert.equal(spendRecorded, false);
+    assert.deepEqual(auditActions, ['approval_blocked_unknown_creator']);
+  });
+
+  it('allows independent approval of vendor-portal invoices', async () => {
+    let spendRecorded = false;
+    const { service } = createService(
+      async () => {
+        spendRecorded = true;
+        return { updated: true, budgetId: 'budget-1' };
+      },
+      'full_match',
+      { createdBy: null, submissionSource: 'vendor_portal' },
+    );
+
+    await service.approve('invoice-1', 'organization-1', 'approver-1');
+
+    assert.equal(spendRecorded, true);
+  });
+});
+
+describe('InvoicesService creation audit', () => {
+  it('writes the creator audit record in the invoice transaction', async () => {
+    const inserted: Array<{ table: unknown; values: unknown }> = [];
+    let invoiceLookup = 0;
+    const createdInvoice = {
+      id: 'invoice-1',
+      organizationId: 'organization-1',
+      invoiceNumber: 'VENDOR-100',
+      totalAmount: '100.00',
+      matchStatus: 'unmatched',
+    };
+    const transaction = {
+      insert(table: unknown) {
+        return {
+          values(values: unknown) {
+            inserted.push({ table, values });
+            return table === invoices
+              ? { returning: async () => [{ id: 'invoice-1' }] }
+              : Promise.resolve();
+          },
+        };
+      },
+    };
+    const db = {
+      query: {
+        invoices: {
+          findFirst: async () => {
+            invoiceLookup += 1;
+            return invoiceLookup === 1 ? null : createdInvoice;
+          },
+        },
+      },
+      transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) =>
+        callback(transaction),
+    } as unknown as Db;
+    const service = new InvoicesService(
+      db,
+      { next: async () => 'INV-2026-0001' } as unknown as SequenceService,
+      undefined as unknown as MatchingService,
+      { emit() {} } as unknown as WebhookEventService,
+      { enqueue() {} } as unknown as GlExportService,
+      undefined as unknown as BudgetsService,
+      undefined as unknown as AuditService,
+      undefined as unknown as NotificationsService,
+      { assertBelongsToOrg: async () => {} } as unknown as EntitiesService,
+      {
+        convertToBase: async () => ({ baseCurrency: 'USD', exchangeRate: 1, baseAmount: 100 }),
+        roundMoney: (value: number) => value,
+      } as unknown as ExchangeRatesService,
+      { analyzeInvoice: async () => {} } as unknown as SpendGuardService,
+      undefined as unknown as SettingsService,
+    );
+
+    await service.create('organization-1', 'maker-1', {
+      vendorId: 'vendor-1',
+      invoiceNumber: 'VENDOR-100',
+      invoiceDate: '2026-08-24',
+      lines: [
+        {
+          lineNumber: 1,
+          description: 'Services',
+          quantity: 1,
+          unitPrice: 100,
+        },
+      ],
+    });
+
+    const auditInsert = inserted.find((entry) => entry.table === auditLog);
+    assert.deepEqual(auditInsert?.values, {
+      organizationId: 'organization-1',
+      userId: 'maker-1',
+      entityType: 'invoice',
+      entityId: 'invoice-1',
+      action: 'created',
+      changes: { invoiceNumber: 'VENDOR-100', totalAmount: '100.00' },
+    });
   });
 });

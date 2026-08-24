@@ -1,5 +1,5 @@
 {
-  "id": "04985b87-bd31-4bf6-9e61-c4f8bc9feee7",
+  "id": "c6b5b399-ab61-4e09-88b3-95d75efa0c3c",
   "prevId": "05bbe11a-b998-4d8f-b00c-57875b894f99",
   "version": "7",
   "dialect": "postgresql",
@@ -3289,6 +3289,13 @@
           "primaryKey": false,
           "notNull": false,
           "default": "'{}'::jsonb"
+        },
+        "submission_source": {
+          "name": "submission_source",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'legacy'"
         },
         "created_by": {
           "name": "created_by",
