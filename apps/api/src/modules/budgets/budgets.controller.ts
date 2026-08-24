@@ -15,6 +15,7 @@ import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { BudgetsService, CreateBudgetInput } from './budgets.service';
 import type { BudgetEnforcementMode, PendingRequisitionPolicy } from './budget-enforcement';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
+import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 
 @ApiTags('budgets')
 @Controller('budgets')
@@ -70,8 +71,12 @@ export class BudgetsController {
 
   @Post()
   @ApiOperation({ summary: 'Create a budget with optional periods' })
-  create(@Body() body: CreateBudgetInput, @CurrentOrgId() orgId: string) {
-    return this.budgetsService.create(orgId, body);
+  create(
+    @Body() body: CreateBudgetInput,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+  ) {
+    return this.budgetsService.create(orgId, userId, body);
   }
 
   @Patch(':id')
@@ -88,8 +93,9 @@ export class BudgetsController {
       pendingRequisitionPolicy?: PendingRequisitionPolicy | null;
     },
     @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
   ) {
-    return this.budgetsService.update(id, orgId, body);
+    return this.budgetsService.update(id, orgId, userId, body);
   }
 
   @Post(':id/periods')

@@ -13,13 +13,13 @@ interface EvaluateBudgetPolicyInput {
     id: string;
     name: string;
     currency: string;
-    totalAmount: number;
-    spentAmount: number;
+    totalAmount: string;
+    spentAmount: string;
   };
   mode: BudgetEnforcementMode;
   pendingPolicy: PendingRequisitionPolicy;
-  committedAmount: number;
-  requestedAmount: number;
+  committedAmount: string;
+  requestedAmount: string;
   ownerUserId: string | null;
 }
 
@@ -33,18 +33,63 @@ export interface BudgetEnforcementDecision {
   mode?: BudgetEnforcementMode;
   pendingPolicy?: PendingRequisitionPolicy;
   ownerUserId?: string;
-  allocated?: number;
-  spent?: number;
-  committed?: number;
-  remainingBefore?: number;
-  remainingAfter?: number;
-  requested?: number;
-  overrun?: number;
+  allocated?: string;
+  spent?: string;
+  committed?: string;
+  remainingBefore?: string;
+  remainingAfter?: string;
+  requested?: string;
+  overrun?: string;
   message: string;
 }
 
-function money(currency: string, amount: number): string {
-  return `${currency} ${amount.toFixed(2)}`;
+const MONEY_DECIMALS = 2;
+const RATE_DECIMALS = 8;
+
+function parseScaledDecimal(value: string, decimals: number): bigint {
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(value.trim());
+  if (!match) throw new Error(`Invalid decimal amount "${value}"`);
+
+  const [, sign, whole, fraction = ''] = match;
+  const keptFraction = fraction.slice(0, decimals).padEnd(decimals, '0');
+  const discarded = fraction.slice(decimals);
+  let units = BigInt(whole) * 10n ** BigInt(decimals) + BigInt(keptFraction || '0');
+  if (discarded[0] && discarded[0] >= '5') units += 1n;
+  return sign === '-' ? -units : units;
+}
+
+function formatScaledDecimal(units: bigint, decimals = MONEY_DECIMALS): string {
+  const negative = units < 0;
+  const absolute = negative ? -units : units;
+  const scale = 10n ** BigInt(decimals);
+  const whole = absolute / scale;
+  const fraction = (absolute % scale).toString().padStart(decimals, '0');
+  return `${negative ? '-' : ''}${whole}.${fraction}`;
+}
+
+/** Convert a persisted decimal money amount using a persisted decimal exchange rate. */
+export function convertMoney(amount: string, rate: string): string {
+  const amountUnits = parseScaledDecimal(amount, MONEY_DECIMALS);
+  const rateUnits = parseScaledDecimal(rate, RATE_DECIMALS);
+  const divisor = 10n ** BigInt(RATE_DECIMALS);
+  const product = amountUnits * rateUnits;
+  const absolute = product < 0 ? -product : product;
+  const rounded = (absolute + divisor / 2n) / divisor;
+  return formatScaledDecimal(product < 0 ? -rounded : rounded);
+}
+
+export function addMoney(amounts: string[]): string {
+  return formatScaledDecimal(
+    amounts.reduce((sum, amount) => sum + parseScaledDecimal(amount, MONEY_DECIMALS), 0n),
+  );
+}
+
+export function isZeroMoney(amount: string): boolean {
+  return parseScaledDecimal(amount, MONEY_DECIMALS) === 0n;
+}
+
+function money(currency: string, amount: bigint): string {
+  return `${currency} ${formatScaledDecimal(amount)}`;
 }
 
 export function noBudgetDecision(): BudgetEnforcementDecision {
@@ -59,38 +104,42 @@ export function noBudgetDecision(): BudgetEnforcementDecision {
 /** Pure policy evaluation. Data lookup and currency conversion stay in BudgetsService. */
 export function evaluateBudgetPolicy(input: EvaluateBudgetPolicyInput): BudgetEnforcementDecision {
   const { budget, mode, pendingPolicy, committedAmount, requestedAmount, ownerUserId } = input;
-  const remainingBefore = budget.totalAmount - budget.spentAmount - committedAmount;
-  const remainingAfter = remainingBefore - requestedAmount;
-  const overrun = Math.max(0, -remainingAfter);
+  const allocatedUnits = parseScaledDecimal(budget.totalAmount, MONEY_DECIMALS);
+  const spentUnits = parseScaledDecimal(budget.spentAmount, MONEY_DECIMALS);
+  const committedUnits = parseScaledDecimal(committedAmount, MONEY_DECIMALS);
+  const requestedUnits = parseScaledDecimal(requestedAmount, MONEY_DECIMALS);
+  const remainingBeforeUnits = allocatedUnits - spentUnits - committedUnits;
+  const remainingAfterUnits = remainingBeforeUnits - requestedUnits;
+  const overrunUnits = remainingAfterUnits < 0 ? -remainingAfterUnits : 0n;
   const common = {
     budgetId: budget.id,
     budgetName: budget.name,
     currency: budget.currency,
     mode,
     pendingPolicy,
-    allocated: budget.totalAmount,
-    spent: budget.spentAmount,
-    committed: committedAmount,
-    remainingBefore,
-    remainingAfter,
-    requested: requestedAmount,
-    overrun,
+    allocated: formatScaledDecimal(allocatedUnits),
+    spent: formatScaledDecimal(spentUnits),
+    committed: formatScaledDecimal(committedUnits),
+    remainingBefore: formatScaledDecimal(remainingBeforeUnits),
+    remainingAfter: formatScaledDecimal(remainingAfterUnits),
+    requested: formatScaledDecimal(requestedUnits),
+    overrun: formatScaledDecimal(overrunUnits),
   };
 
-  if (overrun === 0) {
+  if (overrunUnits === 0n) {
     return {
       ...common,
       action: 'allow',
       withinBudget: true,
       reason: 'within_budget',
-      message: `${budget.name} has ${money(budget.currency, remainingAfter)} remaining after this request`,
+      message: `${budget.name} has ${money(budget.currency, remainingAfterUnits)} remaining after this request`,
     };
   }
 
   const overrunMessage =
-    `${budget.name} would be exceeded by ${money(budget.currency, overrun)}. ` +
-    `Available before this request: ${money(budget.currency, remainingBefore)}; ` +
-    `requested: ${money(budget.currency, requestedAmount)}.`;
+    `${budget.name} would be exceeded by ${money(budget.currency, overrunUnits)}. ` +
+    `Available before this request: ${money(budget.currency, remainingBeforeUnits)}; ` +
+    `requested: ${money(budget.currency, requestedUnits)}.`;
 
   if (mode === 'visibility_only') {
     return {

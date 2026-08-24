@@ -1,16 +1,21 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { evaluateBudgetPolicy, noBudgetDecision } from './budget-enforcement';
+import { convertMoney, evaluateBudgetPolicy, noBudgetDecision } from './budget-enforcement';
 
 const budget = {
   id: 'budget-1',
   name: 'Engineering 2026',
   currency: 'USD',
-  totalAmount: 1_000,
-  spentAmount: 400,
+  totalAmount: '1000.00',
+  spentAmount: '400.00',
 };
 
 describe('evaluateBudgetPolicy', () => {
+  it('converts persisted decimals without floating-point drift', () => {
+    assert.equal(convertMoney('0.10', '0.20000000'), '0.02');
+    assert.equal(convertMoney('999999999999.99', '1.00000000'), '999999999999.99');
+  });
+
   it('allows requests when no matching budget exists', () => {
     const decision = noBudgetDecision();
 
@@ -23,14 +28,14 @@ describe('evaluateBudgetPolicy', () => {
       budget,
       mode: 'hard_stop',
       pendingPolicy: 'approved_only',
-      committedAmount: 100,
-      requestedAmount: 500,
+      committedAmount: '100.00',
+      requestedAmount: '500.00',
       ownerUserId: null,
     });
 
     assert.equal(decision.action, 'allow');
     assert.equal(decision.withinBudget, true);
-    assert.equal(decision.remainingAfter, 0);
+    assert.equal(decision.remainingAfter, '0.00');
   });
 
   it('blocks a hard-stop overrun with the calculated availability', () => {
@@ -38,14 +43,14 @@ describe('evaluateBudgetPolicy', () => {
       budget,
       mode: 'hard_stop',
       pendingPolicy: 'include_pending',
-      committedAmount: 250,
-      requestedAmount: 500,
+      committedAmount: '250.00',
+      requestedAmount: '500.00',
       ownerUserId: null,
     });
 
     assert.equal(decision.action, 'block');
-    assert.equal(decision.overrun, 150);
-    assert.equal(decision.remainingBefore, 350);
+    assert.equal(decision.overrun, '150.00');
+    assert.equal(decision.remainingBefore, '350.00');
     assert.match(decision.message, /exceeded by USD 150\.00/);
   });
 
@@ -54,14 +59,14 @@ describe('evaluateBudgetPolicy', () => {
       budget,
       mode: 'visibility_only',
       pendingPolicy: 'approved_only',
-      committedAmount: 100,
-      requestedAmount: 700,
+      committedAmount: '100.00',
+      requestedAmount: '700.00',
       ownerUserId: null,
     });
 
     assert.equal(decision.action, 'allow');
     assert.equal(decision.withinBudget, false);
-    assert.equal(decision.overrun, 200);
+    assert.equal(decision.overrun, '200.00');
   });
 
   it('requires the configured owner for an owner-approval overrun', () => {
@@ -69,8 +74,8 @@ describe('evaluateBudgetPolicy', () => {
       budget,
       mode: 'owner_approval',
       pendingPolicy: 'approved_only',
-      committedAmount: 100,
-      requestedAmount: 700,
+      committedAmount: '100.00',
+      requestedAmount: '700.00',
       ownerUserId: 'owner-1',
     });
 
@@ -83,12 +88,26 @@ describe('evaluateBudgetPolicy', () => {
       budget,
       mode: 'owner_approval',
       pendingPolicy: 'approved_only',
-      committedAmount: 100,
-      requestedAmount: 700,
+      committedAmount: '100.00',
+      requestedAmount: '700.00',
       ownerUserId: null,
     });
 
     assert.equal(decision.action, 'block');
     assert.equal(decision.reason, 'owner_missing');
+  });
+
+  it('compares exact decimal cents at the budget boundary', () => {
+    const decision = evaluateBudgetPolicy({
+      budget: { ...budget, totalAmount: '0.30', spentAmount: '0.10' },
+      mode: 'hard_stop',
+      pendingPolicy: 'approved_only',
+      committedAmount: '0.00',
+      requestedAmount: '0.20',
+      ownerUserId: null,
+    });
+
+    assert.equal(decision.action, 'allow');
+    assert.equal(decision.remainingAfter, '0.00');
   });
 });

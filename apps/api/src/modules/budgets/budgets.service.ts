@@ -1,13 +1,16 @@
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, and, sql, gte, inArray, lt, ne } from 'drizzle-orm';
+import { eq, and, or, sql, gte, inArray, lt, ne } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
-import type { Db } from '@betterspend/db';
-import { budgets, budgetPeriods, requisitions } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
+import { auditLog, budgets, budgetPeriods, requisitions } from '@betterspend/db';
 import { EntitiesService } from '../entities/entities.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { SettingsService } from '../settings/settings.service';
 import {
   evaluateBudgetPolicy,
+  addMoney,
+  convertMoney,
+  isZeroMoney,
   isBudgetEnforcementMode,
   isPendingRequisitionPolicy,
   noBudgetDecision,
@@ -50,7 +53,9 @@ export class BudgetsService {
     pendingRequisitionPolicy?: string | null;
   }): void {
     if (input.enforcementMode != null && !isBudgetEnforcementMode(input.enforcementMode)) {
-      throw new BadRequestException(`Unsupported budget enforcement mode "${input.enforcementMode}"`);
+      throw new BadRequestException(
+        `Unsupported budget enforcement mode "${input.enforcementMode}"`,
+      );
     }
     if (
       input.pendingRequisitionPolicy != null &&
@@ -64,10 +69,8 @@ export class BudgetsService {
 
   async findAll(organizationId: string, entityId?: string) {
     return this.db.query.budgets.findMany({
-      where: (b, { and, eq }) => and(
-        eq(b.organizationId, organizationId),
-        entityId ? eq(b.entityId, entityId) : undefined,
-      ),
+      where: (b, { and, eq }) =>
+        and(eq(b.organizationId, organizationId), entityId ? eq(b.entityId, entityId) : undefined),
       with: { periods: true, entity: true },
       orderBy: (b, { desc }) => desc(b.createdAt),
     });
@@ -82,16 +85,17 @@ export class BudgetsService {
     return budget;
   }
 
-  async create(organizationId: string, input: CreateBudgetInput) {
+  async create(organizationId: string, actorId: string, input: CreateBudgetInput) {
     this.assertPolicyOverrides(input);
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
     const currency = input.currency ?? 'USD';
-    const { baseCurrency, exchangeRate, baseAmount } = await this.exchangeRatesService.convertToBase(
-      organizationId,
-      input.totalAmount,
-      currency,
-      input.exchangeRate,
-    );
+    const { baseCurrency, exchangeRate, baseAmount } =
+      await this.exchangeRatesService.convertToBase(
+        organizationId,
+        input.totalAmount,
+        currency,
+        input.exchangeRate,
+      );
     // Determine budgetType and scopeId from input
     let budgetType: string;
     let scopeId: string;
@@ -114,24 +118,27 @@ export class BudgetsService {
     }
 
     const budgetId = await this.db.transaction(async (tx) => {
-      const [budget] = await tx.insert(budgets).values({
-        organizationId,
-        entityId: input.entityId ?? null,
-        name: input.name,
-        budgetType,
-        scopeId,
-        fiscalYear: input.fiscalYear,
-        periodType: 'annual',
-        totalAmount: String(input.totalAmount),
-        currency,
-        baseCurrency,
-        exchangeRate: String(exchangeRate),
-        baseTotalAmount: String(baseAmount),
-        baseAllocatedAmount: '0',
-        baseSpentAmount: '0',
-        enforcementMode: input.enforcementMode ?? null,
-        pendingRequisitionPolicy: input.pendingRequisitionPolicy ?? null,
-      }).returning();
+      const [budget] = await tx
+        .insert(budgets)
+        .values({
+          organizationId,
+          entityId: input.entityId ?? null,
+          name: input.name,
+          budgetType,
+          scopeId,
+          fiscalYear: input.fiscalYear,
+          periodType: 'annual',
+          totalAmount: String(input.totalAmount),
+          currency,
+          baseCurrency,
+          exchangeRate: String(exchangeRate),
+          baseTotalAmount: String(baseAmount),
+          baseAllocatedAmount: '0',
+          baseSpentAmount: '0',
+          enforcementMode: input.enforcementMode ?? null,
+          pendingRequisitionPolicy: input.pendingRequisitionPolicy ?? null,
+        })
+        .returning();
 
       if (input.periods && input.periods.length > 0) {
         await tx.insert(budgetPeriods).values(
@@ -144,6 +151,19 @@ export class BudgetsService {
           })),
         );
       }
+
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: actorId,
+        entityType: 'budget',
+        entityId: budget.id,
+        action: 'created',
+        changes: {
+          name: budget.name,
+          enforcementMode: budget.enforcementMode,
+          pendingRequisitionPolicy: budget.pendingRequisitionPolicy,
+        },
+      });
 
       return budget.id;
     });
@@ -165,12 +185,13 @@ export class BudgetsService {
     message?: string;
   }> {
     const budget = await this.db.query.budgets.findFirst({
-      where: (b, { and, eq }) => and(
-        eq(b.organizationId, organizationId),
-        eq(b.budgetType, 'department'),
-        eq(b.scopeId, departmentId),
-        eq(b.fiscalYear, fiscalYear),
-      ),
+      where: (b, { and, eq }) =>
+        and(
+          eq(b.organizationId, organizationId),
+          eq(b.budgetType, 'department'),
+          eq(b.scopeId, departmentId),
+          eq(b.fiscalYear, fiscalYear),
+        ),
     });
 
     if (!budget) {
@@ -193,6 +214,7 @@ export class BudgetsService {
   async update(
     id: string,
     organizationId: string,
+    actorId: string,
     input: {
       name?: string;
       totalAmount?: number;
@@ -203,33 +225,83 @@ export class BudgetsService {
     },
   ) {
     this.assertPolicyOverrides(input);
-    await this.findOne(id, organizationId);
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
-    const existing = await this.findOne(id, organizationId);
-    const nextCurrency = input.currency ?? existing.currency;
-    const nextTotalAmount = input.totalAmount ?? Number(existing.totalAmount);
-    const { baseCurrency, exchangeRate, baseAmount } = await this.exchangeRatesService.convertToBase(
-      organizationId,
-      nextTotalAmount,
-      nextCurrency,
-      undefined,
-    );
-    await this.db.update(budgets)
-      .set({
-        ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.totalAmount !== undefined ? { totalAmount: String(input.totalAmount) } : {}),
-        ...(input.currency !== undefined ? { currency: input.currency } : {}),
-        ...(input.entityId !== undefined ? { entityId: input.entityId } : {}),
-        ...(input.enforcementMode !== undefined ? { enforcementMode: input.enforcementMode } : {}),
-        ...(input.pendingRequisitionPolicy !== undefined
-          ? { pendingRequisitionPolicy: input.pendingRequisitionPolicy }
-          : {}),
-        baseCurrency,
-        exchangeRate: String(exchangeRate),
-        baseTotalAmount: String(baseAmount),
-        updatedAt: new Date(),
-      })
-      .where(and(eq(budgets.id, id), eq(budgets.organizationId, organizationId)));
+    const moneyChanged = input.currency !== undefined || input.totalAmount !== undefined;
+
+    await this.db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select()
+        .from(budgets)
+        .where(and(eq(budgets.id, id), eq(budgets.organizationId, organizationId)))
+        .for('update');
+      if (!locked) throw new NotFoundException(`Budget ${id} not found`);
+      const [convertedTotal, convertedSpent] = moneyChanged
+        ? await Promise.all([
+            this.exchangeRatesService.convertToBase(
+              organizationId,
+              input.totalAmount ?? Number(locked.totalAmount),
+              input.currency ?? locked.currency,
+              undefined,
+            ),
+            this.exchangeRatesService.convertToBase(
+              organizationId,
+              Number(locked.spentAmount),
+              input.currency ?? locked.currency,
+              undefined,
+            ),
+          ])
+        : [null, null];
+      await tx
+        .update(budgets)
+        .set({
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.totalAmount !== undefined ? { totalAmount: String(input.totalAmount) } : {}),
+          ...(input.currency !== undefined ? { currency: input.currency } : {}),
+          ...(input.entityId !== undefined ? { entityId: input.entityId } : {}),
+          ...(input.enforcementMode !== undefined
+            ? { enforcementMode: input.enforcementMode }
+            : {}),
+          ...(input.pendingRequisitionPolicy !== undefined
+            ? { pendingRequisitionPolicy: input.pendingRequisitionPolicy }
+            : {}),
+          ...(convertedTotal && convertedSpent
+            ? {
+                baseCurrency: convertedTotal.baseCurrency,
+                exchangeRate: String(convertedTotal.exchangeRate),
+                baseTotalAmount: String(convertedTotal.baseAmount),
+                baseSpentAmount: String(convertedSpent.baseAmount),
+              }
+            : {}),
+          updatedAt: new Date(),
+        })
+        .where(and(eq(budgets.id, id), eq(budgets.organizationId, organizationId)));
+
+      if (input.enforcementMode !== undefined || input.pendingRequisitionPolicy !== undefined) {
+        await tx.insert(auditLog).values({
+          organizationId,
+          userId: actorId,
+          entityType: 'budget',
+          entityId: id,
+          action: 'enforcement_policy_updated',
+          changes: {
+            before: {
+              enforcementMode: locked.enforcementMode,
+              pendingRequisitionPolicy: locked.pendingRequisitionPolicy,
+            },
+            after: {
+              enforcementMode:
+                input.enforcementMode !== undefined
+                  ? input.enforcementMode
+                  : locked.enforcementMode,
+              pendingRequisitionPolicy:
+                input.pendingRequisitionPolicy !== undefined
+                  ? input.pendingRequisitionPolicy
+                  : locked.pendingRequisitionPolicy,
+            },
+          },
+        });
+      }
+    });
     return this.findOne(id, organizationId);
   }
 
@@ -240,7 +312,7 @@ export class BudgetsService {
   async evaluateEnforcement(input: {
     organizationId: string;
     departmentId?: string | null;
-    requestedAmount: number;
+    requestedAmount: string;
     currency: string;
     fiscalYear: number;
     excludeRequisitionId?: string | null;
@@ -248,14 +320,66 @@ export class BudgetsService {
     if (!input.departmentId) return noBudgetDecision();
 
     const budget = await this.db.query.budgets.findFirst({
-      where: (record, { and, eq }) => and(
-        eq(record.organizationId, input.organizationId),
-        eq(record.budgetType, 'department'),
-        eq(record.scopeId, input.departmentId!),
-        eq(record.fiscalYear, input.fiscalYear),
-      ),
+      where: (record, { and, eq }) =>
+        and(
+          eq(record.organizationId, input.organizationId),
+          eq(record.budgetType, 'department'),
+          eq(record.scopeId, input.departmentId!),
+          eq(record.fiscalYear, input.fiscalYear),
+        ),
     });
     if (!budget) return noBudgetDecision();
+
+    return this.evaluateBudget(input, budget, this.db);
+  }
+
+  /** Serialize a budget decision with the caller's state transition. */
+  async withEnforcementLock<T>(
+    input: {
+      organizationId: string;
+      departmentId?: string | null;
+      requestedAmount: string;
+      currency: string;
+      fiscalYear: number;
+      excludeRequisitionId?: string | null;
+    },
+    apply: (tx: DbTransaction, decision: BudgetEnforcementDecision) => Promise<T>,
+  ): Promise<T> {
+    return this.db.transaction(async (tx) => {
+      if (!input.departmentId) return apply(tx, noBudgetDecision());
+
+      const [budget] = await tx
+        .select()
+        .from(budgets)
+        .where(
+          and(
+            eq(budgets.organizationId, input.organizationId),
+            eq(budgets.budgetType, 'department'),
+            eq(budgets.scopeId, input.departmentId),
+            eq(budgets.fiscalYear, input.fiscalYear),
+          ),
+        )
+        .for('update');
+      if (!budget) return apply(tx, noBudgetDecision());
+
+      const decision = await this.evaluateBudget(input, budget, tx);
+      return apply(tx, decision);
+    });
+  }
+
+  private async evaluateBudget(
+    input: {
+      organizationId: string;
+      departmentId?: string | null;
+      requestedAmount: string;
+      currency: string;
+      fiscalYear: number;
+      excludeRequisitionId?: string | null;
+    },
+    budget: typeof budgets.$inferSelect,
+    executor: Db | DbTransaction,
+  ): Promise<BudgetEnforcementDecision> {
+    if (!input.departmentId) return noBudgetDecision();
 
     const settings = await this.settingsService.getAll(input.organizationId);
     const mode = isBudgetEnforcementMode(budget.enforcementMode)
@@ -269,15 +393,28 @@ export class BudgetsService {
         ? settings.budget_pending_requisition_policy
         : 'approved_only';
 
-    const statuses = pendingPolicy === 'include_pending'
-      ? ['submitted', 'pending_approval', 'approved', 'converted']
-      : ['approved', 'converted'];
+    const statuses =
+      pendingPolicy === 'include_pending'
+        ? ['submitted', 'pending_approval', 'approved']
+        : ['approved'];
     const start = new Date(Date.UTC(input.fiscalYear, 0, 1));
     const end = new Date(Date.UTC(input.fiscalYear + 1, 0, 1));
     const commitmentConditions = [
       eq(requisitions.organizationId, input.organizationId),
       eq(requisitions.departmentId, input.departmentId),
-      inArray(requisitions.status, statuses),
+      or(
+        inArray(requisitions.status, statuses),
+        and(
+          eq(requisitions.status, 'converted'),
+          sql`not exists (
+            select 1
+            from purchase_orders po
+            inner join invoices i on i.purchase_order_id = po.id
+            where po.requisition_id = ${requisitions.id}
+              and i.status = 'approved'
+          )`,
+        ),
+      )!,
       gte(requisitions.createdAt, start),
       lt(requisitions.createdAt, end),
     ];
@@ -286,7 +423,7 @@ export class BudgetsService {
     }
 
     const [commitmentGroups, department] = await Promise.all([
-      this.db
+      executor
         .select({
           currency: requisitions.currency,
           amount: sql<string>`coalesce(sum(${requisitions.totalAmount}), 0)`,
@@ -295,61 +432,69 @@ export class BudgetsService {
         .where(and(...commitmentConditions))
         .groupBy(requisitions.currency),
       mode === 'owner_approval'
-        ? this.db.query.departments.findFirst({
-            where: (record, { and, eq }) => and(
-              eq(record.id, input.departmentId!),
-              eq(record.organizationId, input.organizationId),
-            ),
+        ? executor.query.departments.findFirst({
+            where: (record, { and, eq }) =>
+              and(
+                eq(record.id, input.departmentId!),
+                eq(record.organizationId, input.organizationId),
+              ),
           })
         : Promise.resolve(undefined),
     ]);
 
-    const convertedCommitments = await Promise.all(
-      commitmentGroups.map((group) => this.exchangeRatesService.convertToBase(
-        input.organizationId,
-        Number(group.amount),
-        group.currency,
-      )),
-    );
-    const committedAmount = convertedCommitments.reduce((sum, item) => sum + item.baseAmount, 0);
-    const requested = await this.exchangeRatesService.convertToBase(
+    const baseCurrency = await this.exchangeRatesService.getOrganizationBaseCurrency(
       input.organizationId,
-      input.requestedAmount,
-      input.currency,
     );
+    const convertedCommitments = await Promise.all(
+      commitmentGroups.map(async (group) => {
+        const rate = await this.exchangeRatesService.getRateDecimal(
+          input.organizationId,
+          group.currency,
+          baseCurrency,
+        );
+        return convertMoney(group.amount, rate);
+      }),
+    );
+    const committedAmount = addMoney(convertedCommitments);
+    const requestedRate = await this.exchangeRatesService.getRateDecimal(
+      input.organizationId,
+      input.currency,
+      baseCurrency,
+    );
+    const requestedAmount = convertMoney(input.requestedAmount, requestedRate);
 
     let ownerUserId: string | null = null;
     if (department?.budgetOwnerId) {
-      const owner = await this.db.query.users.findFirst({
-        where: (record, { and, eq }) => and(
-          eq(record.id, department.budgetOwnerId!),
-          eq(record.organizationId, input.organizationId),
-          eq(record.isActive, true),
-        ),
+      const owner = await executor.query.users.findFirst({
+        where: (record, { and, eq }) =>
+          and(
+            eq(record.id, department.budgetOwnerId!),
+            eq(record.organizationId, input.organizationId),
+            eq(record.isActive, true),
+          ),
       });
       ownerUserId = owner?.id ?? null;
     }
 
-    const baseTotalAmount = Number(budget.baseTotalAmount);
-    const baseSpentAmount = Number(budget.baseSpentAmount);
-    const exchangeRate = Number(budget.exchangeRate || '1');
+    const baseTotalAmount = !isZeroMoney(budget.baseTotalAmount)
+      ? budget.baseTotalAmount
+      : convertMoney(budget.totalAmount, budget.exchangeRate || '1');
+    const baseSpentAmount = !isZeroMoney(budget.baseSpentAmount)
+      ? budget.baseSpentAmount
+      : convertMoney(budget.spentAmount, budget.exchangeRate || '1');
 
     return evaluateBudgetPolicy({
       budget: {
         id: budget.id,
         name: budget.name,
-        currency: requested.baseCurrency,
-        totalAmount: baseTotalAmount !== 0
-          ? baseTotalAmount
-          : Number(budget.totalAmount) * exchangeRate,
-        spentAmount: baseSpentAmount !== 0
-          ? baseSpentAmount
-          : Number(budget.spentAmount) * exchangeRate,
+        currency: baseCurrency,
+        totalAmount: baseTotalAmount,
+        spentAmount: baseSpentAmount,
       },
       mode,
       pendingPolicy,
       committedAmount,
-      requestedAmount: requested.baseAmount,
+      requestedAmount,
       ownerUserId,
     });
   }
@@ -372,9 +517,9 @@ export class BudgetsService {
 
   async removePeriod(budgetId: string, periodId: string, organizationId: string) {
     await this.findOne(budgetId, organizationId);
-    await this.db.delete(budgetPeriods).where(
-      and(eq(budgetPeriods.id, periodId), eq(budgetPeriods.budgetId, budgetId)),
-    );
+    await this.db
+      .delete(budgetPeriods)
+      .where(and(eq(budgetPeriods.id, periodId), eq(budgetPeriods.budgetId, budgetId)));
     return this.findOne(budgetId, organizationId);
   }
 
@@ -387,7 +532,10 @@ export class BudgetsService {
    * Returns { slope, intercept } for y = slope*x + intercept.
    * x values are 0-based month indices.
    */
-  private linearRegression(points: { x: number; y: number }[]): { slope: number; intercept: number } {
+  private linearRegression(points: { x: number; y: number }[]): {
+    slope: number;
+    intercept: number;
+  } {
     const n = points.length;
     if (n === 0) return { slope: 0, intercept: 0 };
     if (n === 1) return { slope: 0, intercept: points[0].y };
@@ -457,7 +605,7 @@ export class BudgetsService {
     `);
 
     const monthlySpendMap: Record<number, number> = {};
-    for (const row of (monthlyRows as unknown) as Array<{ month: number; total: number }>) {
+    for (const row of monthlyRows as unknown as Array<{ month: number; total: number }>) {
       monthlySpendMap[Number(row.month)] = Number(row.total);
     }
 
@@ -470,7 +618,7 @@ export class BudgetsService {
     const { slope, intercept } = this.linearRegression(last6);
     const avgMonthly =
       last6.length >= 2
-        ? slope * last6.length + intercept  // projected next-month spend
+        ? slope * last6.length + intercept // projected next-month spend
         : last6.reduce((s, p) => s + p.y, 0) / Math.max(last6.length, 1);
 
     // Total org-wide PO spend YTD
@@ -481,7 +629,9 @@ export class BudgetsService {
         AND po.status NOT IN ('draft', 'cancelled')
         AND EXTRACT(YEAR FROM po.issued_at) = ${fiscalYear}
     `);
-    const orgUtilizedTotal = Number(((orgUtilizedRow as unknown) as Array<{ total: number }>)[0]?.total ?? 0);
+    const orgUtilizedTotal = Number(
+      (orgUtilizedRow as unknown as Array<{ total: number }>)[0]?.total ?? 0,
+    );
 
     // Committed: pending/draft requisitions total (org-wide)
     const committedRow = await this.db.execute(sql`
@@ -491,13 +641,12 @@ export class BudgetsService {
         AND r.status IN ('draft', 'submitted', 'pending_approval')
         AND EXTRACT(YEAR FROM r.created_at) = ${fiscalYear}
     `);
-    const orgCommittedTotal = Number(((committedRow as unknown) as Array<{ total: number }>)[0]?.total ?? 0);
+    const orgCommittedTotal = Number(
+      (committedRow as unknown as Array<{ total: number }>)[0]?.total ?? 0,
+    );
 
     // Total budget across org (to compute proportional share)
-    const orgTotalBudget = allBudgets.reduce(
-      (s, b) => s + parseFloat(String(b.totalAmount)),
-      0,
-    );
+    const orgTotalBudget = allBudgets.reduce((s, b) => s + parseFloat(String(b.totalAmount)), 0);
 
     const results = allBudgets.map((budget) => {
       const totalAmount = parseFloat(String(budget.totalAmount));
@@ -511,8 +660,7 @@ export class BudgetsService {
 
       // Project end-of-year spend: YTD actual + remaining months × projected rate
       const projectedMonthlyRate = Math.max(avgMonthly * budgetShare, 0);
-      const forecast =
-        utilized + projectedMonthlyRate * monthsRemaining;
+      const forecast = utilized + projectedMonthlyRate * monthsRemaining;
 
       const percentUsed = totalAmount > 0 ? (utilized / totalAmount) * 100 : 0;
       const forecastPct = totalAmount > 0 ? (forecast / totalAmount) * 100 : 0;
@@ -592,19 +740,21 @@ export class BudgetsService {
     fiscalYear: number,
   ) {
     const budget = await this.db.query.budgets.findFirst({
-      where: (b, { and, eq }) => and(
-        eq(b.organizationId, organizationId),
-        eq(b.budgetType, 'department'),
-        eq(b.scopeId, departmentId),
-        eq(b.fiscalYear, fiscalYear),
-      ),
+      where: (b, { and, eq }) =>
+        and(
+          eq(b.organizationId, organizationId),
+          eq(b.budgetType, 'department'),
+          eq(b.scopeId, departmentId),
+          eq(b.fiscalYear, fiscalYear),
+        ),
     });
 
     if (!budget) return { updated: false, message: 'No budget configured' };
 
     const today = new Date();
 
-    await this.db.update(budgets)
+    await this.db
+      .update(budgets)
       .set({
         spentAmount: sql`${budgets.spentAmount} + ${String(amount)}`,
         baseSpentAmount: sql`${budgets.baseSpentAmount} + ${String(amount)}`,
@@ -613,7 +763,8 @@ export class BudgetsService {
       .where(and(eq(budgets.id, budget.id), eq(budgets.organizationId, organizationId)));
 
     // Also update the period that covers today's date
-    await this.db.update(budgetPeriods)
+    await this.db
+      .update(budgetPeriods)
       .set({
         spentAmount: sql`${budgetPeriods.spentAmount} + ${String(amount)}`,
       })

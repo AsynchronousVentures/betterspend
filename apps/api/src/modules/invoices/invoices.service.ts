@@ -562,7 +562,7 @@ export class InvoicesService {
             where: (r, { eq }) => eq(r.id, po.requisitionId!),
           });
           if (req?.departmentId) {
-            const fiscalYear = new Date().getFullYear();
+            const fiscalYear = req.createdAt.getUTCFullYear();
             const recoverableTaxAmount = ((approved as any).lines ?? [])
               .filter((line: any) => line.taxCode?.isRecoverable)
               .reduce(

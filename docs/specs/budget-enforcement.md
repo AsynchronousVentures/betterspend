@@ -38,7 +38,7 @@ Org settings provide defaults:
 
 Each budget can override either setting. A null budget value inherits the org setting.
 
-`approved_only` counts approved and converted requisitions. `include_pending` also counts submitted and pending-approval requisitions. The requisition being converted into the PO under evaluation is excluded so the same commitment is not counted twice during that transition.
+`approved_only` counts approved requisitions. `include_pending` also counts submitted and pending-approval requisitions. A converted requisition remains a commitment until its PO has an approved invoice, at which point invoice posting moves the amount into budget spend. The requisition being converted into the PO under evaluation is excluded during that transition.
 
 ## Owner approval
 
@@ -46,13 +46,13 @@ Department `budgetOwnerId` remains the owner source. The user must belong to the
 
 The approval engine stores one optional required approver on an approval request. If a normal rule matches, the required owner becomes the final step. If no rule matches, the owner is the only step. Only that owner may act at the required step.
 
-For a PO, the first issue attempt moves the draft to `pending_approval`. After final approval changes it to `approved`, a second issue attempt performs the budget check again and issues the PO.
+For a PO, the first issue attempt moves the draft to `pending_approval`. The status transition, approval request, and audit entry are atomic. After final approval changes it to `approved`, a second issue attempt verifies that the current budget owner completed the required step, performs the budget check again, and issues the PO.
 
 ## Money and commitments
 
-All comparisons use the organization's base currency. The current request and grouped pending requisitions are converted through the existing exchange-rate module. Budget base totals and base spend are used when present.
+All comparisons use the organization's base currency. Persisted decimal amounts and exchange rates are converted with fixed-point integer math, then returned as two-decimal strings. Budget base totals and base spend are used when present.
 
-Until #118 adds an event-backed encumbrance ledger, converted requisitions are the best available commitment signal. #118 will replace this read-time approximation without changing the enforcement interface.
+The matching budget row is locked while a requisition submission or PO issuance evaluates and commits its state transition. This prevents two concurrent requests from both spending the same remaining amount. #118 will replace the read-time requisition approximation with an event-backed encumbrance ledger without changing the enforcement interface.
 
 ## Failure behavior
 

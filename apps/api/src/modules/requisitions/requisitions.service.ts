@@ -1,5 +1,5 @@
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import { SequenceService } from '../../common/services/sequence.service';
 import { ApprovalEngineService } from '../approvals/approval-engine.service';
@@ -153,22 +153,36 @@ export class RequisitionsService {
       throw new BadRequestException('Requisition must have at least one line item');
     }
 
-    const budgetEnforcement = await this.budgets.evaluateEnforcement({
-      organizationId,
-      departmentId: req.departmentId,
-      requestedAmount: Number(req.totalAmount),
-      currency: req.currency,
-      fiscalYear: new Date().getFullYear(),
-      excludeRequisitionId: req.id,
-    });
-    if (budgetEnforcement.action === 'block') {
-      throw new BadRequestException(budgetEnforcement.message);
-    }
-
-    await this.db
-      .update(requisitions)
-      .set({ status: 'pending_approval', submittedAt: new Date(), updatedAt: new Date() })
-      .where(eq(requisitions.id, id));
+    const budgetEnforcement = await this.budgets.withEnforcementLock(
+      {
+        organizationId,
+        departmentId: req.departmentId,
+        requestedAmount: req.totalAmount,
+        currency: req.currency,
+        fiscalYear: req.createdAt.getUTCFullYear(),
+        excludeRequisitionId: req.id,
+      },
+      async (tx, decision) => {
+        if (decision.action === 'block') {
+          throw new BadRequestException(decision.message);
+        }
+        const [transitioned] = await tx
+          .update(requisitions)
+          .set({ status: 'pending_approval', submittedAt: new Date(), updatedAt: new Date() })
+          .where(
+            and(
+              eq(requisitions.id, id),
+              eq(requisitions.organizationId, organizationId),
+              eq(requisitions.status, 'draft'),
+            ),
+          )
+          .returning({ id: requisitions.id });
+        if (!transitioned) {
+          throw new BadRequestException('Only draft requisitions can be submitted');
+        }
+        return decision;
+      },
+    );
 
     const actorId = requesterId ?? req.requesterId;
 

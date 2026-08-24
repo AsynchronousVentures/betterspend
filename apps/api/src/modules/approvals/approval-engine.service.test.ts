@@ -8,10 +8,27 @@ import type { ApprovalDelegationsService } from '../approval-delegations/approva
 import type { SettingsService } from '../settings/settings.service';
 import { ApprovalEngineService } from './approval-engine.service';
 
-function createService(ruleSteps: Array<{ stepOrder: number }> = []) {
+function createService(
+  ruleSteps: Array<{ stepOrder: number }> = [],
+  lockedRequest?: Record<string, unknown>,
+) {
   const approvalRequestValues: Array<Record<string, unknown>> = [];
   const emitted: Array<Record<string, unknown>> = [];
   const transaction = {
+    query: {
+      approvalRules: { findFirst: async () => null },
+    },
+    select() {
+      return {
+        from() {
+          return {
+            where() {
+              return { for: async () => (lockedRequest ? [lockedRequest] : []) };
+            },
+          };
+        },
+      };
+    },
     insert(table: unknown) {
       return {
         values(values: Record<string, unknown>) {
@@ -31,12 +48,14 @@ function createService(ruleSteps: Array<{ stepOrder: number }> = []) {
       approvalRules: {
         findMany: async () =>
           ruleSteps.length > 0
-            ? [{
-                id: 'rule-1',
-                name: 'Standard rule',
-                conditions: '{"field":"totalAmount","operator":">=","value":0}',
-                steps: ruleSteps,
-              }]
+            ? [
+                {
+                  id: 'rule-1',
+                  name: 'Standard rule',
+                  conditions: '{"field":"totalAmount","operator":">=","value":0}',
+                  steps: ruleSteps,
+                },
+              ]
             : [],
       },
     },
@@ -93,10 +112,7 @@ describe('ApprovalEngineService required approvals', () => {
   });
 
   it('appends the budget owner after the last configured rule step', async () => {
-    const { approvalRequestValues, service } = createService([
-      { stepOrder: 2 },
-      { stepOrder: 4 },
-    ]);
+    const { approvalRequestValues, service } = createService([{ stepOrder: 2 }, { stepOrder: 4 }]);
 
     await service.initiateApproval(
       'organization-1',
@@ -111,16 +127,13 @@ describe('ApprovalEngineService required approvals', () => {
   });
 
   it('rejects actions from anyone except the owner at the required step', async () => {
-    const { service } = createService();
-    Object.defineProperty(service, 'getRequest', {
-      value: async () => ({
-        id: 'approval-request-1',
-        status: 'pending',
-        approvalRuleId: null,
-        currentStep: 1,
-        requiredApprovalStep: 1,
-        requiredApproverId: 'owner-1',
-      }),
+    const { service } = createService([], {
+      id: 'approval-request-1',
+      status: 'pending',
+      approvalRuleId: null,
+      currentStep: 1,
+      requiredApprovalStep: 1,
+      requiredApproverId: 'owner-1',
     });
 
     await assert.rejects(

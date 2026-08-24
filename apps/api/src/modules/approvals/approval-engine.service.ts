@@ -1,8 +1,23 @@
-import { Injectable, Inject, Optional, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  Optional,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { eq, and, sql, gte, lte } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
-import type { Db } from '@betterspend/db';
-import { approvalRules, approvalRuleSteps, approvalRequests, approvalActions, requisitions, purchaseOrders, systemSettings } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
+import {
+  approvalRules,
+  approvalRuleSteps,
+  approvalRequests,
+  approvalActions,
+  requisitions,
+  purchaseOrders,
+  systemSettings,
+} from '@betterspend/db';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ApprovalDelegationsService } from '../approval-delegations/approval-delegations.service';
@@ -42,25 +57,29 @@ export class ApprovalEngineService {
     const condValue = condition.value;
 
     switch (condition.operator) {
-      case '>=': return Number(fieldValue) >= Number(condValue);
-      case '>':  return Number(fieldValue) > Number(condValue);
-      case '<=': return Number(fieldValue) <= Number(condValue);
-      case '<':  return Number(fieldValue) < Number(condValue);
+      case '>=':
+        return Number(fieldValue) >= Number(condValue);
+      case '>':
+        return Number(fieldValue) > Number(condValue);
+      case '<=':
+        return Number(fieldValue) <= Number(condValue);
+      case '<':
+        return Number(fieldValue) < Number(condValue);
       case '==':
-      case 'eq': return String(fieldValue) === String(condValue);
+      case 'eq':
+        return String(fieldValue) === String(condValue);
       case '!=':
-      case 'neq': return String(fieldValue) !== String(condValue);
-      default: return false;
+      case 'neq':
+        return String(fieldValue) !== String(condValue);
+      default:
+        return false;
     }
   }
 
   // Find the first matching rule for an entity
   async findMatchingRule(organizationId: string, entityType: string, entity: Record<string, any>) {
     const rules = await this.db.query.approvalRules.findMany({
-      where: (r, { and, eq }) => and(
-        eq(r.organizationId, organizationId),
-        eq(r.isActive, true),
-      ),
+      where: (r, { and, eq }) => and(eq(r.organizationId, organizationId), eq(r.isActive, true)),
       with: { steps: true },
       orderBy: (r, { asc }) => asc(r.priority),
     });
@@ -68,9 +87,8 @@ export class ApprovalEngineService {
     for (const rule of rules) {
       let conditions: any = {};
       try {
-        conditions = typeof rule.conditions === 'string'
-          ? JSON.parse(rule.conditions)
-          : rule.conditions;
+        conditions =
+          typeof rule.conditions === 'string' ? JSON.parse(rule.conditions) : rule.conditions;
       } catch {
         conditions = {};
       }
@@ -91,7 +109,10 @@ export class ApprovalEngineService {
     }
 
     const thresholdStr = await this.settingsService.get(organizationId, 'auto_approve_threshold');
-    const notifyManagerStr = await this.settingsService.get(organizationId, 'auto_approve_notify_manager');
+    const notifyManagerStr = await this.settingsService.get(
+      organizationId,
+      'auto_approve_notify_manager',
+    );
 
     const threshold = parseFloat(thresholdStr || '0');
     const notifyManager = notifyManagerStr !== 'false';
@@ -113,25 +134,38 @@ export class ApprovalEngineService {
     entityId: string,
     initiatedBy: string,
     requiredApproval?: RequiredApproval,
+    beforePersist?: (tx: DbTransaction) => Promise<void>,
   ) {
     // Fetch entity for condition evaluation
     let entity: Record<string, any> | null = null;
     if (entityType === 'requisition') {
-      entity = await this.db.query.requisitions.findFirst({
-        where: (r, { eq }) => eq(r.id, entityId),
-      }) ?? null;
+      entity =
+        (await this.db.query.requisitions.findFirst({
+          where: (r, { eq }) => eq(r.id, entityId),
+        })) ?? null;
     } else {
-      entity = await this.db.query.purchaseOrders.findFirst({
-        where: (p, { eq }) => eq(p.id, entityId),
-      }) ?? null;
+      entity =
+        (await this.db.query.purchaseOrders.findFirst({
+          where: (p, { eq }) => eq(p.id, entityId),
+        })) ?? null;
     }
     if (!entity) throw new NotFoundException(`Entity ${entityId} not found`);
 
     // A required budget-owner approval always wins over the fast lane.
     if (entityType === 'requisition' && !requiredApproval) {
-      const { eligible, threshold, notifyManager } = await this.checkFastLaneAutoApproval(organizationId, entity);
+      const { eligible, threshold, notifyManager } = await this.checkFastLaneAutoApproval(
+        organizationId,
+        entity,
+      );
       if (eligible) {
-        return this.applyFastLaneApproval(organizationId, entityId, entity, threshold, notifyManager, initiatedBy);
+        return this.applyFastLaneApproval(
+          organizationId,
+          entityId,
+          entity,
+          threshold,
+          notifyManager,
+          initiatedBy,
+        );
       }
     }
 
@@ -140,15 +174,23 @@ export class ApprovalEngineService {
     if ((!rule || !rule.steps || rule.steps.length === 0) && !requiredApproval) {
       // No matching rule → auto-approve
       if (entityType === 'requisition') {
-        await this.db.update(requisitions)
+        await this.db
+          .update(requisitions)
           .set({ status: 'approved', updatedAt: new Date() })
           .where(eq(requisitions.id, entityId));
-        this.webhookEvents.emit(organizationId, 'requisition.approved', { requisitionId: entityId, autoApproved: true });
+        this.webhookEvents.emit(organizationId, 'requisition.approved', {
+          requisitionId: entityId,
+          autoApproved: true,
+        });
       } else {
-        await this.db.update(purchaseOrders)
+        await this.db
+          .update(purchaseOrders)
           .set({ status: 'approved', updatedAt: new Date() })
           .where(eq(purchaseOrders.id, entityId));
-        this.webhookEvents.emit(organizationId, 'po.approved', { purchaseOrderId: entityId, autoApproved: true });
+        this.webhookEvents.emit(organizationId, 'po.approved', {
+          purchaseOrderId: entityId,
+          autoApproved: true,
+        });
       }
       return { autoApproved: true, rule: null };
     }
@@ -167,7 +209,10 @@ export class ApprovalEngineService {
     // Resolve delegation: if the first-step approver has delegated, route to delegatee
     let effectiveApproverId = initiatedBy;
     if (this.delegations && firstStep?.approverId) {
-      const delegatee = await this.delegations.getActiveDelegatee(organizationId, firstStep.approverId);
+      const delegatee = await this.delegations.getActiveDelegatee(
+        organizationId,
+        firstStep.approverId,
+      );
       if (delegatee) {
         effectiveApproverId = delegatee;
       }
@@ -176,16 +221,20 @@ export class ApprovalEngineService {
     // The schema for approvalRequests has no organizationId, initiatedBy, or dueAt —
     // those fields are tracked via the actions log and the approvableType/approvableId pattern
     const requestId = await this.db.transaction(async (tx) => {
-      const [req] = await tx.insert(approvalRequests).values({
-        approvableType: entityType,
-        approvableId: entityId,
-        approvalRuleId: rule?.id ?? null,
-        currentStep,
-        status: 'pending',
-        requiredApproverId: requiredApproval?.approverId ?? null,
-        requiredApprovalStep,
-        requiredApprovalReason: requiredApproval?.reason ?? null,
-      }).returning();
+      await beforePersist?.(tx);
+      const [req] = await tx
+        .insert(approvalRequests)
+        .values({
+          approvableType: entityType,
+          approvableId: entityId,
+          approvalRuleId: rule?.id ?? null,
+          currentStep,
+          status: 'pending',
+          requiredApproverId: requiredApproval?.approverId ?? null,
+          requiredApprovalStep,
+          requiredApprovalReason: requiredApproval?.reason ?? null,
+        })
+        .returning();
 
       // Record the submission action
       await tx.insert(approvalActions).values({
@@ -193,9 +242,10 @@ export class ApprovalEngineService {
         stepOrder: currentStep,
         approverId: firstStep ? effectiveApproverId : initiatedBy,
         action: 'submitted',
-        comment: firstStep && effectiveApproverId !== initiatedBy
-          ? `Submitted for approval (delegated from original approver)`
-          : requiredApproval?.reason ?? 'Submitted for approval',
+        comment:
+          firstStep && effectiveApproverId !== initiatedBy
+            ? `Submitted for approval (delegated from original approver)`
+            : (requiredApproval?.reason ?? 'Submitted for approval'),
       });
 
       return req.id;
@@ -212,21 +262,45 @@ export class ApprovalEngineService {
     if (this.notifications) {
       const entityLabel = entityType === 'requisition' ? 'Requisition' : 'Purchase Order';
       const initialApproverId = firstStep ? DEMO_ADMIN_USER_ID : requiredApproval!.approverId;
-      const approvalDescription = rule && firstStep
-        ? `A ${entityLabel.toLowerCase()} requires your approval (rule: ${rule.name}).`
-        : requiredApproval!.reason;
-      this.notifications.create(
-        organizationId,
-        initialApproverId,
-        'approval_request',
-        `Approval Required: ${entityLabel}`,
-        approvalDescription,
-        entityType,
-        entityId,
-      ).catch(() => {});
+      const approvalDescription =
+        rule && firstStep
+          ? `A ${entityLabel.toLowerCase()} requires your approval (rule: ${rule.name}).`
+          : requiredApproval!.reason;
+      this.notifications
+        .create(
+          organizationId,
+          initialApproverId,
+          'approval_request',
+          `Approval Required: ${entityLabel}`,
+          approvalDescription,
+          entityType,
+          entityId,
+        )
+        .catch(() => {});
     }
 
     return { autoApproved: false, rule, requestId };
+  }
+
+  async hasCompletedRequiredApproval(
+    entityType: 'requisition' | 'purchase_order',
+    entityId: string,
+    approverId: string,
+    reason: string,
+    approvedAtOrAfter: Date,
+  ): Promise<boolean> {
+    const request = await this.db.query.approvalRequests.findFirst({
+      where: (record, { and, eq, gte }) =>
+        and(
+          eq(record.approvableType, entityType),
+          eq(record.approvableId, entityId),
+          eq(record.status, 'approved'),
+          eq(record.requiredApproverId, approverId),
+          eq(record.requiredApprovalReason, reason),
+          gte(record.updatedAt, approvedAtOrAfter),
+        ),
+    });
+    return !!request;
   }
 
   // Apply fast-lane auto-approval for low-value requisitions
@@ -243,13 +317,16 @@ export class ApprovalEngineService {
 
     // Create an approval request in auto-approved state and record the action
     const requestId = await this.db.transaction(async (tx) => {
-      const [req] = await tx.insert(approvalRequests).values({
-        approvableType: 'requisition',
-        approvableId: entityId,
-        approvalRuleId: null,
-        currentStep: 1,
-        status: 'approved',
-      }).returning();
+      const [req] = await tx
+        .insert(approvalRequests)
+        .values({
+          approvableType: 'requisition',
+          approvableId: entityId,
+          approvalRuleId: null,
+          currentStep: 1,
+          status: 'approved',
+        })
+        .returning();
 
       // Record submission action
       await tx.insert(approvalActions).values({
@@ -273,7 +350,8 @@ export class ApprovalEngineService {
     });
 
     // Update the requisition status to approved
-    await this.db.update(requisitions)
+    await this.db
+      .update(requisitions)
       .set({ status: 'approved', updatedAt: new Date() })
       .where(eq(requisitions.id, entityId));
 
@@ -288,7 +366,9 @@ export class ApprovalEngineService {
   }
 
   // Get auto-approved summary for the current calendar month
-  async getAutoApprovedSummary(organizationId: string): Promise<{ count: number; totalAmount: number }> {
+  async getAutoApprovedSummary(
+    organizationId: string,
+  ): Promise<{ count: number; totalAmount: number }> {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
@@ -296,7 +376,7 @@ export class ApprovalEngineService {
     // Find approval requests that were auto-approved (no rule, status approved) for this org's requisitions
     // We detect fast-lane auto-approvals by looking for approval_requests with status='approved' and
     // an action comment containing 'Auto-approved: requisition total'
-    const rows = await this.db.execute(sql`
+    const rows = (await this.db.execute(sql`
       SELECT
         COUNT(DISTINCT ar.id)::int AS count,
         COALESCE(SUM(r.total_amount), 0) AS total_amount
@@ -310,7 +390,7 @@ export class ApprovalEngineService {
       WHERE ar.status = 'approved'
         AND ar.created_at >= ${startOfMonth.toISOString()}
         AND ar.created_at <= ${endOfMonth.toISOString()}
-    `) as any[];
+    `)) as any[];
 
     const row = rows[0] ?? { count: 0, total_amount: '0' };
     return {
@@ -323,22 +403,39 @@ export class ApprovalEngineService {
   private async enrichWithEntityInfo(rows: any[]): Promise<any[]> {
     if (!rows.length) return rows;
 
-    const reqIds = rows.filter(r => r.approvableType === 'requisition').map(r => r.approvableId);
-    const poIds  = rows.filter(r => r.approvableType === 'purchase_order').map(r => r.approvableId);
+    const reqIds = rows
+      .filter((r) => r.approvableType === 'requisition')
+      .map((r) => r.approvableId);
+    const poIds = rows
+      .filter((r) => r.approvableType === 'purchase_order')
+      .map((r) => r.approvableId);
 
     const [reqMap, poMap]: [Record<string, any>, Record<string, any>] = await Promise.all([
-      reqIds.length ? this.db.execute(sql`
-        SELECT id, number, title, total_amount AS amount, status FROM requisitions WHERE id = ANY(${sql.raw(`ARRAY[${reqIds.map(i => `'${i}'`).join(',')}]::uuid[]`)})
-      `).then((rows) => Object.fromEntries((rows as any[]).map(r => [r.id, r]))) : {},
-      poIds.length ? this.db.execute(sql`
+      reqIds.length
+        ? this.db
+            .execute(
+              sql`
+        SELECT id, number, title, total_amount AS amount, status FROM requisitions WHERE id = ANY(${sql.raw(`ARRAY[${reqIds.map((i) => `'${i}'`).join(',')}]::uuid[]`)})
+      `,
+            )
+            .then((rows) => Object.fromEntries((rows as any[]).map((r) => [r.id, r])))
+        : {},
+      poIds.length
+        ? this.db
+            .execute(
+              sql`
         SELECT po.id, po.internal_number AS number, v.name AS "vendorName", po.total_amount AS amount, po.status
         FROM purchase_orders po LEFT JOIN vendors v ON v.id = po.vendor_id
-        WHERE po.id = ANY(${sql.raw(`ARRAY[${poIds.map(i => `'${i}'`).join(',')}]::uuid[]`)})
-      `).then((rows) => Object.fromEntries((rows as any[]).map(r => [r.id, r]))) : {},
+        WHERE po.id = ANY(${sql.raw(`ARRAY[${poIds.map((i) => `'${i}'`).join(',')}]::uuid[]`)})
+      `,
+            )
+            .then((rows) => Object.fromEntries((rows as any[]).map((r) => [r.id, r])))
+        : {},
     ]);
 
     return rows.map((r) => {
-      const entity = r.approvableType === 'requisition' ? reqMap[r.approvableId] : poMap[r.approvableId];
+      const entity =
+        r.approvableType === 'requisition' ? reqMap[r.approvableId] : poMap[r.approvableId];
       return { ...r, entitySummary: entity ?? null };
     });
   }
@@ -378,127 +475,179 @@ export class ApprovalEngineService {
     comment?: string,
     organizationId?: string,
   ) {
-    const approvalReq = await this.getRequest(requestId);
-
-    if (approvalReq.status !== 'pending') {
-      throw new BadRequestException(`Request is already ${approvalReq.status}`);
-    }
-
-    const rule = approvalReq.approvalRuleId
-      ? await this.db.query.approvalRules.findFirst({
-          where: (r, { eq }) => eq(r.id, approvalReq.approvalRuleId!),
-          with: { steps: true },
-        })
-      : null;
-
-    const sortedSteps = [...(rule?.steps ?? [])].sort((a, b) => a.stepOrder - b.stepOrder);
-    const atRequiredApproval = approvalReq.requiredApprovalStep === approvalReq.currentStep;
-    if (
-      atRequiredApproval &&
-      approvalReq.requiredApproverId &&
-      approvalReq.requiredApproverId !== actorId
-    ) {
-      throw new ForbiddenException('This approval step is assigned to the budget owner');
-    }
-    const nextRuleStep = atRequiredApproval
-      ? undefined
-      : sortedSteps.find((step) => step.stepOrder > approvalReq.currentStep);
-    const nextStep = nextRuleStep?.stepOrder ?? (
-      !atRequiredApproval &&
-      approvalReq.requiredApprovalStep != null &&
-      approvalReq.requiredApprovalStep > approvalReq.currentStep
-        ? approvalReq.requiredApprovalStep
-        : undefined
-    );
-
-    // Record the action
-    await this.db.insert(approvalActions).values({
-      approvalRequestId: requestId,
-      stepOrder: approvalReq.currentStep,
-      approverId: actorId,
-      action,
-      comment: comment ?? null,
-    });
-
-    if (action === 'reject') {
-      await this.db.update(approvalRequests)
-        .set({ status: 'rejected', updatedAt: new Date() })
-        .where(eq(approvalRequests.id, requestId));
-
-      await this.updateEntityStatus(approvalReq.approvableType, approvalReq.approvableId, 'rejected', organizationId);
-      return { status: 'rejected' };
-    }
-
-    // action === 'approve'
-    if (nextStep != null) {
-      // Advance to next step
-      await this.db.update(approvalRequests)
-        .set({ currentStep: nextStep, updatedAt: new Date() })
-        .where(eq(approvalRequests.id, requestId));
-
-      await this.db.insert(approvalActions).values({
-        approvalRequestId: requestId,
-        stepOrder: nextStep,
-        approverId: actorId,
-        action: 'forwarded',
-        comment: `Advanced to step ${nextStep}`,
-      });
-
-      if (
-        this.notifications &&
-        organizationId &&
-        nextStep === approvalReq.requiredApprovalStep &&
-        approvalReq.requiredApproverId
-      ) {
-        this.notifications.create(
-          organizationId,
-          approvalReq.requiredApproverId,
-          'approval_request',
-          'Budget Owner Approval Required',
-          approvalReq.requiredApprovalReason ?? 'A budget overrun requires your approval.',
-          approvalReq.approvableType,
-          approvalReq.approvableId,
-        ).catch(() => {});
+    const outcome = await this.db.transaction(async (tx) => {
+      const [approvalReq] = await tx
+        .select()
+        .from(approvalRequests)
+        .where(eq(approvalRequests.id, requestId))
+        .for('update');
+      if (!approvalReq) throw new NotFoundException(`Approval request ${requestId} not found`);
+      if (approvalReq.status !== 'pending') {
+        throw new BadRequestException(`Request is already ${approvalReq.status}`);
       }
 
-      return { status: 'pending', advancedToStep: nextStep };
-    } else {
-      // Final approval
-      await this.db.update(approvalRequests)
-        .set({ status: 'approved', updatedAt: new Date() })
-        .where(eq(approvalRequests.id, requestId));
+      const rule = approvalReq.approvalRuleId
+        ? await tx.query.approvalRules.findFirst({
+            where: (record, { eq }) => eq(record.id, approvalReq.approvalRuleId!),
+            with: { steps: true },
+          })
+        : null;
+      const sortedSteps = [...(rule?.steps ?? [])].sort((a, b) => a.stepOrder - b.stepOrder);
+      const atRequiredApproval = approvalReq.requiredApprovalStep === approvalReq.currentStep;
+      if (
+        atRequiredApproval &&
+        approvalReq.requiredApproverId &&
+        approvalReq.requiredApproverId !== actorId
+      ) {
+        throw new ForbiddenException('This approval step is assigned to the budget owner');
+      }
+      const nextRuleStep = atRequiredApproval
+        ? undefined
+        : sortedSteps.find((step) => step.stepOrder > approvalReq.currentStep);
+      const nextStep =
+        nextRuleStep?.stepOrder ??
+        (!atRequiredApproval &&
+        approvalReq.requiredApprovalStep != null &&
+        approvalReq.requiredApprovalStep > approvalReq.currentStep
+          ? approvalReq.requiredApprovalStep
+          : undefined);
+      const now = new Date();
 
-      await this.updateEntityStatus(approvalReq.approvableType, approvalReq.approvableId, 'approved', organizationId);
-      return { status: 'approved' };
+      await tx.insert(approvalActions).values({
+        approvalRequestId: requestId,
+        stepOrder: approvalReq.currentStep,
+        approverId: actorId,
+        action,
+        comment: comment ?? null,
+      });
+
+      if (action === 'reject') {
+        await tx
+          .update(approvalRequests)
+          .set({ status: 'rejected', updatedAt: now })
+          .where(eq(approvalRequests.id, requestId));
+        await this.updateEntityStatus(
+          tx,
+          approvalReq.approvableType,
+          approvalReq.approvableId,
+          'rejected',
+          now,
+        );
+        return {
+          result: { status: 'rejected' as const },
+          approvalReq,
+          entityStatus: 'rejected' as const,
+        };
+      }
+
+      if (nextStep != null) {
+        await tx
+          .update(approvalRequests)
+          .set({ currentStep: nextStep, updatedAt: now })
+          .where(eq(approvalRequests.id, requestId));
+        await tx.insert(approvalActions).values({
+          approvalRequestId: requestId,
+          stepOrder: nextStep,
+          approverId: actorId,
+          action: 'forwarded',
+          comment: `Advanced to step ${nextStep}`,
+        });
+        return {
+          result: { status: 'pending' as const, advancedToStep: nextStep },
+          approvalReq,
+          notifyRequiredOwner: nextStep === approvalReq.requiredApprovalStep,
+        };
+      }
+
+      await tx
+        .update(approvalRequests)
+        .set({ status: 'approved', updatedAt: now })
+        .where(eq(approvalRequests.id, requestId));
+      await this.updateEntityStatus(
+        tx,
+        approvalReq.approvableType,
+        approvalReq.approvableId,
+        'approved',
+        now,
+      );
+      return {
+        result: { status: 'approved' as const },
+        approvalReq,
+        entityStatus: 'approved' as const,
+      };
+    });
+
+    if (
+      outcome.notifyRequiredOwner &&
+      this.notifications &&
+      organizationId &&
+      outcome.approvalReq.requiredApproverId
+    ) {
+      this.notifications
+        .create(
+          organizationId,
+          outcome.approvalReq.requiredApproverId,
+          'approval_request',
+          'Budget Owner Approval Required',
+          outcome.approvalReq.requiredApprovalReason ?? 'A budget overrun requires your approval.',
+          outcome.approvalReq.approvableType,
+          outcome.approvalReq.approvableId,
+        )
+        .catch(() => {});
     }
+    if (outcome.entityStatus && organizationId) {
+      this.emitEntityStatusEvents(
+        organizationId,
+        outcome.approvalReq.approvableType,
+        outcome.approvalReq.approvableId,
+        outcome.entityStatus,
+      );
+    }
+    return outcome.result;
   }
 
   private async updateEntityStatus(
+    tx: DbTransaction,
     entityType: string,
     entityId: string,
     status: 'approved' | 'rejected',
-    organizationId?: string,
+    updatedAt: Date,
   ) {
     if (entityType === 'requisition') {
-      await this.db.update(requisitions)
-        .set({ status, updatedAt: new Date() })
-        .where(eq(requisitions.id, entityId));
-      if (organizationId) {
-        this.webhookEvents.emit(organizationId, status === 'approved' ? 'requisition.approved' : 'requisition.rejected', { requisitionId: entityId });
-      }
+      await tx.update(requisitions).set({ status, updatedAt }).where(eq(requisitions.id, entityId));
     } else if (entityType === 'purchase_order') {
-      await this.db.update(purchaseOrders)
-        .set({ status, updatedAt: new Date() })
+      await tx
+        .update(purchaseOrders)
+        .set({ status, updatedAt })
         .where(eq(purchaseOrders.id, entityId));
-      if (organizationId) {
-        this.webhookEvents.emit(organizationId, status === 'approved' ? 'po.approved' : 'po.rejected', { purchaseOrderId: entityId });
-      }
     }
-    if (organizationId) {
-      this.webhookEvents.emit(organizationId, status === 'approved' ? 'approval.approved' : 'approval.rejected', {
-        entityType,
-        entityId,
-      });
+  }
+
+  private emitEntityStatusEvents(
+    organizationId: string,
+    entityType: string,
+    entityId: string,
+    status: 'approved' | 'rejected',
+  ) {
+    const entityPayload =
+      entityType === 'requisition' ? { requisitionId: entityId } : { purchaseOrderId: entityId };
+    if (entityType === 'requisition') {
+      this.webhookEvents.emit(
+        organizationId,
+        status === 'approved' ? 'requisition.approved' : 'requisition.rejected',
+        entityPayload,
+      );
+    } else {
+      this.webhookEvents.emit(
+        organizationId,
+        status === 'approved' ? 'po.approved' : 'po.rejected',
+        entityPayload,
+      );
     }
+    this.webhookEvents.emit(
+      organizationId,
+      status === 'approved' ? 'approval.approved' : 'approval.rejected',
+      { entityType, entityId },
+    );
   }
 }
