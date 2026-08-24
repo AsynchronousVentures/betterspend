@@ -175,6 +175,15 @@ describe('email intake policy', () => {
       },
       0,
     );
+    const encryptedAfterCrComment = decideAttachment(
+      {
+        filename: 'locked-cr.pdf',
+        content: Buffer.from(
+          '%PDF-1.7\ntrailer\n<< /Size 3 % comment ending with CR\r /Encrypt 2 0 R >>\nstartxref\n0',
+        ),
+      },
+      0,
+    );
     const oversized = decideAttachment(
       { filename: 'huge.pdf', content: Buffer.alloc(MAX_EMAIL_ATTACHMENT_BYTES + 1, 1) },
       0,
@@ -194,6 +203,10 @@ describe('email intake policy', () => {
 
     assert.equal(zip.status === 'rejected' && zip.reason, 'archive_not_allowed');
     assert.equal(encrypted.status === 'rejected' && encrypted.reason, 'encrypted_pdf');
+    assert.equal(
+      encryptedAfterCrComment.status === 'rejected' && encryptedAfterCrComment.reason,
+      'encrypted_pdf',
+    );
     assert.equal(mentionsEncryption.status, 'accepted');
     assert.equal(oversized.status === 'rejected' && oversized.reason, 'attachment_too_large');
     assert.equal(excess.status === 'rejected' && excess.reason, 'attachment_count_exceeded');

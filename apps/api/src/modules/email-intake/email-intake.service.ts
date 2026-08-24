@@ -85,6 +85,8 @@ interface PendingPromotionContext {
   attachments: PreparedAttachment[];
 }
 
+type MessageStatus = 'accepted' | 'partial' | 'rejected' | 'duplicate';
+
 const RAW_RETENTION_RULE_ID = 'betterspend-email-intake-raw-retention';
 const RAW_RETENTION_DAYS = 90;
 
@@ -439,14 +441,9 @@ export class EmailIntakeService implements OnModuleInit {
       const rejectedCount = storedOutcomes.filter(
         (attachment) => attachment.status === 'rejected',
       ).length;
-      const status: 'accepted' | 'partial' | 'rejected' | 'duplicate' =
-        promotableCount > 0 && (duplicateCount > 0 || rejectedCount > 0)
-          ? 'partial'
-          : promotableCount > 0
-            ? 'accepted'
-            : duplicateCount > 0 && rejectedCount === 0
-              ? 'duplicate'
-              : 'rejected';
+      // The append-only message stores the receipt-time decision. The final promotion outcome is
+      // recorded as an append-only audit event after every pending attachment reaches a terminal state.
+      const status = this.summarizeMessageStatus(storedOutcomes, true);
       const riskSignals = [...initialRisk.signals];
       if (duplicateCount > 0) riskSignals.push('duplicate:file_hash');
 
@@ -513,7 +510,7 @@ export class EmailIntakeService implements OnModuleInit {
       };
     });
 
-    await this.promotePendingAttachments({
+    const promoted = await this.promotePendingAttachments({
       organizationId,
       messageId,
       sourceEmail,
@@ -531,11 +528,11 @@ export class EmailIntakeService implements OnModuleInit {
       messageId,
       sourceEmail,
       subject,
-      result.status,
+      promoted.status,
       result.riskScore,
     );
     if (allowAutomaticReply) {
-      await this.replyToRejectedAttachments(sourceEmail, subject, result.outcomes);
+      await this.replyToRejectedAttachments(sourceEmail, subject, promoted.outcomes);
     }
   }
 
@@ -583,15 +580,19 @@ export class EmailIntakeService implements OnModuleInit {
     return updated;
   }
 
-  private async promotePendingAttachments(context: PendingPromotionContext): Promise<void> {
+  private async promotePendingAttachments(
+    context: PendingPromotionContext,
+  ): Promise<{ outcomes: StoredAttachmentOutcome[]; status: MessageStatus }> {
     const pending = context.outcomes.filter(
       (outcome): outcome is StoredAttachmentOutcome & { storageKey: string } =>
         outcome.status === 'pending' && outcome.storageKey !== null,
     );
-    if (pending.length === 0) return;
+    if (pending.length === 0) {
+      return { outcomes: context.outcomes, status: this.summarizeMessageStatus(context.outcomes) };
+    }
 
     const detected = this.detectIntakeType(context.subject, context.body);
-    await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       // Keep duplicate detection, object upload, and promotion in one organization-level critical section.
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${context.organizationId}, 0))`,
@@ -627,7 +628,7 @@ export class EmailIntakeService implements OnModuleInit {
           if (await this.storage.exists(current.storageKey)) {
             await this.storage.delete(current.storageKey);
           }
-          await tx
+          const [updated] = await tx
             .update(emailIntakeAttachments)
             .set({
               status: 'duplicate',
@@ -641,7 +642,27 @@ export class EmailIntakeService implements OnModuleInit {
                 eq(emailIntakeAttachments.id, outcome.id),
                 eq(emailIntakeAttachments.status, 'pending'),
               ),
-            );
+            )
+            .returning({ id: emailIntakeAttachments.id });
+          if (updated) {
+            await tx
+              .insert(auditLog)
+              .values({
+                id: this.stableUuid('audit', 'attachment-deduplicated', outcome.id),
+                organizationId: context.organizationId,
+                userId: null,
+                entityType: 'email_intake_attachment',
+                entityId: outcome.id,
+                action: 'deduplicated',
+                metadata: {
+                  messageId: context.messageId,
+                  fromStatus: 'pending',
+                  toStatus: 'duplicate',
+                  rejectionReason: 'duplicate_file_hash',
+                },
+              })
+              .onConflictDoNothing({ target: auditLog.id });
+          }
           continue;
         }
 
@@ -686,7 +707,7 @@ export class EmailIntakeService implements OnModuleInit {
             },
           })
           .onConflictDoNothing({ target: emailIntakeItems.id });
-        await tx
+        const [updated] = await tx
           .update(emailIntakeAttachments)
           .set({ status: 'accepted', emailIntakeItemId: intakeItemId })
           .where(
@@ -695,9 +716,89 @@ export class EmailIntakeService implements OnModuleInit {
               eq(emailIntakeAttachments.id, outcome.id),
               eq(emailIntakeAttachments.status, 'pending'),
             ),
-          );
+          )
+          .returning({ id: emailIntakeAttachments.id });
+        if (updated) {
+          await tx
+            .insert(auditLog)
+            .values({
+              id: this.stableUuid('audit', 'attachment-promoted', outcome.id),
+              organizationId: context.organizationId,
+              userId: null,
+              entityType: 'email_intake_attachment',
+              entityId: outcome.id,
+              action: 'promoted',
+              metadata: {
+                messageId: context.messageId,
+                fromStatus: 'pending',
+                toStatus: 'accepted',
+                intakeItemId,
+                storageKey: current.storageKey,
+              },
+            })
+            .onConflictDoNothing({ target: auditLog.id });
+        }
       }
+
+      const finalAttachments = await tx.query.emailIntakeAttachments.findMany({
+        where: (attachment, { and, eq }) =>
+          and(
+            eq(attachment.organizationId, context.organizationId),
+            eq(attachment.messageId, context.messageId),
+          ),
+      });
+      const outcomes = finalAttachments.map((attachment) => ({
+        id: attachment.id,
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        contentHash: attachment.contentHash,
+        sizeBytes: attachment.sizeBytes,
+        status: this.attachmentStatus(attachment.status),
+        rejectionReason: attachment.rejectionReason,
+        storageKey: attachment.storageKey,
+        intakeItemId: attachment.emailIntakeItemId,
+        invoiceNumberHint: attachment.invoiceNumberHint,
+      }));
+      const status = this.summarizeMessageStatus(outcomes);
+      await tx
+        .insert(auditLog)
+        .values({
+          id: this.stableUuid('audit', 'processing-completed', context.messageId),
+          organizationId: context.organizationId,
+          userId: null,
+          entityType: 'email_intake_message',
+          entityId: context.messageId,
+          action: 'processing_completed',
+          metadata: {
+            status,
+            acceptedAttachments: outcomes.filter((outcome) => outcome.status === 'accepted').length,
+            duplicateAttachments: outcomes.filter((outcome) => outcome.status === 'duplicate')
+              .length,
+            rejectedAttachments: outcomes.filter((outcome) => outcome.status === 'rejected').length,
+          },
+        })
+        .onConflictDoNothing({ target: auditLog.id });
+      return { outcomes, status };
     });
+  }
+
+  private summarizeMessageStatus(
+    outcomes: StoredAttachmentOutcome[],
+    pendingAsAccepted = false,
+  ): MessageStatus {
+    if (!pendingAsAccepted && outcomes.some((outcome) => outcome.status === 'pending')) {
+      throw new Error('Email intake processing is incomplete');
+    }
+    const acceptedCount = outcomes.filter(
+      (outcome) =>
+        outcome.status === 'accepted' || (pendingAsAccepted && outcome.status === 'pending'),
+    ).length;
+    const duplicateCount = outcomes.filter((outcome) => outcome.status === 'duplicate').length;
+    const rejectedCount = outcomes.filter((outcome) => outcome.status === 'rejected').length;
+    if (acceptedCount > 0 && (duplicateCount > 0 || rejectedCount > 0)) return 'partial';
+    if (acceptedCount > 0) return 'accepted';
+    if (duplicateCount > 0 && rejectedCount === 0) return 'duplicate';
+    return 'rejected';
   }
 
   private stableUuid(...parts: string[]): string {
@@ -720,7 +821,7 @@ export class EmailIntakeService implements OnModuleInit {
     throw new Error(`Invalid persisted email attachment status: ${value}`);
   }
 
-  private messageStatus(value: string): 'accepted' | 'partial' | 'rejected' | 'duplicate' {
+  private messageStatus(value: string): MessageStatus {
     if (
       value === 'accepted' ||
       value === 'partial' ||

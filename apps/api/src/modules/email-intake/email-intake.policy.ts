@@ -295,9 +295,9 @@ function pdfDictionaryAt(source: string, start: number): string | null {
       continue;
     }
     if (character === '%') {
-      const newline = source.indexOf('\n', index + 1);
-      if (newline < 0) return null;
-      index = newline;
+      const lineEnding = source.slice(index + 1).search(/[\r\n]/);
+      if (lineEnding < 0) return null;
+      index += lineEnding + 1;
       continue;
     }
     if (source.slice(index, index + 2) === '<<') {
