@@ -6,6 +6,19 @@ const EXPECTED_TABLES = [
   'notifications',
   'integration_connections',
   'sync_records',
+  'workflow_definitions',
+  'workflow_definition_versions',
+] as const;
+
+const EXPECTED_COLUMNS = [
+  { table: 'approval_requests', column: 'definition_version_id' },
+  { table: 'approval_requests', column: 'current_node_id' },
+  { table: 'approval_requests', column: 'attempt' },
+] as const;
+
+const EXPECTED_TRIGGERS = [
+  'workflow_definition_versions_immutable',
+  'workflow_definitions_published_version_owner',
 ] as const;
 
 const EXPECTED_FOREIGN_KEYS = [
@@ -57,6 +70,27 @@ const EXPECTED_FOREIGN_KEYS = [
     parent: 'integration_connections',
     childColumns: ['connection_id', 'organization_id'],
     parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'workflow_definition_versions_definition_fk',
+    child: 'workflow_definition_versions',
+    parent: 'workflow_definitions',
+    childColumns: ['definition_id'],
+    parentColumns: ['id'],
+  },
+  {
+    name: 'workflow_definitions_published_version_fk',
+    child: 'workflow_definitions',
+    parent: 'workflow_definition_versions',
+    childColumns: ['published_version_id'],
+    parentColumns: ['id'],
+  },
+  {
+    name: 'approval_requests_definition_version_fk',
+    child: 'approval_requests',
+    parent: 'workflow_definition_versions',
+    childColumns: ['definition_version_id'],
+    parentColumns: ['id'],
   },
 ] as const;
 
@@ -117,17 +151,46 @@ async function main(): Promise<void> {
         AND parent_namespace.nspname = 'public'
         AND fk.conname IN ${client(EXPECTED_FOREIGN_KEYS.map((item) => item.name))}
     `;
+    const columns = await client<{ table: string; column: string }[]>`
+      SELECT table_name AS table, column_name AS column
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name IN ${client(EXPECTED_COLUMNS.map((item) => item.table))}
+        AND column_name IN ${client(EXPECTED_COLUMNS.map((item) => item.column))}
+    `;
+    const triggers = await client<{ name: string }[]>`
+      SELECT trigger.tgname AS name
+      FROM pg_trigger trigger
+      JOIN pg_class table_definition ON table_definition.oid = trigger.tgrelid
+      JOIN pg_namespace table_namespace ON table_namespace.oid = table_definition.relnamespace
+      WHERE NOT trigger.tgisinternal
+        AND table_namespace.nspname = 'public'
+        AND trigger.tgname IN ${client(EXPECTED_TRIGGERS)}
+    `;
     const foundTables = new Set(tables.map((row) => row.name));
     const foundConstraints = new Set(constraints.map(foreignKeySignature));
+    const foundColumns = new Set(columns.map((row) => `${row.table}.${row.column}`));
+    const foundTriggers = new Set(triggers.map((row) => row.name));
     const missingTables = EXPECTED_TABLES.filter((name) => !foundTables.has(name));
     const missingConstraints = EXPECTED_FOREIGN_KEYS.filter(
       (item) => !foundConstraints.has(foreignKeySignature(item)),
     ).map((item) => item.name);
+    const missingColumns = EXPECTED_COLUMNS.filter(
+      (item) => !foundColumns.has(`${item.table}.${item.column}`),
+    ).map((item) => `${item.table}.${item.column}`);
+    const missingTriggers = EXPECTED_TRIGGERS.filter((name) => !foundTriggers.has(name));
 
-    if (missingTables.length || missingConstraints.length) {
+    if (
+      missingTables.length ||
+      missingConstraints.length ||
+      missingColumns.length ||
+      missingTriggers.length
+    ) {
       throw new Error(
         `Migration verification failed. Missing tables: ${missingTables.join(', ') || 'none'}. ` +
-          `Missing constraints: ${missingConstraints.join(', ') || 'none'}.`,
+          `Missing constraints: ${missingConstraints.join(', ') || 'none'}. ` +
+          `Missing columns: ${missingColumns.join(', ') || 'none'}. ` +
+          `Missing triggers: ${missingTriggers.join(', ') || 'none'}.`,
       );
     }
     console.log('Migration verification passed.');

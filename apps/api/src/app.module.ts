@@ -53,6 +53,7 @@ import { ComplianceModule } from './modules/compliance/compliance.module';
 import { AiProvidersModule } from './modules/ai-providers/ai-providers.module';
 import { MessagesModule } from './modules/messages/messages.module';
 import { RiskScreeningModule } from './modules/risk-screening/risk-screening.module';
+import { WorkflowDefinitionsModule } from './modules/workflow-definitions/workflow-definitions.module';
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { RiskScreeningModule } from './modules/risk-screening/risk-screening.mod
     RequisitionsModule,
     PurchaseOrdersModule,
     ApprovalRulesModule,
+    WorkflowDefinitionsModule,
     ApprovalsModule,
     BudgetsModule,
     ReceivingModule,

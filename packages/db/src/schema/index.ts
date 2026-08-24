@@ -6,6 +6,7 @@ export * from './documents';
 export * from './sequences';
 export * from './requisitions';
 export * from './approvals';
+export * from './workflow-definitions';
 export * from './purchase-orders';
 export * from './receiving';
 export * from './invoices';
