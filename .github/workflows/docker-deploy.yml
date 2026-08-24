@@ -17,7 +17,7 @@ on:
     branches:
       - main
     tags:
-      - "v*"
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -101,9 +101,9 @@ jobs:
 
       - name: Validate Compose files
         run: |
-          docker compose config >/dev/null
-          cp .env.production.example deploy/.env.production
-          IMAGE_TAG=sha-ci docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml config >/dev/null
+          docker compose --profile app --profile tools config >/dev/null
+          PRODUCTION_ENV_FILE=.env.production.example IMAGE_TAG=sha-ci \
+            docker compose --profile migrate --env-file .env.production.example -f compose.yaml -f compose.prod.yaml config >/dev/null
 
       - name: Build API image
         run: docker build -f docker/api.Dockerfile -t betterspend-api:ci .
@@ -301,10 +301,11 @@ jobs:
         run: |
           ssh_options="-o StrictHostKeyChecking=yes"
           # Explicit file list, no --delete: never risk touching .env.production
-          rsync -av -e "ssh $ssh_options" \
+          rsync -avR -e "ssh $ssh_options" \
+            compose.yaml \
+            compose.prod.yaml \
             deploy/deploy.sh \
             deploy/rollback.sh \
-            deploy/docker-compose.prod.yml \
             deploy/Caddyfile \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:/opt/betterspend/"
 
@@ -316,4 +317,4 @@ jobs:
           # Expand IMAGE_TAG locally (hex-only sha, safe to interpolate);
           # single quotes keep the remote shell from touching anything else.
           ssh -o StrictHostKeyChecking=yes "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            "cd /opt/betterspend && ./deploy.sh '$IMAGE_TAG'"
+            "cd /opt/betterspend && ./deploy/deploy.sh '$IMAGE_TAG'"
