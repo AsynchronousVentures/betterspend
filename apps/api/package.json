@@ -20,7 +20,7 @@
     "@nestjs/common": "^10.0.0",
     "@nestjs/config": "^3.0.0",
     "@nestjs/core": "^10.0.0",
-    "@nestjs/platform-express": "^10.0.0",
+    "@nestjs/platform-express": "^11.2.1",
     "@nestjs/swagger": "^8.0.0",
     "@nestjs/throttler": "^6.5.0",
     "@types/bcryptjs": "^3.0.0",
