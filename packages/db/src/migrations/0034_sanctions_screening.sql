@@ -1,3 +1,9 @@
+CREATE TABLE IF NOT EXISTS "sanctions_registry_state" (
+	"source" varchar(50) PRIMARY KEY NOT NULL,
+	"version" integer DEFAULT 0 NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "sanctions_entries" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "source" varchar(50) NOT NULL,

@@ -1,8 +1,14 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, Logger } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { auditLog, sanctionsEntries, sanctionsScreenings, vendors } from '@betterspend/db';
+import {
+  auditLog,
+  sanctionsEntries,
+  sanctionsRegistryState,
+  sanctionsScreenings,
+  vendors,
+} from '@betterspend/db';
 import { sanctionsImportRowSchema } from '@betterspend/shared';
 import { SettingsService } from '../settings/settings.service';
 
@@ -14,6 +20,8 @@ export interface SanctionMatch {
   matchedOn: string;
   score: number;
 }
+
+type RiskScreeningTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 /** Match threshold: token-overlap (jaccard) or levenshtein similarity must exceed this. */
 const MATCH_THRESHOLD = 0.82;
@@ -82,6 +90,16 @@ export class RiskScreeningService {
     }
 
     await this.db.transaction(async (tx) => {
+      await tx
+        .insert(sanctionsRegistryState)
+        .values({ source, version: 1 })
+        .onConflictDoUpdate({
+          target: sanctionsRegistryState.source,
+          set: {
+            version: sql`${sanctionsRegistryState.version} + 1`,
+            updatedAt: new Date(),
+          },
+        });
       await tx.delete(sanctionsEntries).where(eq(sanctionsEntries.source, source));
       for (let i = 0; i < rows.length; i += 500) {
         await tx.insert(sanctionsEntries).values(
@@ -115,81 +133,110 @@ export class RiskScreeningService {
   }
 
   async screenAllVendors(organizationId: string, screenedBy?: string) {
-    const orgVendors = await this.db.query.vendors.findMany({
-      where: (v, { and, eq }) => and(eq(v.organizationId, organizationId), eq(v.status, 'active')),
-      columns: { id: true },
+    return this.db.transaction(async (tx) => {
+      // Hold a shared registry-version lock for the whole batch. Ingestion's
+      // version update waits until every result from this snapshot commits.
+      const entries = await this.lockAndLoadEntries(tx);
+      const orgVendors = await tx
+        .select({ id: vendors.id })
+        .from(vendors)
+        .where(and(eq(vendors.organizationId, organizationId), eq(vendors.status, 'active')));
+      let flagged = 0;
+      for (const vendor of orgVendors) {
+        const result = await this.screenVendorInTransaction(
+          tx,
+          organizationId,
+          vendor.id,
+          screenedBy,
+          entries,
+        );
+        if (result.status === 'flagged') flagged += 1;
+      }
+      return { screened: orgVendors.length, flagged };
     });
-    // One pass over the registry shared by every vendor instead of a full
-    // table scan per vendor.
-    const entries = await this.loadEntries();
-    let flagged = 0;
-    for (const vendor of orgVendors) {
-      const result = await this.screenVendorWithEntries(
-        organizationId,
-        vendor.id,
-        screenedBy,
-        entries,
-      );
-      if (result.status === 'flagged') flagged += 1;
-    }
-    return { screened: orgVendors.length, flagged };
   }
 
   private async screenVendorWithEntries(
     organizationId: string,
     vendorId: string,
     screenedBy?: string,
-    entries?: SanctionEntryRow[],
   ) {
     return this.db.transaction(async (tx) => {
-      // Lock the vendor row so a concurrent manual review cannot be silently
-      // overwritten by a screening derived from stale status.
-      const [vendor] = await tx
-        .select()
-        .from(vendors)
-        .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
-        .for('update');
-      if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
-
-      // Matching depends only on the vendor's name, which is immutable here;
-      // the status decision always uses the locked row.
-      const manuallyReviewed = vendor.sanctionsStatus === 'manually_reviewed';
-      const vendorMatches = await this.matchVendorName(vendor.name, entries);
-      const nextStatus =
-        vendorMatches.length > 0 ? 'flagged' : manuallyReviewed ? 'manually_reviewed' : 'clear';
-
-      await tx.insert(sanctionsScreenings).values({
+      const entries = await this.lockAndLoadEntries(tx);
+      return this.screenVendorInTransaction(
+        tx,
         organizationId,
         vendorId,
-        result: nextStatus,
-        matchCount: vendorMatches,
-        screenedBy: screenedBy ?? null,
-      });
-
-      await tx
-        .update(vendors)
-        .set({
-          sanctionsStatus: nextStatus,
-          sanctionsCheckedAt: new Date(),
-          sanctionsNote: nextStatus === 'manually_reviewed' ? (vendor.sanctionsNote ?? null) : null,
-          updatedAt: new Date(),
-        })
-        .where(eq(vendors.id, vendorId));
-
-      await tx.insert(auditLog).values({
-        organizationId,
-        userId: screenedBy ?? null,
-        entityType: 'vendor',
-        entityId: vendorId,
-        action: 'sanctions_screening',
-        changes: {
-          result: nextStatus,
-          matchCount: vendorMatches.length,
-        },
-      });
-
-      return { vendorId, status: nextStatus, matches: vendorMatches };
+        screenedBy,
+        entries,
+      );
     });
+  }
+
+  private async lockAndLoadEntries(
+    tx: RiskScreeningTransaction,
+  ): Promise<SanctionEntryRow[]> {
+    const registry = await tx.select().from(sanctionsRegistryState).for('share');
+    if (registry.length === 0) {
+      throw new BadRequestException('Sanctions registry has not been ingested');
+    }
+    return tx
+      .select({
+        id: sanctionsEntries.id,
+        source: sanctionsEntries.source,
+        entityName: sanctionsEntries.entityName,
+        country: sanctionsEntries.country,
+      })
+      .from(sanctionsEntries);
+  }
+
+  private async screenVendorInTransaction(
+    tx: RiskScreeningTransaction,
+    organizationId: string,
+    vendorId: string,
+    screenedBy: string | undefined,
+    entries: SanctionEntryRow[],
+  ) {
+    const [vendor] = await tx
+      .select()
+      .from(vendors)
+      .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
+      .for('update');
+    if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
+
+    const vendorMatches = await this.matchVendorName(vendor.name, entries);
+    const nextStatus =
+      vendorMatches.length > 0
+        ? 'flagged'
+        : vendor.sanctionsStatus === 'manually_reviewed'
+          ? 'manually_reviewed'
+          : 'clear';
+
+    await tx.insert(sanctionsScreenings).values({
+      organizationId,
+      vendorId,
+      result: nextStatus,
+      matchCount: vendorMatches,
+      screenedBy: screenedBy ?? null,
+    });
+    await tx
+      .update(vendors)
+      .set({
+        sanctionsStatus: nextStatus,
+        sanctionsCheckedAt: new Date(),
+        sanctionsNote: nextStatus === 'manually_reviewed' ? (vendor.sanctionsNote ?? null) : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(vendors.id, vendorId));
+    await tx.insert(auditLog).values({
+      organizationId,
+      userId: screenedBy ?? null,
+      entityType: 'vendor',
+      entityId: vendorId,
+      action: 'sanctions_screening',
+      changes: { result: nextStatus, matchCount: vendorMatches.length },
+    });
+    return { vendorId, status: nextStatus, matches: vendorMatches };
   }
 
   /** Admin override after human review of a flagged (or clear) vendor. */
@@ -280,28 +327,16 @@ export class RiskScreeningService {
     return `Vendor "${vendor.name}" is flagged by sanctions screening; review before issuing this PO`;
   }
 
-  private async loadEntries(): Promise<SanctionEntryRow[]> {
-    return this.db
-      .select({
-        id: sanctionsEntries.id,
-        source: sanctionsEntries.source,
-        entityName: sanctionsEntries.entityName,
-        country: sanctionsEntries.country,
-      })
-      .from(sanctionsEntries);
-  }
-
   private async matchVendorName(
     name: string,
-    entries?: SanctionEntryRow[],
+    entries: SanctionEntryRow[],
   ): Promise<SanctionMatch[]> {
     const normalizedTarget = normalize(name);
     if (!normalizedTarget) return [];
 
-    const rows = entries ?? (await this.loadEntries());
     const matches: SanctionMatch[] = [];
 
-    for (const entry of rows) {
+    for (const entry of entries) {
       const score = similarity(normalizedTarget, normalize(entry.entityName));
       if (score >= MATCH_THRESHOLD) {
         matches.push({

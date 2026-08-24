@@ -6,10 +6,17 @@ import {
   jsonb,
   timestamp,
   index,
+  integer,
 } from 'drizzle-orm/pg-core';
 import { organizations } from './organizations';
 import { users } from './users';
 import { vendors } from './vendors';
+
+export const sanctionsRegistryState = pgTable('sanctions_registry_state', {
+  source: varchar('source', { length: 50 }).primaryKey(),
+  version: integer('version').notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 /**
  * Local copy of public sanctions/denied-party entries (OFAC SDN, EU, UN, or an
