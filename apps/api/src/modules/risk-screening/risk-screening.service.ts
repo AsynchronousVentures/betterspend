@@ -1,7 +1,7 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { lookup } from 'node:dns/promises';
 import { request } from 'node:https';
-import { isIP } from 'node:net';
+import ipaddr from 'ipaddr.js';
 import { and, eq, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
@@ -412,8 +412,7 @@ async function downloadSanctionsSource(
     }
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) throw new Error('Sanctions source download timed out');
-    const pinnedAddress =
-      addresses.find(({ family }) => family === 4) ?? addresses[0];
+    const pinnedAddress = addresses.find(({ family }) => family === 4) ?? addresses[0];
     const response = await requestPinned(
       currentUrl,
       pinnedAddress as { address: string; family: 4 | 6 },
@@ -449,43 +448,9 @@ function assertSafeHttpsUrl(url: URL): void {
 }
 
 function isGlobalIp(address: string): boolean {
-  const family = isIP(address);
-  if (family === 4) {
-    const [a, b, c] = address.split('.').map(Number);
-    return !(
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 0 && c === 0) ||
-      (a === 192 && b === 0 && c === 2) ||
-      (a === 192 && b === 88 && c === 99) ||
-      (a === 192 && b === 168) ||
-      (a === 198 && (b === 18 || b === 19)) ||
-      (a === 198 && b === 51 && c === 100) ||
-      (a === 203 && b === 0 && c === 113) ||
-      a >= 224
-    );
-  }
-  if (family === 6) {
-    const normalized = address.toLowerCase();
-    return !(
-      normalized === '::' ||
-      normalized === '::1' ||
-      normalized.startsWith('::ffff:') ||
-      normalized.startsWith('fc') ||
-      normalized.startsWith('fd') ||
-      /^fe[89ab]/.test(normalized) ||
-      normalized.startsWith('ff') ||
-      normalized.startsWith('100:') ||
-      normalized.startsWith('2001:') ||
-      normalized.startsWith('2002:') ||
-      normalized.startsWith('64:ff9b:1:')
-    );
-  }
-  return false;
+  if (!ipaddr.isValid(address)) return false;
+  const parsed = ipaddr.parse(address);
+  return parsed.range() === 'unicast';
 }
 
 function requestPinned(
