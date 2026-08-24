@@ -56,8 +56,14 @@ export const brandingSettingsSchema = z.object({
   app_favicon_url: z.string().url().or(z.literal('')).optional(),
   copyright_text: z.string().max(255).optional(),
   support_email: z.string().email().or(z.literal('')).optional(),
-  primary_color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
-  accent_color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  primary_color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .optional(),
+  accent_color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .optional(),
   hide_powered_by: z.enum(['true', 'false']).optional(),
 });
 
@@ -71,7 +77,10 @@ export const smtpSettingsSchema = z.object({
 });
 
 export const approvalPolicySettingsSchema = z.object({
-  auto_approve_threshold: z.string().regex(/^\d+(\.\d{1,2})?$/, 'Must be a valid dollar amount').optional(),
+  auto_approve_threshold: z
+    .string()
+    .regex(/^\d+(\.\d{1,2})?$/, 'Must be a valid dollar amount')
+    .optional(),
   auto_approve_require_budget_check: z.enum(['true', 'false']).optional(),
   auto_approve_notify_manager: z.enum(['true', 'false']).optional(),
   // Percentage (0-100). Supplier catalog price changes within this percent are
@@ -84,7 +93,10 @@ export const approvalPolicySettingsSchema = z.object({
 });
 
 export const contractComplianceSettingsSchema = z.object({
-  contract_price_deviation_threshold: z.string().regex(/^\d+(\.\d+)?$/).optional(),
+  contract_price_deviation_threshold: z
+    .string()
+    .regex(/^\d+(\.\d+)?$/)
+    .optional(),
   contract_price_deviation_action: z.enum(['warn', 'block']).optional(),
 });
 

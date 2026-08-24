@@ -39,7 +39,10 @@ export class SettingsService {
       });
   }
 
-  async updateMany(organizationId: string, settings: Record<string, string>): Promise<Record<string, string>> {
+  async updateMany(
+    organizationId: string,
+    settings: Record<string, string>,
+  ): Promise<Record<string, string>> {
     // Upsert each key
     for (const [key, value] of Object.entries(settings)) {
       await this.upsert(organizationId, key, value);

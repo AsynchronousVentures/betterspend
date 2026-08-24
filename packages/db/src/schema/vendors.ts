@@ -1,9 +1,20 @@
-import { pgTable, uuid, varchar, boolean, jsonb, timestamp, text, integer } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  varchar,
+  boolean,
+  jsonb,
+  timestamp,
+  text,
+  integer,
+} from 'drizzle-orm/pg-core';
 import { organizations, legalEntities } from './organizations';
 
 export const vendors = pgTable('vendors', {
   id: uuid('id').primaryKey().defaultRandom(),
-  organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+  organizationId: uuid('organization_id')
+    .notNull()
+    .references(() => organizations.id),
   entityId: uuid('entity_id').references(() => legalEntities.id),
   name: varchar('name', { length: 255 }).notNull(),
   code: varchar('code', { length: 50 }),
@@ -36,7 +47,9 @@ export const vendors = pgTable('vendors', {
 
 export const catalogItems = pgTable('catalog_items', {
   id: uuid('id').primaryKey().defaultRandom(),
-  organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+  organizationId: uuid('organization_id')
+    .notNull()
+    .references(() => organizations.id),
   vendorId: uuid('vendor_id').references(() => vendors.id),
   sku: varchar('sku', { length: 100 }),
   name: varchar('name', { length: 255 }).notNull(),
