@@ -37,14 +37,21 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
 ## Required GitHub Configuration
 
-The validation job runs for pull requests and pushes to `main`. Pushes to `main` publish the application images to GHCR after validation succeeds. The workflow does not update, pull, or restart the server.
+The validation job runs for pull requests, pushes to `main`, and `v*` tags. Pushes to `main` publish application images to GHCR after validation succeeds. A `v*` tag publishes the same immutable images and deploys them to production when the deployment secrets below are configured.
 
 Repository variables:
 
 - `GHCR_IMAGE_NAMESPACE`: optional image namespace for pushed images. Defaults to the lowercased repository owner.
 - `NEXT_PUBLIC_API_URL`: optional API base URL baked into the web image. Defaults to `http://localhost:4001`.
 
-No repository secrets are required by the publishing workflow. If GHCR packages are private, configure pull credentials on the server or local machine that pulls the images.
+Repository secrets for automated tag deployments:
+
+- `DEPLOY_SSH_HOST`: production SSH host.
+- `DEPLOY_SSH_USER`: production SSH user.
+- `DEPLOY_SSH_KEY`: private key for the production host.
+- `DEPLOY_SSH_KNOWN_HOSTS`: pinned `known_hosts` entry for the production host.
+
+Configure the `production` GitHub environment for any required approval rules. If the deployment secrets are absent, validation and publishing still run, but the deploy job is skipped. If GHCR packages are private, configure pull credentials on the server or local machine that pulls the images.
 
 ## Publish Flow
 
@@ -58,11 +65,13 @@ ghcr.io/<namespace>/betterspend-web:sha-<commit>
 ghcr.io/<namespace>/betterspend-migrator:sha-<commit>
 ```
 
-Pulling the image tag, restarting services, running migrations, and smoke-checking production are manual operations.
+Pushing a `v*` tag runs validation, publishes the immutable `sha-<commit>` images, synchronizes the explicit deployment file list to `/opt/betterspend`, and invokes `./deploy.sh sha-<commit>` over SSH. Publish jobs for the same commit are serialized, and the workflow skips any image tag that already exists rather than overwriting it. Registry administrators must preserve that `sha-*` immutability convention for any out-of-band operations. The deploy script backs up PostgreSQL, runs migrations, restarts the application containers, and smoke-checks production. Deployments are serialized by the workflow's production concurrency group.
+
+Tag-driven deployment never synchronizes `.env.production` and does not use `rsync --delete`; production secrets remain server-side.
 
 ## Manual Operations
 
-Deploy a known image tag:
+Deploy a known image tag manually (for example, when automated deployment is not configured):
 
 ```bash
 cd /opt/betterspend
