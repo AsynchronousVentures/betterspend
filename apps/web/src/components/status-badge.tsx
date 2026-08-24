@@ -1,12 +1,12 @@
 import { Badge, type BadgeProps } from './ui/badge';
-import type { SyncRecordStatus } from '@betterspend/shared';
+import { SYNC_RECORD_STATUS, type SyncRecordStatus } from '@betterspend/shared';
 
 const SYNC_RECORD_VARIANTS: Record<SyncRecordStatus, NonNullable<BadgeProps['variant']>> = {
-  pending: 'warning',
-  queued: 'warning',
-  skipped: 'secondary',
-  synced: 'success',
-  failed: 'destructive',
+  [SYNC_RECORD_STATUS.PENDING]: 'warning',
+  [SYNC_RECORD_STATUS.QUEUED]: 'warning',
+  [SYNC_RECORD_STATUS.SKIPPED]: 'secondary',
+  [SYNC_RECORD_STATUS.SYNCED]: 'success',
+  [SYNC_RECORD_STATUS.FAILED]: 'destructive',
 };
 
 const VARIANT_MAP: Record<string, NonNullable<BadgeProps['variant']>> = {

@@ -12,24 +12,56 @@ const EXPECTED_FOREIGN_KEYS = [
     name: 'vendor_portal_tokens_vendor_id_vendors_id_fk',
     child: 'vendor_portal_tokens',
     parent: 'vendors',
+    childColumns: ['vendor_id'],
+    parentColumns: ['id'],
   },
-  { name: 'notifications_user_id_users_id_fk', child: 'notifications', parent: 'users' },
+  {
+    name: 'notifications_user_id_users_id_fk',
+    child: 'notifications',
+    parent: 'users',
+    childColumns: ['user_id'],
+    parentColumns: ['id'],
+  },
   {
     name: 'integration_connections_organization_id_organizations_id_fk',
     child: 'integration_connections',
     parent: 'organizations',
+    childColumns: ['organization_id'],
+    parentColumns: ['id'],
   },
   {
     name: 'integration_connections_connected_by_user_org_fk',
     child: 'integration_connections',
     parent: 'users',
+    childColumns: ['connected_by_user_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
   },
   {
     name: 'sync_records_connection_org_fk',
     child: 'sync_records',
     parent: 'integration_connections',
+    childColumns: ['connection_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
   },
 ] as const;
+
+type ForeignKeyDescription = {
+  name: string;
+  child: string;
+  parent: string;
+  childColumns: readonly string[];
+  parentColumns: readonly string[];
+};
+
+function foreignKeySignature(foreignKey: ForeignKeyDescription): string {
+  return [
+    foreignKey.name,
+    foreignKey.child,
+    foreignKey.parent,
+    foreignKey.childColumns.join(','),
+    foreignKey.parentColumns.join(','),
+  ].join(':');
+}
 
 async function main(): Promise<void> {
   const client = postgres(process.env.DATABASE_URL!);
@@ -39,8 +71,27 @@ async function main(): Promise<void> {
       FROM information_schema.tables
       WHERE table_schema = 'public' AND table_name IN ${client(EXPECTED_TABLES)}
     `;
-    const constraints = await client<{ name: string; child: string; parent: string }[]>`
-      SELECT fk.conname AS name, child.relname AS child, parent.relname AS parent
+    const constraints = await client<ForeignKeyDescription[]>`
+      SELECT
+        fk.conname AS name,
+        child.relname AS child,
+        parent.relname AS parent,
+        ARRAY(
+          SELECT child_attribute.attname
+          FROM unnest(fk.conkey) WITH ORDINALITY AS child_key(attnum, position)
+          JOIN pg_attribute AS child_attribute
+            ON child_attribute.attrelid = fk.conrelid
+            AND child_attribute.attnum = child_key.attnum
+          ORDER BY child_key.position
+        ) AS "childColumns",
+        ARRAY(
+          SELECT parent_attribute.attname
+          FROM unnest(fk.confkey) WITH ORDINALITY AS parent_key(attnum, position)
+          JOIN pg_attribute AS parent_attribute
+            ON parent_attribute.attrelid = fk.confrelid
+            AND parent_attribute.attnum = parent_key.attnum
+          ORDER BY parent_key.position
+        ) AS "parentColumns"
       FROM pg_constraint AS fk
       JOIN pg_class AS child ON child.oid = fk.conrelid
       JOIN pg_namespace AS child_namespace ON child_namespace.oid = child.relnamespace
@@ -52,12 +103,10 @@ async function main(): Promise<void> {
         AND fk.conname IN ${client(EXPECTED_FOREIGN_KEYS.map((item) => item.name))}
     `;
     const foundTables = new Set(tables.map((row) => row.name));
-    const foundConstraints = new Set(
-      constraints.map((row) => `${row.name}:${row.child}:${row.parent}`),
-    );
+    const foundConstraints = new Set(constraints.map(foreignKeySignature));
     const missingTables = EXPECTED_TABLES.filter((name) => !foundTables.has(name));
     const missingConstraints = EXPECTED_FOREIGN_KEYS.filter(
-      (item) => !foundConstraints.has(`${item.name}:${item.child}:${item.parent}`),
+      (item) => !foundConstraints.has(foreignKeySignature(item)),
     ).map((item) => item.name);
 
     if (missingTables.length || missingConstraints.length) {
