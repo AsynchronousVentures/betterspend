@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type { Db } from '@betterspend/db';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { CredentialCryptoService } from '../ai-providers/credential-crypto.service';
 import { OAuthService } from './oauth.service';
 import type { OAuthStateBinding } from './oauth-redis.service';
@@ -59,6 +60,7 @@ describe('OAuthService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedAxios.isAxiosError.mockReturnValue(false);
     process.env.AI_CREDENTIAL_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
     process.env.QBO_CLIENT_ID = 'client-id';
     process.env.QBO_CLIENT_SECRET = 'client-secret';
@@ -149,15 +151,67 @@ describe('OAuthService', () => {
   });
 
   it('single-flights concurrent refreshes and lets waiters read the rotated token', async () => {
+    let refreshPredicate: unknown;
+    const expiredAccessEncrypted = crypto.encrypt('expired-access');
     const connection = {
       id: '00000000-0000-0000-0000-000000000010',
       organizationId,
       provider: 'qbo',
       realmId: 'realm-1',
       realmName: null,
-      accessTokenEncrypted: crypto.encrypt('expired-access'),
+      accessTokenEncrypted: expiredAccessEncrypted,
       refreshTokenEncrypted: crypto.encrypt('refresh-token'),
       accessExpiresAt: new Date(0),
+      status: 'active',
+      scopes: 'com.intuit.quickbooks.accounting',
+      connectedByUserId: userId,
+      lastSyncAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const db = {
+      query: {
+        integrationConnections: {
+          findFirst: jest.fn(async () => ({ ...connection })),
+        },
+      },
+      update: jest.fn(() => ({
+        set: jest.fn((values: Record<string, unknown>) => ({
+          where: jest.fn(async (condition: unknown) => {
+            refreshPredicate = condition;
+            Object.assign(connection, values);
+          }),
+        })),
+      })),
+    } as unknown as Db;
+    mockedAxios.post.mockResolvedValue({
+      data: { access_token: 'rotated-access', refresh_token: 'rotated-refresh', expires_in: 3600 },
+    });
+    const service = new OAuthService(db, crypto, new FakeOAuthRedis() as never);
+
+    const [first, second] = await Promise.all([
+      service.getQboToken(organizationId),
+      service.getQboToken(organizationId),
+    ]);
+
+    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+    expect(first?.accessToken).toBe('rotated-access');
+    expect(second?.accessToken).toBe('rotated-access');
+    const query = new PgDialect().sqlToQuery(refreshPredicate as never);
+    expect(query.sql).toContain('"access_token_enc" =');
+    expect(query.params).toContain(expiredAccessEncrypted);
+  });
+
+  it('single-flights concurrent refreshes after QBO rejects a still-current token', async () => {
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
+      provider: 'qbo',
+      realmId: 'realm-1',
+      realmName: null,
+      accessTokenEncrypted: crypto.encrypt('rejected-access'),
+      refreshTokenEncrypted: crypto.encrypt('refresh-token'),
+      accessExpiresAt: new Date(Date.now() + 3_600_000),
       status: 'active',
       scopes: 'com.intuit.quickbooks.accounting',
       connectedByUserId: userId,
@@ -185,13 +239,138 @@ describe('OAuthService', () => {
     const service = new OAuthService(db, crypto, new FakeOAuthRedis() as never);
 
     const [first, second] = await Promise.all([
-      service.getQboToken(organizationId),
-      service.getQboToken(organizationId),
+      service.refreshQboToken(organizationId, 'rejected-access'),
+      service.refreshQboToken(organizationId, 'rejected-access'),
     ]);
 
     expect(mockedAxios.post).toHaveBeenCalledTimes(1);
     expect(first?.accessToken).toBe('rotated-access');
     expect(second?.accessToken).toBe('rotated-access');
+  });
+
+  it('returns no token after an invalid refresh marks the connection for reconnection', async () => {
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
+      provider: 'qbo',
+      realmId: 'realm-1',
+      realmName: null,
+      accessTokenEncrypted: crypto.encrypt('rejected-access'),
+      refreshTokenEncrypted: crypto.encrypt('invalid-refresh'),
+      accessExpiresAt: new Date(Date.now() + 3_600_000),
+      status: 'active',
+      scopes: 'com.intuit.quickbooks.accounting',
+      connectedByUserId: userId,
+      lastSyncAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const transaction = {
+      update: jest.fn(() => ({
+        set: jest.fn((values: Record<string, unknown>) => ({
+          where: jest.fn(() => ({
+            returning: jest.fn(async () => {
+              Object.assign(connection, values);
+              return [{ id: connection.id }];
+            }),
+          })),
+        })),
+      })),
+      insert: jest.fn(() => ({ values: jest.fn(async () => undefined) })),
+    };
+    const db = {
+      query: {
+        integrationConnections: { findFirst: jest.fn(async () => ({ ...connection })) },
+      },
+      transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback(transaction),
+      ),
+    } as unknown as Db;
+    const invalidGrant = Object.assign(new Error('invalid grant'), {
+      response: { data: { error: 'invalid_grant' } },
+    });
+    mockedAxios.post.mockRejectedValue(invalidGrant);
+    mockedAxios.isAxiosError.mockImplementation((error: unknown) => error === invalidGrant);
+    const service = new OAuthService(db, crypto, new FakeOAuthRedis() as never);
+
+    const result = await service.refreshQboToken(organizationId, 'rejected-access');
+
+    expect(result).toBeNull();
+    expect(connection.status).toBe('reconnect_required');
+    expect(transaction.insert).toHaveBeenCalled();
+  });
+
+  it('does not disable credentials that changed after the rejected request began', async () => {
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
+      provider: 'qbo',
+      accessTokenEncrypted: crypto.encrypt('newly-connected-access'),
+      status: 'active',
+    };
+    const db = {
+      query: { integrationConnections: { findFirst: jest.fn(async () => connection) } },
+      transaction: jest.fn(),
+    } as unknown as Db;
+    const service = new OAuthService(db, crypto, new FakeOAuthRedis() as never);
+
+    await service.markQboReconnectRequired(connection.id, 'stale-rejected-access');
+
+    expect((db as unknown as { transaction: jest.Mock }).transaction).not.toHaveBeenCalled();
+  });
+
+  it('atomically audits a reconnect transition for the rejected credential version', async () => {
+    let predicate: unknown;
+    const audits: Array<Record<string, unknown>> = [];
+    const encryptedAccessToken = crypto.encrypt('rejected-access');
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
+      provider: 'qbo',
+      accessTokenEncrypted: encryptedAccessToken,
+      status: 'active',
+    };
+    const transaction = {
+      update: jest.fn(() => ({
+        set: jest.fn(() => ({
+          where: jest.fn((condition: unknown) => ({
+            returning: jest.fn(async () => {
+              predicate = condition;
+              return [{ id: connection.id }];
+            }),
+          })),
+        })),
+      })),
+      insert: jest.fn(() => ({
+        values: jest.fn(async (values: Record<string, unknown>) => {
+          audits.push(values);
+        }),
+      })),
+    };
+    const db = {
+      query: { integrationConnections: { findFirst: jest.fn(async () => connection) } },
+      transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback(transaction),
+      ),
+    } as unknown as Db;
+    const service = new OAuthService(db, crypto, new FakeOAuthRedis() as never);
+
+    await service.markQboReconnectRequired(connection.id, 'rejected-access');
+
+    const query = new PgDialect().sqlToQuery(predicate as never);
+    expect(query.sql).toContain('"access_token_enc" =');
+    expect(query.sql).toContain('"status" =');
+    expect(query.params).toContain(encryptedAccessToken);
+    expect(audits).toEqual([
+      expect.objectContaining({
+        organizationId,
+        userId: null,
+        entityType: 'integration_connection',
+        entityId: connection.id,
+        action: 'reconnect_required',
+        metadata: { actor: 'system', provider: 'qbo', reason: 'second_401' },
+      }),
+    ]);
   });
 
   it('keeps an active connection retryable after a transient refresh failure', async () => {

@@ -7,12 +7,20 @@ import { GlExportProcessor } from './gl-export.processor';
 import { OAuthService } from './oauth.service';
 import { AiProvidersModule } from '../ai-providers/ai-providers.module';
 import { OAuthRedisService } from './oauth-redis.service';
+import { QboClientService } from './qbo-client.service';
 
 @Global()
 @Module({
   imports: [BullModule.registerQueue({ name: 'gl-export' }), AiProvidersModule],
   controllers: [GlController],
-  providers: [GlMappingsService, GlExportService, GlExportProcessor, OAuthService, OAuthRedisService],
-  exports: [GlExportService, OAuthService],
+  providers: [
+    GlMappingsService,
+    GlExportService,
+    GlExportProcessor,
+    OAuthService,
+    OAuthRedisService,
+    QboClientService,
+  ],
+  exports: [GlExportService, OAuthService, QboClientService],
 })
 export class GlModule {}

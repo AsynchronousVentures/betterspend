@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import axios from 'axios';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { auditLog, integrationConnections, type Db } from '@betterspend/db';
 import { INTEGRATION_CONNECTION_STATUS } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
@@ -32,6 +32,12 @@ type TokenResponse = {
 };
 
 type ConnectionRow = typeof integrationConnections.$inferSelect;
+
+export type QboToken = {
+  accessToken: string;
+  realmId: string;
+  connectionId: string;
+};
 
 @Injectable()
 export class OAuthService {
@@ -99,16 +105,35 @@ export class OAuthService {
     );
   }
 
-  async getQboToken(
-    organizationId: string,
-  ): Promise<{ accessToken: string; realmId: string; connectionId: string } | null> {
+  async getQboToken(organizationId: string): Promise<QboToken | null> {
     const connection = await this.getValidConnection(organizationId, 'qbo');
-    if (!connection?.accessTokenEncrypted) return null;
-    return {
-      accessToken: this.crypto.decrypt(connection.accessTokenEncrypted),
-      realmId: connection.realmId,
-      connectionId: connection.id,
-    };
+    return this.toQboToken(connection);
+  }
+
+  /** Rotates a rejected QBO token once, while concurrent callers share the same refresh. */
+  async refreshQboToken(
+    organizationId: string,
+    rejectedAccessToken: string,
+  ): Promise<QboToken | null> {
+    const connection = await this.findConnection(organizationId, 'qbo');
+    if (!connection || connection.status !== 'active') return null;
+
+    await this.refreshConnection(connection.id, 'qbo', rejectedAccessToken);
+    return this.toQboToken(await this.findConnectionById(connection.id));
+  }
+
+  async markQboReconnectRequired(connectionId: string, rejectedAccessToken: string): Promise<void> {
+    const connection = await this.findConnectionById(connectionId);
+    if (
+      !connection?.accessTokenEncrypted ||
+      connection.provider !== 'qbo' ||
+      connection.status !== INTEGRATION_CONNECTION_STATUS.ACTIVE ||
+      this.crypto.decrypt(connection.accessTokenEncrypted) !== rejectedAccessToken
+    ) {
+      return;
+    }
+
+    await this.transitionToReconnectRequired(connection, 'second_401');
   }
 
   async getXeroToken(
@@ -261,12 +286,24 @@ export class OAuthService {
     return connection?.status === 'active' ? connection : null;
   }
 
-  private async refreshConnection(connectionId: string, provider: OAuthProvider): Promise<void> {
+  private async refreshConnection(
+    connectionId: string,
+    provider: OAuthProvider,
+    rejectedAccessToken?: string,
+  ): Promise<void> {
     await this.oauthRedis.withLock(`refresh:${connectionId}`, async () => {
       const connection = await this.findConnectionById(connectionId);
       if (!connection || connection.status !== 'active') return;
-      if (connection.accessExpiresAt && Date.now() < connection.accessExpiresAt.getTime() - 60_000)
+      const encryptedAccessToken = connection.accessTokenEncrypted;
+      const accessToken = encryptedAccessToken ? this.crypto.decrypt(encryptedAccessToken) : null;
+      if (rejectedAccessToken) {
+        if (accessToken !== rejectedAccessToken) return;
+      } else if (
+        connection.accessExpiresAt &&
+        Date.now() < connection.accessExpiresAt.getTime() - 60_000
+      ) {
         return;
+      }
       if (!connection.refreshTokenEncrypted)
         throw new BadRequestException('Connection has no refresh token');
 
@@ -287,13 +324,20 @@ export class OAuthService {
             status: 'active',
             updatedAt: new Date(),
           })
-          .where(eq(integrationConnections.id, connectionId));
+          .where(
+            and(
+              eq(integrationConnections.id, connectionId),
+              eq(integrationConnections.provider, provider),
+              eq(integrationConnections.status, INTEGRATION_CONNECTION_STATUS.ACTIVE),
+              encryptedAccessToken
+                ? eq(integrationConnections.accessTokenEncrypted, encryptedAccessToken)
+                : isNull(integrationConnections.accessTokenEncrypted),
+            ),
+          );
       } catch (error: unknown) {
         if (this.isInvalidRefreshToken(error)) {
-          await this.db
-            .update(integrationConnections)
-            .set({ status: 'reconnect_required', updatedAt: new Date() })
-            .where(eq(integrationConnections.id, connectionId));
+          await this.transitionToReconnectRequired(connection, 'invalid_refresh_token');
+          return;
         }
         throw error;
       }
@@ -393,6 +437,63 @@ export class OAuthService {
   private findConnectionById(id: string): Promise<ConnectionRow | undefined> {
     return this.db.query.integrationConnections.findFirst({
       where: (connection) => eq(connection.id, id),
+    });
+  }
+
+  private toQboToken(connection: ConnectionRow | null | undefined): QboToken | null {
+    if (
+      !connection?.accessTokenEncrypted ||
+      connection.provider !== 'qbo' ||
+      connection.status !== INTEGRATION_CONNECTION_STATUS.ACTIVE
+    ) {
+      return null;
+    }
+    return {
+      accessToken: this.crypto.decrypt(connection.accessTokenEncrypted),
+      realmId: connection.realmId,
+      connectionId: connection.id,
+    };
+  }
+
+  private async transitionToReconnectRequired(
+    connection: Pick<
+      ConnectionRow,
+      'id' | 'organizationId' | 'provider' | 'accessTokenEncrypted' | 'status'
+    >,
+    reason: 'invalid_refresh_token' | 'second_401',
+  ): Promise<void> {
+    const encryptedAccessToken = connection.accessTokenEncrypted;
+    if (!encryptedAccessToken || connection.status !== 'active') return;
+
+    await this.db.transaction(async (transaction) => {
+      const [updated] = await transaction
+        .update(integrationConnections)
+        .set({ status: INTEGRATION_CONNECTION_STATUS.RECONNECT_REQUIRED, updatedAt: new Date() })
+        .where(
+          and(
+            eq(integrationConnections.id, connection.id),
+            eq(integrationConnections.provider, connection.provider),
+            eq(integrationConnections.status, INTEGRATION_CONNECTION_STATUS.ACTIVE),
+            eq(integrationConnections.accessTokenEncrypted, encryptedAccessToken),
+          ),
+        )
+        .returning({ id: integrationConnections.id });
+      if (!updated) return;
+
+      await transaction.insert(auditLog).values({
+        organizationId: connection.organizationId,
+        userId: null,
+        entityType: 'integration_connection',
+        entityId: connection.id,
+        action: 'reconnect_required',
+        changes: {
+          status: {
+            from: INTEGRATION_CONNECTION_STATUS.ACTIVE,
+            to: INTEGRATION_CONNECTION_STATUS.RECONNECT_REQUIRED,
+          },
+        },
+        metadata: { actor: 'system', provider: connection.provider, reason },
+      });
     });
   }
 

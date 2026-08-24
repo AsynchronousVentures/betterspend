@@ -1,6 +1,7 @@
 import type { Db } from '@betterspend/db';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { GlExportService } from './gl-export.service';
+import { QboConnectionRequiredError } from './qbo-client.service';
 
 describe('GlExportService', () => {
   it('does not mark a disconnected QBO export as synced or exported', async () => {
@@ -57,9 +58,18 @@ describe('GlExportService', () => {
         externalAccountName: 'Software',
       })),
     };
-    const oauth = { getQboToken: jest.fn(async () => null) };
+    const oauth = {};
+    const qboClient = {
+      request: jest.fn(async () => Promise.reject(new QboConnectionRequiredError())),
+    };
     const queue = { add: jest.fn(async () => undefined) };
-    const service = new GlExportService(db, mappings as never, oauth as never, queue as never);
+    const service = new GlExportService(
+      db,
+      mappings as never,
+      oauth as never,
+      qboClient as never,
+      queue as never,
+    );
 
     await service.processExport(
       '00000000-0000-0000-0000-000000000001',
@@ -102,7 +112,13 @@ describe('GlExportService', () => {
         }),
       })),
     } as unknown as Db;
-    const service = new GlExportService(db, {} as never, {} as never, { add: jest.fn() } as never);
+    const service = new GlExportService(
+      db,
+      {} as never,
+      {} as never,
+      {} as never,
+      { add: jest.fn() } as never,
+    );
 
     await expect(
       service.processExport(
@@ -138,7 +154,7 @@ describe('GlExportService', () => {
         },
       },
     } as unknown as Db;
-    const service = new GlExportService(db, {} as never, {} as never, {} as never);
+    const service = new GlExportService(db, {} as never, {} as never, {} as never, {} as never);
 
     await service.findJobsForInvoice('invoice-1', 'organization-1');
 
@@ -161,7 +177,7 @@ describe('GlExportService', () => {
         },
       },
     } as unknown as Db;
-    const service = new GlExportService(db, {} as never, {} as never, {} as never);
+    const service = new GlExportService(db, {} as never, {} as never, {} as never, {} as never);
 
     const [record] = await service.findJobsForInvoice('invoice-1', 'organization-1');
 
@@ -179,7 +195,7 @@ describe('GlExportService', () => {
         })),
       })),
     } as unknown as Db;
-    const service = new GlExportService(db, {} as never, {} as never, {} as never);
+    const service = new GlExportService(db, {} as never, {} as never, {} as never, {} as never);
 
     await (
       service as unknown as {
@@ -209,7 +225,7 @@ describe('GlExportService', () => {
         })),
       })),
     } as unknown as Db;
-    const service = new GlExportService(db, {} as never, {} as never, {} as never);
+    const service = new GlExportService(db, {} as never, {} as never, {} as never, {} as never);
 
     await service.processExport('organization-1', 'invoice-1', 'qbo');
 
