@@ -480,6 +480,19 @@ export class RfqService {
       );
     }
 
+    const fractionalCentLines = dto.lines.filter(
+      (line) =>
+        !Number.isFinite(line.unitPrice) ||
+        Number(line.unitPrice.toFixed(2)) !== line.unitPrice,
+    );
+    if (fractionalCentLines.length > 0) {
+      throw new BadRequestException(
+        `Response line unit prices must use at most two decimal places: ${fractionalCentLines
+          .map((line) => line.rfqLineId)
+          .join(', ')}`,
+      );
+    }
+
     // Response totals are quantity-aware and rounded per line to match the
     // numeric(14,2) line persistence, so the response total always equals
     // the sum of its persisted lines (and any awarded PO's header total).
