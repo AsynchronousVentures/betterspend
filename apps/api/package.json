@@ -7,7 +7,7 @@
     "build": "nest build",
     "start": "node dist/main",
     "lint": "eslint \"{src,apps,libs}/**/*.ts\"",
-    "test": "jest",
+    "test": "tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -54,6 +54,7 @@
     "@types/pdfkit": "^0.17.6",
     "jest": "^29.7.0",
     "ts-jest": "^29.4.12",
+    "tsx": "^4.23.12",
     "ts-node": "^10.9.0",
     "typescript": "^5.7.0"
   }

@@ -15,6 +15,8 @@ import { ContractComplianceService } from './contract-compliance.service';
 import { EntitiesService } from '../entities/entities.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { RiskScreeningService } from '../risk-screening/risk-screening.service';
+import { BudgetsService } from '../budgets/budgets.service';
+import { ApprovalEngineService } from '../approvals/approval-engine.service';
 import type { Db } from '@betterspend/db';
 import {
   auditLog,
@@ -105,6 +107,8 @@ export class PurchaseOrdersService {
     private readonly entitiesService: EntitiesService,
     private readonly exchangeRatesService: ExchangeRatesService,
     private readonly riskScreening: RiskScreeningService,
+    private readonly budgets: BudgetsService,
+    private readonly approvalEngine: ApprovalEngineService,
   ) {}
 
   private calculateLineTax(
@@ -338,6 +342,55 @@ export class PurchaseOrdersService {
       throw new BadRequestException(`Cannot issue a PO with status "${po.status}"`);
     }
 
+    const linkedRequisition = po.requisitionId
+      ? await this.db.query.requisitions.findFirst({
+          where: (record, { and, eq }) =>
+            and(eq(record.id, po.requisitionId!), eq(record.organizationId, organizationId)),
+        })
+      : null;
+    const budgetEnforcement = await this.budgets.evaluateEnforcement({
+      organizationId,
+      departmentId: linkedRequisition?.departmentId,
+      requestedAmount: Number(po.totalAmount),
+      currency: po.currency,
+      fiscalYear: new Date().getFullYear(),
+      excludeRequisitionId: linkedRequisition?.id,
+    });
+    if (budgetEnforcement.action === 'block') {
+      throw new BadRequestException(budgetEnforcement.message);
+    }
+    if (budgetEnforcement.action === 'require_approval' && po.status !== 'approved') {
+      await this.db
+        .update(purchaseOrders)
+        .set({ status: 'pending_approval', updatedAt: new Date() })
+        .where(and(eq(purchaseOrders.id, id), eq(purchaseOrders.organizationId, organizationId)));
+      try {
+        await this.approvalEngine.initiateApproval(
+          organizationId,
+          'purchase_order',
+          id,
+          issuedBy,
+          {
+            approverId: budgetEnforcement.ownerUserId!,
+            reason: budgetEnforcement.message,
+          },
+        );
+      } catch (error) {
+        await this.db
+          .update(purchaseOrders)
+          .set({ status: po.status, updatedAt: new Date() })
+          .where(and(eq(purchaseOrders.id, id), eq(purchaseOrders.organizationId, organizationId)));
+        throw error;
+      }
+      await this.audit
+        .log(organizationId, issuedBy, 'purchase_order', id, 'budget_owner_approval_requested', {
+          budgetEnforcement,
+        })
+        .catch(() => {});
+      const pending = await this.findOne(id, organizationId);
+      return { ...pending, budgetEnforcement };
+    }
+
     // Re-check at issuance: the vendor may have been flagged after the draft
     // was created, and issuance is the moment the commitment becomes real.
     const updated = await this.db.transaction(async (tx) => {
@@ -372,7 +425,7 @@ export class PurchaseOrdersService {
         entityType: 'purchase_order',
         entityId: id,
         action: 'issued',
-        changes: { totalAmount: issued.totalAmount },
+        changes: { totalAmount: issued.totalAmount, budgetEnforcement },
       });
       return issued;
     });
@@ -390,7 +443,7 @@ export class PurchaseOrdersService {
         )
         .catch(() => {});
     }
-    return updated;
+    return { ...updated, budgetEnforcement };
   }
 
   async createChangeOrder(

@@ -1,10 +1,20 @@
-import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { eq, and, sql } from 'drizzle-orm';
+import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import { eq, and, sql, gte, inArray, lt, ne } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { budgets, budgetPeriods } from '@betterspend/db';
+import { budgets, budgetPeriods, requisitions } from '@betterspend/db';
 import { EntitiesService } from '../entities/entities.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
+import { SettingsService } from '../settings/settings.service';
+import {
+  evaluateBudgetPolicy,
+  isBudgetEnforcementMode,
+  isPendingRequisitionPolicy,
+  noBudgetDecision,
+  type BudgetEnforcementDecision,
+  type BudgetEnforcementMode,
+  type PendingRequisitionPolicy,
+} from './budget-enforcement';
 
 export interface CreateBudgetInput {
   name: string;
@@ -16,6 +26,8 @@ export interface CreateBudgetInput {
   totalAmount: number;
   currency?: string;
   exchangeRate?: number;
+  enforcementMode?: BudgetEnforcementMode;
+  pendingRequisitionPolicy?: PendingRequisitionPolicy;
   periods?: Array<{
     periodType?: string;
     periodStart: string;
@@ -30,7 +42,25 @@ export class BudgetsService {
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly entitiesService: EntitiesService,
     private readonly exchangeRatesService: ExchangeRatesService,
+    private readonly settingsService: SettingsService,
   ) {}
+
+  private assertPolicyOverrides(input: {
+    enforcementMode?: string | null;
+    pendingRequisitionPolicy?: string | null;
+  }): void {
+    if (input.enforcementMode != null && !isBudgetEnforcementMode(input.enforcementMode)) {
+      throw new BadRequestException(`Unsupported budget enforcement mode "${input.enforcementMode}"`);
+    }
+    if (
+      input.pendingRequisitionPolicy != null &&
+      !isPendingRequisitionPolicy(input.pendingRequisitionPolicy)
+    ) {
+      throw new BadRequestException(
+        `Unsupported pending requisition policy "${input.pendingRequisitionPolicy}"`,
+      );
+    }
+  }
 
   async findAll(organizationId: string, entityId?: string) {
     return this.db.query.budgets.findMany({
@@ -53,6 +83,7 @@ export class BudgetsService {
   }
 
   async create(organizationId: string, input: CreateBudgetInput) {
+    this.assertPolicyOverrides(input);
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
     const currency = input.currency ?? 'USD';
     const { baseCurrency, exchangeRate, baseAmount } = await this.exchangeRatesService.convertToBase(
@@ -98,6 +129,8 @@ export class BudgetsService {
         baseTotalAmount: String(baseAmount),
         baseAllocatedAmount: '0',
         baseSpentAmount: '0',
+        enforcementMode: input.enforcementMode ?? null,
+        pendingRequisitionPolicy: input.pendingRequisitionPolicy ?? null,
       }).returning();
 
       if (input.periods && input.periods.length > 0) {
@@ -160,8 +193,16 @@ export class BudgetsService {
   async update(
     id: string,
     organizationId: string,
-    input: { name?: string; totalAmount?: number; currency?: string; entityId?: string | null },
+    input: {
+      name?: string;
+      totalAmount?: number;
+      currency?: string;
+      entityId?: string | null;
+      enforcementMode?: BudgetEnforcementMode | null;
+      pendingRequisitionPolicy?: PendingRequisitionPolicy | null;
+    },
   ) {
+    this.assertPolicyOverrides(input);
     await this.findOne(id, organizationId);
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
     const existing = await this.findOne(id, organizationId);
@@ -179,6 +220,10 @@ export class BudgetsService {
         ...(input.totalAmount !== undefined ? { totalAmount: String(input.totalAmount) } : {}),
         ...(input.currency !== undefined ? { currency: input.currency } : {}),
         ...(input.entityId !== undefined ? { entityId: input.entityId } : {}),
+        ...(input.enforcementMode !== undefined ? { enforcementMode: input.enforcementMode } : {}),
+        ...(input.pendingRequisitionPolicy !== undefined
+          ? { pendingRequisitionPolicy: input.pendingRequisitionPolicy }
+          : {}),
         baseCurrency,
         exchangeRate: String(exchangeRate),
         baseTotalAmount: String(baseAmount),
@@ -186,6 +231,127 @@ export class BudgetsService {
       })
       .where(and(eq(budgets.id, id), eq(budgets.organizationId, organizationId)));
     return this.findOne(id, organizationId);
+  }
+
+  /**
+   * Resolve and evaluate the effective department-budget policy for a spend decision.
+   * Callers only need to act on allow, block, or require_approval.
+   */
+  async evaluateEnforcement(input: {
+    organizationId: string;
+    departmentId?: string | null;
+    requestedAmount: number;
+    currency: string;
+    fiscalYear: number;
+    excludeRequisitionId?: string | null;
+  }): Promise<BudgetEnforcementDecision> {
+    if (!input.departmentId) return noBudgetDecision();
+
+    const budget = await this.db.query.budgets.findFirst({
+      where: (record, { and, eq }) => and(
+        eq(record.organizationId, input.organizationId),
+        eq(record.budgetType, 'department'),
+        eq(record.scopeId, input.departmentId!),
+        eq(record.fiscalYear, input.fiscalYear),
+      ),
+    });
+    if (!budget) return noBudgetDecision();
+
+    const settings = await this.settingsService.getAll(input.organizationId);
+    const mode = isBudgetEnforcementMode(budget.enforcementMode)
+      ? budget.enforcementMode
+      : isBudgetEnforcementMode(settings.budget_enforcement_mode)
+        ? settings.budget_enforcement_mode
+        : 'hard_stop';
+    const pendingPolicy = isPendingRequisitionPolicy(budget.pendingRequisitionPolicy)
+      ? budget.pendingRequisitionPolicy
+      : isPendingRequisitionPolicy(settings.budget_pending_requisition_policy)
+        ? settings.budget_pending_requisition_policy
+        : 'approved_only';
+
+    const statuses = pendingPolicy === 'include_pending'
+      ? ['submitted', 'pending_approval', 'approved', 'converted']
+      : ['approved', 'converted'];
+    const start = new Date(Date.UTC(input.fiscalYear, 0, 1));
+    const end = new Date(Date.UTC(input.fiscalYear + 1, 0, 1));
+    const commitmentConditions = [
+      eq(requisitions.organizationId, input.organizationId),
+      eq(requisitions.departmentId, input.departmentId),
+      inArray(requisitions.status, statuses),
+      gte(requisitions.createdAt, start),
+      lt(requisitions.createdAt, end),
+    ];
+    if (input.excludeRequisitionId) {
+      commitmentConditions.push(ne(requisitions.id, input.excludeRequisitionId));
+    }
+
+    const [commitmentGroups, department] = await Promise.all([
+      this.db
+        .select({
+          currency: requisitions.currency,
+          amount: sql<string>`coalesce(sum(${requisitions.totalAmount}), 0)`,
+        })
+        .from(requisitions)
+        .where(and(...commitmentConditions))
+        .groupBy(requisitions.currency),
+      mode === 'owner_approval'
+        ? this.db.query.departments.findFirst({
+            where: (record, { and, eq }) => and(
+              eq(record.id, input.departmentId!),
+              eq(record.organizationId, input.organizationId),
+            ),
+          })
+        : Promise.resolve(undefined),
+    ]);
+
+    const convertedCommitments = await Promise.all(
+      commitmentGroups.map((group) => this.exchangeRatesService.convertToBase(
+        input.organizationId,
+        Number(group.amount),
+        group.currency,
+      )),
+    );
+    const committedAmount = convertedCommitments.reduce((sum, item) => sum + item.baseAmount, 0);
+    const requested = await this.exchangeRatesService.convertToBase(
+      input.organizationId,
+      input.requestedAmount,
+      input.currency,
+    );
+
+    let ownerUserId: string | null = null;
+    if (department?.budgetOwnerId) {
+      const owner = await this.db.query.users.findFirst({
+        where: (record, { and, eq }) => and(
+          eq(record.id, department.budgetOwnerId!),
+          eq(record.organizationId, input.organizationId),
+          eq(record.isActive, true),
+        ),
+      });
+      ownerUserId = owner?.id ?? null;
+    }
+
+    const baseTotalAmount = Number(budget.baseTotalAmount);
+    const baseSpentAmount = Number(budget.baseSpentAmount);
+    const exchangeRate = Number(budget.exchangeRate || '1');
+
+    return evaluateBudgetPolicy({
+      budget: {
+        id: budget.id,
+        name: budget.name,
+        currency: requested.baseCurrency,
+        totalAmount: baseTotalAmount !== 0
+          ? baseTotalAmount
+          : Number(budget.totalAmount) * exchangeRate,
+        spentAmount: baseSpentAmount !== 0
+          ? baseSpentAmount
+          : Number(budget.spentAmount) * exchangeRate,
+      },
+      mode,
+      pendingPolicy,
+      committedAmount,
+      requestedAmount: requested.baseAmount,
+      ownerUserId,
+    });
   }
 
   async addPeriod(

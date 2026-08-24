@@ -253,6 +253,13 @@
       "when": 1775703500000,
       "tag": "0035_integration_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1787576303000,
+      "tag": "0036_budget_enforcement",
+      "breakpoints": true
     }
   ]
 }

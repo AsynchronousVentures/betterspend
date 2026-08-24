@@ -50,7 +50,7 @@ export class SettingsController {
 
   @Put('approval-policy')
   @Roles('admin')
-  @ApiOperation({ summary: 'Update approval policy settings (auto-approval threshold)' })
+  @ApiOperation({ summary: 'Update approval and budget enforcement policy settings' })
   updateApprovalPolicy(@Body() body: unknown, @CurrentOrgId() orgId: string) {
     const parsed = approvalPolicySettingsSchema.parse(body);
     return this.settingsService.updateMany(orgId, parsed as Record<string, string>);

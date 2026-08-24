@@ -1,8 +1,19 @@
 import {
-  Controller, Get, Post, Patch, Delete, Param, Body, Query, ParseUUIDPipe, HttpCode, HttpStatus,
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Param,
+  Body,
+  Query,
+  ParseUUIDPipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { BudgetsService, CreateBudgetInput } from './budgets.service';
+import type { BudgetEnforcementMode, PendingRequisitionPolicy } from './budget-enforcement';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 
 @ApiTags('budgets')
@@ -13,10 +24,7 @@ export class BudgetsController {
   @Get('forecast/summary')
   @ApiOperation({ summary: 'Org-level budget forecast summary' })
   @ApiQuery({ name: 'fiscalYear', required: false, type: Number })
-  getForecastSummary(
-    @CurrentOrgId() orgId: string,
-    @Query('fiscalYear') fiscalYear?: string,
-  ) {
+  getForecastSummary(@CurrentOrgId() orgId: string, @Query('fiscalYear') fiscalYear?: string) {
     const year = fiscalYear ? parseInt(fiscalYear, 10) : new Date().getFullYear();
     return this.budgetsService.getForecastSummary(orgId, year);
   }
@@ -24,10 +32,7 @@ export class BudgetsController {
   @Get('forecast')
   @ApiOperation({ summary: 'Per-budget consumption forecast with linear regression' })
   @ApiQuery({ name: 'fiscalYear', required: false, type: Number })
-  getForecast(
-    @CurrentOrgId() orgId: string,
-    @Query('fiscalYear') fiscalYear?: string,
-  ) {
+  getForecast(@CurrentOrgId() orgId: string, @Query('fiscalYear') fiscalYear?: string) {
     const year = fiscalYear ? parseInt(fiscalYear, 10) : new Date().getFullYear();
     return this.budgetsService.getForecast(orgId, year);
   }
@@ -44,7 +49,10 @@ export class BudgetsController {
     @Query('fiscalYear') fiscalYear: string,
   ) {
     return this.budgetsService.checkBudget(
-      orgId, departmentId, parseFloat(amount), parseInt(fiscalYear, 10),
+      orgId,
+      departmentId,
+      parseFloat(amount),
+      parseInt(fiscalYear, 10),
     );
   }
 
@@ -70,7 +78,15 @@ export class BudgetsController {
   @ApiOperation({ summary: 'Update a budget' })
   update(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { name?: string; totalAmount?: number; currency?: string; entityId?: string },
+    @Body()
+    body: {
+      name?: string;
+      totalAmount?: number;
+      currency?: string;
+      entityId?: string;
+      enforcementMode?: BudgetEnforcementMode | null;
+      pendingRequisitionPolicy?: PendingRequisitionPolicy | null;
+    },
     @CurrentOrgId() orgId: string,
   ) {
     return this.budgetsService.update(id, orgId, body);
