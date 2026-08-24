@@ -5,9 +5,10 @@ import { SettingsModule } from '../settings/settings.module';
 import { InvoicesModule } from '../invoices/invoices.module';
 import { VendorsModule } from '../vendors/vendors.module';
 import { CatalogModule } from '../catalog/catalog.module';
+import { MessagesModule } from '../messages/messages.module';
 
 @Module({
-  imports: [SettingsModule, InvoicesModule, VendorsModule, CatalogModule],
+  imports: [SettingsModule, InvoicesModule, VendorsModule, CatalogModule, MessagesModule],
   controllers: [VendorPortalController],
   providers: [VendorPortalService],
 })

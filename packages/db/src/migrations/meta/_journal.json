@@ -232,6 +232,13 @@
       "when": 1775703200000,
       "tag": "0032_license_renewal_refs",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1775703300000,
+      "tag": "0033_messages",
+      "breakpoints": true
     }
   ]
 }

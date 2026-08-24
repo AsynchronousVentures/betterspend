@@ -88,7 +88,9 @@ export class VendorPortalService {
 
     const vendorEmail = (vendor.contactInfo as any)?.email;
     if (!vendorEmail) {
-      this.logger.warn(`Vendor ${vendorId} has no contact email; access link generated: ${portalLink}`);
+      this.logger.warn(
+        `Vendor ${vendorId} has no contact email; access link generated: ${portalLink}`,
+      );
       return { success: true };
     }
 
@@ -130,12 +132,21 @@ export class VendorPortalService {
   }
 
   async validateToken(token: string): Promise<string> {
+    return (await this.validateTokenContext(token)).vendorId;
+  }
+
+  async validateTokenContext(token: string): Promise<{ vendorId: string; organizationId: string }> {
     const record = await this.db.query.vendorPortalTokens.findFirst({
       where: (t, { and, eq, gt }) =>
         and(eq(t.token, token), eq(t.used, false), gt(t.expiresAt, new Date())),
     });
     if (!record) throw new UnauthorizedException('Invalid or expired portal token');
-    return record.vendorId;
+    const vendor = await this.db.query.vendors.findFirst({
+      where: (v, { eq }) => eq(v.id, record.vendorId),
+      columns: { organizationId: true },
+    });
+    if (!vendor) throw new UnauthorizedException('Invalid portal token vendor');
+    return { vendorId: record.vendorId, organizationId: vendor.organizationId };
   }
 
   async getVendorDashboard(vendorId: string, orgId: string) {
@@ -198,7 +209,8 @@ export class VendorPortalService {
         and(eq(p.id, poId), eq(p.vendorId, vendorId), eq(p.organizationId, orgId)),
       with: { lines: true },
     });
-    if (!po) throw new ForbiddenException('Purchase order not found or does not belong to your account');
+    if (!po)
+      throw new ForbiddenException('Purchase order not found or does not belong to your account');
     return po;
   }
 
@@ -208,7 +220,8 @@ export class VendorPortalService {
       where: (p, { and, eq }) =>
         and(eq(p.id, data.purchaseOrderId), eq(p.vendorId, vendorId), eq(p.organizationId, orgId)),
     });
-    if (!po) throw new ForbiddenException('Purchase order not found or does not belong to your account');
+    if (!po)
+      throw new ForbiddenException('Purchase order not found or does not belong to your account');
 
     // Check for duplicate invoice
     const duplicate = await this.db.query.invoices.findFirst({
@@ -220,28 +233,33 @@ export class VendorPortalService {
         ),
     });
     if (duplicate) {
-      throw new ForbiddenException(`Invoice number ${data.invoiceNumber} already exists for this vendor`);
+      throw new ForbiddenException(
+        `Invoice number ${data.invoiceNumber} already exists for this vendor`,
+      );
     }
 
     const subtotal = data.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
 
     const invoiceId = await this.db.transaction(async (tx) => {
       const internalNumber = await this.sequenceService.next(orgId, 'invoice', tx);
-      const [inv] = await tx.insert(invoices).values({
-        organizationId: orgId,
-        purchaseOrderId: data.purchaseOrderId,
-        vendorId,
-        invoiceNumber: data.invoiceNumber,
-        internalNumber,
-        invoiceDate: new Date(data.invoiceDate),
-        dueDate: data.dueDate ? new Date(data.dueDate) : null,
-        currency: data.currency ?? 'USD',
-        subtotal: String(subtotal.toFixed(2)),
-        taxAmount: '0',
-        totalAmount: String(subtotal.toFixed(2)),
-        status: 'pending_match',
-        matchStatus: 'unmatched',
-      }).returning();
+      const [inv] = await tx
+        .insert(invoices)
+        .values({
+          organizationId: orgId,
+          purchaseOrderId: data.purchaseOrderId,
+          vendorId,
+          invoiceNumber: data.invoiceNumber,
+          internalNumber,
+          invoiceDate: new Date(data.invoiceDate),
+          dueDate: data.dueDate ? new Date(data.dueDate) : null,
+          currency: data.currency ?? 'USD',
+          subtotal: String(subtotal.toFixed(2)),
+          taxAmount: '0',
+          totalAmount: String(subtotal.toFixed(2)),
+          status: 'pending_match',
+          matchStatus: 'unmatched',
+        })
+        .returning();
 
       if (data.lines.length > 0) {
         await tx.insert(invoiceLines).values(
@@ -263,9 +281,11 @@ export class VendorPortalService {
     // Auto-run 3-way match
     const matchResult = await this.matchingService.runMatch(invoiceId);
     const newStatus =
-      matchResult.matchStatus === 'full_match' ? 'matched'
-        : matchResult.matchStatus === 'exception' ? 'exception'
-        : 'partial_match';
+      matchResult.matchStatus === 'full_match'
+        ? 'matched'
+        : matchResult.matchStatus === 'exception'
+          ? 'exception'
+          : 'partial_match';
     await this.db
       .update(invoices)
       .set({ status: newStatus, updatedAt: new Date() })

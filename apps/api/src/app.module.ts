@@ -51,6 +51,7 @@ import { PaymentRunsModule } from './modules/payment-runs/payment-runs.module';
 import { IntakeConciergeModule } from './modules/intake-concierge/intake-concierge.module';
 import { ComplianceModule } from './modules/compliance/compliance.module';
 import { AiProvidersModule } from './modules/ai-providers/ai-providers.module';
+import { MessagesModule } from './modules/messages/messages.module';
 
 @Module({
   imports: [
@@ -91,6 +92,7 @@ import { AiProvidersModule } from './modules/ai-providers/ai-providers.module';
     IntakeConciergeModule,
     ComplianceModule,
     AiProvidersModule,
+    MessagesModule,
     AuditModule,
     ReportsModule,
     SearchModule,

@@ -16,8 +16,16 @@ import {
   CardTitle,
 } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../../components/ui/table';
 import { Textarea } from '../../../components/ui/textarea';
+import { MessageThread } from '../../../components/message-thread';
 
 interface POLine {
   id: string;
@@ -118,10 +126,19 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
         .then((data) => {
           setPo(data);
           if (data.poType === 'blanket') {
-            api.purchaseOrders.releases(pid).then(setReleases).catch(() => {});
+            api.purchaseOrders
+              .releases(pid)
+              .then(setReleases)
+              .catch(() => {});
           }
-          api.purchaseOrders.receivingSummary(pid).then(setReceivingLines).catch(() => {});
-          api.purchaseOrders.complianceReport(pid).then(setComplianceReport).catch(() => {});
+          api.purchaseOrders
+            .receivingSummary(pid)
+            .then(setReceivingLines)
+            .catch(() => {});
+          api.purchaseOrders
+            .complianceReport(pid)
+            .then(setComplianceReport)
+            .catch(() => {});
         })
         .catch(() => setPo(null))
         .finally(() => setLoading(false));
@@ -270,7 +287,8 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
   const canCancel = po.status !== 'closed' && po.status !== 'cancelled' && po.status !== 'received';
   const canReceive = ['approved', 'issued', 'partially_received'].includes(po.status);
   const isBlanket = po.poType === 'blanket';
-  const canCreateRelease = isBlanket && ['issued', 'approved', 'partially_received'].includes(po.status);
+  const canCreateRelease =
+    isBlanket && ['issued', 'approved', 'partially_received'].includes(po.status);
   const blanketLimit = po.blanketTotalLimit ? parseFloat(po.blanketTotalLimit) : null;
   const blanketReleased = parseFloat(po.blanketReleasedAmount ?? '0');
   const blanketRemaining = blanketLimit !== null ? blanketLimit - blanketReleased : null;
@@ -278,7 +296,9 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
-      <Breadcrumbs items={[{ label: 'Purchase Orders', href: '/purchase-orders' }, { label: po.number }]} />
+      <Breadcrumbs
+        items={[{ label: 'Purchase Orders', href: '/purchase-orders' }, { label: po.number }]}
+      />
 
       <PageHeader
         title={po.number}
@@ -306,7 +326,10 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
       <div className="grid gap-4 md:grid-cols-3">
         <StatCard label="Total" value={formatCurrency(po.totalAmount, po.currency)} />
         <StatCard label="Created" value={new Date(po.createdAt).toLocaleDateString()} />
-        <StatCard label="Issued" value={po.issuedAt ? new Date(po.issuedAt).toLocaleDateString() : '—'} />
+        <StatCard
+          label="Issued"
+          value={po.issuedAt ? new Date(po.issuedAt).toLocaleDateString() : '—'}
+        />
       </div>
 
       <Card className="rounded-lg">
@@ -333,27 +356,55 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
         <Card className="rounded-lg border-amber-200/70 bg-amber-50/60">
           <CardHeader>
             <CardTitle className="text-xl">Blanket PO Summary</CardTitle>
-            <CardDescription>Release utilization, term boundaries, and remaining spending room.</CardDescription>
+            <CardDescription>
+              Release utilization, term boundaries, and remaining spending room.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-              {po.blanketStartDate ? <DetailField label="Start Date" value={new Date(po.blanketStartDate).toLocaleDateString()} /> : null}
-              {po.blanketEndDate ? <DetailField label="End Date" value={new Date(po.blanketEndDate).toLocaleDateString()} /> : null}
-              {blanketLimit !== null ? <DetailField label="Total Limit" value={formatCurrency(blanketLimit, po.currency)} /> : null}
+              {po.blanketStartDate ? (
+                <DetailField
+                  label="Start Date"
+                  value={new Date(po.blanketStartDate).toLocaleDateString()}
+                />
+              ) : null}
+              {po.blanketEndDate ? (
+                <DetailField
+                  label="End Date"
+                  value={new Date(po.blanketEndDate).toLocaleDateString()}
+                />
+              ) : null}
+              {blanketLimit !== null ? (
+                <DetailField
+                  label="Total Limit"
+                  value={formatCurrency(blanketLimit, po.currency)}
+                />
+              ) : null}
               <DetailField label="Released" value={formatCurrency(blanketReleased, po.currency)} />
-              {blanketRemaining !== null ? <DetailField label="Remaining" value={formatCurrency(blanketRemaining, po.currency)} /> : null}
+              {blanketRemaining !== null ? (
+                <DetailField
+                  label="Remaining"
+                  value={formatCurrency(blanketRemaining, po.currency)}
+                />
+              ) : null}
             </div>
             {blanketLimit !== null ? (
               <div className="space-y-2">
                 <div className="h-2 overflow-hidden rounded-full bg-amber-200">
                   <div
                     className={`h-full rounded-full ${
-                      blanketPct >= 100 ? 'bg-rose-600' : blanketPct >= 80 ? 'bg-amber-500' : 'bg-emerald-600'
+                      blanketPct >= 100
+                        ? 'bg-rose-600'
+                        : blanketPct >= 80
+                          ? 'bg-amber-500'
+                          : 'bg-emerald-600'
                     }`}
                     style={{ width: `${Math.min(100, blanketPct)}%` }}
                   />
                 </div>
-                <div className="text-sm text-muted-foreground">{blanketPct.toFixed(1)}% utilized</div>
+                <div className="text-sm text-muted-foreground">
+                  {blanketPct.toFixed(1)}% utilized
+                </div>
               </div>
             ) : null}
           </CardContent>
@@ -392,7 +443,9 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
                       <TableCell>{Number(line.qty)}</TableCell>
                       <TableCell>{line.uom}</TableCell>
                       <TableCell>{formatCurrency(line.unitPrice, po.currency)}</TableCell>
-                      <TableCell className="font-medium text-foreground">{formatCurrency(lineTotal, po.currency)}</TableCell>
+                      <TableCell className="font-medium text-foreground">
+                        {formatCurrency(lineTotal, po.currency)}
+                      </TableCell>
                     </TableRow>
                   );
                 })}
@@ -400,7 +453,9 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
                   <TableCell colSpan={5} className="text-right font-semibold text-muted-foreground">
                     Total
                   </TableCell>
-                  <TableCell className="font-semibold text-foreground">{formatCurrency(po.totalAmount, po.currency)}</TableCell>
+                  <TableCell className="font-semibold text-foreground">
+                    {formatCurrency(po.totalAmount, po.currency)}
+                  </TableCell>
                 </TableRow>
               </TableBody>
             </Table>
@@ -413,7 +468,8 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
           <CardHeader>
             <CardTitle className="text-xl">Contract Compliance</CardTitle>
             <CardDescription>
-              {complianceReport.summary?.compliantLines ?? 0} of {complianceReport.summary?.totalLines ?? 0} lines compliant.
+              {complianceReport.summary?.compliantLines ?? 0} of{' '}
+              {complianceReport.summary?.totalLines ?? 0} lines compliant.
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-0">
@@ -431,22 +487,40 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
               <TableBody>
                 {complianceReport.lines.map((line: any, index: number) => {
                   const st = line.contractComplianceStatus ?? 'no_contract';
-                  const delta = line.contractComplianceDeltaPercent ? parseFloat(line.contractComplianceDeltaPercent) : null;
+                  const delta = line.contractComplianceDeltaPercent
+                    ? parseFloat(line.contractComplianceDeltaPercent)
+                    : null;
                   return (
                     <TableRow key={line.id}>
-                      <TableCell className="text-muted-foreground">{line.lineNumber ?? index + 1}</TableCell>
-                      <TableCell>{line.description}</TableCell>
-                      <TableCell>{line.unitPrice != null ? formatCurrency(line.unitPrice, po.currency) : '—'}</TableCell>
-                      <TableCell>
-                        {line.contractedUnitPrice != null ? formatCurrency(line.contractedUnitPrice, po.currency) : '—'}
+                      <TableCell className="text-muted-foreground">
+                        {line.lineNumber ?? index + 1}
                       </TableCell>
-                      <TableCell className={delta != null && delta > 0 ? 'text-amber-700' : 'text-muted-foreground'}>
+                      <TableCell>{line.description}</TableCell>
+                      <TableCell>
+                        {line.unitPrice != null ? formatCurrency(line.unitPrice, po.currency) : '—'}
+                      </TableCell>
+                      <TableCell>
+                        {line.contractedUnitPrice != null
+                          ? formatCurrency(line.contractedUnitPrice, po.currency)
+                          : '—'}
+                      </TableCell>
+                      <TableCell
+                        className={
+                          delta != null && delta > 0 ? 'text-amber-700' : 'text-muted-foreground'
+                        }
+                      >
                         {delta != null ? `${delta > 0 ? '+' : ''}${delta.toFixed(1)}%` : '—'}
                       </TableCell>
                       <TableCell>
                         <Badge
                           variant={
-                            st === 'compliant' ? 'success' : st === 'deviation' ? 'warning' : st === 'exempt' ? 'outline' : 'secondary'
+                            st === 'compliant'
+                              ? 'success'
+                              : st === 'deviation'
+                                ? 'warning'
+                                : st === 'exempt'
+                                  ? 'outline'
+                                  : 'secondary'
                           }
                         >
                           {st.replace(/_/g, ' ')}
@@ -465,7 +539,9 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
         <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Receiving Progress</CardTitle>
-            <CardDescription>Ordered, received, rejected, and outstanding quantities by line.</CardDescription>
+            <CardDescription>
+              Ordered, received, rejected, and outstanding quantities by line.
+            </CardDescription>
           </CardHeader>
           <CardContent className="pt-0">
             <Table>
@@ -487,12 +563,28 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
                     <TableRow key={line.poLineId}>
                       <TableCell className="text-muted-foreground">{line.lineNumber}</TableCell>
                       <TableCell>{line.description}</TableCell>
-                      <TableCell>{Number(line.orderedQty)} {line.uom}</TableCell>
-                      <TableCell className="font-medium text-emerald-700">{Number(line.receivedQty)}</TableCell>
-                      <TableCell className={parseFloat(line.rejectedQty) > 0 ? 'text-rose-700' : 'text-muted-foreground'}>
+                      <TableCell>
+                        {Number(line.orderedQty)} {line.uom}
+                      </TableCell>
+                      <TableCell className="font-medium text-emerald-700">
+                        {Number(line.receivedQty)}
+                      </TableCell>
+                      <TableCell
+                        className={
+                          parseFloat(line.rejectedQty) > 0
+                            ? 'text-rose-700'
+                            : 'text-muted-foreground'
+                        }
+                      >
                         {Number(line.rejectedQty)}
                       </TableCell>
-                      <TableCell className={parseFloat(line.outstandingQty) > 0 ? 'font-medium text-amber-700' : 'text-muted-foreground'}>
+                      <TableCell
+                        className={
+                          parseFloat(line.outstandingQty) > 0
+                            ? 'font-medium text-amber-700'
+                            : 'text-muted-foreground'
+                        }
+                      >
                         {Number(line.outstandingQty)}
                       </TableCell>
                       <TableCell className="min-w-[140px]">
@@ -500,7 +592,11 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
                           <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
                             <div
                               className={`h-full rounded-full ${
-                                pct >= 100 ? 'bg-emerald-600' : pct >= 50 ? 'bg-sky-600' : 'bg-amber-500'
+                                pct >= 100
+                                  ? 'bg-emerald-600'
+                                  : pct >= 50
+                                    ? 'bg-sky-600'
+                                    : 'bg-amber-500'
                               }`}
                               style={{ width: `${pct}%` }}
                             />
@@ -522,7 +618,9 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
           <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-1.5">
               <CardTitle className="text-xl">Releases</CardTitle>
-              <CardDescription>{releases.length} release{releases.length === 1 ? '' : 's'} against this blanket PO.</CardDescription>
+              <CardDescription>
+                {releases.length} release{releases.length === 1 ? '' : 's'} against this blanket PO.
+              </CardDescription>
             </div>
             {canCreateRelease ? (
               <Button type="button" onClick={() => setReleaseDialogOpen(true)}>
@@ -550,18 +648,32 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
                 <TableBody>
                   {releases.map((release) => (
                     <TableRow key={release.id}>
-                      <TableCell className="font-medium text-foreground">#{release.releaseNumber}</TableCell>
+                      <TableCell className="font-medium text-foreground">
+                        #{release.releaseNumber}
+                      </TableCell>
                       <TableCell>{formatCurrency(release.amount, po.currency)}</TableCell>
                       <TableCell>{release.description ?? '—'}</TableCell>
                       <TableCell>
-                        <Badge variant={release.status === 'approved' ? 'success' : release.status === 'cancelled' ? 'destructive' : 'secondary'}>
+                        <Badge
+                          variant={
+                            release.status === 'approved'
+                              ? 'success'
+                              : release.status === 'cancelled'
+                                ? 'destructive'
+                                : 'secondary'
+                          }
+                        >
                           {release.status}
                         </Badge>
                       </TableCell>
                       <TableCell>{new Date(release.createdAt).toLocaleDateString()}</TableCell>
                       <TableCell className="text-right">
                         {release.status !== 'cancelled' ? (
-                          <Button size="sm" variant="destructive" onClick={() => cancelRelease(release.id)}>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => cancelRelease(release.id)}
+                          >
                             Cancel
                           </Button>
                         ) : null}
@@ -579,7 +691,9 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
         <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Version History</CardTitle>
-            <CardDescription>Change-order history and revision trail for this purchase order.</CardDescription>
+            <CardDescription>
+              Change-order history and revision trail for this purchase order.
+            </CardDescription>
           </CardHeader>
           <CardContent className="pt-0">
             <Table>
@@ -593,7 +707,9 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
               <TableBody>
                 {versions.map((version) => (
                   <TableRow key={version.id}>
-                    <TableCell className="font-medium text-foreground">V{version.version}</TableCell>
+                    <TableCell className="font-medium text-foreground">
+                      V{version.version}
+                    </TableCell>
                     <TableCell>{version.changeReason ?? 'Initial version'}</TableCell>
                     <TableCell>{new Date(version.createdAt).toLocaleDateString()}</TableCell>
                   </TableRow>
@@ -603,6 +719,19 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
           </CardContent>
         </Card>
       ) : null}
+
+      <Card className="rounded-lg">
+        <CardHeader>
+          <CardTitle className="text-xl">Messages</CardTitle>
+          <CardDescription>
+            Threaded conversation with {po.vendor?.name ?? 'the supplier'}. Messages are permanent
+            and visible to both sides in the vendor portal.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <MessageThread threadType="po" threadId={id} />
+        </CardContent>
+      </Card>
 
       <div className="flex flex-wrap gap-3">
         {canIssue ? (
@@ -624,7 +753,12 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
           </Button>
         ) : null}
         {canCancel ? (
-          <Button type="button" variant="destructive" onClick={cancelPO} disabled={actionLoading !== null}>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={cancelPO}
+            disabled={actionLoading !== null}
+          >
             {actionLoading === 'cancel' ? 'Cancelling...' : 'Cancel PO'}
           </Button>
         ) : null}
@@ -686,7 +820,9 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
               <h2 className="text-xl font-semibold text-foreground">New Blanket Release</h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 Release funds against this blanket PO.
-                {blanketRemaining !== null ? ` Remaining: ${formatCurrency(blanketRemaining, po.currency)}` : ''}
+                {blanketRemaining !== null
+                  ? ` Remaining: ${formatCurrency(blanketRemaining, po.currency)}`
+                  : ''}
               </p>
             </div>
             <Field label={`Amount (${po.currency})`}>
@@ -738,7 +874,9 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-border/70 bg-background/70 p-4">
-      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </div>
       <div className="mt-2 text-sm text-foreground">{value}</div>
     </div>
   );
@@ -748,35 +886,29 @@ function StatCard({ label, value }: { label: string; value: string }) {
   return (
     <Card className="rounded-lg border-border/70 bg-card/95">
       <CardContent className="p-6">
-        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
-        <div className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-foreground">{value}</div>
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          {label}
+        </div>
+        <div className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-foreground">
+          {value}
+        </div>
       </CardContent>
     </Card>
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="space-y-2">
-      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</span>
+      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </span>
       {children}
     </label>
   );
 }
 
-function ModalShell({
-  children,
-  onClose,
-}: {
-  children: React.ReactNode;
-  onClose: () => void;
-}) {
+function ModalShell({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4"

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
+import { MessageThread } from '../../components/message-thread';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -57,7 +58,8 @@ export default function RfqPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailTab, setDetailTab] = useState<'overview' | 'responses'>('overview');
+  const [detailTab, setDetailTab] = useState<'overview' | 'responses' | 'messages'>('overview');
+  const [messageRecipientVendorId, setMessageRecipientVendorId] = useState('');
   const [responseSort, setResponseSort] = useState<'price' | 'supplier' | 'delivery'>('price');
   const [rejectDrafts, setRejectDrafts] = useState<Record<string, string>>({});
   const [awardingId, setAwardingId] = useState<string | null>(null);
@@ -79,7 +81,10 @@ export default function RfqPage() {
 
   useEffect(() => {
     void loadRfqs();
-    api.vendors.list().then((v: any[]) => setVendors(v)).catch(() => {});
+    api.vendors
+      .list()
+      .then((v: any[]) => setVendors(v))
+      .catch(() => {});
   }, []);
 
   async function loadRfqs() {
@@ -96,6 +101,7 @@ export default function RfqPage() {
 
   async function loadDetail(id: string) {
     setSelected(id);
+    setMessageRecipientVendorId('');
     setDetailLoading(true);
     setDetailTab('overview');
     try {
@@ -209,7 +215,8 @@ export default function RfqPage() {
 
   const sortedResponses = detail?.responses
     ? [...detail.responses].sort((a: any, b: any) => {
-        if (responseSort === 'supplier') return (a.vendor?.name ?? '').localeCompare(b.vendor?.name ?? '');
+        if (responseSort === 'supplier')
+          return (a.vendor?.name ?? '').localeCompare(b.vendor?.name ?? '');
         if (responseSort === 'delivery') {
           const aLead = Math.min(
             ...(a.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER),
@@ -276,7 +283,9 @@ export default function RfqPage() {
                   <CardContent className="space-y-3 p-5">
                     <div className="flex flex-wrap items-center gap-3">
                       <span className="font-mono text-xs text-muted-foreground">{rfq.number}</span>
-                      <Badge variant={statusVariant(rfq.status) as any}>{rfq.status.toUpperCase()}</Badge>
+                      <Badge variant={statusVariant(rfq.status) as any}>
+                        {rfq.status.toUpperCase()}
+                      </Badge>
                       {rfq.dueDate ? (
                         <span className="ml-auto text-xs text-muted-foreground">
                           Due: {new Date(rfq.dueDate).toLocaleDateString()}
@@ -310,9 +319,18 @@ export default function RfqPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="font-mono text-xs text-muted-foreground">{detail.number}</div>
-                      <div className="mt-1 text-xl font-semibold text-foreground">{detail.title}</div>
+                      <div className="mt-1 text-xl font-semibold text-foreground">
+                        {detail.title}
+                      </div>
                     </div>
-                    <Button type="button" variant="ghost" onClick={() => { setSelected(null); setDetail(null); }}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => {
+                        setSelected(null);
+                        setDetail(null);
+                      }}
+                    >
                       Close
                     </Button>
                   </div>
@@ -328,7 +346,11 @@ export default function RfqPage() {
                       </Button>
                     ) : null}
                     {detail.status === 'open' ? (
-                      <Button type="button" variant="outline" onClick={() => void handleClose(detail.id)}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void handleClose(detail.id)}
+                      >
                         Close RFQ
                       </Button>
                     ) : null}
@@ -338,18 +360,45 @@ export default function RfqPage() {
                     {[
                       { key: 'overview', label: 'Overview' },
                       { key: 'responses', label: `Responses (${detail.responses?.length ?? 0})` },
+                      { key: 'messages', label: 'Messages' },
                     ].map((tab) => (
                       <Button
                         key={tab.key}
                         type="button"
                         size="sm"
                         variant={detailTab === tab.key ? 'default' : 'outline'}
-                        onClick={() => setDetailTab(tab.key as 'overview' | 'responses')}
+                        onClick={() =>
+                          setDetailTab(tab.key as 'overview' | 'responses' | 'messages')
+                        }
                       >
                         {tab.label}
                       </Button>
                     ))}
                   </div>
+
+                  {detailTab === 'messages' ? (
+                    <div className="space-y-3">
+                      <label className="block space-y-1 text-sm">
+                        <span className="font-medium text-foreground">Recipient</span>
+                        <Select
+                          value={messageRecipientVendorId}
+                          onChange={(event) => setMessageRecipientVendorId(event.target.value)}
+                        >
+                          <option value="">All invited vendors</option>
+                          {detail.invitations?.map((invitation: any) => (
+                            <option key={invitation.vendorId} value={invitation.vendorId}>
+                              {invitation.vendor?.name ?? invitation.vendorId}
+                            </option>
+                          ))}
+                        </Select>
+                      </label>
+                      <MessageThread
+                        threadType="rfq"
+                        threadId={detail.id}
+                        recipientVendorId={messageRecipientVendorId || undefined}
+                      />
+                    </div>
+                  ) : null}
 
                   {detailTab === 'overview' ? (
                     <div className="space-y-5">
@@ -359,7 +408,10 @@ export default function RfqPage() {
                         </div>
                         <div className="space-y-2">
                           {detail.lines?.map((line: any, index: number) => (
-                            <div key={line.id} className="flex justify-between rounded-lg border border-border/70 bg-background/70 px-4 py-3 text-sm">
+                            <div
+                              key={line.id}
+                              className="flex justify-between rounded-lg border border-border/70 bg-background/70 px-4 py-3 text-sm"
+                            >
                               <span className="text-foreground">
                                 {index + 1}. {line.description}
                               </span>
@@ -377,9 +429,20 @@ export default function RfqPage() {
                         </div>
                         <div className="space-y-2">
                           {detail.invitations?.map((invitation: any) => (
-                            <div key={invitation.id} className="flex items-center justify-between rounded-lg border border-border/70 bg-background/70 px-4 py-3 text-sm">
-                              <span className="text-foreground">{invitation.vendor?.name ?? '—'}</span>
-                              <span className={invitation.respondedAt ? 'text-emerald-700' : 'text-muted-foreground'}>
+                            <div
+                              key={invitation.id}
+                              className="flex items-center justify-between rounded-lg border border-border/70 bg-background/70 px-4 py-3 text-sm"
+                            >
+                              <span className="text-foreground">
+                                {invitation.vendor?.name ?? '—'}
+                              </span>
+                              <span
+                                className={
+                                  invitation.respondedAt
+                                    ? 'text-emerald-700'
+                                    : 'text-muted-foreground'
+                                }
+                              >
                                 {invitation.respondedAt ? 'Responded' : 'Pending'}
                               </span>
                             </div>
@@ -387,7 +450,7 @@ export default function RfqPage() {
                         </div>
                       </div>
                     </div>
-                  ) : (
+                  ) : detailTab === 'responses' ? (
                     <div className="space-y-4">
                       <div className="flex items-center justify-between gap-3">
                         <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -407,21 +470,35 @@ export default function RfqPage() {
                       </div>
 
                       {sortedResponses.length === 0 ? (
-                        <div className="text-sm text-muted-foreground">No responses received yet.</div>
+                        <div className="text-sm text-muted-foreground">
+                          No responses received yet.
+                        </div>
                       ) : (
                         sortedResponses.map((response: any, index: number) => {
-                          const bestPrice = Math.min(...sortedResponses.map((item: any) => Number(item.totalAmount)));
+                          const bestPrice = Math.min(
+                            ...sortedResponses.map((item: any) => Number(item.totalAmount)),
+                          );
                           const responseLead = Math.min(
-                            ...(response.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER),
+                            ...(response.lines ?? []).map(
+                              (line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER,
+                            ),
                           );
                           const bestLead = Math.min(
                             ...sortedResponses.map((item: any) =>
-                              Math.min(...(item.lines ?? []).map((line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER)),
+                              Math.min(
+                                ...(item.lines ?? []).map(
+                                  (line: any) => line.leadTimeDays ?? Number.MAX_SAFE_INTEGER,
+                                ),
+                              ),
                             ),
                           );
                           const priceScore =
                             bestPrice > 0
-                              ? Math.max(0, 100 - (((Number(response.totalAmount) - bestPrice) / bestPrice) * 100))
+                              ? Math.max(
+                                  0,
+                                  100 -
+                                    ((Number(response.totalAmount) - bestPrice) / bestPrice) * 100,
+                                )
                               : 100;
                           const deliveryScore =
                             Number.isFinite(responseLead) && Number.isFinite(bestLead)
@@ -433,12 +510,16 @@ export default function RfqPage() {
                             <div
                               key={response.id}
                               className={`rounded-lg border p-4 ${
-                                response.awarded ? 'border-emerald-300 bg-emerald-50/60' : 'border-border/70 bg-background/70'
+                                response.awarded
+                                  ? 'border-emerald-300 bg-emerald-50/60'
+                                  : 'border-border/70 bg-background/70'
                               }`}
                             >
                               <div className="grid gap-3 md:grid-cols-3">
                                 <div>
-                                  <div className="text-sm font-semibold text-foreground">{response.vendor?.name}</div>
+                                  <div className="text-sm font-semibold text-foreground">
+                                    {response.vendor?.name}
+                                  </div>
                                   <div className="mt-1 text-xs text-muted-foreground">
                                     Rank #{index + 1} by {responseSort}
                                   </div>
@@ -456,25 +537,41 @@ export default function RfqPage() {
                                     Lead Time
                                   </div>
                                   <div className="mt-1 text-sm font-semibold text-foreground">
-                                    {Number.isFinite(responseLead) ? `${responseLead} days` : 'Not provided'}
+                                    {Number.isFinite(responseLead)
+                                      ? `${responseLead} days`
+                                      : 'Not provided'}
                                   </div>
                                 </div>
                               </div>
 
                               <div className="mt-4 grid gap-3 md:grid-cols-3">
-                                <MetricCard label="Price Score" value={String(Math.round(priceScore))} />
-                                <MetricCard label="Delivery Score" value={String(Math.round(deliveryScore))} />
-                                <MetricCard label="Status" value={response.awarded ? 'Awarded' : response.status} />
+                                <MetricCard
+                                  label="Price Score"
+                                  value={String(Math.round(priceScore))}
+                                />
+                                <MetricCard
+                                  label="Delivery Score"
+                                  value={String(Math.round(deliveryScore))}
+                                />
+                                <MetricCard
+                                  label="Status"
+                                  value={response.awarded ? 'Awarded' : response.status}
+                                />
                               </div>
 
                               <div className="mt-4 space-y-2">
                                 {(response.lines ?? []).map((line: any) => (
-                                  <div key={line.id} className="flex justify-between gap-3 border-b border-border/70 pb-2 text-xs last:border-b-0 last:pb-0">
+                                  <div
+                                    key={line.id}
+                                    className="flex justify-between gap-3 border-b border-border/70 pb-2 text-xs last:border-b-0 last:pb-0"
+                                  >
                                     <span className="text-foreground">
-                                      {line.rfqLine?.description} ({line.rfqLine?.quantity} {line.rfqLine?.unitOfMeasure})
+                                      {line.rfqLine?.description} ({line.rfqLine?.quantity}{' '}
+                                      {line.rfqLine?.unitOfMeasure})
                                     </span>
                                     <span className="text-muted-foreground">
-                                      {formatMoney(line.unitPrice, detail.currency ?? 'USD')} / {line.rfqLine?.unitOfMeasure ?? 'ea'}
+                                      {formatMoney(line.unitPrice, detail.currency ?? 'USD')} /{' '}
+                                      {line.rfqLine?.unitOfMeasure ?? 'ea'}
                                     </span>
                                   </div>
                                 ))}
@@ -484,7 +581,10 @@ export default function RfqPage() {
                                 <Input
                                   value={rejectValue}
                                   onChange={(event) =>
-                                    setRejectDrafts((current) => ({ ...current, [response.id]: event.target.value }))
+                                    setRejectDrafts((current) => ({
+                                      ...current,
+                                      [response.id]: event.target.value,
+                                    }))
                                   }
                                   placeholder="Reject reason"
                                 />
@@ -519,14 +619,16 @@ export default function RfqPage() {
                               </div>
 
                               {response.notes ? (
-                                <div className="mt-3 text-xs text-muted-foreground">{response.notes}</div>
+                                <div className="mt-3 text-xs text-muted-foreground">
+                                  {response.notes}
+                                </div>
                               ) : null}
                             </div>
                           );
                         })
                       )}
                     </div>
-                  )}
+                  ) : null}
                 </>
               ) : null}
             </CardContent>
@@ -607,7 +709,10 @@ export default function RfqPage() {
               </div>
               <div className="space-y-3">
                 {lines.map((line, index) => (
-                  <div key={index} className="grid gap-3 rounded-lg border border-border/70 bg-background/70 p-4 md:grid-cols-[3fr_1fr_1fr_1fr_auto]">
+                  <div
+                    key={index}
+                    className="grid gap-3 rounded-lg border border-border/70 bg-background/70 p-4 md:grid-cols-[3fr_1fr_1fr_1fr_auto]"
+                  >
                     <Input
                       placeholder="Description"
                       value={line.description}
@@ -648,7 +753,12 @@ export default function RfqPage() {
                         setLines(next);
                       }}
                     />
-                    <Button type="button" variant="ghost" onClick={() => removeLine(index)} disabled={lines.length === 1}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => removeLine(index)}
+                      disabled={lines.length === 1}
+                    >
                       Remove
                     </Button>
                   </div>
@@ -686,7 +796,9 @@ export default function RfqPage() {
                     );
                   })}
                 </div>
-                <div className="mt-2 text-xs text-muted-foreground">{selectedVendors.length} selected</div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {selectedVendors.length} selected
+                </div>
               </div>
             ) : null}
 
@@ -705,13 +817,7 @@ export default function RfqPage() {
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="space-y-2">
       <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -725,7 +831,9 @@ function Field({
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-border/70 bg-background/70 px-4 py-3">
-      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </div>
       <div className="mt-1 text-sm font-semibold text-foreground">{value}</div>
     </div>
   );

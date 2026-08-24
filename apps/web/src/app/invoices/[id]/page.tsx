@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { api } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { DocumentUploader } from '../../../components/document-uploader';
+import { MessageThread } from '../../../components/message-thread';
 import { PageHeader } from '../../../components/page-header';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge } from '../../../components/ui/badge';
@@ -206,7 +207,9 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
-      <Breadcrumbs items={[{ label: 'Invoices', href: '/invoices' }, { label: invoice.internalNumber }]} />
+      <Breadcrumbs
+        items={[{ label: 'Invoices', href: '/invoices' }, { label: invoice.internalNumber }]}
+      />
 
       <PageHeader
         title={invoice.internalNumber}
@@ -229,7 +232,8 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       {hasExceptions ? (
         <Alert variant="destructive">
           <AlertDescription>
-            3-way match exceptions detected. One or more lines have price or quantity variances outside tolerance.
+            3-way match exceptions detected. One or more lines have price or quantity variances
+            outside tolerance.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -277,22 +281,35 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Invoice Details</CardTitle>
-          <CardDescription>Commercial details, linked PO, and lifecycle timestamps.</CardDescription>
+          <CardDescription>
+            Commercial details, linked PO, and lifecycle timestamps.
+          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <DetailField label="Vendor" value={invoice.vendor?.name ?? '—'} />
           <DetailField label="Linked PO" value={invoice.purchaseOrder?.number ?? '—'} />
-          <DetailField label="Invoice Date" value={new Date(invoice.invoiceDate).toLocaleDateString()} />
-          <DetailField label="Due Date" value={invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : '—'} />
+          <DetailField
+            label="Invoice Date"
+            value={new Date(invoice.invoiceDate).toLocaleDateString()}
+          />
+          <DetailField
+            label="Due Date"
+            value={invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : '—'}
+          />
           <DetailField label="Currency" value={invoice.currency} />
-          <DetailField label="Approved At" value={invoice.approvedAt ? new Date(invoice.approvedAt).toLocaleString() : '—'} />
+          <DetailField
+            label="Approved At"
+            value={invoice.approvedAt ? new Date(invoice.approvedAt).toLocaleString() : '—'}
+          />
         </CardContent>
       </Card>
 
       <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Line Items & 3-Way Match</CardTitle>
-          <CardDescription>Review line-level quantities, PO linkage, and match variances.</CardDescription>
+          <CardDescription>
+            Review line-level quantities, PO linkage, and match variances.
+          </CardDescription>
         </CardHeader>
         <CardContent className="pt-0">
           <Table>
@@ -328,7 +345,8 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                       <div className="font-medium text-foreground">{line.description}</div>
                       {line.poLine ? (
                         <div className="mt-1 text-xs text-muted-foreground">
-                          PO: {line.poLine.description} @ {formatCurrency(line.poLine.unitPrice, invoice.currency)}
+                          PO: {line.poLine.description} @{' '}
+                          {formatCurrency(line.poLine.unitPrice, invoice.currency)}
                         </div>
                       ) : null}
                     </TableCell>
@@ -339,7 +357,13 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                     </TableCell>
                     <TableCell className="text-center">
                       {match ? (
-                        <span className={match.priceMatch ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
+                        <span
+                          className={
+                            match.priceMatch
+                              ? 'font-bold text-emerald-700'
+                              : 'font-bold text-rose-700'
+                          }
+                        >
                           {match.priceMatch ? 'OK' : 'X'}
                         </span>
                       ) : (
@@ -348,7 +372,13 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                     </TableCell>
                     <TableCell className="text-center">
                       {match ? (
-                        <span className={match.quantityMatch ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
+                        <span
+                          className={
+                            match.quantityMatch
+                              ? 'font-bold text-emerald-700'
+                              : 'font-bold text-rose-700'
+                          }
+                        >
                           {match.quantityMatch ? 'OK' : 'X'}
                         </span>
                       ) : (
@@ -378,10 +408,19 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       <div className="flex flex-wrap gap-3">
         {!['approved', 'paid'].includes(invoice.status) ? (
           <>
-            <Button type="button" onClick={doApprove} disabled={hasExceptions || actionLoading !== null}>
+            <Button
+              type="button"
+              onClick={doApprove}
+              disabled={hasExceptions || actionLoading !== null}
+            >
               {actionLoading === 'approve' ? 'Approving...' : 'Approve for Payment'}
             </Button>
-            <Button type="button" variant="outline" onClick={doRerunMatch} disabled={actionLoading !== null}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={doRerunMatch}
+              disabled={actionLoading !== null}
+            >
               {actionLoading === 'match' ? 'Running...' : 'Re-run Match'}
             </Button>
           </>
@@ -402,7 +441,12 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                 <option value="qbo">QuickBooks Online</option>
                 <option value="xero">Xero</option>
               </Select>
-              <Button type="button" variant="outline" onClick={doGlExport} disabled={actionLoading !== null}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={doGlExport}
+                disabled={actionLoading !== null}
+              >
                 {actionLoading === 'gl' ? 'Exporting...' : 'Export'}
               </Button>
             </div>
@@ -415,6 +459,21 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           <DocumentUploader entityType="invoice" entityId={id} label="Documents" />
         </div>
       ) : null}
+
+      {id ? (
+        <Card className="rounded-lg">
+          <CardHeader>
+            <CardTitle className="text-xl">Messages</CardTitle>
+            <CardDescription>
+              Threaded conversation with the supplier. Messages are permanent and visible to both
+              sides.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <MessageThread threadType="invoice" threadId={id} />
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 }
@@ -422,7 +481,9 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-border/70 bg-background/70 p-4">
-      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </div>
       <div className="mt-2 text-sm text-foreground">{value}</div>
     </div>
   );
@@ -432,8 +493,12 @@ function StatCard({ label, value }: { label: string; value: string }) {
   return (
     <Card className="rounded-lg border-border/70 bg-card/95">
       <CardContent className="p-6">
-        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
-        <div className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-foreground">{value}</div>
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          {label}
+        </div>
+        <div className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-foreground">
+          {value}
+        </div>
       </CardContent>
     </Card>
   );
