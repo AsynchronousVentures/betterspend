@@ -44,7 +44,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "@nestjs/cli": "^10.0.0",
+    "@nestjs/cli": "^11.0.24",
     "@nestjs/schematics": "^11.1.0",
     "@nestjs/testing": "^10.0.0",
     "@types/express": "^5.0.0",
