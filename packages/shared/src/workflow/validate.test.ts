@@ -34,7 +34,7 @@ function validGraph() {
             {
               type: 'user',
               userId: PRIMARY_APPROVER_ID,
-              spendLimit: { amount: '1000.00', currency: 'USD' },
+              spendLimitBaseAmount: '1000.000',
             },
           ],
           quorum: { type: 'all' },
@@ -121,6 +121,36 @@ describe('validateWorkflowGraph', () => {
     assert.equal(result.graph, null);
     assert.equal(result.issues[0]?.code, 'invalid_graph');
     assert.deepEqual(result.issues[0]?.path, ['nodes', 0, 'type']);
+  });
+
+  it('requires spend limits to be precise base-currency decimal strings', () => {
+    const graph = validGraph();
+    const input = {
+      ...graph,
+      nodes: graph.nodes.map((node) =>
+        node.id === 'finance' && node.type === 'approver_group'
+          ? {
+              ...node,
+              config: {
+                ...node.config,
+                resolvers: [
+                  {
+                    type: 'user',
+                    userId: PRIMARY_APPROVER_ID,
+                    spendLimitBaseAmount: 1000.001,
+                  },
+                ],
+              },
+            }
+          : node,
+      ),
+    };
+
+    const result = validateWorkflowGraph(input);
+
+    assert.equal(result.valid, false);
+    assert.equal(result.graph, null);
+    assert.ok(result.issues.some((issue) => issue.code === 'invalid_graph'));
   });
 
   it('rejects multiple entry nodes and unreachable nodes', () => {
