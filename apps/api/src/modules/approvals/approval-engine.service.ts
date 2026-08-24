@@ -151,6 +151,22 @@ export class ApprovalEngineService {
     }
     if (!entity) throw new NotFoundException(`Entity ${entityId} not found`);
 
+    if (requiredApproval) {
+      const approver = await this.db.query.users.findFirst({
+        where: (record, { and, eq }) =>
+          and(
+            eq(record.id, requiredApproval.approverId),
+            eq(record.organizationId, organizationId),
+            eq(record.isActive, true),
+          ),
+      });
+      if (!approver) {
+        throw new BadRequestException(
+          'The required approver must be an active user in this organization',
+        );
+      }
+    }
+
     // A required budget-owner approval always wins over the fast lane.
     if (entityType === 'requisition' && !requiredApproval) {
       const { eligible, threshold, notifyManager } = await this.checkFastLaneAutoApproval(

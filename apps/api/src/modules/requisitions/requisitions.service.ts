@@ -166,6 +166,9 @@ export class RequisitionsService {
         if (decision.action === 'block') {
           throw new BadRequestException(decision.message);
         }
+        if (decision.action === 'require_approval' && !decision.ownerUserId) {
+          throw new BadRequestException('An active budget owner is required for approval');
+        }
         const [transitioned] = await tx
           .update(requisitions)
           .set({ status: 'pending_approval', submittedAt: new Date(), updatedAt: new Date() })
@@ -187,17 +190,22 @@ export class RequisitionsService {
     const actorId = requesterId ?? req.requesterId;
 
     // Initiate approval — may auto-approve (status → 'approved') or create a pending request
+    let requiredApproval: { approverId: string; reason: string } | undefined;
+    if (budgetEnforcement.action === 'require_approval') {
+      if (!budgetEnforcement.ownerUserId) {
+        throw new BadRequestException('An active budget owner is required for approval');
+      }
+      requiredApproval = {
+        approverId: budgetEnforcement.ownerUserId,
+        reason: budgetEnforcement.message,
+      };
+    }
     await this.approvalEngine.initiateApproval(
       organizationId,
       'requisition',
       id,
       actorId,
-      budgetEnforcement.action === 'require_approval'
-        ? {
-            approverId: budgetEnforcement.ownerUserId!,
-            reason: budgetEnforcement.message,
-          }
-        : undefined,
+      requiredApproval,
     );
 
     const submitted = await this.findOne(id, organizationId);

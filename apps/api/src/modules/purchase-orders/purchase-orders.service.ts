@@ -363,12 +363,15 @@ export class PurchaseOrdersService {
           throw new BadRequestException(budgetEnforcement.message);
         }
         if (budgetEnforcement.action === 'require_approval') {
+          if (!budgetEnforcement.ownerUserId) {
+            throw new BadRequestException('An active budget owner is required for approval');
+          }
           const completed =
             po.status === 'approved' &&
             (await this.approvalEngine.hasCompletedRequiredApproval(
               'purchase_order',
               id,
-              budgetEnforcement.ownerUserId!,
+              budgetEnforcement.ownerUserId,
               budgetEnforcement.message,
               po.updatedAt,
             ));
@@ -423,13 +426,17 @@ export class PurchaseOrdersService {
     );
 
     if (outcome.kind === 'approval') {
+      const ownerUserId = outcome.budgetEnforcement.ownerUserId;
+      if (!ownerUserId) {
+        throw new BadRequestException('An active budget owner is required for approval');
+      }
       await this.approvalEngine.initiateApproval(
         organizationId,
         'purchase_order',
         id,
         issuedBy,
         {
-          approverId: outcome.budgetEnforcement.ownerUserId!,
+          approverId: ownerUserId,
           reason: outcome.budgetEnforcement.message,
         },
         async (tx) => {

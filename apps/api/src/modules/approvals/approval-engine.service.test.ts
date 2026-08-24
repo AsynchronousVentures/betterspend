@@ -11,6 +11,7 @@ import { ApprovalEngineService } from './approval-engine.service';
 function createService(
   ruleSteps: Array<{ stepOrder: number }> = [],
   lockedRequest?: Record<string, unknown>,
+  requiredApproverIsActive = true,
 ) {
   const approvalRequestValues: Array<Record<string, unknown>> = [];
   const emitted: Array<Record<string, unknown>> = [];
@@ -45,6 +46,7 @@ function createService(
     query: {
       requisitions: { findFirst: async () => ({ id: 'requisition-1', totalAmount: '25' }) },
       purchaseOrders: { findFirst: async () => null },
+      users: { findFirst: async () => (requiredApproverIsActive ? { id: 'owner-1' } : null) },
       approvalRules: {
         findMany: async () =>
           ruleSteps.length > 0
@@ -124,6 +126,18 @@ describe('ApprovalEngineService required approvals', () => {
 
     assert.equal(approvalRequestValues[0]?.currentStep, 2);
     assert.equal(approvalRequestValues[0]?.requiredApprovalStep, 5);
+  });
+
+  it('rejects a required approver outside the active organization users', async () => {
+    const { service } = createService([], undefined, false);
+
+    await assert.rejects(
+      service.initiateApproval('organization-1', 'requisition', 'requisition-1', 'requester-1', {
+        approverId: 'other-org-owner',
+        reason: 'Budget owner approval is required.',
+      }),
+      /active user in this organization/,
+    );
   });
 
   it('rejects actions from anyone except the owner at the required step', async () => {

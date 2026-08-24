@@ -736,7 +736,8 @@ export class BudgetsService {
   async recordSpend(
     organizationId: string,
     departmentId: string,
-    amount: number,
+    amount: string,
+    baseAmount: string,
     fiscalYear: number,
   ) {
     const budget = await this.db.query.budgets.findFirst({
@@ -756,8 +757,8 @@ export class BudgetsService {
     await this.db
       .update(budgets)
       .set({
-        spentAmount: sql`${budgets.spentAmount} + ${String(amount)}`,
-        baseSpentAmount: sql`${budgets.baseSpentAmount} + ${String(amount)}`,
+        spentAmount: sql`${budgets.spentAmount} + ${amount}`,
+        baseSpentAmount: sql`${budgets.baseSpentAmount} + ${baseAmount}`,
         updatedAt: new Date(),
       })
       .where(and(eq(budgets.id, budget.id), eq(budgets.organizationId, organizationId)));
@@ -766,7 +767,7 @@ export class BudgetsService {
     await this.db
       .update(budgetPeriods)
       .set({
-        spentAmount: sql`${budgetPeriods.spentAmount} + ${String(amount)}`,
+        spentAmount: sql`${budgetPeriods.spentAmount} + ${amount}`,
       })
       .where(
         and(

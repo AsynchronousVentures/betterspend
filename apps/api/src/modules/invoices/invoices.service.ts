@@ -14,6 +14,7 @@ import { MatchingService } from './matching.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { GlExportService } from '../gl/gl-export.service';
 import { BudgetsService } from '../budgets/budgets.service';
+import { addMoney, convertMoney } from '../budgets/budget-enforcement';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EntitiesService } from '../entities/entities.service';
@@ -563,16 +564,20 @@ export class InvoicesService {
           });
           if (req?.departmentId) {
             const fiscalYear = req.createdAt.getUTCFullYear();
-            const recoverableTaxAmount = ((approved as any).lines ?? [])
-              .filter((line: any) => line.taxCode?.isRecoverable)
-              .reduce(
-                (sum: number, line: any) => sum + parseFloat(String(line.taxAmount ?? '0')),
-                0,
-              );
+            const recoverableTaxAmount = addMoney(
+              ((approved as any).lines ?? [])
+                .filter((line: any) => line.taxCode?.isRecoverable)
+                .map((line: any) => String(line.taxAmount ?? '0')),
+            );
+            const spendAmount = addMoney([
+              String((approved as any).totalAmount ?? '0'),
+              `-${recoverableTaxAmount}`,
+            ]);
             await this.budgets.recordSpend(
               organizationId,
               req.departmentId,
-              parseFloat((approved as any).totalAmount ?? '0') - recoverableTaxAmount,
+              spendAmount,
+              convertMoney(spendAmount, String((approved as any).exchangeRate ?? '1')),
               fiscalYear,
             );
           }
