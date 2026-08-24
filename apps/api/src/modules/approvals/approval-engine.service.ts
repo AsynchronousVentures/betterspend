@@ -214,23 +214,36 @@ export class ApprovalEngineService {
       await this.runInTransaction(transaction, async (tx) => {
         await beforePersist?.(tx);
         if (entityType === 'requisition') {
-          await tx
+          const [transitioned] = await tx
             .update(requisitions)
             .set({ status: 'approved', updatedAt: new Date() })
             .where(
-              and(eq(requisitions.id, entityId), eq(requisitions.organizationId, organizationId)),
-            );
+              and(
+                eq(requisitions.id, entityId),
+                eq(requisitions.organizationId, organizationId),
+                inArray(requisitions.status, ['submitted', 'pending_approval']),
+              ),
+            )
+            .returning({ id: requisitions.id });
+          if (!transitioned) {
+            throw new BadRequestException('Requisition status changed before auto-approval');
+          }
           await this.budgets.recordRequisitionApproval(tx, organizationId, entityId);
         } else {
-          await tx
+          const [transitioned] = await tx
             .update(purchaseOrders)
             .set({ status: 'approved', updatedAt: new Date() })
             .where(
               and(
                 eq(purchaseOrders.id, entityId),
                 eq(purchaseOrders.organizationId, organizationId),
+                eq(purchaseOrders.status, 'pending_approval'),
               ),
-            );
+            )
+            .returning({ id: purchaseOrders.id });
+          if (!transitioned) {
+            throw new BadRequestException('Purchase order status changed before auto-approval');
+          }
         }
       });
       if (entityType === 'requisition') {
@@ -544,10 +557,20 @@ export class ApprovalEngineService {
         comment: notifyManager ? note : 'Auto-approved: below configured threshold',
       });
 
-      await tx
+      const [transitioned] = await tx
         .update(requisitions)
         .set({ status: 'approved', updatedAt: new Date() })
-        .where(and(eq(requisitions.id, entityId), eq(requisitions.organizationId, organizationId)));
+        .where(
+          and(
+            eq(requisitions.id, entityId),
+            eq(requisitions.organizationId, organizationId),
+            inArray(requisitions.status, ['submitted', 'pending_approval']),
+          ),
+        )
+        .returning({ id: requisitions.id });
+      if (!transitioned) {
+        throw new BadRequestException('Requisition status changed before fast-lane approval');
+      }
       await this.budgets.recordRequisitionApproval(tx, organizationId, entityId);
 
       return req.id;
@@ -883,9 +906,7 @@ export class ApprovalEngineService {
           and(
             eq(requisitions.id, entityId),
             eq(requisitions.organizationId, organizationId),
-            status === 'rejected'
-              ? inArray(requisitions.status, ['submitted', 'pending_approval', 'approved'])
-              : undefined,
+            inArray(requisitions.status, ['submitted', 'pending_approval']),
           ),
         )
         .returning({ id: requisitions.id });
@@ -905,9 +926,7 @@ export class ApprovalEngineService {
           and(
             eq(purchaseOrders.id, entityId),
             eq(purchaseOrders.organizationId, organizationId),
-            status === 'rejected'
-              ? inArray(purchaseOrders.status, ['draft', 'pending_approval', 'approved'])
-              : undefined,
+            eq(purchaseOrders.status, 'pending_approval'),
           ),
         )
         .returning({ id: purchaseOrders.id });
