@@ -85,6 +85,19 @@ export class SettingsService {
   /** Returns only public (non-sensitive) branding settings — safe to expose to frontend without auth */
   async getBranding(organizationId: string) {
     const all = await this.getAll(organizationId);
+    return this.pickBranding(all);
+  }
+
+  /** BetterSpend is single-tenant, so public login branding belongs to the sole organization. */
+  async getPublicBranding() {
+    const organization = await this.db.query.organizations.findFirst({
+      columns: { id: true },
+    });
+    const all = organization ? await this.getAll(organization.id) : DEFAULT_SETTINGS;
+    return this.pickBranding(all);
+  }
+
+  private pickBranding(all: Record<string, string>) {
     return {
       app_name: all.app_name,
       app_logo_url: all.app_logo_url,

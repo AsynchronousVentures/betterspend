@@ -2,8 +2,7 @@ import { Controller, Post, Get, Param, Body, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { PunchoutService } from './punchout.service';
 import type { PunchOutSetupRequest, PunchOutOrderMessage } from './cxml.types';
-
-const DEMO_ORG_ID = '00000000-0000-0000-0000-000000000001';
+import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 
 @ApiTags('punchout')
 @Controller('punchout')
@@ -20,13 +19,15 @@ export class PunchoutController {
   @Post('vendors/:vendorId/setup')
   @ApiOperation({
     summary: 'Initiate a punchout session for a vendor',
-    description: 'Accepts JSON-shaped PunchOutSetupRequest. Full cXML XML parsing is wired in Phase 5b.',
+    description:
+      'Accepts JSON-shaped PunchOutSetupRequest. Full cXML XML parsing is wired in Phase 5b.',
   })
   setup(
     @Param('vendorId') vendorId: string,
     @Body() body: PunchOutSetupRequest,
+    @CurrentOrgId() organizationId: string,
   ) {
-    return this.punchoutService.handleSetupRequest(vendorId, DEMO_ORG_ID, body);
+    return this.punchoutService.handleSetupRequest(vendorId, organizationId, body);
   }
 
   /**
@@ -39,10 +40,7 @@ export class PunchoutController {
     summary: 'Receive cart items from vendor punchout catalog',
     description: 'Call with session token and cart. Returns mapped requisition lines.',
   })
-  orderReturn(
-    @Query('session') session: string,
-    @Body() body: PunchOutOrderMessage,
-  ) {
+  orderReturn(@Query('session') session: string, @Body() body: PunchOutOrderMessage) {
     return this.punchoutService.handleOrderReturn(session, body);
   }
 

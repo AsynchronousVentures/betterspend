@@ -131,10 +131,6 @@ export class VendorPortalService {
     return { success: true };
   }
 
-  async validateToken(token: string): Promise<string> {
-    return (await this.validateTokenContext(token)).vendorId;
-  }
-
   async validateTokenContext(token: string): Promise<{ vendorId: string; organizationId: string }> {
     const record = await this.db.query.vendorPortalTokens.findFirst({
       where: (t, { and, eq, gt }) =>

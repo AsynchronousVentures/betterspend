@@ -7,8 +7,8 @@ import type { Db } from '@betterspend/db';
 import { authAccounts, passwordResetTokens } from '@betterspend/db';
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
+import { DEFAULT_SETTINGS } from '@betterspend/shared';
 
-const DEMO_ORG_ID = '00000000-0000-0000-0000-000000000001';
 const SALT_ROUNDS = 12;
 
 @Injectable()
@@ -42,7 +42,9 @@ export class PasswordResetService {
       });
 
       // Send email (fire-and-forget — don't block response on SMTP)
-      const settings = await this.settingsService.getAll(user.organizationId ?? DEMO_ORG_ID);
+      const settings: Record<string, string> = user.organizationId
+        ? await this.settingsService.getAll(user.organizationId)
+        : DEFAULT_SETTINGS;
       const appName = settings['app_name'] || 'BetterSpend';
       const appUrl = settings['app_url'] || process.env['WEB_URL'] || 'http://localhost:3100';
       const smtpHost = settings['smtp_host'] || '';
@@ -108,10 +110,7 @@ export class PasswordResetService {
       .update(authAccounts)
       .set({ password: hashedPassword, updatedAt: new Date() })
       .where(
-        and(
-          eq(authAccounts.userId, resetToken.userId),
-          eq(authAccounts.providerId, 'credential'),
-        ),
+        and(eq(authAccounts.userId, resetToken.userId), eq(authAccounts.providerId, 'credential')),
       );
 
     // Mark token as used

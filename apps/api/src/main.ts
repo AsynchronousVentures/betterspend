@@ -7,8 +7,10 @@ import { AppModule } from './app.module';
 import { createAuthInstance } from './auth/auth.instance';
 import { SessionGuard } from './modules/auth/session.guard';
 import { RolesGuard } from './modules/auth/roles.guard';
+import { assertDemoModeIsSafe } from './common/demo-mode';
 
 async function bootstrap() {
+  assertDemoModeIsSafe();
   const app = await NestFactory.create(AppModule);
 
   // Security headers (CSP disabled — Swagger UI needs inline scripts)
