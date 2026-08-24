@@ -2,8 +2,6 @@ import { evaluateGateState } from './review-gate-policy.mjs';
 
 const requiredEnvironment = [
   'GATE_HEAD_SHA',
-  'GATE_PR_NUMBER',
-  'GATE_PR_AUTHOR',
   'GITHUB_REPOSITORY',
   'GITHUB_TOKEN',
 ];
@@ -16,8 +14,6 @@ for (const name of requiredEnvironment) {
 
 const [owner, repository] = process.env.GITHUB_REPOSITORY.split('/');
 const headSha = process.env.GATE_HEAD_SHA;
-const pullRequestNumber = Number(process.env.GATE_PR_NUMBER);
-const pullRequestAuthor = process.env.GATE_PR_AUTHOR;
 const token = process.env.GITHUB_TOKEN;
 const pollIntervalMs = Number(process.env.GATE_POLL_INTERVAL_MS ?? 10_000);
 const startupGraceMs = Number(process.env.GATE_STARTUP_GRACE_MS ?? 60_000);
@@ -25,10 +21,6 @@ const timeoutMs = Number(process.env.GATE_TIMEOUT_MS ?? 15 * 60_000);
 
 if (!owner || !repository) {
   throw new Error('GITHUB_REPOSITORY must have the form owner/repository');
-}
-
-if (!Number.isInteger(pullRequestNumber)) {
-  throw new Error('GATE_PR_NUMBER must be an integer');
 }
 
 const headers = {
@@ -49,10 +41,6 @@ async function githubResponse(path, init = {}) {
   }
 
   return response;
-}
-
-async function githubRequest(path, init = {}) {
-  return (await githubResponse(path, init)).json();
 }
 
 function getNextPagePath(linkHeader) {
@@ -82,87 +70,13 @@ async function githubPaginatedRequest(path, getItems) {
   return items;
 }
 
-async function graphql(query, variables) {
-  const response = await githubRequest('/graphql', {
-    body: JSON.stringify({ query, variables }),
-    headers: { 'content-type': 'application/json' },
-    method: 'POST',
-  });
-
-  if (response.errors) {
-    throw new Error(`GitHub GraphQL error: ${JSON.stringify(response.errors)}`);
-  }
-
-  return response.data;
-}
-
-async function getUnresolvedCodeRabbitThreads() {
-  const unresolvedThreads = [];
-  let after = null;
-
-  do {
-    const data = await graphql(
-      `
-        query ReviewThreads(
-          $owner: String!
-          $repository: String!
-          $pullRequestNumber: Int!
-          $after: String
-        ) {
-          repository(owner: $owner, name: $repository) {
-            pullRequest(number: $pullRequestNumber) {
-              reviewThreads(first: 100, after: $after) {
-                nodes {
-                  isResolved
-                  comments(first: 1) {
-                    nodes {
-                      author {
-                        login
-                      }
-                      path
-                      url
-                    }
-                  }
-                }
-                pageInfo {
-                  endCursor
-                  hasNextPage
-                }
-              }
-            }
-          }
-        }
-      `,
-      { after, owner, pullRequestNumber, repository },
-    );
-
-    const threads = data.repository.pullRequest.reviewThreads;
-    for (const thread of threads.nodes) {
-      const comment = thread.comments.nodes[0];
-      if (!thread.isResolved && comment?.author?.login.toLowerCase().startsWith('coderabbitai')) {
-        unresolvedThreads.push(comment);
-      }
-    }
-
-    after = threads.pageInfo.hasNextPage ? threads.pageInfo.endCursor : null;
-  } while (after);
-
-  return unresolvedThreads;
-}
-
 async function getGateState() {
-  const [checkRunItems, statusItems] = await Promise.all([
-    githubPaginatedRequest(
-      `/repos/${owner}/${repository}/commits/${headSha}/check-runs?filter=latest&per_page=100`,
-      (response) => response.check_runs,
-    ),
-    githubPaginatedRequest(
-      `/repos/${owner}/${repository}/commits/${headSha}/status?per_page=100`,
-      (response) => response.statuses,
-    ),
-  ]);
+  const checkRunItems = await githubPaginatedRequest(
+    `/repos/${owner}/${repository}/commits/${headSha}/check-runs?filter=latest&per_page=100`,
+    (response) => response.check_runs,
+  );
 
-  return evaluateGateState({ checkRunItems, pullRequestAuthor, statusItems });
+  return evaluateGateState({ checkRunItems });
 }
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -195,16 +109,6 @@ while (Date.now() - startedAt < timeoutMs) {
   }
 
   if (!state.missing.length && !state.pending.length) {
-    const unresolvedThreads = await getUnresolvedCodeRabbitThreads();
-    if (unresolvedThreads.length) {
-      for (const thread of unresolvedThreads) {
-        console.error(`Unresolved CodeRabbit finding: ${thread.path} ${thread.url}`);
-      }
-      throw new Error(
-        `Review gate blocked by ${unresolvedThreads.length} unresolved CodeRabbit finding(s)`,
-      );
-    }
-
     consecutiveGreenPolls += 1;
     if (consecutiveGreenPolls === 2) {
       console.log('Review gate passed');

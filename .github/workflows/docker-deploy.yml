@@ -1,7 +1,7 @@
 name: Docker CI/CD
 
 # Flow:
-#   PR              -> review gate -> CI -> validate result
+#   PR              -> review gate + CI in parallel -> validate result
 #   push to main    -> CI -> validate result -> publish immutable images
 #   push v* tag     -> CI -> validate result -> publish -> deploy
 #   workflow_dispatch -> CI -> validate result (manual re-check / republish)
@@ -24,7 +24,6 @@ permissions:
   checks: read
   contents: read
   pull-requests: read
-  statuses: read
 
 concurrency:
   group: betterspend-${{ github.ref }}
@@ -53,19 +52,11 @@ jobs:
       - name: Wait for external reviews
         env:
           GATE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          GATE_PR_NUMBER: ${{ github.event.pull_request.number }}
-          GATE_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node .github/scripts/wait-for-review-gate.mjs
 
   ci:
     name: CI Validation
-    needs: review-gate
-    if: >-
-      always()
-      && (github.event_name != 'pull_request'
-        || github.event.pull_request.user.login == 'dependabot[bot]'
-        || needs.review-gate.result == 'success')
     runs-on: blacksmith-4vcpu-ubuntu-2404
     services:
       postgres:

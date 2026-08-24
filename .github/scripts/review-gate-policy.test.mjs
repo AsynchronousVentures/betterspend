@@ -9,68 +9,56 @@ const completedMacroscopeChecks = requiredMacroscopeChecks.map((name) => ({
   status: 'completed',
 }));
 
-test('does not require CodeRabbit for a Blacksmith-authored PR', () => {
+test('passes when all required Macroscope checks succeed', () => {
   assert.deepEqual(
     evaluateGateState({
       checkRunItems: completedMacroscopeChecks,
-      pullRequestAuthor: 'blacksmith-sh[bot]',
-      statusItems: [],
     }),
     { blockers: [], missing: [], pending: [] },
   );
 });
 
-test('still requires Macroscope for a Blacksmith-authored PR', () => {
+test('reports missing Macroscope checks', () => {
   assert.deepEqual(
     evaluateGateState({
       checkRunItems: [],
-      pullRequestAuthor: 'blacksmith-sh[bot]',
-      statusItems: [],
     }),
     { blockers: [], missing: requiredMacroscopeChecks, pending: [] },
   );
 });
 
-test('blocks CodeRabbit for a Blacksmith PR when the review did run and failed', () => {
+test('waits for pending Macroscope checks', () => {
   assert.deepEqual(
     evaluateGateState({
-      checkRunItems: completedMacroscopeChecks,
-      pullRequestAuthor: 'blacksmith-sh[bot]',
-      statusItems: [{ context: 'CodeRabbit', state: 'failure' }],
+      checkRunItems: [
+        completedMacroscopeChecks[0],
+        { ...completedMacroscopeChecks[1], conclusion: null, status: 'in_progress' },
+      ],
     }),
-    { blockers: ['CodeRabbit: failure'], missing: [], pending: [] },
+    { blockers: [], missing: [], pending: [requiredMacroscopeChecks[1]] },
   );
 });
 
-test('reports an absent CodeRabbit review separately from a pending review', () => {
+test('blocks failed Macroscope checks', () => {
   assert.deepEqual(
     evaluateGateState({
-      checkRunItems: completedMacroscopeChecks,
-      pullRequestAuthor: 'av-tw',
-      statusItems: [],
+      checkRunItems: [
+        completedMacroscopeChecks[0],
+        { ...completedMacroscopeChecks[1], conclusion: 'failure' },
+      ],
     }),
-    { blockers: [], missing: ['CodeRabbit'], pending: [] },
+    { blockers: [`${requiredMacroscopeChecks[1]}: failure`], missing: [], pending: [] },
   );
 });
 
-test('continues waiting when CodeRabbit registered a pending status', () => {
+test('ignores CodeRabbit check runs', () => {
   assert.deepEqual(
     evaluateGateState({
-      checkRunItems: completedMacroscopeChecks,
-      pullRequestAuthor: 'av-tw',
-      statusItems: [{ context: 'CodeRabbit', state: 'pending' }],
+      checkRunItems: [
+        ...completedMacroscopeChecks,
+        { conclusion: 'failure', name: 'CodeRabbit', status: 'completed' },
+      ],
     }),
-    { blockers: [], missing: [], pending: ['CodeRabbit'] },
-  );
-});
-
-test('blocks a failed CodeRabbit status', () => {
-  assert.deepEqual(
-    evaluateGateState({
-      checkRunItems: completedMacroscopeChecks,
-      pullRequestAuthor: 'av-tw',
-      statusItems: [{ context: 'CodeRabbit', state: 'failure' }],
-    }),
-    { blockers: ['CodeRabbit: failure'], missing: [], pending: [] },
+    { blockers: [], missing: [], pending: [] },
   );
 });
