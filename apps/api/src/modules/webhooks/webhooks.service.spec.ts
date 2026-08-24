@@ -200,4 +200,24 @@ describe('durable webhook retries', () => {
     await processor.process({ name: recoveredJob.name, data: recoveredJob.data } as never);
     expect(harness.deliveries[0]).toMatchObject({ status: 'delivered', attempts: 2 });
   });
+
+  it('lets startup replace a retry job that failed before advancing the delivery', async () => {
+    const harness = createDurableHarness();
+    jest.spyOn(global, 'fetch').mockResolvedValue(new Response('unavailable', { status: 503 }));
+    const firstProcess = new WebhooksService(harness.db, harness.queue);
+
+    await firstProcess.dispatchEvent(
+      '00000000-0000-0000-0000-000000000001',
+      'invoice.approved',
+      { invoiceId: 'INV-1' },
+    );
+
+    const [jobId, failedJob] = [...harness.jobs.entries()][0];
+    if (failedJob.opts.removeOnFail === true) harness.jobs.delete(jobId);
+
+    const restartedProcess = new WebhooksService(harness.db, harness.queue);
+    await restartedProcess.onModuleInit();
+
+    expect(harness.jobs.get(jobId)).not.toBe(failedJob);
+  });
 });

@@ -268,7 +268,7 @@ export class WebhooksService implements OnModuleInit {
         delay: Math.max(0, nextRetryAt.getTime() - Date.now()),
         jobId: `webhook-retry-${deliveryId}-${completedAttempts + 1}`,
         removeOnComplete: true,
-        removeOnFail: false,
+        removeOnFail: true,
       },
     );
   }
