@@ -32,6 +32,7 @@ reviews:
   poem: false
   in_progress_fortune: false
   collapse_walkthrough: true
+  review_status: false
 
   path_filters:
     - "!**/pnpm-lock.yaml"
