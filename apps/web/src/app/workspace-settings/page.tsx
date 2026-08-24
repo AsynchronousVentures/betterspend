@@ -111,6 +111,7 @@ function SettingsContent() {
     auto_approve_threshold: '0',
     auto_approve_require_budget_check: 'false',
     auto_approve_notify_manager: 'true',
+    prevent_invoice_self_approval: 'true',
     catalog_auto_approve_price_change_pct: '0',
   });
   const [approvalPolicySaving, setApprovalPolicySaving] = useState(false);
@@ -148,6 +149,7 @@ function SettingsContent() {
       auto_approve_threshold: '0',
       auto_approve_require_budget_check: 'false',
       auto_approve_notify_manager: 'true',
+      prevent_invoice_self_approval: 'true',
       catalog_auto_approve_price_change_pct: '0',
     },
     compliance: {
@@ -480,6 +482,12 @@ function SettingsContent() {
                 checked={approvalPolicy.auto_approve_notify_manager === 'true'}
                 onChange={(checked) => setApprovalPolicy((current) => ({ ...current, auto_approve_notify_manager: checked ? 'true' : 'false' }))}
                 title="Notify managers when auto-approval fires"
+              />
+              <CheckboxRow
+                checked={approvalPolicy.prevent_invoice_self_approval === 'true'}
+                onChange={(checked) => setApprovalPolicy((current) => ({ ...current, prevent_invoice_self_approval: checked ? 'true' : 'false' }))}
+                title="Prevent invoice creators from approving their own invoices"
+                description="Routes self-approval attempts to an independent global approver and blocks approval when none is configured."
               />
               <Field label="Auto-approve supplier price changes within (%)">
                 <Input

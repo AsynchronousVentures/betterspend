@@ -3,6 +3,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { InvoicesService, CreateInvoiceInput, MarkPaidInput } from './invoices.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('invoices')
 @ApiBearerAuth()
@@ -41,9 +42,10 @@ export class InvoicesController {
   }
 
   @Post()
+  @Permissions('invoices:create')
   @ApiOperation({ summary: 'Create an invoice (auto-runs 3-way match if PO linked)' })
-  create(@Body() body: CreateInvoiceInput, @CurrentOrgId() orgId: string) {
-    return this.invoicesService.create(orgId, body);
+  create(@Body() body: CreateInvoiceInput, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
+    return this.invoicesService.create(orgId, userId, body);
   }
 
   @Post(':id/match')
@@ -53,6 +55,7 @@ export class InvoicesController {
   }
 
   @Patch(':id/approve')
+  @Permissions('invoices:approve')
   @ApiOperation({ summary: 'Approve a matched invoice for payment' })
   approve(@Param('id') id: string, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
     return this.invoicesService.approve(id, orgId, userId);
@@ -70,6 +73,7 @@ export class InvoicesController {
   }
 
   @Post('bulk-approve')
+  @Permissions('invoices:approve')
   @ApiOperation({ summary: 'Bulk approve multiple matched invoices' })
   bulkApprove(@Body() body: { ids: string[] }, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
     return this.invoicesService.bulkApprove(body.ids, orgId, userId);

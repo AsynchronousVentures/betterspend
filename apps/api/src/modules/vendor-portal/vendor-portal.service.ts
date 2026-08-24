@@ -304,6 +304,7 @@ export class VendorPortalService {
           vendorId,
           invoiceNumber: data.invoiceNumber,
           internalNumber,
+          submissionSource: 'vendor_portal',
           invoiceDate: new Date(data.invoiceDate),
           dueDate: data.dueDate ? new Date(data.dueDate) : null,
           currency: data.currency ?? 'USD',
