@@ -16,7 +16,7 @@ export const sanctionsImportRowSchema = z.object({
   externalId: z.string().max(120).nullable(),
   entityName: z.string().min(2).max(500),
   entryType: z.string().max(40).nullable(),
-  raw: z.object({ cells: z.array(z.string()) }),
+  raw: z.object({ cells: z.array(z.string().max(1_000)).min(12).max(20) }),
 });
 
 export const sanctionMatchSchema = z.object({

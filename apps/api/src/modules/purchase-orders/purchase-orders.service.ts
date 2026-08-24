@@ -1,5 +1,5 @@
 import { Injectable, Inject, Optional, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import { SequenceService } from '../../common/services/sequence.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
@@ -10,7 +10,7 @@ import { EntitiesService } from '../entities/entities.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { RiskScreeningService } from '../risk-screening/risk-screening.service';
 import type { Db } from '@betterspend/db';
-import { auditLog, purchaseOrders, poLines, poVersions, blanketReleases, requisitions } from '@betterspend/db';
+import { auditLog, purchaseOrders, poLines, poVersions, blanketReleases, requisitions, vendors } from '@betterspend/db';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 import { z } from 'zod';
@@ -155,6 +155,7 @@ export class PurchaseOrdersService {
       );
     }
     const sanctionsWarning = await this.riskScreening.checkVendorForPo(organizationId, vendor);
+    const number = await this.sequenceService.next(organizationId, 'purchase_order');
     const currency = input.currency ?? 'USD';
     const taxCodeMap = await this.getTaxCodeMap(
       organizationId,
@@ -290,20 +291,25 @@ export class PurchaseOrdersService {
 
     // Re-check at issuance: the vendor may have been flagged after the draft
     // was created, and issuance is the moment the commitment becomes real.
-    const issueVendor = await this.db.query.vendors.findFirst({
-      where: (record, { and, eq }) =>
-        and(eq(record.id, po.vendorId), eq(record.organizationId, organizationId)),
-    });
-    const sanctionsWarning = issueVendor
-      ? await this.riskScreening.checkVendorForPo(organizationId, issueVendor)
-      : null;
     const updated = await this.db.transaction(async (tx) => {
+      const [issueVendor] = await tx
+        .select()
+        .from(vendors)
+        .where(
+          and(eq(vendors.id, po.vendorId), eq(vendors.organizationId, organizationId)),
+        )
+        .for('update');
+      if (!issueVendor) throw new NotFoundException(`Vendor ${po.vendorId} not found`);
+      const sanctionsWarning = await this.riskScreening.checkVendorStatusForPo(
+        organizationId,
+        issueVendor,
+      );
       const [issued] = await tx
         .update(purchaseOrders)
         .set({ status: 'issued', issuedBy, issuedAt: new Date(), updatedAt: new Date() })
         .where(eq(purchaseOrders.id, id))
         .returning();
-      if (sanctionsWarning && issueVendor) {
+      if (sanctionsWarning) {
         await tx.insert(auditLog).values({
           organizationId,
           userId: issuedBy,

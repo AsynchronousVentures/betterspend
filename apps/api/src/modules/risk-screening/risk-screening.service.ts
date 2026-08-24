@@ -4,7 +4,6 @@ import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { auditLog, sanctionsEntries, sanctionsScreenings, vendors } from '@betterspend/db';
 import { sanctionsImportRowSchema } from '@betterspend/shared';
-import { AuditService } from '../audit/audit.service';
 import { SettingsService } from '../settings/settings.service';
 
 export interface SanctionMatch {
@@ -25,7 +24,6 @@ export class RiskScreeningService {
 
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
-    private readonly audit: AuditService,
     private readonly settingsService: SettingsService,
   ) {}
 
@@ -39,6 +37,9 @@ export class RiskScreeningService {
     ofac_sdn: 'https://www.treasury.gov/ofac/downloads/sdn.csv',
   };
   private static readonly INGEST_TIMEOUT_MS = 30_000;
+  private static readonly MAX_INGEST_BYTES = 25 * 1024 * 1024;
+  private static readonly MAX_INGEST_ENTRIES = 100_000;
+  private static readonly MIN_INGEST_ENTRIES = 100;
 
   async ingest(
     organizationId: string,
@@ -46,7 +47,7 @@ export class RiskScreeningService {
     source = 'ofac_sdn',
   ): Promise<{ count: number; source: string }> {
     const listUrl =
-      RiskScreeningService.INGEST_SOURCES[source] ?? process.env['SANCTIONS_LIST_URL'] ?? '';
+      process.env['SANCTIONS_LIST_URL'] ?? RiskScreeningService.INGEST_SOURCES[source] ?? '';
     if (!listUrl) {
       throw new BadRequestException(`Unsupported sanctions source "${source}"`);
     }
@@ -65,10 +66,19 @@ export class RiskScreeningService {
     if (!response.ok) {
       throw new Error(`Sanctions list download failed with HTTP ${response.status}`);
     }
-    const csv = await response.text();
+    const csv = await readResponseTextWithLimit(
+      response,
+      RiskScreeningService.MAX_INGEST_BYTES,
+    );
     const { entries: rows, skipped } = parseSdnCsv(csv);
-    if (rows.length === 0) {
-      throw new Error('Sanctions list parse produced no entries; refusing to replace data');
+    if (
+      rows.length < RiskScreeningService.MIN_INGEST_ENTRIES ||
+      rows.length > RiskScreeningService.MAX_INGEST_ENTRIES ||
+      skipped > 0
+    ) {
+      throw new Error(
+        `Sanctions list validation failed (${rows.length} valid, ${skipped} malformed); refusing to replace data`,
+      );
     }
 
     await this.db.transaction(async (tx) => {
@@ -86,17 +96,15 @@ export class RiskScreeningService {
           })),
         );
       }
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId,
+        entityType: 'sanctions_registry',
+        entityId: organizationId,
+        action: 'ingest',
+        changes: { source, url: listUrl, count: rows.length },
+      });
     });
-
-    await this.audit.log(organizationId, userId, 'sanctions_registry', source, 'ingest', {
-      url: listUrl,
-      count: rows.length,
-      skipped,
-    });
-
-    if (skipped > 0) {
-      this.logger.warn(`Sanctions ingest skipped ${skipped} unparseable lines from ${listUrl}`);
-    }
     this.logger.log(`Ingested ${rows.length} ${source} entries from ${listUrl}`);
     return { count: rows.length, source };
   }
@@ -251,7 +259,17 @@ export class RiskScreeningService {
       .select({ sanctionsStatus: vendors.sanctionsStatus })
       .from(vendors)
       .where(eq(vendors.id, vendor.id));
-    if ((current?.sanctionsStatus ?? 'untested') !== 'flagged') return null;
+    return this.checkVendorStatusForPo(organizationId, {
+      name: vendor.name,
+      sanctionsStatus: current?.sanctionsStatus,
+    });
+  }
+
+  async checkVendorStatusForPo(
+    organizationId: string,
+    vendor: { name: string; sanctionsStatus?: string | null },
+  ): Promise<string | null> {
+    if ((vendor.sanctionsStatus ?? 'untested') !== 'flagged') return null;
     const blocking =
       (await this.settingsService.get(organizationId, 'block_pos_for_flagged_vendors')) === 'true';
     if (blocking) {
@@ -347,6 +365,30 @@ function levenshteinDistance(a: string, b: string): number {
   return previous[b.length];
 }
 
+async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
+  const contentLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new Error(`Sanctions list exceeds the ${maxBytes}-byte limit`);
+  }
+  if (!response.body) return '';
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let text = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > maxBytes) {
+      await reader.cancel();
+      throw new Error(`Sanctions list exceeds the ${maxBytes}-byte limit`);
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
 /**
  * Tolerant parser for OFAC's SDN CSV (ent_num, SDN_Name, SDN_Type, Program,
  * ...). Structural validation instead of a name character class: a row is an
@@ -379,13 +421,14 @@ function parseSdnCsv(csv: string): {
       candidate.length > 1 &&
       /[A-Za-z\u00C0-\u024F]/.test(candidate) &&
       !/^sdn_name$/i.test(candidate);
+    const hasNumericEntityId = /^\d+$/.test(cells[0] ?? '');
     const parsed = sanctionsImportRowSchema.safeParse({
       externalId: cells[0] || null,
       entityName: candidate.slice(0, 500),
       entryType: cells[2] ?? null,
       raw: { cells },
     });
-    if (cells.length >= 2 && looksLikeName && parsed.success) {
+    if (hasNumericEntityId && looksLikeName && parsed.success) {
       entries.push(parsed.data);
     } else {
       skipped += 1;
