@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, asc, desc, eq, lte, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
@@ -152,6 +152,14 @@ export class SoftwareLicensesService {
     note?: string,
   ) {
     const license = await this.findOne(id, organizationId);
+    const renewalRefs = license.renewalRefs as RenewalRef[];
+    if (
+      action !== 'cancel' &&
+      license.status === 'renewal_due' &&
+      renewalRefs.some((reference) => reference.action !== 'cancel')
+    ) {
+      throw new BadRequestException('A renewal action is already in progress for this license');
+    }
     const actionNote = note?.trim();
     const notePrefix = `[${new Date().toISOString()}] ${action.toUpperCase()}`;
     const appendedNote = [license.notes, `${notePrefix}${actionNote ? `: ${actionNote}` : ''}`]
