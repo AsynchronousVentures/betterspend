@@ -17,4 +17,11 @@ describe('parseAuthResponse', () => {
     );
     assert.equal(result.error, 'Instance already initialized');
   });
+
+  it('rejects a malformed successful response', async () => {
+    await assert.rejects(
+      parseAuthResponse(new Response('<html>proxy error</html>', { status: 200 })),
+      /Invalid authentication response/,
+    );
+  });
 });

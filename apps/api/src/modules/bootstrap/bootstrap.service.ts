@@ -1,10 +1,10 @@
 import { ConflictException, Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import { authAccounts, organizations, userRoles, users, type Db } from '@betterspend/db';
+import { auditLog, authAccounts, organizations, userRoles, users, type Db } from '@betterspend/db';
+import type { BootstrapInstanceInput } from '@betterspend/shared';
 import { hashCredentialPassword } from '../../auth/credential-password';
 import { DB_TOKEN } from '../../database/database.module';
-import type { BootstrapInstanceDto } from './bootstrap.dto';
 
 const BOOTSTRAP_LOCK_ID = 0x42534155;
 
@@ -28,7 +28,7 @@ function organizationSlug(name: string): string {
 export class BootstrapService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  async initialize(data: BootstrapInstanceDto) {
+  async initialize(data: BootstrapInstanceInput) {
     const [existingUser] = await this.db.select({ id: users.id }).from(users).limit(1);
     if (existingUser) throw alreadyInitialized();
 
@@ -71,6 +71,15 @@ export class BootstrapService {
         userId,
         role: 'admin',
         scopeType: 'global',
+      });
+      await transaction.insert(auditLog).values({
+        organizationId: organization.id,
+        userId,
+        entityType: 'organization',
+        entityId: organization.id,
+        action: 'bootstrapped',
+        changes: { firstAdminUserId: userId },
+        metadata: { accountCreationPolicy: 'admin-only' },
       });
 
       return { organization, user };

@@ -171,8 +171,9 @@ jobs:
       - name: Verify authentication integration
         env:
           DATABASE_URL: postgresql://betterspend@127.0.0.1:5432/betterspend_test
-          BETTER_AUTH_SECRET: ci-auth-verification-secret
-        run: pnpm --filter @betterspend/api auth:verify-integration
+        run: |
+          BETTER_AUTH_SECRET="$(openssl rand -hex 32)" \
+            pnpm --filter @betterspend/api auth:verify-integration
 
       - name: Typecheck API
         run: pnpm --filter @betterspend/api typecheck

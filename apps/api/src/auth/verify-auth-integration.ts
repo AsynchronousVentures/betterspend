@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import postgres from 'postgres';
@@ -27,6 +27,10 @@ async function authRequest(
       body: JSON.stringify(body),
     }),
   );
+}
+
+function testPassword(): string {
+  return randomBytes(24).toString('base64url');
 }
 
 async function verifyMigratedCredentialSignIn(databaseUrl: string): Promise<void> {
@@ -82,7 +86,7 @@ async function verifyMigratedCredentialSignIn(databaseUrl: string): Promise<void
     `);
 
     const userId = randomUUID();
-    const password = 'pre-upgrade password';
+    const password = testPassword();
     const passwordHash = await hashCredentialPassword(password);
     await client`
       INSERT INTO users (id, organization_id, email, name)
@@ -139,7 +143,7 @@ async function main(): Promise<void> {
       organizationName: 'Auth Verification Company',
       name: 'First Admin',
       email: 'first-admin@example.test',
-      password: 'correct horse battery staple',
+      password: testPassword(),
     };
     const initialized = await bootstrapService.initialize(firstAdmin);
     const [account] = await db
@@ -150,10 +154,15 @@ async function main(): Promise<void> {
       .select()
       .from(schema.userRoles)
       .where(eq(schema.userRoles.userId, initialized.user.id));
+    const [auditEntry] = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.entityId, initialized.organization.id));
     assert.equal(account?.issuer, 'local:credential');
     assert.equal(account?.accountId, initialized.user.id);
     assert.equal(role?.role, 'admin');
     assert.equal(role?.scopeType, 'global');
+    assert.equal(auditEntry?.action, 'bootstrapped');
 
     await assert.rejects(
       bootstrapService.initialize({
@@ -167,7 +176,7 @@ async function main(): Promise<void> {
     const disabledSignUp = await authRequest(auth, 'sign-up/email', {
       name: 'Bypass Attempt',
       email: 'bypass@example.test',
-      password: 'correct horse battery staple',
+      password: testPassword(),
     });
     assert.equal(disabledSignUp.status, 400);
 
@@ -179,15 +188,16 @@ async function main(): Promise<void> {
     assert.equal(typeof ((await firstSignIn.json()) as { token?: unknown }).token, 'string');
 
     const usersService = new UsersService(db);
+    const invitedPassword = testPassword();
     const invited = await usersService.create(initialized.organization.id, {
       name: 'Invited User',
       email: 'invited@example.test',
-      password: 'correct horse battery staple',
+      password: invitedPassword,
       role: 'requester',
     });
     const invitedSignIn = await authRequest(auth, 'sign-in/email', {
       email: invited.email,
-      password: 'correct horse battery staple',
+      password: invitedPassword,
     });
     assert.equal(invitedSignIn.status, 200);
 
@@ -208,7 +218,7 @@ async function main(): Promise<void> {
         usersService.create(initialized.organization.id, {
           name: 'Must Roll Back',
           email: 'rollback@example.test',
-          password: 'correct horse battery staple',
+          password: testPassword(),
           role: 'requester',
         }),
       );

@@ -1,4 +1,5 @@
 import { apiUrl } from './api-url';
+import type { BootstrapInstanceInput } from '@betterspend/shared';
 
 const SESSION_COOKIE = 'bs_token';
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60; // 7 days in seconds
@@ -13,10 +14,13 @@ export interface SignInResult {
 export async function parseAuthResponse(res: Response): Promise<SignInResult> {
   const text = await res.text();
   let data: SignInResult = {};
-  if (text) {
+  if (!text) {
+    if (res.ok) throw new Error('Invalid authentication response');
+  } else {
     try {
       data = JSON.parse(text) as SignInResult;
     } catch {
+      if (res.ok) throw new Error('Invalid authentication response');
       data = {};
     }
   }
@@ -51,21 +55,16 @@ export async function signIn(email: string, password: string): Promise<SignInRes
   return data;
 }
 
-export async function signUp(
-  email: string,
-  password: string,
-  name: string,
-  organizationName: string,
-): Promise<SignInResult> {
+export async function signUp(input: BootstrapInstanceInput): Promise<SignInResult> {
   const res = await fetch(apiUrl('/api/v1/bootstrap'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, name, organizationName }),
+    body: JSON.stringify(input),
     credentials: 'include',
   });
   const data = await parseAuthResponse(res);
   if (data.error || data.message) return data;
-  return signIn(email, password);
+  return signIn(input.email, input.password);
 }
 
 export async function signOut(): Promise<void> {

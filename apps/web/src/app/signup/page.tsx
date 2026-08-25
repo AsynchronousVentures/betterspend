@@ -4,6 +4,7 @@ import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowRight, Building2, KeyRound, Mail, UserRound } from 'lucide-react';
+import { bootstrapInstanceSchema } from '@betterspend/shared';
 import { signUp } from '../../lib/auth-client';
 import { AuthShell } from '../../components/auth-shell';
 import { Alert, AlertDescription } from '../../components/ui/alert';
@@ -28,14 +29,20 @@ export default function SignUpPage() {
       setError('Passwords do not match');
       return;
     }
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters');
+    const parsed = bootstrapInstanceSchema.safeParse({
+      organizationName,
+      name,
+      email,
+      password,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || 'Check the account details');
       return;
     }
 
     setLoading(true);
     try {
-      const result = await signUp(email, password, name, organizationName);
+      const result = await signUp(parsed.data);
       if (result.error || result.message?.toLowerCase().includes('already')) {
         setError(result.message || result.error || 'Sign-up failed');
       } else {

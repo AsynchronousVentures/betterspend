@@ -1,7 +1,7 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { bootstrapInstanceSchema } from '@betterspend/shared';
 import { Public } from '../../common/decorators/public.decorator';
-import { BootstrapInstanceDto } from './bootstrap.dto';
 import { BootstrapService } from './bootstrap.service';
 
 @ApiTags('bootstrap')
@@ -12,7 +12,7 @@ export class BootstrapController {
 
   @Post()
   @ApiOperation({ summary: 'Initialize a fresh BetterSpend instance and its first administrator' })
-  initialize(@Body() body: BootstrapInstanceDto) {
-    return this.bootstrapService.initialize(body);
+  initialize(@Body() body: unknown) {
+    return this.bootstrapService.initialize(bootstrapInstanceSchema.parse(body));
   }
 }
