@@ -2109,9 +2109,13 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         });
     }
   }
-  const payable = invoiceContext.filter(
-    (invoice) => invoice.status === 'approved' || invoice.status === 'paid',
-  );
+  const payable = invoiceContext
+    .filter((invoice) => invoice.status === 'approved' || invoice.status === 'paid')
+    .sort((left, right) => {
+      const paidOrder = (invoice: (typeof invoiceContext)[number]): number =>
+        invoice.status === 'paid' ? 0 : 1;
+      return paidOrder(left) - paidOrder(right) || left.index - right.index;
+    });
   const runCount = Math.ceil(payable.length / 20);
   for (let index = 0; index < runCount; index += 1) {
     const runInvoices = payable.slice(index * 20, (index + 1) * 20);
@@ -2129,7 +2133,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
     );
     const runDate = dateAfter(runBaseDate, seed, 'payment-run-date', index, 1, 14);
     const runUpdatedAt = dateAfter(runDate, seed, 'payment-run-updated', index, 1, 20);
-    const paid = runInvoices.some((invoice) => invoice.status === 'paid');
+    const paid = runInvoices.every((invoice) => invoice.status === 'paid');
     rows.paymentRuns.push({
       id: runId,
       orgId: DEMO_ORG_ID,
@@ -2270,7 +2274,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
       productName: `${['Analytics suite', 'Endpoint security', 'Design workspace', 'Cloud monitoring'][index % 4]} ${index + 1}`,
       status: index % 11 === 0 ? 'expired' : index % 7 === 0 ? 'renewal_due' : 'active',
       seatCount: 10 + (index % 12) * 5,
-      seatsUsed: 6 + (index % 10) * 3,
+      seatsUsed: Math.min(10 + (index % 12) * 5, 6 + (index % 10) * 3),
       pricePerSeat: money(3_500 + index * 200),
       currency: currencyAt(index),
       billingCycle: index % 4 === 0 ? 'monthly' : 'annual',
@@ -2284,7 +2288,8 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
       updatedAt: stableDate(seed, 'license-updated', index, -30, 0),
     });
   for (let index = 0; index < Math.max(8, Math.ceil(count / 20)); index += 1) {
-    const req = requisitionContext.get(index * 3);
+    const req = requisitionContext.get(index % count);
+    if (!req) continue;
     rows.spendGuardAlerts.push({
       id: stableUuid(seed, 'spend-alert', index),
       orgId: DEMO_ORG_ID,
@@ -2296,7 +2301,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
             : 'unusual_vendor',
       severity: index % 5 === 0 ? 'high' : index % 2 === 0 ? 'medium' : 'low',
       recordType: 'requisition',
-      recordId: req?.id ?? stableUuid(seed, 'requisition', index * 3),
+      recordId: req.id,
       details: { thresholdPercent: 80 + (index % 3) * 5, generated: true },
       status: index % 4 === 0 ? 'resolved' : 'open',
       note: 'Synthetic spend guard alert.',
@@ -2398,7 +2403,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
     rows.notifications.push({
       id: stableUuid(seed, 'notification', index),
       organizationId: DEMO_ORG_ID,
-      userId: req.requesterId,
+      userId: req.status === 'pending_approval' ? DEMO_APPROVER_ID : req.requesterId,
       type:
         req.status === 'pending_approval'
           ? 'approval_request'

@@ -20,6 +20,7 @@ import {
 } from './random-seed';
 import { materializeEmailIntakeTokens, materializeWebhookSecrets } from './random-seed-secrets';
 import {
+  DEMO_APPROVER_ID,
   DEMO_ORG_ID,
   DEMO_USER_ROLE_FIXTURES,
   DEMO_VENDOR_FIXTURES,
@@ -347,6 +348,7 @@ test('keeps generated money references and vendor fixture reconciliation keys co
   const requisitionsById = new Map(dataset.requisitions.map((row) => [row.id, row]));
   const purchaseOrdersById = new Map(dataset.purchaseOrders.map((row) => [row.id, row]));
   const invoicesById = new Map(dataset.invoices.map((row) => [row.id, row]));
+  const requisitionIds = new Set(dataset.requisitions.map((row) => row.id));
 
   const receiptIds = new Set(dataset.goodsReceipts.map((row) => row.id));
   const purchaseOrderIds = new Set(dataset.purchaseOrders.map((row) => row.id));
@@ -360,6 +362,10 @@ test('keeps generated money references and vendor fixture reconciliation keys co
     if (movement.referenceType === 'purchase_order')
       assert.equal(purchaseOrderIds.has(movement.referenceId ?? ''), true);
   }
+  for (const alert of dataset.spendGuardAlerts)
+    assert.equal(requisitionIds.has(alert.recordId ?? ''), true);
+  for (const license of dataset.softwareLicenses)
+    assert.equal(Number(license.seatsUsed) <= Number(license.seatCount), true);
 
   for (const event of dataset.budgetCommitmentEvents) {
     const requisition = requisitionsById.get(event.requisitionId ?? '');
@@ -427,6 +433,38 @@ test('keeps generated money references and vendor fixture reconciliation keys co
     true,
   );
 
+  for (const notification of dataset.notifications.filter(
+    (candidate) => candidate.entityType === 'requisition',
+  )) {
+    const requisition = requisitionsById.get(notification.entityId ?? '');
+    assert.ok(requisition);
+    assert.equal(
+      notification.userId,
+      requisition.status === 'pending_approval' ? DEMO_APPROVER_ID : requisition.requesterId,
+    );
+  }
+
+  const paymentRunEventsByRunId = new Map(
+    dataset.paymentRunEvents.map((event) => [event.paymentRunId, event]),
+  );
+  let sawMixedPaymentRun = false;
+  for (const run of dataset.paymentRuns) {
+    if (!run.id) throw new Error('Payment run is missing an ID');
+    const linkedInvoices = dataset.paymentRunInvoices
+      .filter((link) => link.paymentRunId === run.id)
+      .map((link) => invoicesById.get(link.invoiceId))
+      .filter((invoice): invoice is (typeof dataset.invoices)[number] => Boolean(invoice));
+    const allPaid =
+      linkedInvoices.length > 0 && linkedInvoices.every((invoice) => invoice.status === 'paid');
+    const hasPaid = linkedInvoices.some((invoice) => invoice.status === 'paid');
+    const paymentRunEvent = paymentRunEventsByRunId.get(run.id);
+    assert.ok(paymentRunEvent);
+    assert.equal(run.status === 'paid', allPaid);
+    assert.equal(paymentRunEvent.eventType, allPaid ? 'completed' : 'created');
+    if (hasPaid && !allPaid) sawMixedPaymentRun = true;
+  }
+  assert.equal(sawMixedPaymentRun, true);
+
   const invoiceNotifications = dataset.notifications.filter(
     (notification) => notification.entityType === 'invoice',
   );
@@ -475,6 +513,14 @@ test('keeps generated money references and vendor fixture reconciliation keys co
     roleByKey.get(demoUserRoleNaturalKey(DEMO_USER_ROLE_FIXTURES[0])),
     '00000000-0000-0000-0000-000000000040',
   );
+});
+
+test('keeps minimum spend guard alerts linked to a generated requisition', () => {
+  const dataset = generateRandomSeedDataset({ count: 1, seed: 'spend-guard-count-one' });
+  const requisitionIds = new Set(dataset.requisitions.map((row) => row.id));
+  assert.equal(dataset.spendGuardAlerts.length >= 8, true);
+  for (const alert of dataset.spendGuardAlerts)
+    assert.equal(requisitionIds.has(alert.recordId ?? ''), true);
 });
 
 test('converts payable invoices to base-currency payment amounts and omits empty runs', () => {
