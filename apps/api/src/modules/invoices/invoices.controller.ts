@@ -77,8 +77,12 @@ export class InvoicesController {
 
   @Post(':id/match')
   @ApiOperation({ summary: 'Re-run 3-way match on an invoice' })
-  runMatch(@Param('id') id: string, @CurrentOrgId() orgId: string) {
-    return this.invoicesService.runMatch(id, orgId);
+  runMatch(
+    @Param('id') id: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+  ) {
+    return this.invoicesService.runMatch(id, orgId, userId);
   }
 
   @Patch(':id/approve')

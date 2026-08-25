@@ -395,6 +395,7 @@ describe('InvoicesService material edits', () => {
     rerunMatchStatus: 'full_match' | 'partial_match' | 'exception' = 'full_match',
     duplicateInvoice = false,
     poVendorId = 'vendor-1',
+    workflowConfigured = true,
   ) => {
     const invoice = {
       id: 'invoice-1',
@@ -525,7 +526,9 @@ describe('InvoicesService material edits', () => {
       initiateIfConfigured: async () => {
         workflowStartedFromStatus = invoiceUpdates.at(-1)?.status;
         initiated = true;
-        return { requestId: 'request-2', status: 'pending' as const };
+        return workflowConfigured
+          ? { requestId: 'request-2', status: 'pending' as const }
+          : null;
       },
       publishCommittedRequest: async () => {
         published = true;
@@ -657,6 +660,18 @@ describe('InvoicesService material edits', () => {
     assert.equal(fixture.workflowStartedFromStatus(), 'pending_approval');
   });
 
+  it('falls back to manual reapproval when no workflow is configured', async () => {
+    const fixture = createEditService('rejected', 'full_match', false, 'vendor-1', false);
+
+    await fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+      lines: [{ id: '00000000-0000-4000-8000-000000000101', quantity: 2 }],
+    });
+
+    assert.equal(fixture.state().initiated, true);
+    assert.equal(fixture.state().published, false);
+    assert.equal(fixture.invoiceUpdates.at(-1)?.status, 'matched');
+  });
+
   it('starts reapproval when an edit restores a previously failed match', async () => {
     const fixture = createEditService('partial_match', 'full_match');
 
@@ -666,6 +681,16 @@ describe('InvoicesService material edits', () => {
 
     assert.equal(fixture.state().initiated, true);
     assert.equal(fixture.workflowStartedFromStatus(), 'pending_approval');
+  });
+
+  it('starts reapproval when a later rematch restores a full match', async () => {
+    const fixture = createEditService('partial_match', 'full_match');
+
+    await fixture.service.runMatch('invoice-1', 'organization-1', 'editor-1');
+
+    assert.equal(fixture.state().initiated, true);
+    assert.equal(fixture.workflowStartedFromStatus(), 'pending_approval');
+    assert.equal(fixture.state().published, true);
   });
 
   it('does not revive a cancelled invoice through editing', async () => {

@@ -4,7 +4,6 @@ import {
   Optional,
   NotFoundException,
   BadRequestException,
-  ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
 import { eq, and, ne, isNull, lte, gte, sql } from 'drizzle-orm';
@@ -599,10 +598,14 @@ export class InvoicesService {
             tx,
           );
           if (!initiated) {
-            throw new ConflictException('Invoice reapproval requires a published workflow');
+            await tx
+              .update(invoices)
+              .set({ status: 'matched', updatedAt: editedAt })
+              .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+          } else {
+            publishRequestId = initiated.requestId;
+            approvalRequestId = initiated.requestId;
           }
-          publishRequestId = initiated.requestId;
-          approvalRequestId = initiated.requestId;
         }
       }
 
@@ -807,9 +810,56 @@ export class InvoicesService {
     return created;
   }
 
-  async runMatch(id: string, organizationId: string) {
-    await this.findOne(id, organizationId); // validate exists
-    return this.matchingService.runMatch(id);
+  async runMatch(id: string, organizationId: string, actorId: string) {
+    const outcome = await this.db.transaction(async (tx) => {
+      const [lockedInvoice] = await tx
+        .select()
+        .from(invoices)
+        .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)))
+        .for('update');
+      if (!lockedInvoice) throw new NotFoundException(`Invoice ${id} not found`);
+      if (lockedInvoice.status === 'paid' || lockedInvoice.status === 'cancelled') {
+        throw new BadRequestException(`${lockedInvoice.status} invoices cannot be rematched`);
+      }
+
+      const match = await this.matchingService.runMatch(id, tx);
+      let publishRequestId: string | null = null;
+      if (
+        match.matchStatus === 'full_match' &&
+        lockedInvoice.status !== 'approved' &&
+        lockedInvoice.status !== 'pending_approval'
+      ) {
+        await tx
+          .update(invoices)
+          .set({ status: 'pending_approval', updatedAt: new Date() })
+          .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+        const initiated = await this.workflowExecution.initiateIfConfigured(
+          organizationId,
+          'invoice',
+          id,
+          actorId,
+          undefined,
+          undefined,
+          tx,
+        );
+        if (initiated) {
+          publishRequestId = initiated.requestId;
+        } else {
+          await tx
+            .update(invoices)
+            .set({ status: 'matched', updatedAt: new Date() })
+            .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+        }
+      }
+      return { match, publishRequestId };
+    });
+    if (outcome.publishRequestId) {
+      await this.workflowExecution.publishCommittedRequest(
+        outcome.publishRequestId,
+        organizationId,
+      );
+    }
+    return outcome.match;
   }
 
   async markPaid(id: string, organizationId: string, userId: string, input?: MarkPaidInput) {
