@@ -165,6 +165,7 @@ export const workflowRuntimePublications = pgTable(
     approvalRequestId: uuid('approval_request_id').notNull(),
     nodeId: varchar('node_id', { length: 100 }).notNull(),
     attempt: integer('attempt').notNull(),
+    outcomeStatus: varchar('outcome_status', { length: 20 }).notNull(),
     status: varchar('status', { length: 20 }).notNull().default('pending'),
     deliveryAttempts: integer('delivery_attempts').notNull().default(0),
     lastError: text('last_error'),

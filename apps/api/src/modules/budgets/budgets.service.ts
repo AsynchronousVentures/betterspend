@@ -410,7 +410,7 @@ export class BudgetsService {
     input: EnforcementInput,
   ): Promise<BudgetEnforcementDecision> {
     if (!input.departmentId) return noDepartmentDecision();
-    const context = await this.loadEnforcementContext(input);
+    const context = await this.loadEnforcementContext(input, tx);
     const [budget] = await tx
       .select()
       .from(budgets)
@@ -428,13 +428,16 @@ export class BudgetsService {
     return this.evaluateBudget(input, budget, tx, context);
   }
 
-  private async loadEnforcementContext(input: EnforcementInput): Promise<EnforcementContext> {
+  private async loadEnforcementContext(
+    input: EnforcementInput,
+    executor: Db | DbTransaction = this.db,
+  ): Promise<EnforcementContext> {
     const [settings, baseCurrency, rates, department] = await Promise.all([
-      this.settingsService.getAll(input.organizationId),
-      this.exchangeRatesService.getOrganizationBaseCurrency(input.organizationId),
-      this.exchangeRatesService.list(input.organizationId),
+      this.settingsService.getAll(input.organizationId, executor),
+      this.exchangeRatesService.getOrganizationBaseCurrency(input.organizationId, executor),
+      this.exchangeRatesService.list(input.organizationId, executor),
       input.departmentId
-        ? this.db.query.departments.findFirst({
+        ? executor.query.departments.findFirst({
             where: (record, { and, eq }) =>
               and(
                 eq(record.id, input.departmentId!),
@@ -444,7 +447,7 @@ export class BudgetsService {
         : Promise.resolve(undefined),
     ]);
     const owner = department?.budgetOwnerId
-      ? await this.db.query.users.findFirst({
+      ? await executor.query.users.findFirst({
           where: (record, { and, eq }) =>
             and(
               eq(record.id, department.budgetOwnerId!),

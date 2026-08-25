@@ -376,6 +376,9 @@ function createRestartFixture(
   } as unknown as NotificationsService;
   const webhooks = {
     emit: () => entityUpdates.push({ webhook: true }),
+    enqueue: async () => {
+      entityUpdates.push({ webhook: true });
+    },
   } as unknown as WebhookEventService;
   const audit = { log: async () => undefined } as unknown as AuditService;
 
@@ -640,6 +643,17 @@ describe('WorkflowExecutionService restart', () => {
       ['skipped', 'approved', 'approved'],
     );
     assert.equal(replacement.status, 'approved');
+    for (const publication of fixture.publications.filter((item) => item.status === 'pending')) {
+      await fixture.service.handleRuntimePublication(String(publication.id));
+    }
+    assert.equal(
+      fixture.publications.find((publication) => publication.outcomeStatus === 'approved')?.status,
+      'published',
+    );
+    assert.equal(
+      fixture.entityUpdates.filter((update) => update.webhook === true).length,
+      2,
+    );
   });
 
   it('skips active assignments when an SLA auto-rejects the request', async () => {
@@ -767,6 +781,7 @@ describe('WorkflowExecutionService escalation scheduling', () => {
       currentNodeId: 'review',
       attempt: 3,
       status: 'pending',
+      updatedAt: new Date(Date.now() + 60_000),
     };
     const db = {
       query: {
@@ -805,6 +820,21 @@ describe('WorkflowExecutionService escalation scheduling', () => {
       ],
     );
     assert.ok(jobs.every((job) => job.data.definitionVersionId === request.definitionVersionId));
+    assert.ok(
+      jobs.every(
+        (job) =>
+          job.options.attempts === 5 &&
+          (job.options.backoff as { type?: string }).type === 'exponential' &&
+          job.options.removeOnFail === undefined,
+        ),
+    );
+
+    jobs.splice(0);
+    request.updatedAt = new Date(Date.now() - 5_400_000);
+    await service.scheduleEscalations(request.id, ORGANIZATION_ID);
+    assert.equal(jobs[0]?.options.delay, 0);
+    assert.ok(Number(jobs[1]?.options.delay) > 1_790_000);
+    assert.ok(Number(jobs[1]?.options.delay) <= 1_800_000);
   });
 
   it('ignores a valid action job before the pinned step SLA has elapsed', async () => {

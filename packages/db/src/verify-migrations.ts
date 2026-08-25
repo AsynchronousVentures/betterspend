@@ -23,6 +23,7 @@ const EXPECTED_COLUMNS = [
   { table: 'approval_actions', column: 'metadata' },
   { table: 'users', column: 'manager_id' },
   { table: 'workflow_definition_versions', column: 'organization_id' },
+  { table: 'workflow_runtime_publications', column: 'outcome_status' },
 ] as const;
 
 const EXPECTED_TRIGGERS = [

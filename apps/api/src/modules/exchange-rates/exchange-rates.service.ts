@@ -41,8 +41,8 @@ export class ExchangeRatesService {
     return org.baseCurrency ?? 'USD';
   }
 
-  async list(organizationId: string) {
-    const rows = await this.db.query.exchangeRates.findMany({
+  async list(organizationId: string, executor: Db | DbTransaction = this.db) {
+    const rows = await executor.query.exchangeRates.findMany({
       where: (record, { eq }) => eq(record.orgId, organizationId),
       orderBy: (record, { desc, asc }) => [
         asc(record.fromCurrency),
