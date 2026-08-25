@@ -12,6 +12,7 @@
     "db:generate": "turbo db:generate",
     "db:migrate": "turbo db:migrate",
     "db:seed": "turbo db:seed",
+    "db:seed:random": "pnpm --filter @betterspend/db db:seed:random --",
     "db:studio": "turbo db:studio",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "release:tag": "git tag -a v$npm_package_version -m \"Release v$npm_package_version\"",

@@ -95,7 +95,17 @@ pnpm db:migrate
 pnpm db:seed
 ```
 
-The seed creates the Acme Corp organization, two departments, three users, and sample vendors. The user rows do not have passwords. Use local demo mode for the shortest path, or leave it disabled when testing the real sign-up and session flow.
+The ordinary seed creates the small Acme Corp demo organization, two departments, three users, and sample vendors. It uses stable upserts, so rerunning it is safe after adding other local records. The user rows do not have passwords. Use local demo mode for the shortest path, or leave it disabled when testing the real sign-up and session flow.
+
+For a larger, repeatable local workload, run the opt-in seed after migrations:
+
+```bash
+pnpm db:seed:random -- --count 500 --seed 42
+```
+
+`--count` is the number of purchase-to-pay stories and accepts 1 through 5000. The default is 500. `--seed` accepts a non-empty string and has a fixed default. Repeating the same seed and count is idempotent. A durable `system_settings` marker records the original count under the full seed digest, so a namespace can only be rerun with that count. Once recorded, the marker remains authoritative even if generated rows are deleted, allowing a rerun to repair them. The first run retains a legacy prefix-count check before creating the marker. To use a different count, choose a new seed. The command validates this before writing, uses one transaction and bounded batches, and refuses to run when `NODE_ENV=production`.
+
+The workload covers the linked requisition, approval, PO, receiving, invoice, 3-way match, budget, payment, audit, sourcing, contract, inventory, catalog, onboarding, notification, document/OCR metadata, email-intake, policy, concierge, alert, license, GL, webhook, sanctions-screening, and disabled integration-sync domains. Generated emails, URLs, storage keys, account masks, and payment metadata are fake and inert. Webhook signing secrets and the inbound email address token are generated randomly at first insert and preserved on idempotent reruns, so secrets are not part of the deterministic graph. It intentionally excludes auth sessions/accounts/verifications, password reset tokens, vendor portal tokens/sessions, AI credentials, active integrations, external secrets, workflow runtime rows, and sanctions registry state or entries.
 
 ### 4. Run the app
 
@@ -183,7 +193,8 @@ pnpm format           # Format supported files with Prettier
 
 pnpm db:generate      # Generate a migration from schema changes
 pnpm db:migrate       # Apply pending migrations
-pnpm db:seed          # Reset and load the local demo organization
+pnpm db:seed          # Load the small local demo organization
+pnpm db:seed:random   # Generate an opt-in repeatable local workload
 pnpm db:studio        # Open Drizzle Studio
 ```
 
