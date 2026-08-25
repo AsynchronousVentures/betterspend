@@ -415,6 +415,10 @@ test('keeps generated money references and vendor fixture reconciliation keys co
     true,
   );
   assert.equal(
+    dataset.invoices.some((invoice) => invoice.status === 'rejected'),
+    true,
+  );
+  assert.equal(
     dataset.paymentRuns.some((run) => run.status === 'paid'),
     true,
   );
@@ -422,6 +426,34 @@ test('keeps generated money references and vendor fixture reconciliation keys co
     dataset.glExportJobs.some((job) => job.status === 'exported'),
     true,
   );
+
+  const invoiceNotifications = dataset.notifications.filter(
+    (notification) => notification.entityType === 'invoice',
+  );
+  assert.equal(invoiceNotifications.length, dataset.invoices.length);
+  for (const notification of invoiceNotifications) {
+    const invoice = invoicesById.get(notification.entityId ?? '');
+    assert.ok(invoice);
+    if (invoice.status === 'pending_match') {
+      assert.equal(notification.type, 'invoice_exception');
+      assert.equal(notification.title, 'Invoice match requires review');
+    } else if (invoice.status === 'rejected') {
+      assert.equal(notification.type, 'invoice_exception');
+      assert.equal(notification.title, 'Invoice rejected');
+    } else {
+      assert.equal(notification.type, 'invoice_approved');
+      assert.equal(notification.title, 'Invoice approved');
+    }
+  }
+  for (const card of dataset.vendorVirtualCards) {
+    const invoice = invoicesById.get(card.invoiceId ?? '');
+    assert.ok(invoice);
+    assert.equal(card.currency, 'USD');
+    assert.equal(
+      cents(card.limitAmount),
+      toBaseCents(cents(invoice.totalAmount), invoice.currency ?? 'USD'),
+    );
+  }
 
   const vendorByKey = new Map(
     DEMO_VENDOR_FIXTURES.map((vendor) => [demoVendorNaturalKey(vendor), vendor.id]),

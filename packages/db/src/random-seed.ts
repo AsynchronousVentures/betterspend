@@ -2220,7 +2220,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         provider: 'demo-manual',
         providerCardId: `demo-card-${seedToken}-${index + 1}`,
         maskedCard: `**** **** **** ${String(4000 + index).slice(-4)}`,
-        limitAmount: money(invoice.totalCents),
+        limitAmount: money(convertToBaseCents(invoice.totalCents, invoice.currency)),
         currency: 'USD',
         validThrough: dateOnly(stableDate(seed, 'card-valid', index, 20, 180)),
         controls: { fake: true, inert: true },
@@ -2432,9 +2432,16 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
       id: stableUuid(seed, 'invoice-notification', index),
       organizationId: DEMO_ORG_ID,
       userId: DEMO_ADMIN_ID,
-      type: invoice.status === 'pending_match' ? 'invoice_exception' : 'invoice_approved',
+      type:
+        invoice.status === 'pending_match' || invoice.status === 'rejected'
+          ? 'invoice_exception'
+          : 'invoice_approved',
       title:
-        invoice.status === 'pending_match' ? 'Invoice match requires review' : 'Invoice approved',
+        invoice.status === 'pending_match'
+          ? 'Invoice match requires review'
+          : invoice.status === 'rejected'
+            ? 'Invoice rejected'
+            : 'Invoice approved',
       body: 'Synthetic invoice notification.',
       entityType: 'invoice',
       entityId: invoice.id,
