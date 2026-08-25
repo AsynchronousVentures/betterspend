@@ -13,5 +13,7 @@ COPY apps/web/package.json apps/web/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/shared/package.json packages/shared/package.json
 RUN pnpm install --frozen-lockfile
+COPY packages/shared packages/shared
 COPY packages/db packages/db
+RUN pnpm --filter @betterspend/shared build
 CMD ["pnpm", "--filter", "@betterspend/db", "db:migrate"]
