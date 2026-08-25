@@ -791,6 +791,10 @@ export class WorkflowExecutionService implements OnModuleInit {
     await this.reassignEscalatedStep(current, data, timerNode, action.resolvers, execution, quorum);
   }
 
+  /**
+   * Claims one timer delivery inside the same transaction as its side effects.
+   * The escalation-claim unique index makes duplicate queue deliveries no-ops.
+   */
   private async claimEscalation(
     tx: DbTransaction,
     request: RuntimeRequest,
@@ -1454,6 +1458,8 @@ export class WorkflowExecutionService implements OnModuleInit {
         .returning({ id: purchaseOrders.id });
       if (!transitioned)
         throw new ConflictException('Purchase order status changed during workflow');
+      // Approval keeps the requisition reservation intact. PO issuance owns the
+      // reservation-to-commitment conversion in PurchaseOrdersService.issue.
       if (status === 'rejected') {
         await this.budgets.releasePurchaseOrder(
           tx,
