@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { EncryptedPDFError, PDFDocument } from 'pdf-lib';
 
 export const MAX_EMAIL_ATTACHMENTS = 10;
 export const MAX_EMAIL_ATTACHMENT_BYTES = 25 * 1024 * 1024;
@@ -63,6 +64,7 @@ function requiredString(value: unknown, field: string, maxLength: number): strin
     throw new Error(`${field} is required`);
   }
   const normalized = value.trim();
+  if (normalized.includes('\0')) throw new Error(`${field} contains NUL`);
   if (normalized.length > maxLength) throw new Error(`${field} is too long`);
   return normalized;
 }
@@ -133,6 +135,7 @@ export function normalizeSesReceipt(payload: unknown): NormalizedSesReceipt {
     subject:
       typeof (root.subject ?? commonHeaders?.subject) === 'string'
         ? String(root.subject ?? commonHeaders?.subject)
+            .replaceAll('\0', '')
             .trim()
             .slice(0, 500)
         : '',
@@ -264,146 +267,22 @@ function detectedContentType(content: Buffer): string | null {
   return null;
 }
 
-export function isEncryptedPdf(content: Buffer): boolean {
-  if (detectedContentType(content) !== 'application/pdf') return false;
-  const tail = content.subarray(Math.max(0, content.length - 128 * 1024)).toString('latin1');
-  const structuralDictionaries: string[] = [];
-  const startXref = tail.lastIndexOf('startxref');
-  const structuralEnd = startXref >= 0 ? startXref : tail.length;
-
-  const trailerMarkers = [...tail.slice(0, structuralEnd).matchAll(/\btrailer\b/g)];
-  const xrefMarkers = [...tail.slice(0, structuralEnd).matchAll(pdfXrefTypePattern())];
-  if (trailerMarkers.length + xrefMarkers.length > 128) return true;
-
-  for (const trailer of trailerMarkers) {
-    const dictionary = pdfDictionaryAt(tail, tail.indexOf('<<', trailer.index));
-    if (!dictionary) return true;
-    structuralDictionaries.push(dictionary);
+async function pdfRejectionReason(
+  content: Buffer,
+): Promise<'encrypted_pdf' | 'invalid_pdf' | null> {
+  try {
+    const document = await PDFDocument.load(content, {
+      updateMetadata: false,
+      throwOnInvalidObject: true,
+    });
+    if (document.getPageCount() < 1) return 'invalid_pdf';
+    return document.isEncrypted ? 'encrypted_pdf' : null;
+  } catch (error) {
+    const encrypted =
+      error instanceof EncryptedPDFError ||
+      (error instanceof Error && /input document.*is encrypted/i.test(error.message));
+    return encrypted ? 'encrypted_pdf' : 'invalid_pdf';
   }
-
-  for (const xrefMarker of xrefMarkers) {
-    const dictionaryStart = pdfEnclosingDictionaryStart(tail, xrefMarker.index!);
-    const dictionary = pdfDictionaryAt(tail, dictionaryStart);
-    if (!dictionary) return true;
-    structuralDictionaries.push(dictionary);
-  }
-
-  if (startXref >= 0 && structuralDictionaries.length === 0) return true;
-
-  return structuralDictionaries.some((dictionary) =>
-    /\/Encrypt\b/.test(decodePdfNameEscapes(dictionary)),
-  );
-}
-
-function pdfXrefTypePattern(): RegExp {
-  const character = (literal: string, hex: string) => `(?:${literal}|#${hex})`;
-  const type = [
-    character('T', '54'),
-    character('y', '79'),
-    character('p', '70'),
-    character('e', '65'),
-  ].join('');
-  const xref = [
-    character('X', '58'),
-    character('R', '52'),
-    character('e', '65'),
-    character('f', '66'),
-  ].join('');
-  const separator = '(?:\\s|%[^\\r\\n]*(?:\\r\\n?|\\n))*';
-  return new RegExp(`/${type}${separator}/${xref}(?=[\\s/<>()\\[\\]{}%]|$)`, 'g');
-}
-
-function decodePdfNameEscapes(value: string): string {
-  return value.replace(/#([a-f\d]{2})/gi, (_, hex: string) =>
-    String.fromCharCode(Number.parseInt(hex, 16)),
-  );
-}
-
-function pdfEnclosingDictionaryStart(source: string, position: number): number {
-  const starts: number[] = [];
-  let literalDepth = 0;
-  let escaped = false;
-
-  for (let index = 0; index < position; index += 1) {
-    const character = source[index]!;
-    if (literalDepth > 0) {
-      if (escaped) {
-        escaped = false;
-      } else if (character === '\\') {
-        escaped = true;
-      } else if (character === '(') {
-        literalDepth += 1;
-      } else if (character === ')') {
-        literalDepth -= 1;
-      }
-      continue;
-    }
-    if (character === '(') {
-      literalDepth = 1;
-      continue;
-    }
-    if (character === '%') {
-      const lineEnding = source.slice(index + 1, position).search(/[\r\n]/);
-      if (lineEnding < 0) break;
-      index += lineEnding + 1;
-      continue;
-    }
-    if (source.slice(index, index + 2) === '<<') {
-      starts.push(index);
-      index += 1;
-      continue;
-    }
-    if (source.slice(index, index + 2) === '>>') {
-      starts.pop();
-      index += 1;
-    }
-  }
-  return starts.at(-1) ?? -1;
-}
-
-function pdfDictionaryAt(source: string, start: number): string | null {
-  if (start < 0 || source.slice(start, start + 2) !== '<<') return null;
-  let depth = 0;
-  let literalDepth = 0;
-  let escaped = false;
-
-  const end = Math.min(source.length - 1, start + 64 * 1024);
-  for (let index = start; index < end; index += 1) {
-    const character = source[index]!;
-    if (literalDepth > 0) {
-      if (escaped) {
-        escaped = false;
-      } else if (character === '\\') {
-        escaped = true;
-      } else if (character === '(') {
-        literalDepth += 1;
-      } else if (character === ')') {
-        literalDepth -= 1;
-      }
-      continue;
-    }
-    if (character === '(') {
-      literalDepth = 1;
-      continue;
-    }
-    if (character === '%') {
-      const lineEnding = source.slice(index + 1).search(/[\r\n]/);
-      if (lineEnding < 0) return null;
-      index += lineEnding + 1;
-      continue;
-    }
-    if (source.slice(index, index + 2) === '<<') {
-      depth += 1;
-      index += 1;
-      continue;
-    }
-    if (source.slice(index, index + 2) === '>>') {
-      depth -= 1;
-      index += 1;
-      if (depth === 0) return source.slice(start, index + 1);
-    }
-  }
-  return null;
 }
 
 export function sanitizeAttachmentFilename(filename: string): string {
@@ -415,10 +294,10 @@ export function sanitizeAttachmentFilename(filename: string): string {
   return (normalized || 'attachment').slice(0, 255);
 }
 
-export function decideAttachment(
+export async function decideAttachment(
   attachment: IntakeAttachmentCandidate,
   topLevelIndex: number,
-): AttachmentDecision {
+): Promise<AttachmentDecision> {
   const disposition = attachment.contentDisposition?.toLowerCase();
   if (disposition === 'inline' || (attachment.cid && !disposition?.startsWith('attachment'))) {
     return { status: 'ignored', reason: 'inline_attachment' };
@@ -464,8 +343,11 @@ export function decideAttachment(
       contentType: declaredType,
     };
   }
-  if (contentType === 'application/pdf' && isEncryptedPdf(attachment.content)) {
-    return { status: 'rejected', reason: 'encrypted_pdf', filename, contentType };
+  if (contentType === 'application/pdf') {
+    const rejectionReason = await pdfRejectionReason(attachment.content);
+    if (rejectionReason) {
+      return { status: 'rejected', reason: rejectionReason, filename, contentType };
+    }
   }
 
   return {

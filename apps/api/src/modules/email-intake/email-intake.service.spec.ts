@@ -81,6 +81,12 @@ describe('EmailIntakeService receipt enqueueing', () => {
 });
 
 describe('EmailIntakeService attachment promotion', () => {
+  it('removes PostgreSQL-incompatible NUL characters from decoded MIME text', () => {
+    const { service } = serviceWith();
+
+    expect(service['messageBody']('Invoice\0body')).toBe('Invoicebody');
+  });
+
   it('leaves the durable attachment pending when object upload fails', async () => {
     const findAttachment = jest
       .fn()

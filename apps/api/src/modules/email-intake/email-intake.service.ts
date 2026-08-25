@@ -250,12 +250,12 @@ export class EmailIntakeService implements OnModuleInit {
     const rawMime = await this.storage.getBuffer(rawStorageKey);
     if (rawMime.length === 0) throw new Error(`Raw MIME object ${rawStorageKey} is empty`);
     const parsed = await simpleParser(rawMime, { skipImageLinks: true });
-    const sourceEmail = (
-      persisted?.sourceEmail ||
-      parsed.from?.value[0]?.address?.trim() ||
-      receipt.source
+    const sourceEmail = this.postgresText(
+      persisted?.sourceEmail || parsed.from?.value[0]?.address?.trim() || receipt.source,
     ).slice(0, 255);
-    const subject = (persisted?.subject || parsed.subject || receipt.subject).trim().slice(0, 500);
+    const subject = this.postgresText(persisted?.subject || parsed.subject || receipt.subject)
+      .trim()
+      .slice(0, 500);
     const envelopeSource = persisted?.envelopeSource ?? receipt.source;
     const verdicts = persisted?.authVerdicts ?? receipt.verdicts;
     const body = this.messageBody(parsed.text).slice(0, 100_000);
@@ -267,7 +267,7 @@ export class EmailIntakeService implements OnModuleInit {
     let topLevelIndex = 0;
     const attachments: PreparedAttachment[] = [];
     for (const attachment of parsed.attachments) {
-      let decision = decideAttachment(
+      let decision = await decideAttachment(
         {
           filename: attachment.filename,
           contentType: attachment.contentType,
@@ -537,15 +537,15 @@ export class EmailIntakeService implements OnModuleInit {
   }
 
   async create(organizationId: string, input: CreateEmailIntakeInput) {
-    const body = input.body.trim();
-    const subject = input.subject.trim();
+    const body = this.messageBody(input.body);
+    const subject = this.postgresText(input.subject).trim();
     const detected = this.detectIntakeType(subject, body);
 
     const [created] = await this.db
       .insert(emailIntakeItems)
       .values({
         organizationId,
-        sourceEmail: input.sourceEmail.trim(),
+        sourceEmail: this.postgresText(input.sourceEmail).trim(),
         subject,
         body,
         detectedType: detected.detectedType,
@@ -982,7 +982,11 @@ export class EmailIntakeService implements OnModuleInit {
   }
 
   private messageBody(text: string | undefined): string {
-    return text?.trim() ?? '';
+    return this.postgresText(text ?? '').trim();
+  }
+
+  private postgresText(value: string): string {
+    return value.replaceAll('\0', '');
   }
 
   private async notifyIntake(
@@ -1046,6 +1050,7 @@ export class EmailIntakeService implements OnModuleInit {
         [
           'archive_not_allowed',
           'encrypted_pdf',
+          'invalid_pdf',
           'attachment_too_large',
           'attachment_count_exceeded',
         ].includes(attachment.rejectionReason ?? ''),
@@ -1088,6 +1093,7 @@ export class EmailIntakeService implements OnModuleInit {
   private rejectionCopy(reason: string): string {
     if (reason === 'archive_not_allowed') return 'archives are not accepted';
     if (reason === 'encrypted_pdf') return 'password-protected PDFs are not accepted';
+    if (reason === 'invalid_pdf') return 'the PDF is malformed or unreadable';
     if (reason === 'attachment_too_large') return 'the file exceeds 25 MB';
     if (reason === 'attachment_count_exceeded') return 'the email exceeds 10 attachments';
     return 'the file was not accepted';
