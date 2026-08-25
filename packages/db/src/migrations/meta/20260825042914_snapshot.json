@@ -1,6 +1,6 @@
 {
-  "id": "07a7c1c8-9664-4c99-98fc-ffda6b7ad17f",
-  "prevId": "fd9030a8-a462-4af5-acd9-21a3f5c192af",
+  "id": "254f1944-59c8-43ac-ba4a-b17f7602b515",
+  "prevId": "ea66fec5-d5c0-4bde-b5d9-6949d6a91f5a",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -596,6 +596,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "manager_id": {
+          "name": "manager_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "is_active": {
           "name": "is_active",
           "type": "boolean",
@@ -664,6 +670,21 @@
           ],
           "columnsTo": [
             "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "users_manager_org_fk": {
+          "name": "users_manager_org_fk",
+          "tableFrom": "users",
+          "tableTo": "users",
+          "columnsFrom": [
+            "manager_id",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -1658,7 +1679,7 @@
           "name": "approver_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "action": {
           "name": "action",
@@ -1671,6 +1692,19 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "node_id": {
+          "name": "node_id",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
         },
         "acted_at": {
           "name": "acted_at",
@@ -1687,7 +1721,36 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "approval_actions_escalation_claim_unique": {
+          "name": "approval_actions_escalation_claim_unique",
+          "columns": [
+            {
+              "expression": "approval_request_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "node_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "action",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"approval_actions\".\"action\" in ('escalation_warning', 'escalation_action')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "approval_actions_approval_request_id_approval_requests_id_fk": {
           "name": "approval_actions_approval_request_id_approval_requests_id_fk",
@@ -1733,6 +1796,12 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
         "approvable_type": {
           "name": "approvable_type",
           "type": "varchar(50)",
@@ -1757,11 +1826,24 @@
           "primaryKey": false,
           "notNull": false
         },
+        "initiated_by": {
+          "name": "initiated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "current_node_id": {
           "name": "current_node_id",
           "type": "varchar(100)",
           "primaryKey": false,
           "notNull": false
+        },
+        "workflow_context": {
+          "name": "workflow_context",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
         },
         "attempt": {
           "name": "attempt",
@@ -1823,8 +1905,64 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "approval_requests_id_organization_id_unique": {
+          "name": "approval_requests_id_organization_id_unique",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "approval_requests_org_status_idx": {
+          "name": "approval_requests_org_status_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
+        "approval_requests_organization_id_organizations_id_fk": {
+          "name": "approval_requests_organization_id_organizations_id_fk",
+          "tableFrom": "approval_requests",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
         "approval_requests_approval_rule_id_approval_rules_id_fk": {
           "name": "approval_requests_approval_rule_id_approval_rules_id_fk",
           "tableFrom": "approval_requests",
@@ -1851,15 +1989,32 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "approval_requests_definition_version_fk": {
-          "name": "approval_requests_definition_version_fk",
+        "approval_requests_definition_version_org_fk": {
+          "name": "approval_requests_definition_version_org_fk",
           "tableFrom": "approval_requests",
           "tableTo": "workflow_definition_versions",
           "columnsFrom": [
-            "definition_version_id"
+            "definition_version_id",
+            "organization_id"
           ],
           "columnsTo": [
-            "id"
+            "id",
+            "organization_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "approval_requests_initiated_by_org_fk": {
+          "name": "approval_requests_initiated_by_org_fk",
+          "tableFrom": "approval_requests",
+          "tableTo": "users",
+          "columnsFrom": [
+            "initiated_by",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -2053,6 +2208,376 @@
             "id"
           ],
           "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.workflow_approval_assignments": {
+      "name": "workflow_approval_assignments",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "approval_request_id": {
+          "name": "approval_request_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "node_id": {
+          "name": "node_id",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sequence": {
+          "name": "sequence",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resolver": {
+          "name": "resolver",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resolved_approver_id": {
+          "name": "resolved_approver_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "assigned_approver_id": {
+          "name": "assigned_approver_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "acted_by": {
+          "name": "acted_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "acted_at": {
+          "name": "acted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "workflow_approval_assignments_request_node_sequence_unique": {
+          "name": "workflow_approval_assignments_request_node_sequence_unique",
+          "columns": [
+            {
+              "expression": "approval_request_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "node_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "sequence",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "workflow_approval_assignments_assignee_status_idx": {
+          "name": "workflow_approval_assignments_assignee_status_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "assigned_approver_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "workflow_approval_assignments_organization_fk": {
+          "name": "workflow_approval_assignments_organization_fk",
+          "tableFrom": "workflow_approval_assignments",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "workflow_approval_assignments_request_org_fk": {
+          "name": "workflow_approval_assignments_request_org_fk",
+          "tableFrom": "workflow_approval_assignments",
+          "tableTo": "approval_requests",
+          "columnsFrom": [
+            "approval_request_id",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "workflow_approval_assignments_resolved_approver_org_fk": {
+          "name": "workflow_approval_assignments_resolved_approver_org_fk",
+          "tableFrom": "workflow_approval_assignments",
+          "tableTo": "users",
+          "columnsFrom": [
+            "resolved_approver_id",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "workflow_approval_assignments_assigned_approver_org_fk": {
+          "name": "workflow_approval_assignments_assigned_approver_org_fk",
+          "tableFrom": "workflow_approval_assignments",
+          "tableTo": "users",
+          "columnsFrom": [
+            "assigned_approver_id",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "workflow_approval_assignments_acted_by_org_fk": {
+          "name": "workflow_approval_assignments_acted_by_org_fk",
+          "tableFrom": "workflow_approval_assignments",
+          "tableTo": "users",
+          "columnsFrom": [
+            "acted_by",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "workflow_approval_assignments_status_check": {
+          "name": "workflow_approval_assignments_status_check",
+          "value": "\"workflow_approval_assignments\".\"status\" in ('waiting', 'pending', 'approved', 'rejected', 'skipped')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.workflow_runtime_publications": {
+      "name": "workflow_runtime_publications",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "approval_request_id": {
+          "name": "approval_request_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "node_id": {
+          "name": "node_id",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempt": {
+          "name": "attempt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "outcome_status": {
+          "name": "outcome_status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "delivery_attempts": {
+          "name": "delivery_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "published_at": {
+          "name": "published_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "workflow_runtime_publications_status_idx": {
+          "name": "workflow_runtime_publications_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "workflow_runtime_publications_organization_fk": {
+          "name": "workflow_runtime_publications_organization_fk",
+          "tableFrom": "workflow_runtime_publications",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "workflow_runtime_publications_request_org_fk": {
+          "name": "workflow_runtime_publications_request_org_fk",
+          "tableFrom": "workflow_runtime_publications",
+          "tableTo": "approval_requests",
+          "columnsFrom": [
+            "approval_request_id",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
+          ],
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -4303,7 +4828,7 @@
       "checkConstraints": {
         "budget_commitment_events_event_type_check": {
           "name": "budget_commitment_events_event_type_check",
-          "value": "\"budget_commitment_events\".\"event_type\" in ('requisition_reserved', 'requisition_released', 'purchase_order_committed', 'purchase_order_reduced', 'purchase_order_released', 'invoice_expended', 'legacy_commitment_backfill', 'legacy_reservation_backfill')"
+          "value": "\"budget_commitment_events\".\"event_type\" in ('requisition_reserved', 'requisition_released', 'purchase_order_committed', 'purchase_order_reduced', 'purchase_order_released', 'invoice_expended', 'invoice_reopened', 'legacy_commitment_backfill', 'legacy_reservation_backfill')"
         }
       },
       "isRLSEnabled": false

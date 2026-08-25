@@ -104,7 +104,7 @@ async function verifyMigratedCredentialSignIn(databaseUrl: string): Promise<void
     const migration = await readFile(
       path.resolve(
         __dirname,
-        '../../../../packages/db/src/migrations/20260825035813_gray_angel.sql',
+        '../../../../packages/db/src/migrations/20260825042914_amazing_hydra.sql',
       ),
       'utf8',
     );
