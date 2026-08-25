@@ -11,6 +11,7 @@ import {
   stableBusinessNumber,
   stableUuid,
 } from './random-seed';
+import { materializeWebhookSecrets } from './random-seed-secrets';
 
 test('parses defaults and explicit workload options', () => {
   assert.deepEqual(parseRandomSeedArgs([]), {
@@ -101,6 +102,16 @@ test('uses migration-safe budget enforcement modes', () => {
   const dataset = generateRandomSeedDataset({ count: 12, seed: 'budget-mode-test' });
   for (const budget of dataset.budgets)
     assert.equal(allowedModes.has(budget.enforcementMode ?? ''), true);
+});
+
+test('materializes webhook secrets outside the deterministic graph', () => {
+  const dataset = generateRandomSeedDataset({ count: 4, seed: 'webhook-secret-test' });
+  const source = dataset.webhookEndpoints[0];
+  assert.ok(source);
+  assert.equal(Object.prototype.hasOwnProperty.call(source, 'secret'), false);
+  const materialized = materializeWebhookSecrets(dataset.webhookEndpoints, () => 'a'.repeat(64));
+  assert.equal(Object.prototype.hasOwnProperty.call(materialized[0], 'secret'), true);
+  assert.equal(materialized[0]?.secret, 'a'.repeat(64));
 });
 
 test('keeps core lifecycle timestamps and money allocations coherent', () => {

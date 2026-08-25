@@ -97,6 +97,7 @@ export interface RandomSeedCliOptions extends RandomSeedOptions {
 }
 
 type InsertRow<T> = T extends { $inferInsert: infer R } ? R : never;
+type WebhookEndpointSeedRow = Omit<InsertRow<typeof webhookEndpoints>, 'secret'>;
 
 type Rows = {
   legalEntities: Array<InsertRow<typeof legalEntities>>;
@@ -151,7 +152,7 @@ type Rows = {
   catalogPriceProposals: Array<InsertRow<typeof catalogPriceProposals>>;
   softwareLicenses: Array<InsertRow<typeof softwareLicenses>>;
   spendGuardAlerts: Array<InsertRow<typeof spendGuardAlerts>>;
-  webhookEndpoints: Array<InsertRow<typeof webhookEndpoints>>;
+  webhookEndpoints: Array<WebhookEndpointSeedRow>;
   webhookDeliveries: Array<InsertRow<typeof webhookDeliveries>>;
   glMappings: Array<InsertRow<typeof glMappings>>;
   glExportJobs: Array<InsertRow<typeof glExportJobs>>;
@@ -2192,7 +2193,6 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
     id: webhookId,
     organizationId: DEMO_ORG_ID,
     url: 'https://example.invalid/betterspend-demo-webhook',
-    secret: `demo-secret-${seedToken}`,
     events: ['requisition.created', 'purchase_order.issued', 'invoice.approved'],
     isActive: false,
     createdAt: stableDate(seed, 'webhook-created', 0, -120, -30),
