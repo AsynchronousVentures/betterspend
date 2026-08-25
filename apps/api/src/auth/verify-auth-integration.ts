@@ -6,7 +6,7 @@ import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { eq } from 'drizzle-orm';
 import * as schema from '@betterspend/db';
-import type { Db } from '@betterspend/db';
+import { migrateBetterAuthAccounts, type Db } from '@betterspend/db';
 import { createAuthForDatabase, type AuthInstance } from './auth.instance';
 import { hashCredentialPassword } from './credential-password';
 import { BootstrapService } from '../modules/bootstrap/bootstrap.service';
@@ -107,6 +107,7 @@ async function verifyMigratedCredentialSignIn(databaseUrl: string): Promise<void
     for (const statement of migration.split('--> statement-breakpoint')) {
       if (statement.trim()) await client.unsafe(statement);
     }
+    await migrateBetterAuthAccounts(client);
 
     const upgradeDb = drizzle(client, { schema }) as Db;
     const auth = await createAuthForDatabase(upgradeDb);

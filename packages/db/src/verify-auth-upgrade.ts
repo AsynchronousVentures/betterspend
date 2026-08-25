@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import postgres from 'postgres';
+import { migrateBetterAuthAccounts } from './better-auth-migration';
 
 const migrationPath = path.resolve(__dirname, 'migrations/20260825035813_gray_angel.sql');
 
@@ -54,26 +55,60 @@ async function verifyCredentialBackfill(client: postgres.Sql): Promise<void> {
         'legacy-account', ${userId}, ${userId}, 'credential', ${expiry}, 'legacy-hash'
       )
     `;
+    await client.unsafe(`
+      INSERT INTO auth_accounts (
+        id, user_id, account_id, provider_id, expires_at, password
+      )
+      SELECT
+        'bulk-' || item,
+        ('00000000-0000-0000-0000-' || lpad(item::text, 12, '0'))::uuid,
+        'bulk-' || item,
+        'credential',
+        '2026-01-02T03:04:05.000Z',
+        'legacy-hash'
+      FROM generate_series(1, 1001) AS item
+    `);
 
     await applyAuthMigration(client);
+    await migrateBetterAuthAccounts(client);
 
     const [account] = await client<
       Array<{
         issuer: string;
         accountId: string;
         accessTokenExpiresAt: Date;
+        legacyExpiresAt: Date;
       }>
     >`
       SELECT
         issuer,
         account_id AS "accountId",
-        access_token_expires_at AS "accessTokenExpiresAt"
+        access_token_expires_at AS "accessTokenExpiresAt",
+        expires_at AS "legacyExpiresAt"
       FROM auth_accounts
       WHERE id = 'legacy-account'
     `;
     assert.equal(account?.issuer, 'local:credential');
     assert.equal(account?.accountId, userId);
     assert.equal(account?.accessTokenExpiresAt.toISOString(), expiry.toISOString());
+    assert.equal(account?.legacyExpiresAt.toISOString(), expiry.toISOString());
+
+    const [remaining] = await client<{ count: number }[]>`
+      SELECT COUNT(*)::integer AS count
+      FROM auth_accounts
+      WHERE issuer IS NULL
+        OR access_token_expires_at IS DISTINCT FROM expires_at
+    `;
+    assert.equal(remaining?.count, 0);
+
+    const [issuerColumn] = await client<{ nullable: string }[]>`
+      SELECT is_nullable AS nullable
+      FROM information_schema.columns
+      WHERE table_schema = ${schemaName}
+        AND table_name = 'auth_accounts'
+        AND column_name = 'issuer'
+    `;
+    assert.equal(issuerColumn?.nullable, 'NO');
 
     const indexes = await client<Array<{ name: string }>>`
       SELECT indexname AS name
@@ -97,9 +132,10 @@ async function verifyUnknownProviderRefusal(client: postgres.Sql): Promise<void>
       INSERT INTO auth_accounts (id, user_id, account_id, provider_id)
       VALUES ('unknown-account', ${randomUUID()}, 'subject', 'unknown-provider')
     `;
+    await applyAuthMigration(client);
     await assert.rejects(
-      applyAuthMigration(client),
-      /non-credential providers require an explicit issuer mapping/,
+      migrateBetterAuthAccounts(client),
+      /Add an explicit issuer mapping and rerun migrations/,
     );
   });
 }
@@ -112,9 +148,10 @@ async function verifyCollisionRefusal(client: postgres.Sql): Promise<void> {
         ('duplicate-one', ${randomUUID()}, 'duplicate-subject', 'credential'),
         ('duplicate-two', ${randomUUID()}, 'duplicate-subject', 'credential')
     `;
+    await applyAuthMigration(client);
     await assert.rejects(
-      applyAuthMigration(client),
-      /duplicate issuer\/account_id pairs require manual resolution/,
+      migrateBetterAuthAccounts(client),
+      /requires manual resolution before migration/,
     );
   });
 }

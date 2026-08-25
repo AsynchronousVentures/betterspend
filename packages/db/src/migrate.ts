@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { encryptCredential } from './credential-crypto';
+import { migrateBetterAuthAccounts } from './better-auth-migration';
 
 const LEGACY_KEYS = [
   'qbo_access_token',
@@ -291,6 +292,7 @@ async function main(): Promise<void> {
     await prepareEmailIntakeItemOrganizationIndex(client);
     const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
+    await migrateBetterAuthAccounts(client);
     await migrateLegacyConnections(client);
   } finally {
     try {
