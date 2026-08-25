@@ -263,6 +263,45 @@ export class InvoicesService {
         }
       }
 
+      const requestedPoLineIds = [
+        ...new Set(
+          (input.lines ?? [])
+            .filter((line) => line.poLineId !== undefined && line.poLineId !== null)
+            .map((line) => line.poLineId!),
+        ),
+      ];
+      if (requestedPoLineIds.length > 0) {
+        if (!lockedInvoice.purchaseOrderId) {
+          throw new BadRequestException('Invoice lines require a linked purchase order');
+        }
+        const purchaseOrder = await tx.query.purchaseOrders.findFirst({
+          where: (record, { and, eq }) =>
+            and(
+              eq(record.id, lockedInvoice.purchaseOrderId!),
+              eq(record.organizationId, organizationId),
+            ),
+          columns: { id: true },
+        });
+        if (!purchaseOrder) {
+          throw new BadRequestException(
+            `Purchase order ${lockedInvoice.purchaseOrderId} not found`,
+          );
+        }
+        const validPoLines = await tx.query.poLines.findMany({
+          where: (record, { and, eq, inArray }) =>
+            and(
+              eq(record.purchaseOrderId, purchaseOrder.id),
+              inArray(record.id, requestedPoLineIds),
+            ),
+          columns: { id: true },
+        });
+        if (validPoLines.length !== requestedPoLineIds.length) {
+          throw new BadRequestException(
+            'Invoice line references must belong to the linked purchase order',
+          );
+        }
+      }
+
       if (input.vendorId !== undefined && input.vendorId !== lockedInvoice.vendorId) {
         const vendor = await tx.query.vendors.findFirst({
           where: (record, { and, eq }) =>
@@ -530,10 +569,7 @@ export class InvoicesService {
               { allowApproved: true },
             );
           }
-        } else if (
-          approvalEligible &&
-          ['matched', 'pending_approval', 'approved', 'rejected'].includes(lockedInvoice.status)
-        ) {
+        } else if (approvalEligible) {
           await tx
             .update(invoices)
             .set({ status: 'pending_approval', updatedAt: editedAt })

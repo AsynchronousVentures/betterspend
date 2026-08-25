@@ -390,7 +390,8 @@ describe('InvoicesService creation audit', () => {
 
 describe('InvoicesService material edits', () => {
   const createEditService = (
-    status: 'approved' | 'matched' | 'rejected' | 'cancelled' = 'approved',
+    status: 'approved' | 'matched' | 'rejected' | 'cancelled' | 'partial_match' | 'exception' =
+      'approved',
     rerunMatchStatus: 'full_match' | 'partial_match' | 'exception' = 'full_match',
   ) => {
     const invoice = {
@@ -419,7 +420,8 @@ describe('InvoicesService material edits', () => {
       baseTaxAmount: '0.00',
       baseTotalAmount: '100.00',
       documentId: null,
-      matchStatus: 'full_match',
+      matchStatus:
+        status === 'partial_match' || status === 'exception' ? status : 'full_match',
       matchDetails: {},
       submissionSource: 'internal',
       createdBy: 'maker-1',
@@ -462,9 +464,12 @@ describe('InvoicesService material edits', () => {
         taxCodes: { findMany: async () => [] },
         vendors: { findFirst: async () => ({ id: 'vendor-2' }) },
         purchaseOrders: { findFirst: async () => ({ vendorId: 'vendor-1' }) },
+        poLines: {
+          findMany: async () => [],
+        },
         approvalRequests: {
           findFirst: async () =>
-            status === 'rejected' || status === 'cancelled'
+            ['rejected', 'cancelled', 'partial_match', 'exception'].includes(status)
               ? null
               : {
                   id: 'request-1',
@@ -647,6 +652,17 @@ describe('InvoicesService material edits', () => {
     assert.equal(fixture.workflowStartedFromStatus(), 'pending_approval');
   });
 
+  it('starts reapproval when an edit restores a previously failed match', async () => {
+    const fixture = createEditService('partial_match', 'full_match');
+
+    await fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+      lines: [{ id: '00000000-0000-4000-8000-000000000101', quantity: 2 }],
+    });
+
+    assert.equal(fixture.state().initiated, true);
+    assert.equal(fixture.workflowStartedFromStatus(), 'pending_approval');
+  });
+
   it('does not revive a cancelled invoice through editing', async () => {
     const fixture = createEditService('cancelled');
 
@@ -681,5 +697,21 @@ describe('InvoicesService material edits', () => {
       initiated: false,
       published: false,
     });
+  });
+
+  it('rejects a PO line reference outside the linked purchase order', async () => {
+    const fixture = createEditService();
+
+    await assert.rejects(
+      fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+        lines: [
+          {
+            id: '00000000-0000-4000-8000-000000000101',
+            poLineId: '00000000-0000-4000-8000-000000000302',
+          },
+        ],
+      }),
+      /must belong to the linked purchase order/,
+    );
   });
 });
