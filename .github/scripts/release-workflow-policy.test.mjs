@@ -130,17 +130,30 @@ test('keeps immutable SHA images as the publication source', () => {
 });
 
 test('promotes all release images to the version and latest aliases', () => {
+  const sourceWaitIndex = workflow.indexOf('- name: Check for existing immutable images');
   const stageIndex = workflow.indexOf('- name: Stage release version aliases');
   const verifyIndex = workflow.indexOf('- name: Verify staged release aliases');
   const latestIndex = workflow.indexOf('- name: Update latest image aliases');
-  assert.ok(stageIndex > -1 && stageIndex < verifyIndex && verifyIndex < latestIndex);
+  assert.ok(
+    sourceWaitIndex > -1 &&
+      sourceWaitIndex < stageIndex &&
+      stageIndex < verifyIndex &&
+      verifyIndex < latestIndex,
+  );
 
+  const sourceWait = workflow.slice(sourceWaitIndex, stageIndex);
   const staging = workflow.slice(stageIndex, verifyIndex);
   const verification = workflow.slice(verifyIndex, latestIndex);
   const latest = workflow.slice(latestIndex, workflow.indexOf('  deploy-preflight:'));
+  assert.match(sourceWait, /max_attempts=90/);
+  assert.match(sourceWait, /Waiting for immutable image/);
+  assert.match(staging, /inspect --raw "\$source_tag"/);
+  assert.match(staging, /inspect --raw "\$release_tag"/);
+  assert.match(staging, /already refers to a different manifest/);
   for (const image of ['API', 'WEB', 'MIGRATOR']) {
     assert.match(staging, new RegExp(`${image}_SOURCE_TAG`));
     assert.match(staging, new RegExp(`${image}_RELEASE_TAG`));
+    assert.match(verification, new RegExp(`${image}_SOURCE_TAG`));
     assert.match(verification, new RegExp(`${image}_RELEASE_TAG`));
     assert.match(latest, new RegExp(`${image}_RELEASE_TAG`));
     assert.match(latest, new RegExp(`${image}_LATEST_TAG`));

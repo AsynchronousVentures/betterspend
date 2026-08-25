@@ -327,25 +327,38 @@ jobs:
           API_TAG: ${{ steps.image_settings.outputs.api_tag }}
           WEB_TAG: ${{ steps.image_settings.outputs.web_tag }}
           MIGRATOR_TAG: ${{ steps.image_settings.outputs.migrator_tag }}
+          RELEASE_TAG: ${{ steps.release_ref.outputs.release_tag }}
         run: |
+          max_attempts=3
+          retry_delay=5
+          if [ -n "$RELEASE_TAG" ]; then
+            # A tag push can finish CI before the matching main run publishes
+            # its immutable images. Give that run time to finish.
+            max_attempts=90
+            retry_delay=10
+          fi
+
           for image in API WEB MIGRATOR; do
             tag_variable="${image}_TAG"
             tag="${!tag_variable}"
             output_name="$(printf '%s' "$image" | tr '[:upper:]' '[:lower:]')_exists"
-            for attempt in 1 2 3; do
+            for ((attempt = 1; attempt <= max_attempts; attempt++)); do
               if inspect_output="$(docker buildx imagetools inspect "$tag" 2>&1)"; then
                 printf '%s=true\n' "$output_name" >> "$GITHUB_OUTPUT"
                 break
               fi
               if printf '%s' "$inspect_output" | grep -Eqi 'manifest unknown|name unknown|not found'; then
-                printf '%s=false\n' "$output_name" >> "$GITHUB_OUTPUT"
-                break
-              fi
-              if [ "$attempt" -eq 3 ]; then
+                if [ -z "$RELEASE_TAG" ] || [ "$attempt" -eq "$max_attempts" ]; then
+                  printf '%s=false\n' "$output_name" >> "$GITHUB_OUTPUT"
+                  break
+                fi
+                printf 'Waiting for immutable image %s (attempt %s/%s).\n' \
+                  "$tag" "$attempt" "$max_attempts"
+              elif [ "$attempt" -eq "$max_attempts" ]; then
                 printf 'Unable to determine whether %s exists:\n%s\n' "$tag" "$inspect_output" >&2
                 exit 1
               fi
-              sleep $((attempt * 5))
+              sleep "$retry_delay"
             done
           done
 
@@ -405,9 +418,40 @@ jobs:
           MIGRATOR_SOURCE_TAG: ${{ steps.image_settings.outputs.migrator_tag }}
           MIGRATOR_RELEASE_TAG: ${{ steps.image_settings.outputs.migrator_release_tag }}
         run: |
+          # Validate every existing version alias before writing any of them.
+          # A released version may never move to a different manifest.
           for image in API WEB MIGRATOR; do
             source_variable="${image}_SOURCE_TAG"
             release_variable="${image}_RELEASE_TAG"
+            source_tag="${!source_variable}"
+            release_tag="${!release_variable}"
+            output_name="$(printf '%s' "$image" | tr '[:upper:]' '[:lower:]')_release_exists"
+
+            if ! source_manifest="$(docker buildx imagetools inspect --raw "$source_tag" 2>&1)"; then
+              printf 'Unable to inspect source image %s:\n%s\n' "$source_tag" "$source_manifest" >&2
+              exit 1
+            fi
+            if release_manifest="$(docker buildx imagetools inspect --raw "$release_tag" 2>&1)"; then
+              if [ "$release_manifest" != "$source_manifest" ]; then
+                echo "Release image $release_tag already refers to a different manifest." >&2
+                exit 1
+              fi
+              printf -v "$output_name" '%s' true
+            elif printf '%s' "$release_manifest" | grep -Eqi 'manifest unknown|name unknown|not found'; then
+              printf -v "$output_name" '%s' false
+            else
+              printf 'Unable to inspect release image %s:\n%s\n' "$release_tag" "$release_manifest" >&2
+              exit 1
+            fi
+          done
+
+          for image in API WEB MIGRATOR; do
+            source_variable="${image}_SOURCE_TAG"
+            release_variable="${image}_RELEASE_TAG"
+            exists_variable="$(printf '%s' "$image" | tr '[:upper:]' '[:lower:]')_release_exists"
+            if [ "${!exists_variable}" = "true" ]; then
+              continue
+            fi
             docker buildx imagetools create \
               --tag "${!release_variable}" \
               "${!source_variable}"
@@ -416,13 +460,22 @@ jobs:
       - name: Verify staged release aliases
         if: steps.release_ref.outputs.release_tag != ''
         env:
+          API_SOURCE_TAG: ${{ steps.image_settings.outputs.api_tag }}
           API_RELEASE_TAG: ${{ steps.image_settings.outputs.api_release_tag }}
+          WEB_SOURCE_TAG: ${{ steps.image_settings.outputs.web_tag }}
           WEB_RELEASE_TAG: ${{ steps.image_settings.outputs.web_release_tag }}
+          MIGRATOR_SOURCE_TAG: ${{ steps.image_settings.outputs.migrator_tag }}
           MIGRATOR_RELEASE_TAG: ${{ steps.image_settings.outputs.migrator_release_tag }}
         run: |
           for image in API WEB MIGRATOR; do
+            source_variable="${image}_SOURCE_TAG"
             release_variable="${image}_RELEASE_TAG"
-            docker buildx imagetools inspect "${!release_variable}" >/dev/null
+            source_manifest="$(docker buildx imagetools inspect --raw "${!source_variable}")"
+            release_manifest="$(docker buildx imagetools inspect --raw "${!release_variable}")"
+            if [ "$release_manifest" != "$source_manifest" ]; then
+              echo "Release image ${!release_variable} does not match ${!source_variable}." >&2
+              exit 1
+            fi
           done
 
       - name: Update latest image aliases
