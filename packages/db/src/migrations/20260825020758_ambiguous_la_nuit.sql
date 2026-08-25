@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "approval_actions_escalation_claim_unique" ON "approval_actions" USING btree ("approval_request_id","node_id","action") WHERE "approval_actions"."action" in ('escalation_warning', 'escalation_action');

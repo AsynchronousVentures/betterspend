@@ -157,17 +157,25 @@ export const workflowApprovalAssignments = pgTable(
   ],
 );
 
-export const approvalActions = pgTable('approval_actions', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  approvalRequestId: uuid('approval_request_id')
-    .notNull()
-    .references(() => approvalRequests.id),
-  stepOrder: integer('step_order').notNull(),
-  approverId: uuid('approver_id').references(() => users.id),
-  action: varchar('action', { length: 20 }).notNull(), // approved|rejected|delegated|returned
-  comment: text('comment'),
-  nodeId: varchar('node_id', { length: 100 }),
-  metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
-  actedAt: timestamp('acted_at', { withTimezone: true }).notNull().defaultNow(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const approvalActions = pgTable(
+  'approval_actions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    approvalRequestId: uuid('approval_request_id')
+      .notNull()
+      .references(() => approvalRequests.id),
+    stepOrder: integer('step_order').notNull(),
+    approverId: uuid('approver_id').references(() => users.id),
+    action: varchar('action', { length: 20 }).notNull(),
+    comment: text('comment'),
+    nodeId: varchar('node_id', { length: 100 }),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    actedAt: timestamp('acted_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('approval_actions_escalation_claim_unique')
+      .on(table.approvalRequestId, table.nodeId, table.action)
+      .where(sql`${table.action} in ('escalation_warning', 'escalation_action')`),
+  ],
+);

@@ -90,7 +90,7 @@ function executableWithApproval(enforceSeparationOfDuties = false): ExecutableDe
 function createRestartFixture(
   publicationFails = false,
   enforceSeparationOfDuties = false,
-  requiresBudgetApproval = false,
+  budgetAction: 'allow' | 'require_approval' | 'block' = 'allow',
 ) {
   const executable = executableWithApproval(enforceSeparationOfDuties);
   const oldRequest = {
@@ -233,7 +233,26 @@ function createRestartFixture(
             assignments.push(...created);
             return { returning: async () => created };
           }
-          if (table === approvalActions) actions.push(...rows);
+          if (table === approvalActions) {
+            const priorActions = [...actions];
+            actions.push(...rows);
+            return {
+              returning: async () => rows,
+              onConflictDoNothing: () => {
+                const inserted = rows.filter(
+                  (row) =>
+                    !priorActions.some(
+                      (existing) =>
+                        existing.approvalRequestId === row.approvalRequestId &&
+                        existing.nodeId === row.nodeId &&
+                        existing.action === row.action,
+                    ),
+                );
+                actions.splice(priorActions.length, rows.length, ...inserted);
+                return { returning: async () => inserted };
+              },
+            };
+          }
           return { returning: async () => rows };
         },
       };
@@ -286,22 +305,32 @@ function createRestartFixture(
       userId === APPROVER_ID ? DELEGATE_ID : null,
   } as unknown as ApprovalDelegationsService;
   const budgets = {
-    evaluateEnforcement: async () =>
-      requiresBudgetApproval
-        ? {
-            action: 'require_approval',
-            withinBudget: false,
-            reason: 'overrun',
-            budgetId: '00000000-0000-4000-8000-000000000901',
-            ownerUserId: FALLBACK_ID,
-            message: 'Current budget needs owner approval',
-          }
-        : {
-            action: 'allow',
-            withinBudget: false,
-            reason: 'overrun',
-            message: 'Current budget is overrun',
-          },
+    evaluateEnforcement: async () => {
+      if (budgetAction === 'require_approval') {
+        return {
+          action: 'require_approval',
+          withinBudget: false,
+          reason: 'overrun',
+          budgetId: '00000000-0000-4000-8000-000000000901',
+          ownerUserId: FALLBACK_ID,
+          message: 'Current budget needs owner approval',
+        };
+      }
+      if (budgetAction === 'block') {
+        return {
+          action: 'block',
+          withinBudget: false,
+          reason: 'overrun',
+          message: 'Current budget blocks this request',
+        };
+      }
+      return {
+        action: 'allow',
+        withinBudget: false,
+        reason: 'overrun',
+        message: 'Current budget is overrun',
+      };
+    },
     recordRequisitionApproval: async () => entityUpdates.push({ budget: 'approved' }),
     releaseRequisition: async () => entityUpdates.push({ budget: 'released' }),
   } as unknown as BudgetsService;
@@ -445,7 +474,7 @@ describe('WorkflowExecutionService restart', () => {
   });
 
   it('uses the current budget owner requirement on the replacement attempt', async () => {
-    const fixture = createRestartFixture(false, false, true);
+    const fixture = createRestartFixture(false, false, 'require_approval');
 
     await fixture.service.restartOnLatest(
       fixture.oldRequest.id,
@@ -460,6 +489,22 @@ describe('WorkflowExecutionService restart', () => {
       replacement?.requiredApprovalKey,
       `budget:00000000-0000-4000-8000-000000000901:requisition:${fixture.oldRequest.approvableId}:owner:${FALLBACK_ID}`,
     );
+  });
+
+  it('does not replace a request blocked by the current budget policy', async () => {
+    const fixture = createRestartFixture(false, false, 'block');
+
+    await assert.rejects(
+      fixture.service.restartOnLatest(
+        fixture.oldRequest.id,
+        ORGANIZATION_ID,
+        fixture.oldRequest.initiatedBy,
+      ),
+      /Budget policy blocks this workflow restart/,
+    );
+
+    assert.equal(fixture.getReplacement(), null);
+    assert.equal(fixture.oldRequest.status, 'pending');
   });
 
   it('approves after an SLA reassign skips the obsolete assignment', async () => {
@@ -583,6 +628,54 @@ describe('WorkflowExecutionService restart', () => {
       ['skipped'],
     );
     assert.equal(replacement.status, 'rejected');
+  });
+
+  it('claims an escalation action once before notifying assignees', async () => {
+    const fixture = createRestartFixture();
+    await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+    fixture.notifications.splice(0);
+    fixture.executable.steps.push({
+      node: {
+        id: 'review-timer',
+        name: 'Review SLA',
+        type: 'escalation_timer',
+        disabled: false,
+        config: {
+          parentNodeId: 'review',
+          slaHours: 1,
+          warningPercent: 50,
+          action: { type: 'notify' },
+        },
+      },
+      transitions: [],
+    });
+    const replacement = fixture.getReplacement();
+    assert.ok(replacement);
+    replacement.updatedAt = new Date(Date.now() - 2 * 60 * 60 * 1_000);
+    const job = {
+      organizationId: ORGANIZATION_ID,
+      approvalRequestId: String(replacement.id),
+      definitionVersionId: String(replacement.definitionVersionId),
+      parentNodeId: 'review',
+      timerNodeId: 'review-timer',
+      attempt: Number(replacement.attempt),
+      kind: 'action' as const,
+    };
+
+    await fixture.service.handleEscalation(job);
+    await fixture.service.handleEscalation(job);
+
+    assert.deepEqual(fixture.notifications, [DELEGATE_ID]);
+    assert.equal(
+      fixture.actions.filter(
+        (action) => action.action === 'escalation_action' && action.nodeId === 'review-timer',
+      ).length,
+      1,
+    );
   });
 });
 

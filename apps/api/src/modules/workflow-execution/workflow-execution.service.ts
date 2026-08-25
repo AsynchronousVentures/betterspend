@@ -399,6 +399,9 @@ export class WorkflowExecutionService {
       let requiredApproverId = request.requiredApproverId;
       let requiredApprovalReason = request.requiredApprovalReason;
       let requiredApprovalKey = request.requiredApprovalKey;
+      if (budgetDecision.action === 'block') {
+        throw new ConflictException('Budget policy blocks this workflow restart');
+      }
       if (budgetDecision.action === 'require_approval') {
         if (!budgetDecision.ownerUserId || !budgetDecision.budgetId) {
           throw new ConflictException('The current budget approval has no eligible owner');
@@ -590,42 +593,38 @@ export class WorkflowExecutionService {
     ) {
       return;
     }
+    const timerNode = timer.node;
     const elapsedMilliseconds = Date.now() - current.updatedAt.getTime();
-    const slaMilliseconds = timer.node.config.slaHours * 60 * 60 * 1_000;
+    const slaMilliseconds = timerNode.config.slaHours * 60 * 60 * 1_000;
     const minimumElapsed =
       data.kind === 'warning'
-        ? slaMilliseconds * (timer.node.config.warningPercent / 100)
+        ? slaMilliseconds * (timerNode.config.warningPercent / 100)
         : slaMilliseconds;
     if (elapsedMilliseconds < minimumElapsed) return;
 
-    const assignments = await this.db.query.workflowApprovalAssignments.findMany({
-      where: (assignment, { and, eq }) =>
-        and(
-          eq(assignment.approvalRequestId, current.id),
-          eq(assignment.nodeId, data.parentNodeId),
-          eq(assignment.status, 'pending'),
-        ),
-    });
     if (data.kind === 'warning') {
-      await this.notifyAssignees(current, assignments, 'Workflow approval is nearing its SLA');
+      await this.notifyClaimedEscalation(
+        current,
+        data,
+        timerNode,
+        'Workflow approval is nearing its SLA',
+      );
       return;
     }
-    const action = timer.node.config.action;
+    const action = timerNode.config.action;
     if (action.type === 'notify') {
-      await this.notifyAssignees(current, assignments, 'Workflow approval exceeded its SLA');
+      await this.notifyClaimedEscalation(
+        current,
+        data,
+        timerNode,
+        'Workflow approval exceeded its SLA',
+      );
       return;
     }
     if (action.type === 'auto_reject') {
       const outcome = await this.db.transaction(async (tx) => {
-        const locked = await this.lockVersionedRequest(tx, current.id, current.organizationId);
-        if (
-          locked.status !== 'pending' ||
-          locked.currentNodeId !== data.parentNodeId ||
-          locked.definitionVersionId !== data.definitionVersionId ||
-          locked.attempt !== data.attempt
-        ) {
-          return null;
-        }
+        const locked = await this.claimEscalation(tx, current, data, timerNode);
+        if (!locked) return null;
         await tx
           .update(workflowApprovalAssignments)
           .set({ status: 'skipped', updatedAt: new Date() })
@@ -642,14 +641,74 @@ export class WorkflowExecutionService {
       return;
     }
     if (action.type === 'auto_approve') {
-      await this.autoApproveEscalatedStep(current, data.parentNodeId);
+      await this.autoApproveEscalatedStep(current, data, timerNode);
       return;
     }
     const parentStep = this.getStep(executable, data.parentNodeId);
     if (parentStep.node.type !== 'approver_group' && parentStep.node.type !== 'resolver') return;
     const execution =
       parentStep.node.type === 'approver_group' ? parentStep.node.config.execution : 'serial';
-    await this.reassignEscalatedStep(current, timer, action.resolvers, execution);
+    await this.reassignEscalatedStep(current, data, timerNode, action.resolvers, execution);
+  }
+
+  private async claimEscalation(
+    tx: DbTransaction,
+    request: RuntimeRequest,
+    data: WorkflowEscalationJobData,
+    timer: Extract<ExecutableStep['node'], { type: 'escalation_timer' }>,
+  ): Promise<RuntimeRequest | null> {
+    const locked = await this.lockVersionedRequest(tx, request.id, request.organizationId);
+    if (
+      locked.status !== 'pending' ||
+      locked.currentNodeId !== data.parentNodeId ||
+      locked.definitionVersionId !== data.definitionVersionId ||
+      locked.attempt !== data.attempt
+    ) {
+      return null;
+    }
+
+    const slaMilliseconds = timer.config.slaHours * 60 * 60 * 1_000;
+    const minimumElapsed =
+      data.kind === 'warning'
+        ? slaMilliseconds * (timer.config.warningPercent / 100)
+        : slaMilliseconds;
+    if (Date.now() - locked.updatedAt.getTime() < minimumElapsed) return null;
+
+    const [claim] = await tx
+      .insert(approvalActions)
+      .values({
+        approvalRequestId: locked.id,
+        stepOrder: locked.currentStep,
+        approverId: null,
+        action: data.kind === 'warning' ? 'escalation_warning' : 'escalation_action',
+        nodeId: data.timerNodeId,
+        comment: `Claimed workflow escalation ${data.kind}`,
+        metadata: {
+          attempt: data.attempt,
+          definitionVersionId: data.definitionVersionId,
+          parentNodeId: data.parentNodeId,
+        },
+      })
+      .onConflictDoNothing()
+      .returning({ id: approvalActions.id });
+    return claim ? locked : null;
+  }
+
+  private async notifyClaimedEscalation(
+    request: RuntimeRequest,
+    data: WorkflowEscalationJobData,
+    timer: Extract<ExecutableStep['node'], { type: 'escalation_timer' }>,
+    message: string,
+  ): Promise<void> {
+    const claimed = await this.db.transaction(async (tx) => {
+      const locked = await this.claimEscalation(tx, request, data, timer);
+      if (!locked) return null;
+      const assignments = (await this.getAssignments(tx, locked.id, data.parentNodeId)).filter(
+        (assignment) => assignment.status === 'pending',
+      );
+      return { request: locked, assignments };
+    });
+    if (claimed) await this.notifyAssignees(claimed.request, claimed.assignments, message);
   }
 
   private async findPublishedVersion(
@@ -1312,19 +1371,14 @@ export class WorkflowExecutionService {
 
   private async reassignEscalatedStep(
     request: RuntimeRequest,
-    timer: ExecutableStep,
+    data: WorkflowEscalationJobData,
+    timer: Extract<ExecutableStep['node'], { type: 'escalation_timer' }>,
     resolvers: ApproverResolver[],
     execution: 'serial' | 'parallel',
   ): Promise<void> {
     const outcome = await this.db.transaction(async (tx) => {
-      const locked = await this.lockVersionedRequest(tx, request.id, request.organizationId);
-      if (
-        locked.status !== 'pending' ||
-        locked.currentNodeId !== request.currentNodeId ||
-        locked.attempt !== request.attempt
-      ) {
-        return null;
-      }
+      const locked = await this.claimEscalation(tx, request, data, timer);
+      if (!locked) return null;
       const resolved = await this.resolveApprovers(tx, locked, resolvers, [], []);
       if (resolved.length === 0) throw new ConflictException('Escalation resolved no approvers');
       const current = await this.getAssignments(tx, locked.id, locked.currentNodeId!);
@@ -1358,8 +1412,8 @@ export class WorkflowExecutionService {
         approverId: null,
         action: 'reassigned',
         nodeId: locked.currentNodeId,
-        comment: `Escalated by timer ${timer.node.id}`,
-        metadata: { timerNodeId: timer.node.id, resolverCount: resolvers.length },
+        comment: `Escalated by timer ${timer.id}`,
+        metadata: { timerNodeId: timer.id, resolverCount: resolvers.length },
       });
       await this.audit.log(
         locked.organizationId,
@@ -1367,7 +1421,7 @@ export class WorkflowExecutionService {
         'approval_request',
         locked.id,
         'workflow_reassigned',
-        { nodeId: locked.currentNodeId, timerNodeId: timer.node.id },
+        { nodeId: locked.currentNodeId, timerNodeId: timer.id },
         undefined,
         tx,
       );
@@ -1376,17 +1430,15 @@ export class WorkflowExecutionService {
     if (outcome) await this.publishRuntimeOutcomeAfterCommit(outcome);
   }
 
-  private async autoApproveEscalatedStep(request: RuntimeRequest, nodeId: string): Promise<void> {
+  private async autoApproveEscalatedStep(
+    request: RuntimeRequest,
+    data: WorkflowEscalationJobData,
+    timer: Extract<ExecutableStep['node'], { type: 'escalation_timer' }>,
+  ): Promise<void> {
     const outcome = await this.db.transaction(async (tx) => {
-      const locked = await this.lockVersionedRequest(tx, request.id, request.organizationId);
-      if (
-        locked.status !== 'pending' ||
-        locked.currentNodeId !== nodeId ||
-        locked.definitionVersionId !== request.definitionVersionId ||
-        locked.attempt !== request.attempt
-      ) {
-        return null;
-      }
+      const locked = await this.claimEscalation(tx, request, data, timer);
+      if (!locked) return null;
+      const nodeId = data.parentNodeId;
       const executable = await this.loadExecutable(tx, locked);
       const step = this.getStep(executable, nodeId);
       const now = new Date();
