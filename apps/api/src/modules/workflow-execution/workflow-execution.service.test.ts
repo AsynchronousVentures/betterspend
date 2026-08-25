@@ -794,7 +794,7 @@ describe('WorkflowExecutionService restart', () => {
         attempt: Number(replacement.attempt),
         kind: 'action',
       }),
-      /resolved 1 approvers, but the workflow requires 2/,
+      /resolved 1 replacement approvers, but 2 are required/,
     );
 
     assert.deepEqual(
@@ -802,6 +802,72 @@ describe('WorkflowExecutionService restart', () => {
         .filter((assignment) => assignment.approvalRequestId === replacement.id)
         .map((assignment) => assignment.status),
       ['pending', 'waiting'],
+    );
+  });
+
+  it('preserves prior approvals and excludes their assignees from SLA replacements', async () => {
+    const fixture = createRestartFixture();
+    const review = fixture.executable.steps.find((step) => step.node.id === 'review');
+    assert.ok(review?.node.type === 'approver_group');
+    review.node.config.resolvers.push({ type: 'user', userId: FALLBACK_ID });
+    review.node.config.quorum = { type: 'count', count: 2 };
+    fixture.executable.steps.push({
+      node: {
+        id: 'review-timer',
+        name: 'Review SLA',
+        type: 'escalation_timer',
+        disabled: false,
+        config: {
+          parentNodeId: 'review',
+          slaHours: 1,
+          warningPercent: 50,
+          action: {
+            type: 'reassign',
+            resolvers: [
+              { type: 'user', userId: APPROVER_ID },
+              { type: 'user', userId: FALLBACK_ID },
+            ],
+          },
+        },
+      },
+      transitions: [],
+    });
+    await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+    const replacement = fixture.getReplacement();
+    assert.ok(replacement);
+    await fixture.service.processAction(
+      String(replacement.id),
+      DELEGATE_ID,
+      'approve',
+      undefined,
+      ORGANIZATION_ID,
+    );
+    replacement.updatedAt = new Date(Date.now() - 2 * 60 * 60 * 1_000);
+
+    await fixture.service.handleEscalation({
+      organizationId: ORGANIZATION_ID,
+      approvalRequestId: String(replacement.id),
+      definitionVersionId: String(replacement.definitionVersionId),
+      parentNodeId: 'review',
+      timerNodeId: 'review-timer',
+      attempt: Number(replacement.attempt),
+      kind: 'action',
+    });
+
+    const activeAttemptAssignments = fixture.assignments.filter(
+      (assignment) => assignment.approvalRequestId === replacement.id,
+    );
+    assert.deepEqual(
+      activeAttemptAssignments.map((assignment) => assignment.status),
+      ['approved', 'skipped', 'pending'],
+    );
+    assert.deepEqual(
+      activeAttemptAssignments.map((assignment) => assignment.assignedApproverId),
+      [DELEGATE_ID, FALLBACK_ID, FALLBACK_ID],
     );
   });
 
