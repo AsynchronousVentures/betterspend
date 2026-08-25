@@ -10,10 +10,13 @@ import {
 
 const workflow = readFileSync(new URL('../workflows/docker-deploy.yml', import.meta.url), 'utf8');
 const releasePolicy = readFileSync(new URL('./release-policy.mjs', import.meta.url), 'utf8');
+const releaseTagScript = readFileSync(new URL('../../scripts/release-tag.mjs', import.meta.url), 'utf8');
+const rollbackScript = readFileSync(new URL('../../deploy/rollback.sh', import.meta.url), 'utf8');
 
 test('accepts strict semantic version release tags only', () => {
   assert.equal(isValidReleaseTag('v0.2.4'), true);
   assert.equal(isValidReleaseTag('v1.20.300-rc.1'), true);
+  assert.equal(isValidReleaseTag('v1.20.300-01'), false);
   assert.equal(isValidReleaseTag('v0.2.4+build.7'), false);
   assert.equal(isValidReleaseTag('v01.2.4'), false);
   assert.equal(isValidReleaseTag('release-0.2.4'), false);
@@ -27,6 +30,7 @@ test('requires the requested release to match every workspace package version', 
   ];
 
   assert.equal(normalizeRequestedVersion('v0.2.4'), '0.2.4');
+  assert.throws(() => normalizeRequestedVersion('1.2.3-01'), /Expected a semantic version/);
   assert.throws(() => normalizeRequestedVersion('0.2.4+build.7'), /Expected a semantic version/);
   assert.doesNotThrow(() => assertMatchingWorkspaceVersions(synchronizedVersions, '0.2.4'));
   assert.throws(
@@ -43,6 +47,13 @@ test('requires the requested release to match every workspace package version', 
   );
   assert.match(releasePolicy, /assertMatchingWorkspaceVersions/);
   assert.match(releasePolicy, /releaseVersionFromTag\(tag\)/);
+});
+
+test('checks the live main tip and keeps rollback metadata tied to its target', () => {
+  assert.match(releaseTagScript, /\['fetch', '--quiet', 'origin', 'main'\]/);
+  assert.match(releaseTagScript, /\['rev-parse', 'FETCH_HEAD'\]/);
+  assert.match(rollbackScript, /APP_VERSION="\$\(release_version_from_image_tag "\$IMAGE_TAG"\)"/);
+  assert.doesNotMatch(rollbackScript, /APP_VERSION="\$\{APP_VERSION:-/);
 });
 
 test('extracts and normalizes a validated release ref', () => {
@@ -74,6 +85,17 @@ test('derives runtime versions from supported deployment image tags', () => {
   );
   assert.notEqual(unsupported.status, 0);
   assert.match(unsupported.stderr, /Unsupported image tag/);
+  const invalidPrerelease = spawnSync(
+    'bash',
+    [
+      '-c',
+      'source deploy/release-version.sh && release_version_from_image_tag "$1"',
+      '_',
+      'v1.2.3-01',
+    ],
+    { cwd: new URL('../..', import.meta.url), encoding: 'utf8' },
+  );
+  assert.notEqual(invalidPrerelease.status, 0);
 });
 
 test('keeps immutable SHA images as the publication source', () => {

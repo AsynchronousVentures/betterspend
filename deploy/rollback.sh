@@ -26,7 +26,7 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-APP_VERSION="${APP_VERSION:-$(release_version_from_image_tag "$IMAGE_TAG")}"
+APP_VERSION="$(release_version_from_image_tag "$IMAGE_TAG")"
 
 export APP_VERSION COMPOSE_PROJECT_NAME IMAGE_TAG PRODUCTION_ENV_FILE
 

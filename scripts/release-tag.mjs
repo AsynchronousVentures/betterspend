@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SEMVER_PATTERN =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$/;
 const workspaceManifestPaths = [
   'package.json',
   'apps/api/package.json',
@@ -73,12 +73,9 @@ export function assertReleaseState(rootDirectory, requestedVersion) {
   if (runGit(rootDirectory, ['branch', '--show-current']) !== 'main')
     throw new Error('Release tags must be created from the main branch.');
 
-  const originMain = runGitOptional(rootDirectory, [
-    'rev-parse',
-    '--verify',
-    'refs/remotes/origin/main',
-  ]);
-  if (originMain && runGit(rootDirectory, ['rev-parse', 'HEAD']) !== originMain) {
+  runGit(rootDirectory, ['fetch', '--quiet', 'origin', 'main']);
+  const originMain = runGit(rootDirectory, ['rev-parse', 'FETCH_HEAD']);
+  if (runGit(rootDirectory, ['rev-parse', 'HEAD']) !== originMain) {
     throw new Error('The local main branch must match origin/main before creating a release tag.');
   }
 
@@ -91,6 +88,18 @@ export function assertReleaseState(rootDirectory, requestedVersion) {
     ])
   ) {
     throw new Error(`Tag v${requestedVersion} already exists.`);
+  }
+
+  if (
+    runGitOptional(rootDirectory, [
+      'ls-remote',
+      '--exit-code',
+      '--tags',
+      'origin',
+      `refs/tags/v${requestedVersion}`,
+    ])
+  ) {
+    throw new Error(`Tag v${requestedVersion} already exists on origin.`);
   }
 }
 

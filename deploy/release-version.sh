@@ -5,7 +5,8 @@
 # visible for exact-image testing.
 release_version_from_image_tag() {
   local image_tag="$1"
-  local semver_pattern='^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)$'
+  local prerelease_identifier='(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+  local semver_pattern="^v((0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-${prerelease_identifier}(\\.${prerelease_identifier})*)?)$"
 
   if [[ "$image_tag" =~ $semver_pattern ]]; then
     printf '%s\n' "${BASH_REMATCH[1]}"

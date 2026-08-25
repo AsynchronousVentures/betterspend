@@ -7,7 +7,7 @@ import {
 } from '../../scripts/release-tag.mjs';
 
 const SEMVER_TAG_PATTERN =
-  /^v((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$/;
+  /^v((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?)$/;
 
 export function isValidReleaseTag(value) {
   return typeof value === 'string' && SEMVER_TAG_PATTERN.test(value);

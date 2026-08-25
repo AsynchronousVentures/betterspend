@@ -106,7 +106,7 @@ ghcr.io/<namespace>/betterspend-migrator:sha-<commit>
 
 Main pushes do not move `latest`. Pushing a valid `vX.Y.Z` tag checks that all three SHA manifests already exist, then promotes each one to both `vX.Y.Z` and `latest` with `docker buildx imagetools create`. It does not rebuild or replace the SHA source. The workflow synchronizes the explicit deployment file list to `/opt/betterspend` and invokes `./deploy/deploy.sh vX.Y.Z` over SSH. Publish jobs for the same commit are serialized, and registry administrators must preserve `sha-*` immutability.
 
-The deploy script derives `APP_VERSION` from the selected tag unless an explicit value is supplied. It displays `0.2.4` for `v0.2.4` and `sha-<commit>` for an exact SHA deployment. The API and web containers receive the same value. With no runtime override they fall back to the synchronized workspace package version. Rollback applies the same derivation to the restored image tag, so the displayed release follows the image.
+The deploy script derives `APP_VERSION` from the selected tag unless an explicit value is supplied. It displays `0.2.4` for `v0.2.4` and `sha-<commit>` for an exact SHA deployment. The API and web containers receive the same value. With no runtime override they fall back to the synchronized workspace package version. Rollback always derives the value from the restored image tag, so an inherited shell override cannot make the displayed release stale.
 
 Tag-driven deployment never synchronizes `.env.production` and does not use `rsync --delete`; production secrets remain server-side.
 
@@ -159,7 +159,7 @@ pnpm release:tag 0.2.4
 git push origin v0.2.4
 ```
 
-The command requires a clean `main` checkout, synchronized workspace package versions that match the requested tag, and a current `origin/main` ref. It creates the annotated tag but does not push it. Package versions remain the local fallback and must be advanced deliberately in a release preparation change.
+The command requires a clean `main` checkout and synchronized workspace package versions that match the requested tag. It fetches `origin/main`, verifies `HEAD` against that live remote tip, and refuses an existing local or remote tag. It creates the annotated tag but does not push it. Package versions remain the local fallback and must be advanced deliberately in a release preparation change.
 
 Database migrations are forward-only. The rollback script does not revert schema changes; use the compressed dumps in `/opt/betterspend/backups` for disaster recovery.
 
