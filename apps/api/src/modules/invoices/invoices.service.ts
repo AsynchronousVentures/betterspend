@@ -822,6 +822,18 @@ export class InvoicesService {
         throw new BadRequestException(`${lockedInvoice.status} invoices cannot be rematched`);
       }
 
+      const currentRequest = await tx.query.approvalRequests.findFirst({
+        where: (request, { and, eq, inArray, isNotNull }) =>
+          and(
+            eq(request.organizationId, organizationId),
+            eq(request.approvableType, 'invoice'),
+            eq(request.approvableId, id),
+            isNotNull(request.definitionVersionId),
+            inArray(request.status, ['pending', 'approved']),
+          ),
+        orderBy: (request, { desc }) => desc(request.createdAt),
+      });
+
       const match = await this.matchingService.runMatch(id, tx);
       let publishRequestId: string | null = null;
       if (
@@ -850,7 +862,42 @@ export class InvoicesService {
             .set({ status: 'matched', updatedAt: new Date() })
             .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
         }
+      } else if (match.matchStatus !== 'full_match') {
+        const rematchStatus = match.matchStatus === 'exception' ? 'exception' : 'partial_match';
+        if (lockedInvoice.status === 'approved') {
+          await this.budgets.reopenInvoice(tx, organizationId, id, new Date());
+        }
+        await tx
+          .update(invoices)
+          .set({
+            status: rematchStatus,
+            approvedBy: null,
+            approvedAt: null,
+            updatedAt: new Date(),
+          })
+          .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+        if (currentRequest) {
+          await this.workflowExecution.cancelForEditInTransaction(
+            currentRequest.id,
+            organizationId,
+            actorId,
+            tx,
+            { allowApproved: true, reason: 'invoice_match_invalidated' },
+          );
+        }
       }
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: actorId,
+        entityType: 'invoice',
+        entityId: id,
+        action: 'rematched',
+        changes: {
+          previousStatus: lockedInvoice.status,
+          matchStatus: match.matchStatus,
+          workflowRequestId: publishRequestId,
+        },
+      });
       return { match, publishRequestId };
     });
     if (outcome.publishRequestId) {

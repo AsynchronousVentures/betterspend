@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
@@ -39,6 +40,8 @@ import { invoiceCommitmentAmounts } from '../budgets/budget-commitments';
 import { BudgetsService } from '../budgets/budgets.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
+import { GlExportService } from '../gl/gl-export.service';
+import { SettingsService } from '../settings/settings.service';
 import {
   compareWorkflowDecimals,
   evaluateWorkflowQuorum,
@@ -127,6 +130,8 @@ export class WorkflowExecutionService {
     private readonly notifications: NotificationsService,
     private readonly webhookEvents: WebhookEventService,
     private readonly audit: AuditService,
+    @Optional() private readonly glExport?: GlExportService,
+    @Optional() private readonly settings?: SettingsService,
   ) {}
 
   async initiateIfConfigured(
@@ -516,7 +521,10 @@ export class WorkflowExecutionService {
     organizationId: string,
     actorId: string,
     tx: DbTransaction,
-    options: { allowApproved?: boolean } = {},
+    options: {
+      allowApproved?: boolean;
+      reason?: 'material_edit_requires_rematch' | 'invoice_match_invalidated';
+    } = {},
   ): Promise<void> {
     const request = await this.lockVersionedRequest(tx, requestId, organizationId);
     if (request.status !== 'pending' && !(options.allowApproved && request.status === 'approved')) {
@@ -536,14 +544,18 @@ export class WorkflowExecutionService {
           inArray(workflowApprovalAssignments.status, ['waiting', 'pending']),
         ),
       );
+    const reason = options.reason ?? 'material_edit_requires_rematch';
     await tx.insert(approvalActions).values({
       approvalRequestId: request.id,
       stepOrder: request.currentStep,
       approverId: actorId,
       action: 'cancelled',
       nodeId: request.currentNodeId,
-      comment: 'Cancelled because a material edit requires a new successful match',
-      metadata: { reason: 'material_edit_requires_rematch' },
+      comment:
+        reason === 'invoice_match_invalidated'
+          ? 'Cancelled because the invoice no longer fully matches'
+          : 'Cancelled because a material edit requires a new successful match',
+      metadata: { reason },
     });
     await this.audit.log(
       organizationId,
@@ -1221,6 +1233,29 @@ export class WorkflowExecutionService {
       return;
     }
     if (request.approvableType === 'invoice') {
+      if (status === 'approved') {
+        const invoice = await tx.query.invoices.findFirst({
+          where: (record, { and, eq }) =>
+            and(
+              eq(record.id, request.approvableId),
+              eq(record.organizationId, request.organizationId),
+            ),
+          columns: { createdBy: true, submissionSource: true },
+        });
+        const makerCheckerEnabled =
+          (await this.settings?.get(
+            request.organizationId,
+            'prevent_invoice_self_approval',
+            tx,
+          )) !== 'false';
+        if (
+          makerCheckerEnabled &&
+          (invoice?.createdBy === actorId ||
+            (invoice?.submissionSource !== 'vendor_portal' && !invoice?.createdBy))
+        ) {
+          throw new ForbiddenException('Invoice maker-checker policy blocks this approval');
+        }
+      }
       const transitionCondition =
         status === 'approved'
           ? and(
@@ -1312,6 +1347,9 @@ export class WorkflowExecutionService {
         outcome.status === 'approved' ? 'invoice.approved' : 'invoice.rejected',
         { invoiceId: entityId },
       );
+      if (outcome.status === 'approved') {
+        this.glExport?.enqueue(outcome.request.organizationId, entityId, 'qbo');
+      }
     }
     this.webhookEvents.emit(
       outcome.request.organizationId,

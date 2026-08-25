@@ -502,6 +502,9 @@ describe('InvoicesService material edits', () => {
           },
         };
       },
+      insert() {
+        return { values: async () => undefined };
+      },
     };
     const db = {
       transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) =>

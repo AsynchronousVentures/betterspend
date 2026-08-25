@@ -1,4 +1,10 @@
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
 import { asc, eq, and, sql, gte, inArray, isNotNull, isNull, lt, ne, or } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
@@ -1128,13 +1134,21 @@ export class BudgetsService {
       orderBy: (event, { desc }) => desc(event.createdAt),
       columns: { metadata: true },
     });
-    const originalBudgetAmount =
+    let originalBudgetAmount =
       originalPosting?.metadata &&
       typeof originalPosting.metadata === 'object' &&
       'budgetAmount' in originalPosting.metadata &&
       typeof originalPosting.metadata.budgetAmount === 'string'
         ? originalPosting.metadata.budgetAmount
         : null;
+    if (!originalBudgetAmount) {
+      if (context.budget.currency !== context.budget.baseCurrency) {
+        throw new ConflictException(
+          'Cannot safely reverse a legacy foreign-currency invoice posting without its original budget amount',
+        );
+      }
+      originalBudgetAmount = invoiceBalance.expended;
+    }
 
     await this.recordSpend(
       organizationId,
@@ -1143,7 +1157,7 @@ export class BudgetsService {
       context.requisition.createdAt.getUTCFullYear(),
       executor,
       invoice.approvedAt ?? editedAt,
-      originalBudgetAmount ? `-${originalBudgetAmount}` : undefined,
+      `-${originalBudgetAmount}`,
     );
     await this.appendCommitmentEvent(
       executor,
