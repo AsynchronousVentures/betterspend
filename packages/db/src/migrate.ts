@@ -41,6 +41,7 @@ type LegalEntityIndexState = {
 
 type BudgetEventConstraintState = {
   tableExists: boolean;
+  canonicalReady: boolean;
   replacementExists: boolean;
   replacementValidated: boolean;
 };
@@ -110,6 +111,14 @@ async function prepareBudgetEventTypeConstraint(client: postgres.Sql): Promise<v
   const [state] = await client<BudgetEventConstraintState[]>`
     SELECT
       to_regclass('public.budget_commitment_events') IS NOT NULL AS "tableExists",
+      EXISTS (
+        SELECT 1
+        FROM pg_constraint AS canonical
+        WHERE canonical.conrelid = to_regclass('public.budget_commitment_events')
+          AND canonical.conname = 'budget_commitment_events_event_type_check'
+          AND canonical.convalidated
+          AND pg_get_constraintdef(canonical.oid) LIKE '%invoice_reopened%'
+      ) AS "canonicalReady",
       replacement.oid IS NOT NULL AS "replacementExists",
       COALESCE(replacement.convalidated, false) AS "replacementValidated"
     FROM (VALUES (1)) AS singleton(value)
@@ -118,7 +127,7 @@ async function prepareBudgetEventTypeConstraint(client: postgres.Sql): Promise<v
       AND replacement.conname = 'budget_commitment_events_event_type_check_v2'
   `;
 
-  if (!state?.tableExists || state.replacementValidated) return;
+  if (!state?.tableExists || state.canonicalReady || state.replacementValidated) return;
 
   await client`SET lock_timeout = '5s'`;
   await client`SET statement_timeout = '5min'`;

@@ -1250,7 +1250,8 @@ export class WorkflowExecutionService {
           )) !== 'false';
         if (
           makerCheckerEnabled &&
-          ((actorId !== null && invoice?.createdBy === actorId) ||
+          ((actorId === null && invoice?.submissionSource !== 'vendor_portal') ||
+            (actorId !== null && invoice?.createdBy === actorId) ||
             (invoice?.submissionSource !== 'vendor_portal' && !invoice?.createdBy))
         ) {
           throw new ForbiddenException('Invoice maker-checker policy blocks this approval');
