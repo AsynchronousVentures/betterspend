@@ -601,6 +601,36 @@ describe('WorkflowExecutionService restart', () => {
     assert.ok(replacement.updatedAt.getTime() > previousUpdatedAt.getTime());
   });
 
+  it('does not republish unchanged parallel assignments after a pending vote', async () => {
+    const fixture = createRestartFixture();
+    const review = fixture.executable.steps.find((step) => step.node.id === 'review');
+    assert.ok(review?.node.type === 'approver_group');
+    review.node.config.execution = 'parallel';
+    review.node.config.resolvers.push({ type: 'user', userId: FALLBACK_ID });
+
+    await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+    const replacement = fixture.getReplacement();
+    assert.ok(replacement);
+    const publicationCount = fixture.publications.length;
+    const queuedJobCount = fixture.queueJobs.length;
+
+    const result = await fixture.service.processAction(
+      String(replacement.id),
+      DELEGATE_ID,
+      'approve',
+      undefined,
+      ORGANIZATION_ID,
+    );
+
+    assert.equal(result.status, 'pending');
+    assert.equal(fixture.publications.length, publicationCount);
+    assert.equal(fixture.queueJobs.length, queuedJobCount);
+  });
+
   it('finishes at the terminal node that triggered required approval', async () => {
     const fixture = createRestartFixture(false, false, 'require_approval');
     const review = fixture.executable.steps.find((step) => step.node.id === 'review');
