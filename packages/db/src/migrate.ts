@@ -58,6 +58,12 @@ const BUDGET_EVENT_TYPES = [
   'legacy_reservation_backfill',
 ] as const;
 
+type EmailIntakeIndexState = {
+  emailIntakeItemsTableExists: boolean;
+  indexExists: boolean;
+  indexIsValid: boolean;
+};
+
 /** Build the parent key without blocking writes before transactional migrations add its FK. */
 async function prepareVendorOrganizationIndex(client: postgres.Sql): Promise<void> {
   const [state] = await client<IndexState[]>`
@@ -148,6 +154,30 @@ async function prepareBudgetEventTypeConstraint(client: postgres.Sql): Promise<v
     await client`RESET statement_timeout`;
     await client`RESET lock_timeout`;
   }
+}
+
+/** Build the email-intake parent key concurrently before its tenant-scoped FK is added. */
+async function prepareEmailIntakeItemOrganizationIndex(client: postgres.Sql): Promise<void> {
+  const [state] = await client<EmailIntakeIndexState[]>`
+    SELECT
+      to_regclass('public.email_intake_items') IS NOT NULL AS "emailIntakeItemsTableExists",
+      to_regclass('public.email_intake_items_id_org_unique') IS NOT NULL AS "indexExists",
+      COALESCE(index_state.indisvalid, false) AS "indexIsValid"
+    FROM (VALUES (1)) AS singleton(value)
+    LEFT JOIN pg_class AS index_class
+      ON index_class.oid = to_regclass('public.email_intake_items_id_org_unique')
+    LEFT JOIN pg_index AS index_state ON index_state.indexrelid = index_class.oid
+  `;
+
+  if (!state?.emailIntakeItemsTableExists || state.indexIsValid) return;
+
+  if (state.indexExists) {
+    await client`DROP INDEX CONCURRENTLY "email_intake_items_id_org_unique"`;
+  }
+  await client`
+    CREATE UNIQUE INDEX CONCURRENTLY "email_intake_items_id_org_unique"
+    ON "email_intake_items" ("id", "organization_id")
+  `;
 }
 
 function expiryDate(value: string | undefined): Date | null {
@@ -258,6 +288,7 @@ async function main(): Promise<void> {
     await prepareVendorOrganizationIndex(client);
     await prepareLegalEntityOrganizationIndex(client);
     await prepareBudgetEventTypeConstraint(client);
+    await prepareEmailIntakeItemOrganizationIndex(client);
     const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
     await migrateLegacyConnections(client);
