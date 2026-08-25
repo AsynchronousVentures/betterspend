@@ -44,7 +44,12 @@ import { exchangeRates } from './schema/exchange-rates';
 import { spendGuardAlerts } from './schema/spend-guard-alerts';
 import { softwareLicenses } from './schema/software-licenses';
 import { catalogPriceProposals } from './schema/catalog-price-proposals';
-import { emailIntakeItems } from './schema/email-intake';
+import {
+  emailIntakeAddresses,
+  emailIntakeAttachments,
+  emailIntakeItems,
+  emailIntakeMessages,
+} from './schema/email-intake';
 import {
   onboardingQuestionnaires,
   vendorOnboardingSubmissions,
@@ -67,6 +72,9 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   spendGuardAlerts: many(spendGuardAlerts),
   softwareLicenses: many(softwareLicenses),
   emailIntakeItems: many(emailIntakeItems),
+  emailIntakeAddresses: many(emailIntakeAddresses),
+  emailIntakeMessages: many(emailIntakeMessages),
+  emailIntakeAttachments: many(emailIntakeAttachments),
   procurementPolicies: many(procurementPolicies),
   intakeConciergeSessions: many(intakeConciergeSessions),
   onboardingQuestionnaires: many(onboardingQuestionnaires),
@@ -158,6 +166,40 @@ export const emailIntakeItemsRelations = relations(emailIntakeItems, ({ one }) =
   organization: one(organizations, {
     fields: [emailIntakeItems.organizationId],
     references: [organizations.id],
+  }),
+}));
+
+export const emailIntakeAddressesRelations = relations(emailIntakeAddresses, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [emailIntakeAddresses.organizationId],
+    references: [organizations.id],
+  }),
+}));
+
+export const emailIntakeMessagesRelations = relations(emailIntakeMessages, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [emailIntakeMessages.organizationId],
+    references: [organizations.id],
+  }),
+  vendor: one(vendors, {
+    fields: [emailIntakeMessages.vendorId],
+    references: [vendors.id],
+  }),
+  attachments: many(emailIntakeAttachments),
+}));
+
+export const emailIntakeAttachmentsRelations = relations(emailIntakeAttachments, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [emailIntakeAttachments.organizationId],
+    references: [organizations.id],
+  }),
+  message: one(emailIntakeMessages, {
+    fields: [emailIntakeAttachments.messageId],
+    references: [emailIntakeMessages.id],
+  }),
+  intakeItem: one(emailIntakeItems, {
+    fields: [emailIntakeAttachments.emailIntakeItemId],
+    references: [emailIntakeItems.id],
   }),
 }));
 
