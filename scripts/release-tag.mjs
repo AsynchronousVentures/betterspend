@@ -3,8 +3,6 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SEMVER_PATTERN =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$/;
 const workspaceManifestPaths = [
   'package.json',
   'apps/api/package.json',
@@ -13,10 +11,45 @@ const workspaceManifestPaths = [
   'packages/shared/package.json',
 ];
 
+function isAsciiDigit(character) {
+  return character >= '0' && character <= '9';
+}
+
+function isValidNumericIdentifier(value) {
+  if (!value || (value.length > 1 && value.startsWith('0'))) return false;
+  return [...value].every(isAsciiDigit);
+}
+
+function isValidPrereleaseIdentifier(value) {
+  if (!value) return false;
+  let hasNonDigit = false;
+
+  for (const character of value) {
+    const isLetter =
+      (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z');
+    if (!isAsciiDigit(character) && !isLetter && character !== '-') return false;
+    if (!isAsciiDigit(character)) hasNonDigit = true;
+  }
+
+  return hasNonDigit || isValidNumericIdentifier(value);
+}
+
+export function isValidReleaseVersion(value) {
+  if (typeof value !== 'string' || !value || value.length > 127 || value.includes('+')) return false;
+
+  const prereleaseSeparator = value.indexOf('-');
+  const core = prereleaseSeparator === -1 ? value : value.slice(0, prereleaseSeparator);
+  const prerelease = prereleaseSeparator === -1 ? null : value.slice(prereleaseSeparator + 1);
+  const coreIdentifiers = core.split('.');
+
+  if (coreIdentifiers.length !== 3 || !coreIdentifiers.every(isValidNumericIdentifier)) return false;
+  return prerelease === null || prerelease.split('.').every(isValidPrereleaseIdentifier);
+}
+
 export function normalizeRequestedVersion(value) {
   const trimmed = value.trim();
   const version = trimmed.startsWith('v') ? trimmed.slice(1) : trimmed;
-  if (!SEMVER_PATTERN.test(version))
+  if (!isValidReleaseVersion(version))
     throw new Error(`Expected a semantic version such as 0.2.4, received "${value}".`);
   return version;
 }

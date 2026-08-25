@@ -3,14 +3,17 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   assertMatchingWorkspaceVersions,
+  isValidReleaseVersion,
   readWorkspaceVersions,
 } from '../../scripts/release-tag.mjs';
 
-const SEMVER_TAG_PATTERN =
-  /^v((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?)$/;
-
 export function isValidReleaseTag(value) {
-  return typeof value === 'string' && SEMVER_TAG_PATTERN.test(value);
+  return (
+    typeof value === 'string' &&
+    value.startsWith('v') &&
+    value.length <= 128 &&
+    isValidReleaseVersion(value.slice(1))
+  );
 }
 
 export function releaseVersionFromTag(value) {

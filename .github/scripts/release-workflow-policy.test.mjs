@@ -21,6 +21,7 @@ test('accepts strict semantic version release tags only', () => {
   assert.equal(isValidReleaseTag('v01.2.4'), false);
   assert.equal(isValidReleaseTag('release-0.2.4'), false);
   assert.equal(isValidReleaseTag('v0.2'), false);
+  assert.equal(isValidReleaseTag(`v0.0.0-0.${'--.'.repeat(1_000)}`), false);
 });
 
 test('requires the requested release to match every workspace package version', () => {
