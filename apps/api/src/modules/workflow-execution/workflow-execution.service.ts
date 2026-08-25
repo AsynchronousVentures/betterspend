@@ -394,23 +394,10 @@ export class WorkflowExecutionService {
       if (!latest) throw new ConflictException('The published workflow version is unavailable');
       const executable = executableDefinitionSchema.parse(latest.executableJson);
       const now = new Date();
-      if (request.approvableType !== 'requisition' && request.approvableType !== 'purchase_order') {
-        throw new ConflictException(
-          `Workflow restart does not support ${request.approvableType} requests`,
-        );
-      }
-      const freshContext = await this.loadWorkflowContext(
+      const freshContext = await this.loadRestartWorkflowContext(
         tx,
-        organizationId,
-        request.approvableType,
-        request.approvableId,
+        request,
         request.initiatedBy ?? actorId,
-        {},
-      );
-      const supplementalContext = Object.fromEntries(
-        Object.entries(request.workflowContext).filter(
-          ([key]) => !Object.hasOwn(freshContext, key),
-        ),
       );
 
       await tx
@@ -436,7 +423,7 @@ export class WorkflowExecutionService {
           definitionVersionId: latest.id,
           initiatedBy: request.initiatedBy ?? actorId,
           currentNodeId: executable.entryStepId,
-          workflowContext: { ...supplementalContext, ...freshContext },
+          workflowContext: freshContext,
           attempt: request.attempt + 1,
           currentStep: 0,
           status: 'pending',
@@ -588,6 +575,14 @@ export class WorkflowExecutionService {
     ) {
       return;
     }
+    const elapsedMilliseconds = Date.now() - current.updatedAt.getTime();
+    const slaMilliseconds = timer.node.config.slaHours * 60 * 60 * 1_000;
+    const minimumElapsed =
+      data.kind === 'warning'
+        ? slaMilliseconds * (timer.node.config.warningPercent / 100)
+        : slaMilliseconds;
+    if (elapsedMilliseconds < minimumElapsed) return;
+
     const assignments = await this.db.query.workflowApprovalAssignments.findMany({
       where: (assignment, { and, eq }) =>
         and(
@@ -625,7 +620,11 @@ export class WorkflowExecutionService {
       await this.autoApproveEscalatedStep(current, data.parentNodeId);
       return;
     }
-    await this.reassignEscalatedStep(current, timer, action.resolvers);
+    const parentStep = this.getStep(executable, data.parentNodeId);
+    if (parentStep.node.type !== 'approver_group' && parentStep.node.type !== 'resolver') return;
+    const execution =
+      parentStep.node.type === 'approver_group' ? parentStep.node.config.execution : 'serial';
+    await this.reassignEscalatedStep(current, timer, action.resolvers, execution);
   }
 
   private async findPublishedVersion(
@@ -697,6 +696,77 @@ export class WorkflowExecutionService {
         po_creator: poCreatorId,
         invoice_creator: null,
       },
+    };
+  }
+
+  private async loadRestartWorkflowContext(
+    tx: DbTransaction,
+    request: RuntimeRequest,
+    initiatedBy: string,
+  ): Promise<Record<string, unknown>> {
+    if (request.approvableType !== 'requisition' && request.approvableType !== 'purchase_order') {
+      throw new ConflictException(
+        `Workflow restart does not support ${request.approvableType} requests`,
+      );
+    }
+    const context = await this.loadWorkflowContext(
+      tx,
+      request.organizationId,
+      request.approvableType,
+      request.approvableId,
+      initiatedBy,
+      {},
+    );
+    const totalAmount = context.totalAmount;
+    const currency = context.currency;
+    const createdAt = context.createdAt;
+    if (
+      typeof totalAmount !== 'string' ||
+      typeof currency !== 'string' ||
+      !(createdAt instanceof Date)
+    ) {
+      throw new ConflictException('The approvable is missing current budget context');
+    }
+
+    let departmentId = typeof context.departmentId === 'string' ? context.departmentId : null;
+    let fiscalYear = createdAt.getUTCFullYear();
+    let excludeRequisitionId: string | undefined;
+    let excludePurchaseOrderId: string | undefined;
+    if (request.approvableType === 'requisition') {
+      excludeRequisitionId = request.approvableId;
+    } else {
+      excludePurchaseOrderId = request.approvableId;
+      if (typeof context.requisitionId === 'string') {
+        const linkedRequisitionId = context.requisitionId;
+        const linkedRequisition = await tx.query.requisitions.findFirst({
+          where: (record, { and, eq }) =>
+            and(
+              eq(record.id, linkedRequisitionId),
+              eq(record.organizationId, request.organizationId),
+            ),
+        });
+        if (!linkedRequisition) {
+          throw new ConflictException('The linked requisition is unavailable for restart');
+        }
+        departmentId = linkedRequisition.departmentId;
+        fiscalYear = linkedRequisition.createdAt.getUTCFullYear();
+        excludeRequisitionId = linkedRequisition.id;
+      }
+    }
+
+    const budgetDecision = await this.budgets.evaluateEnforcement({
+      organizationId: request.organizationId,
+      departmentId,
+      requestedAmount: totalAmount,
+      currency,
+      fiscalYear,
+      excludeRequisitionId,
+      excludePurchaseOrderId,
+    });
+    return {
+      ...context,
+      budgetAvailable: budgetDecision.withinBudget,
+      budgetDecision,
     };
   }
 
@@ -1213,6 +1283,7 @@ export class WorkflowExecutionService {
     request: RuntimeRequest,
     timer: ExecutableStep,
     resolvers: ApproverResolver[],
+    execution: 'serial' | 'parallel',
   ): Promise<void> {
     const outcome = await this.db.transaction(async (tx) => {
       const locked = await this.lockVersionedRequest(tx, request.id, request.organizationId);
@@ -1246,7 +1317,8 @@ export class WorkflowExecutionService {
           resolver: item.resolver,
           resolvedApproverId: item.resolvedApproverId,
           assignedApproverId: item.assignedApproverId,
-          status: 'pending' as const,
+          status:
+            execution === 'parallel' || index === 0 ? ('pending' as const) : ('waiting' as const),
         })),
       );
       await tx.insert(approvalActions).values({

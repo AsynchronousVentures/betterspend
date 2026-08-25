@@ -34,20 +34,13 @@ BEGIN
 END
 $$;
 --> statement-breakpoint
-WITH first_action_actor AS (
-  SELECT DISTINCT ON (action."approval_request_id")
-    action."approval_request_id",
-    action."approver_id"
-  FROM "approval_actions" AS action
-  ORDER BY action."approval_request_id", action."acted_at", action."id"
-), initiator_candidates AS (
+WITH initiator_candidates AS (
   SELECT
     request."id",
     COALESCE(
       requisition_actor."id",
       purchase_order_actor."id",
-      invoice_actor."id",
-      action_actor."id"
+      invoice_actor."id"
     ) AS "initiated_by"
   FROM "approval_requests" AS request
   LEFT JOIN "requisitions" AS requisition
@@ -68,11 +61,6 @@ WITH first_action_actor AS (
   LEFT JOIN "users" AS invoice_actor
     ON invoice_actor."id" = invoice."created_by"
     AND invoice_actor."organization_id" = request."organization_id"
-  LEFT JOIN first_action_actor AS first_action
-    ON first_action."approval_request_id" = request."id"
-  LEFT JOIN "users" AS action_actor
-    ON action_actor."id" = first_action."approver_id"
-    AND action_actor."organization_id" = request."organization_id"
   WHERE request."initiated_by" IS NULL
 )
 UPDATE "approval_requests" AS request

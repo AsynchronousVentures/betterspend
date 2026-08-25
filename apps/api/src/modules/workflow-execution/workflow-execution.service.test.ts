@@ -100,6 +100,7 @@ function createRestartFixture(publicationFails = false, enforceSeparationOfDutie
     currentNodeId: 'old-review',
     workflowContext: {
       totalAmount: '100',
+      budgetAvailable: true,
     },
     attempt: 1,
     currentStep: 1,
@@ -281,6 +282,12 @@ function createRestartFixture(publicationFails = false, enforceSeparationOfDutie
       userId === APPROVER_ID ? DELEGATE_ID : null,
   } as unknown as ApprovalDelegationsService;
   const budgets = {
+    evaluateEnforcement: async () => ({
+      action: 'allow',
+      withinBudget: false,
+      reason: 'overrun',
+      message: 'Current budget is overrun',
+    }),
     recordRequisitionApproval: async () => entityUpdates.push({ budget: 'approved' }),
     releaseRequisition: async () => entityUpdates.push({ budget: 'released' }),
   } as unknown as BudgetsService;
@@ -345,6 +352,10 @@ describe('WorkflowExecutionService restart', () => {
     assert.equal(
       (fixture.getReplacement()?.workflowContext as Record<string, unknown>).totalAmount,
       '250',
+    );
+    assert.equal(
+      (fixture.getReplacement()?.workflowContext as Record<string, unknown>).budgetAvailable,
+      false,
     );
     assert.deepEqual(fixture.notifications, [DELEGATE_ID]);
     assert.ok(fixture.actions.some((action) => action.action === 'restarted'));
@@ -436,13 +447,20 @@ describe('WorkflowExecutionService restart', () => {
           parentNodeId: 'review',
           slaHours: 1,
           warningPercent: 50,
-          action: { type: 'reassign', resolvers: [{ type: 'user', userId: FALLBACK_ID }] },
+          action: {
+            type: 'reassign',
+            resolvers: [
+              { type: 'user', userId: FALLBACK_ID },
+              { type: 'user', userId: APPROVER_ID },
+            ],
+          },
         },
       },
       transitions: [],
     });
     const replacement = fixture.getReplacement();
     assert.ok(replacement);
+    replacement.updatedAt = new Date(Date.now() - 2 * 60 * 60 * 1_000);
 
     await fixture.service.handleEscalation({
       organizationId: ORGANIZATION_ID,
@@ -453,21 +471,38 @@ describe('WorkflowExecutionService restart', () => {
       attempt: Number(replacement.attempt),
       kind: 'action',
     });
-    const result = await fixture.service.processAction(
+    const replacementAssignments = fixture.assignments.filter(
+      (assignment) => assignment.approvalRequestId === replacement.id,
+    );
+    assert.deepEqual(
+      replacementAssignments.map((assignment) => assignment.status),
+      ['skipped', 'pending', 'waiting'],
+    );
+
+    const firstResult = await fixture.service.processAction(
       String(replacement.id),
       FALLBACK_ID,
       'approve',
       undefined,
       ORGANIZATION_ID,
     );
-
-    assert.equal(result.status, 'approved');
-    const replacementAssignments = fixture.assignments.filter(
-      (assignment) => assignment.approvalRequestId === replacement.id,
-    );
+    assert.equal(firstResult.status, 'pending');
     assert.deepEqual(
       replacementAssignments.map((assignment) => assignment.status),
-      ['skipped', 'approved'],
+      ['skipped', 'approved', 'pending'],
+    );
+    const result = await fixture.service.processAction(
+      String(replacement.id),
+      DELEGATE_ID,
+      'approve',
+      undefined,
+      ORGANIZATION_ID,
+    );
+
+    assert.equal(result.status, 'approved');
+    assert.deepEqual(
+      replacementAssignments.map((assignment) => assignment.status),
+      ['skipped', 'approved', 'approved'],
     );
     assert.equal(replacement.status, 'approved');
   });
@@ -543,6 +578,81 @@ describe('WorkflowExecutionService escalation scheduling', () => {
     assert.ok(jobs.every((job) => job.data.definitionVersionId === request.definitionVersionId));
   });
 
+  it('ignores a valid action job before the pinned step SLA has elapsed', async () => {
+    const executable = executableWithApproval();
+    executable.steps.push({
+      node: {
+        id: 'review-timer',
+        name: 'Review SLA',
+        type: 'escalation_timer',
+        disabled: false,
+        config: {
+          parentNodeId: 'review',
+          slaHours: 1,
+          warningPercent: 75,
+          action: { type: 'auto_reject' },
+        },
+      },
+      transitions: [],
+    });
+    const current = {
+      id: '00000000-0000-4000-8000-000000000301',
+      organizationId: ORGANIZATION_ID,
+      approvableType: 'requisition',
+      approvableId: '00000000-0000-4000-8000-000000000401',
+      approvalRuleId: null,
+      definitionVersionId: '00000000-0000-4000-8000-000000000501',
+      initiatedBy: '00000000-0000-4000-8000-000000000601',
+      currentNodeId: 'review',
+      workflowContext: {},
+      attempt: 1,
+      currentStep: 1,
+      status: 'pending',
+      requiredApproverId: null,
+      requiredApprovalStep: null,
+      requiredApprovalReason: null,
+      requiredApprovalKey: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    let transactions = 0;
+    const db = {
+      query: {
+        approvalRequests: { findFirst: async () => current },
+        workflowDefinitionVersions: { findFirst: async () => ({ executableJson: executable }) },
+        workflowApprovalAssignments: {
+          findMany: async () => {
+            throw new Error('Assignments must not be loaded before the trusted deadline');
+          },
+        },
+      },
+      transaction: async () => {
+        transactions += 1;
+      },
+    } as unknown as Db;
+    const service = new WorkflowExecutionService(
+      db,
+      {} as Queue,
+      {} as ApprovalDelegationsService,
+      {} as BudgetsService,
+      {} as NotificationsService,
+      {} as WebhookEventService,
+      {} as AuditService,
+    );
+
+    await service.handleEscalation({
+      organizationId: current.organizationId,
+      approvalRequestId: current.id,
+      definitionVersionId: current.definitionVersionId,
+      parentNodeId: current.currentNodeId,
+      timerNodeId: 'review-timer',
+      attempt: current.attempt,
+      kind: 'action',
+    });
+
+    assert.equal(transactions, 0);
+  });
+
   for (const escalationAction of [
     { type: 'auto_reject' as const },
     { type: 'reassign' as const, resolvers: [{ type: 'user' as const, userId: APPROVER_ID }] },
@@ -582,7 +692,7 @@ describe('WorkflowExecutionService escalation scheduling', () => {
         requiredApprovalReason: null,
         requiredApprovalKey: null,
         createdAt: new Date(),
-        updatedAt: new Date(),
+        updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1_000),
       };
       const locked = { ...current, status: 'cancelled' };
       const writes: string[] = [];
