@@ -87,6 +87,71 @@ describe('EmailIntakeService attachment promotion', () => {
     expect(service['messageBody']('Invoice\0body')).toBe('Invoicebody');
   });
 
+  it('notifies each promoted review item by its intake item ID', async () => {
+    const { service } = serviceWith();
+    const notifyIntake = jest.fn().mockResolvedValue(undefined);
+    service['notifyIntake'] = notifyIntake;
+
+    await service['notifyReviewItems'](organizationId, 'billing@vendor.test', 'Invoice 123', 10, [
+      {
+        id: '00000000-0000-0000-0000-000000000051',
+        filename: 'first.pdf',
+        contentType: 'application/pdf',
+        contentHash: 'a'.repeat(64),
+        sizeBytes: 8,
+        status: 'accepted',
+        rejectionReason: null,
+        storageKey: 'first',
+        intakeItemId: '00000000-0000-0000-0000-000000000061',
+        invoiceNumberHint: null,
+      },
+      {
+        id: '00000000-0000-0000-0000-000000000052',
+        filename: 'second.pdf',
+        contentType: 'application/pdf',
+        contentHash: 'b'.repeat(64),
+        sizeBytes: 8,
+        status: 'accepted',
+        rejectionReason: null,
+        storageKey: 'second',
+        intakeItemId: '00000000-0000-0000-0000-000000000062',
+        invoiceNumberHint: null,
+      },
+      {
+        id: '00000000-0000-0000-0000-000000000053',
+        filename: 'duplicate.pdf',
+        contentType: 'application/pdf',
+        contentHash: 'c'.repeat(64),
+        sizeBytes: 8,
+        status: 'duplicate',
+        rejectionReason: 'duplicate_file_hash',
+        storageKey: null,
+        intakeItemId: null,
+        invoiceNumberHint: null,
+      },
+    ]);
+
+    expect(notifyIntake).toHaveBeenNthCalledWith(
+      1,
+      organizationId,
+      '00000000-0000-0000-0000-000000000061',
+      'billing@vendor.test',
+      'Invoice 123',
+      'accepted',
+      10,
+    );
+    expect(notifyIntake).toHaveBeenNthCalledWith(
+      2,
+      organizationId,
+      '00000000-0000-0000-0000-000000000062',
+      'billing@vendor.test',
+      'Invoice 123',
+      'accepted',
+      10,
+    );
+    expect(notifyIntake).toHaveBeenCalledTimes(2);
+  });
+
   it('leaves the durable attachment pending when object upload fails', async () => {
     const findAttachment = jest
       .fn()

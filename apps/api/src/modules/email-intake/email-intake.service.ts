@@ -523,13 +523,12 @@ export class EmailIntakeService implements OnModuleInit {
       attachments,
     });
 
-    await this.notifyIntake(
+    await this.notifyReviewItems(
       organizationId,
-      messageId,
       sourceEmail,
       subject,
-      promoted.status,
       result.riskScore,
+      promoted.outcomes,
     );
     if (allowAutomaticReply) {
       await this.replyToRejectedAttachments(sourceEmail, subject, promoted.outcomes);
@@ -987,6 +986,26 @@ export class EmailIntakeService implements OnModuleInit {
 
   private postgresText(value: string): string {
     return value.replaceAll('\0', '');
+  }
+
+  private async notifyReviewItems(
+    organizationId: string,
+    sourceEmail: string,
+    subject: string,
+    riskScore: number,
+    outcomes: StoredAttachmentOutcome[],
+  ): Promise<void> {
+    for (const outcome of outcomes) {
+      if (outcome.status !== 'accepted' || !outcome.intakeItemId) continue;
+      await this.notifyIntake(
+        organizationId,
+        outcome.intakeItemId,
+        sourceEmail,
+        subject,
+        'accepted',
+        riskScore,
+      );
+    }
   }
 
   private async notifyIntake(
