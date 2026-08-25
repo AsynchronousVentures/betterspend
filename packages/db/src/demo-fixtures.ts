@@ -1,5 +1,5 @@
 import type { DbTransaction } from './client';
-import { sql } from 'drizzle-orm';
+import { eq, inArray, or, sql } from 'drizzle-orm';
 import { departments, legalEntities, organizations, userRoles, users, vendors } from './schema';
 
 /** IDs used by the demo controllers and the ordinary, small seed. */
@@ -14,6 +14,246 @@ export const DEMO_VENDOR_IDS = [
   '00000000-0000-0000-0000-000000000030',
   '00000000-0000-0000-0000-000000000031',
 ] as const;
+
+type DemoUserRoleFixture = typeof userRoles.$inferInsert;
+type DemoVendorFixture = typeof vendors.$inferInsert;
+
+export const DEMO_USER_ROLE_FIXTURES: DemoUserRoleFixture[] = [
+  {
+    id: '00000000-0000-0000-0000-000000000040',
+    userId: DEMO_ADMIN_ID,
+    role: 'admin',
+    customRoleId: null,
+    scopeType: 'global',
+    scopeId: null,
+  },
+  {
+    id: '00000000-0000-0000-0000-000000000041',
+    userId: DEMO_REQUESTER_ID,
+    role: 'requester',
+    customRoleId: null,
+    scopeType: 'global',
+    scopeId: null,
+  },
+  {
+    id: '00000000-0000-0000-0000-000000000042',
+    userId: DEMO_APPROVER_ID,
+    role: 'approver',
+    customRoleId: null,
+    scopeType: 'global',
+    scopeId: null,
+  },
+];
+
+export const DEMO_VENDOR_FIXTURES: DemoVendorFixture[] = [
+  {
+    id: DEMO_VENDOR_IDS[0],
+    organizationId: DEMO_ORG_ID,
+    entityId: DEMO_PARENT_ENTITY_ID,
+    name: 'Acme Supplies Inc.',
+    code: 'ACME-SUP',
+    taxId: null,
+    paymentTerms: 'Net 30',
+    address: {},
+    contactInfo: { email: 'sales@acmesupplies.com', phone: '+1-555-0100' },
+    status: 'active',
+    onboardingStatus: 'not_started',
+    onboardingRiskScore: 0,
+    onboardingRiskLevel: 'low',
+    onboardingApprovedAt: null,
+    onboardingLastSubmittedAt: null,
+    punchoutEnabled: false,
+    punchoutConfig: null,
+    diversityCategories: [],
+    esgRating: null,
+    carbonFootprintTons: null,
+    sustainabilityCertifications: [],
+    esgNotes: null,
+    diversityVerifiedAt: null,
+    sanctionsStatus: 'untested',
+    sanctionsCheckedAt: null,
+    sanctionsNote: null,
+  },
+  {
+    id: DEMO_VENDOR_IDS[1],
+    organizationId: DEMO_ORG_ID,
+    entityId: DEMO_PARENT_ENTITY_ID,
+    name: 'TechParts Global',
+    code: 'TECHPARTS',
+    taxId: null,
+    paymentTerms: 'Net 60',
+    address: {},
+    contactInfo: { email: 'orders@techparts.com', phone: '+1-555-0200' },
+    status: 'active',
+    onboardingStatus: 'not_started',
+    onboardingRiskScore: 0,
+    onboardingRiskLevel: 'low',
+    onboardingApprovedAt: null,
+    onboardingLastSubmittedAt: null,
+    punchoutEnabled: false,
+    punchoutConfig: null,
+    diversityCategories: [],
+    esgRating: null,
+    carbonFootprintTons: null,
+    sustainabilityCertifications: [],
+    esgNotes: null,
+    diversityVerifiedAt: null,
+    sanctionsStatus: 'untested',
+    sanctionsCheckedAt: null,
+    sanctionsNote: null,
+  },
+];
+
+export function demoUserRoleNaturalKey(
+  row: Pick<DemoUserRoleFixture, 'userId' | 'role' | 'customRoleId' | 'scopeType' | 'scopeId'>,
+): string {
+  return [row.userId, row.role, row.customRoleId ?? '', row.scopeType, row.scopeId ?? ''].join(
+    '\0',
+  );
+}
+
+export function demoVendorNaturalKey(
+  row: Pick<DemoVendorFixture, 'organizationId' | 'code' | 'name'>,
+): string {
+  return [row.organizationId, row.code ?? `name:${row.name}`].join('\0');
+}
+
+async function reconcileLegacyDemoUserRoles(tx: DbTransaction): Promise<void> {
+  const fixtureIds = DEMO_USER_ROLE_FIXTURES.map((row) => row.id).filter((id): id is string =>
+    Boolean(id),
+  );
+  const fixtureUserIds = DEMO_USER_ROLE_FIXTURES.map((row) => row.userId).filter(
+    (id): id is string => Boolean(id),
+  );
+  const existing = await tx
+    .select()
+    .from(userRoles)
+    .where(or(inArray(userRoles.userId, fixtureUserIds), inArray(userRoles.id, fixtureIds)));
+  const existingById = new Map(existing.map((row) => [row.id, row]));
+
+  for (const fixture of DEMO_USER_ROLE_FIXTURES) {
+    if (!fixture.id || !fixture.userId) continue;
+    const naturalKey = demoUserRoleNaturalKey(fixture);
+    const matching = existing.filter(
+      (row) => demoUserRoleNaturalKey(row) === naturalKey && row.id !== fixture.id,
+    );
+    const fixedRow = existingById.get(fixture.id);
+    let retainedId = fixedRow?.id;
+    if (!retainedId && matching[0]?.id) {
+      retainedId = fixture.id;
+      await tx
+        .update(userRoles)
+        .set({
+          id: fixture.id,
+          userId: fixture.userId,
+          role: fixture.role,
+          customRoleId: fixture.customRoleId,
+          scopeType: fixture.scopeType,
+          scopeId: fixture.scopeId,
+        })
+        .where(eq(userRoles.id, matching[0].id));
+      existingById.delete(matching[0].id);
+      existingById.set(fixture.id, { ...matching[0], ...fixture });
+    }
+    for (const duplicate of matching) {
+      if (duplicate.id !== retainedId)
+        await tx.delete(userRoles).where(eq(userRoles.id, duplicate.id));
+    }
+  }
+}
+
+/** Move legacy vendor children before removing duplicate random-ID fixtures. */
+async function repointLegacyVendorReferences(
+  tx: DbTransaction,
+  legacyId: string,
+  canonicalId: string,
+): Promise<void> {
+  await tx.execute(
+    sql`UPDATE "catalog_items" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "requisition_lines" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "purchase_orders" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "invoices" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "recurring_pos" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "contracts" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "vendor_portal_tokens" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "vendor_portal_sessions" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "rfq_requests" SET "awarded_vendor_id" = ${canonicalId} WHERE "awarded_vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "rfq_invitations" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "rfq_responses" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "software_licenses" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "catalog_price_proposals" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "vendor_onboarding_submissions" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "messages" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "messages" SET "recipient_vendor_id" = ${canonicalId} WHERE "recipient_vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "sanctions_screenings" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "vendor_payment_accounts" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "vendor_virtual_cards" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+  await tx.execute(
+    sql`UPDATE "email_intake_messages" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
+  );
+}
+
+async function reconcileLegacyDemoVendors(tx: DbTransaction): Promise<void> {
+  const existing = await tx
+    .select({
+      id: vendors.id,
+      organizationId: vendors.organizationId,
+      code: vendors.code,
+      name: vendors.name,
+    })
+    .from(vendors)
+    .where(eq(vendors.organizationId, DEMO_ORG_ID));
+  for (const fixture of DEMO_VENDOR_FIXTURES) {
+    if (!fixture.id || !fixture.organizationId || !fixture.code) continue;
+    const naturalKey = demoVendorNaturalKey(fixture);
+    const legacyRows = existing.filter(
+      (row) => row.id !== fixture.id && demoVendorNaturalKey(row) === naturalKey,
+    );
+    if (legacyRows.length === 0) continue;
+    await tx.insert(vendors).values(fixture).onConflictDoNothing();
+    for (const legacy of legacyRows) {
+      await repointLegacyVendorReferences(tx, legacy.id, fixture.id);
+      await tx.delete(vendors).where(eq(vendors.id, legacy.id));
+    }
+  }
+}
 
 /**
  * Insert the fixed records used by demo-mode requests. This is deliberately
@@ -151,28 +391,10 @@ export async function upsertDemoFixtures(tx: DbTransaction): Promise<void> {
       },
     });
 
+  await reconcileLegacyDemoUserRoles(tx);
   await tx
     .insert(userRoles)
-    .values([
-      {
-        id: '00000000-0000-0000-0000-000000000040',
-        userId: DEMO_ADMIN_ID,
-        role: 'admin',
-        scopeType: 'global',
-      },
-      {
-        id: '00000000-0000-0000-0000-000000000041',
-        userId: DEMO_REQUESTER_ID,
-        role: 'requester',
-        scopeType: 'global',
-      },
-      {
-        id: '00000000-0000-0000-0000-000000000042',
-        userId: DEMO_APPROVER_ID,
-        role: 'approver',
-        scopeType: 'global',
-      },
-    ])
+    .values(DEMO_USER_ROLE_FIXTURES)
     .onConflictDoUpdate({
       target: userRoles.id,
       set: {
@@ -184,66 +406,10 @@ export async function upsertDemoFixtures(tx: DbTransaction): Promise<void> {
       },
     });
 
+  await reconcileLegacyDemoVendors(tx);
   await tx
     .insert(vendors)
-    .values([
-      {
-        id: DEMO_VENDOR_IDS[0],
-        organizationId: DEMO_ORG_ID,
-        entityId: DEMO_PARENT_ENTITY_ID,
-        name: 'Acme Supplies Inc.',
-        code: 'ACME-SUP',
-        taxId: null,
-        paymentTerms: 'Net 30',
-        address: {},
-        contactInfo: { email: 'sales@acmesupplies.com', phone: '+1-555-0100' },
-        status: 'active',
-        onboardingStatus: 'not_started',
-        onboardingRiskScore: 0,
-        onboardingRiskLevel: 'low',
-        onboardingApprovedAt: null,
-        onboardingLastSubmittedAt: null,
-        punchoutEnabled: false,
-        punchoutConfig: null,
-        diversityCategories: [],
-        esgRating: null,
-        carbonFootprintTons: null,
-        sustainabilityCertifications: [],
-        esgNotes: null,
-        diversityVerifiedAt: null,
-        sanctionsStatus: 'untested',
-        sanctionsCheckedAt: null,
-        sanctionsNote: null,
-      },
-      {
-        id: DEMO_VENDOR_IDS[1],
-        organizationId: DEMO_ORG_ID,
-        entityId: DEMO_PARENT_ENTITY_ID,
-        name: 'TechParts Global',
-        code: 'TECHPARTS',
-        taxId: null,
-        paymentTerms: 'Net 60',
-        address: {},
-        contactInfo: { email: 'orders@techparts.com', phone: '+1-555-0200' },
-        status: 'active',
-        onboardingStatus: 'not_started',
-        onboardingRiskScore: 0,
-        onboardingRiskLevel: 'low',
-        onboardingApprovedAt: null,
-        onboardingLastSubmittedAt: null,
-        punchoutEnabled: false,
-        punchoutConfig: null,
-        diversityCategories: [],
-        esgRating: null,
-        carbonFootprintTons: null,
-        sustainabilityCertifications: [],
-        esgNotes: null,
-        diversityVerifiedAt: null,
-        sanctionsStatus: 'untested',
-        sanctionsCheckedAt: null,
-        sanctionsNote: null,
-      },
-    ])
+    .values(DEMO_VENDOR_FIXTURES)
     .onConflictDoUpdate({
       target: vendors.id,
       set: {

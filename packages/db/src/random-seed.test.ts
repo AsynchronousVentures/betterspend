@@ -18,7 +18,15 @@ import {
   stableSeedToken,
   stableUuid,
 } from './random-seed';
-import { materializeWebhookSecrets } from './random-seed-secrets';
+import { materializeEmailIntakeTokens, materializeWebhookSecrets } from './random-seed-secrets';
+import {
+  DEMO_ORG_ID,
+  DEMO_USER_ROLE_FIXTURES,
+  DEMO_VENDOR_FIXTURES,
+  DEMO_VENDOR_IDS,
+  demoUserRoleNaturalKey,
+  demoVendorNaturalKey,
+} from './demo-fixtures';
 
 test('parses defaults and explicit workload options', () => {
   assert.deepEqual(parseRandomSeedArgs([]), {
@@ -144,6 +152,18 @@ test('materializes webhook secrets outside the deterministic graph', () => {
   const materialized = materializeWebhookSecrets(dataset.webhookEndpoints, () => 'a'.repeat(64));
   assert.equal(Object.prototype.hasOwnProperty.call(materialized[0], 'secret'), true);
   assert.equal(materialized[0]?.secret, 'a'.repeat(64));
+});
+
+test('materializes email intake tokens outside the deterministic graph', () => {
+  const dataset = generateRandomSeedDataset({ count: 4, seed: 'email-token-test' });
+  const source = dataset.emailIntakeAddresses[0];
+  assert.ok(source);
+  assert.equal(Object.prototype.hasOwnProperty.call(source, 'token'), false);
+  const materialized = materializeEmailIntakeTokens(dataset.emailIntakeAddresses, () =>
+    'b'.repeat(40),
+  );
+  assert.equal(Object.prototype.hasOwnProperty.call(materialized[0], 'token'), true);
+  assert.equal(materialized[0]?.token, 'b'.repeat(40));
 });
 
 test('keeps core lifecycle timestamps and money allocations coherent', () => {
@@ -316,6 +336,113 @@ test('keeps RFQ award state consistent with cancellation and responses', () => {
       assert.equal(awardedResponses.length, 0);
     }
   }
+});
+
+test('keeps generated money references and vendor fixture reconciliation keys coherent', () => {
+  const dataset = generateRandomSeedDataset({ count: 500, seed: 'secondary-coherence-test' });
+  const cents = (value: string | number | null | undefined): number =>
+    Math.round(Number(value ?? 0) * 100);
+  const toBaseCents = (amountCents: number, currency: string): number =>
+    Math.round(amountCents * (currency === 'EUR' ? 1.09 : currency === 'GBP' ? 1.27 : 1));
+  const requisitionsById = new Map(dataset.requisitions.map((row) => [row.id, row]));
+  const purchaseOrdersById = new Map(dataset.purchaseOrders.map((row) => [row.id, row]));
+  const invoicesById = new Map(dataset.invoices.map((row) => [row.id, row]));
+
+  const receiptIds = new Set(dataset.goodsReceipts.map((row) => row.id));
+  const purchaseOrderIds = new Set(dataset.purchaseOrders.map((row) => row.id));
+  const receiptMovements = dataset.inventoryMovements.filter(
+    (row) => row.referenceType === 'goods_receipt',
+  );
+  assert.equal(receiptMovements.length > 0, true);
+  for (const movement of dataset.inventoryMovements) {
+    if (movement.referenceType === 'goods_receipt')
+      assert.equal(receiptIds.has(movement.referenceId ?? ''), true);
+    if (movement.referenceType === 'purchase_order')
+      assert.equal(purchaseOrderIds.has(movement.referenceId ?? ''), true);
+  }
+
+  for (const event of dataset.budgetCommitmentEvents) {
+    const requisition = requisitionsById.get(event.requisitionId ?? '');
+    const purchaseOrder = purchaseOrdersById.get(event.purchaseOrderId ?? '');
+    const invoice = invoicesById.get(event.invoiceId ?? '');
+    if (event.eventType === 'requisition_reserved' && requisition) {
+      assert.equal(
+        cents(event.baseReservedDelta),
+        toBaseCents(cents(requisition.totalAmount), requisition.currency ?? 'USD'),
+      );
+    }
+    if (event.eventType === 'purchase_order_committed' && purchaseOrder) {
+      assert.equal(
+        cents(event.baseCommittedDelta),
+        toBaseCents(cents(purchaseOrder.totalAmount), purchaseOrder.currency ?? 'USD'),
+      );
+      if (requisition)
+        assert.equal(
+          cents(event.baseReservedDelta),
+          -toBaseCents(cents(requisition.totalAmount), requisition.currency ?? 'USD'),
+        );
+    }
+    if (event.eventType === 'invoice_expended' && invoice) {
+      assert.equal(
+        cents(event.baseExpendedDelta),
+        toBaseCents(cents(invoice.totalAmount), invoice.currency ?? 'USD'),
+      );
+      if (purchaseOrder)
+        assert.equal(
+          cents(event.baseCommittedDelta),
+          -toBaseCents(cents(purchaseOrder.totalAmount), purchaseOrder.currency ?? 'USD'),
+        );
+    }
+  }
+
+  const rfqLinesById = new Map(dataset.rfqLines.map((row) => [row.id, row]));
+  for (const response of dataset.rfqResponses) {
+    const total = dataset.rfqResponseLines
+      .filter((line) => line.responseId === response.id)
+      .reduce((sum, line) => {
+        const rfqLine = rfqLinesById.get(line.rfqLineId);
+        return sum + Number(rfqLine?.quantity ?? 0) * cents(line.unitPrice);
+      }, 0);
+    assert.equal(cents(response.totalAmount), total);
+  }
+
+  assert.equal(
+    dataset.invoices.some((invoice) => invoice.status === 'paid'),
+    true,
+  );
+  assert.equal(
+    dataset.invoices.some((invoice) => invoice.status === 'approved'),
+    true,
+  );
+  assert.equal(
+    dataset.paymentRuns.some((run) => run.status === 'paid'),
+    true,
+  );
+  assert.equal(
+    dataset.glExportJobs.some((job) => job.status === 'exported'),
+    true,
+  );
+
+  const vendorByKey = new Map(
+    DEMO_VENDOR_FIXTURES.map((vendor) => [demoVendorNaturalKey(vendor), vendor.id]),
+  );
+  assert.equal(
+    vendorByKey.get(
+      demoVendorNaturalKey({
+        organizationId: DEMO_ORG_ID,
+        code: 'ACME-SUP',
+        name: 'legacy vendor row',
+      }),
+    ),
+    DEMO_VENDOR_IDS[0],
+  );
+  const roleByKey = new Map(
+    DEMO_USER_ROLE_FIXTURES.map((role) => [demoUserRoleNaturalKey(role), role.id]),
+  );
+  assert.equal(
+    roleByKey.get(demoUserRoleNaturalKey(DEMO_USER_ROLE_FIXTURES[0])),
+    '00000000-0000-0000-0000-000000000040',
+  );
 });
 
 test('converts payable invoices to base-currency payment amounts and omits empty runs', () => {

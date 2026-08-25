@@ -14,7 +14,8 @@ Options:
 The same seed and count are safe to rerun. A durable seed marker records the
 original count, so a namespace may only be rerun with that count. Once present,
 the marker permits repair of deleted generated rows. To change the count,
-choose a new seed. Webhook secrets are random at first insert.
+choose a new seed. Webhook secrets and the inbound email address token are
+random at first insert and preserved on reruns.
 This command refuses to run with NODE_ENV=production.
 `;
 

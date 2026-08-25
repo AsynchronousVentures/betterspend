@@ -2,7 +2,7 @@ import type { PgTable } from 'drizzle-orm/pg-core';
 import { and, count, eq, like, sql } from 'drizzle-orm';
 import { db, type DbTransaction } from './client';
 import { DEMO_ORG_ID, upsertDemoFixtures } from './demo-fixtures';
-import { materializeWebhookSecrets } from './random-seed-secrets';
+import { materializeEmailIntakeTokens, materializeWebhookSecrets } from './random-seed-secrets';
 import {
   approvalActions,
   approvalDelegations,
@@ -220,7 +220,11 @@ export async function persistRandomSeed(
     await insertBatches(tx, notifications, dataset.notifications);
     await insertBatches(tx, messages, dataset.messages);
     await insertBatches(tx, ocrJobs, dataset.ocrJobs);
-    await insertBatches(tx, emailIntakeAddresses, dataset.emailIntakeAddresses);
+    await insertBatches(
+      tx,
+      emailIntakeAddresses,
+      materializeEmailIntakeTokens(dataset.emailIntakeAddresses),
+    );
     await insertBatches(tx, emailIntakeItems, dataset.emailIntakeItems);
     await insertBatches(tx, emailIntakeMessages, dataset.emailIntakeMessages);
     await insertBatches(tx, emailIntakeAttachments, dataset.emailIntakeAttachments);

@@ -99,6 +99,7 @@ export interface RandomSeedCliOptions extends RandomSeedOptions {
 
 type InsertRow<T> = T extends { $inferInsert: infer R } ? R : never;
 type WebhookEndpointSeedRow = Omit<InsertRow<typeof webhookEndpoints>, 'secret'>;
+type EmailIntakeAddressSeedRow = Omit<InsertRow<typeof emailIntakeAddresses>, 'token'>;
 
 type Rows = {
   legalEntities: Array<InsertRow<typeof legalEntities>>;
@@ -160,7 +161,7 @@ type Rows = {
   notificationPreferences: Array<InsertRow<typeof notificationPreferences>>;
   notifications: Array<InsertRow<typeof notifications>>;
   messages: Array<InsertRow<typeof messages>>;
-  emailIntakeAddresses: Array<InsertRow<typeof emailIntakeAddresses>>;
+  emailIntakeAddresses: Array<EmailIntakeAddressSeedRow>;
   emailIntakeItems: Array<InsertRow<typeof emailIntakeItems>>;
   emailIntakeMessages: Array<InsertRow<typeof emailIntakeMessages>>;
   emailIntakeAttachments: Array<InsertRow<typeof emailIntakeAttachments>>;
@@ -529,6 +530,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
       createdAt: Date;
       issuedAt?: Date;
       receivedAt?: Date;
+      receiptId?: string;
     }
   >();
   const invoiceContext: Array<{
@@ -1316,6 +1318,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
     );
     const receiptUpdatedAt = dateAfter(receivedDate, seed, 'goods-receipt-updated', index, 1, 20);
     po.receivedAt = receivedDate;
+    po.receiptId = receiptId;
     rows.goodsReceipts.push({
       id: receiptId,
       organizationId: DEMO_ORG_ID,
@@ -1361,10 +1364,6 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
   rows.emailIntakeAddresses.push({
     id: stableUuid('betterspend-random-support', 'email-address', 0),
     organizationId: DEMO_ORG_ID,
-    token: createHash('sha256')
-      .update('betterspend-random-support:email-address')
-      .digest('hex')
-      .slice(0, 48),
     createdAt: stableDate('betterspend-random-support', 'email-address-created', 0, -90, -1),
   });
   const emailCount = Math.max(8, Math.ceil(count / 20));
@@ -1560,11 +1559,14 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
     });
   }
   const inventoryCount = Math.max(12, Math.min(100, Math.ceil(count / 12)));
+  const receivedPurchaseOrders = [...poContext.values()].filter((po) => po.receiptId);
   for (let index = 0; index < inventoryCount; index += 1) {
     const id = stableUuid(seed, 'inventory-item', index);
     const opening = 50 + (index % 9) * 10;
     const issued = index % 4 === 0 ? 12 : 6;
-    const po = poContext.get(index % Math.max(1, poContext.size));
+    const po = receivedPurchaseOrders.length
+      ? receivedPurchaseOrders[index % receivedPurchaseOrders.length]
+      : undefined;
     rows.inventoryItems.push({
       id,
       organizationId: DEMO_ORG_ID,
@@ -1590,8 +1592,8 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         quantity: String(opening),
         quantityBefore: '0',
         quantityAfter: String(opening),
-        referenceType: 'goods_receipt',
-        referenceId: po?.id,
+        referenceType: po?.receiptId ? 'goods_receipt' : undefined,
+        referenceId: po?.receiptId,
         notes: 'Synthetic opening receipt.',
         createdAt: stableDate(seed, 'inventory-receipt', index, -300, -10),
       },
@@ -1603,7 +1605,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         quantity: String(-issued),
         quantityBefore: String(opening),
         quantityAfter: String(opening - issued),
-        referenceType: 'purchase_order',
+        referenceType: po?.id ? 'purchase_order' : undefined,
         referenceId: po?.id,
         notes: 'Synthetic issue movement.',
         createdAt: stableDate(seed, 'inventory-issue', index, -90, -1),
@@ -1710,7 +1712,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
     const status =
       index % 11 === 0
         ? 'rejected'
-        : index % 7 === 0
+        : index % 7 === 6
           ? 'paid'
           : index % 5 === 0
             ? 'approved'
@@ -1941,7 +1943,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
       invoiceId: invoice?.id,
       eventKey: `random:${seedDigest}:${index}:reserved`,
       eventType: 'requisition_reserved',
-      baseReservedDelta: money(req?.totalCents ?? 0),
+      baseReservedDelta: money(req ? convertToBaseCents(req.totalCents, req.currency) : 0),
       baseCommittedDelta: '0',
       baseExpendedDelta: '0',
       reason: 'Synthetic requisition reservation',
@@ -1966,8 +1968,8 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         purchaseOrderId: po.id,
         eventKey: `random:${seedDigest}:${index}:committed`,
         eventType: 'purchase_order_committed',
-        baseReservedDelta: money(-(req?.totalCents ?? 0)),
-        baseCommittedDelta: money(po.totalCents),
+        baseReservedDelta: money(req ? -convertToBaseCents(req.totalCents, req.currency) : 0),
+        baseCommittedDelta: money(convertToBaseCents(po.totalCents, po.currency)),
         baseExpendedDelta: '0',
         reason: 'Synthetic purchase order commitment',
         metadata: { generated: true },
@@ -1984,8 +1986,8 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         eventKey: `random:${seedDigest}:${index}:expended`,
         eventType: 'invoice_expended',
         baseReservedDelta: '0',
-        baseCommittedDelta: money(-(po?.totalCents ?? 0)),
-        baseExpendedDelta: money(invoice.totalCents),
+        baseCommittedDelta: money(po ? -convertToBaseCents(po.totalCents, po.currency) : 0),
+        baseExpendedDelta: money(convertToBaseCents(invoice.totalCents, invoice.currency)),
         reason: 'Synthetic invoice expenditure',
         metadata: { generated: true },
         createdAt: dateAfter(
@@ -2062,33 +2064,45 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
       if (!responded) continue;
       const responseId = stableUuid(seed, 'rfq-response', index * 3 + vendorIndex);
       const accepted = awarded && vendorId === awardedVendorId;
+      const responseLineData = lineIds.map((rfqLineId, line) => {
+        const quantity = 2 + ((index + line) % 8);
+        const unitPriceCents = 3_000 + index * 100 + line * 250 + vendorIndex * 80;
+        return {
+          rfqLineId,
+          line,
+          unitPriceCents,
+          totalCents: quantity * unitPriceCents,
+        };
+      });
       rows.rfqResponses.push({
         id: responseId,
         rfqId: id,
         vendorId,
         status: accepted ? 'accepted' : vendorIndex === 0 ? 'submitted' : 'rejected',
-        totalAmount: money(7_000 + index * 350 + vendorIndex * 225),
+        totalAmount: money(responseLineData.reduce((sum, line) => sum + line.totalCents, 0)),
         validUntil: stableDate(seed, 'rfq-valid', index * 3 + vendorIndex, 15, 120),
         notes: 'Synthetic vendor response.',
         awarded: accepted,
         submittedAt: stableDate(seed, 'rfq-submitted', index * 3 + vendorIndex, -190, -1),
         createdAt: stableDate(seed, 'rfq-response-created', index * 3 + vendorIndex, -190, -1),
       });
-      for (let line = 0; line < lineIds.length; line += 1)
+      for (const responseLine of responseLineData)
         rows.rfqResponseLines.push({
-          id: stableUuid(seed, 'rfq-response-line', index * 6 + vendorIndex * 2 + line),
-          responseId,
-          rfqLineId: lineIds[line] as string,
-          unitPrice: money(3_000 + index * 100 + line * 250 + vendorIndex * 80),
-          totalPrice: money(
-            (2 + ((index + line) % 8)) * (3_000 + index * 100 + line * 250 + vendorIndex * 80),
+          id: stableUuid(
+            seed,
+            'rfq-response-line',
+            index * 6 + vendorIndex * 2 + responseLine.line,
           ),
+          responseId,
+          rfqLineId: responseLine.rfqLineId,
+          unitPrice: money(responseLine.unitPriceCents),
+          totalPrice: money(responseLine.totalCents),
           leadTimeDays: 10 + vendorIndex * 4,
           notes: 'Synthetic response line.',
           createdAt: stableDate(
             seed,
             'rfq-response-line-created',
-            index * 6 + vendorIndex * 2 + line,
+            index * 6 + vendorIndex * 2 + responseLine.line,
             -180,
             -1,
           ),
