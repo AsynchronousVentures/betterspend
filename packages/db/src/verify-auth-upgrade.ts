@@ -50,22 +50,21 @@ async function verifyCredentialBackfill(client: postgres.Sql): Promise<void> {
     const userId = randomUUID();
     await client`
       INSERT INTO auth_accounts (
-        id, user_id, account_id, provider_id, expires_at, password
+        id, user_id, account_id, provider_id, expires_at
       ) VALUES (
-        'legacy-account', ${userId}, ${userId}, 'credential', ${expiry}, 'legacy-hash'
+        'legacy-account', ${userId}, ${userId}, 'credential', ${expiry}
       )
     `;
     await client.unsafe(`
       INSERT INTO auth_accounts (
-        id, user_id, account_id, provider_id, expires_at, password
+        id, user_id, account_id, provider_id, expires_at
       )
       SELECT
         'bulk-' || item,
         ('00000000-0000-0000-0000-' || lpad(item::text, 12, '0'))::uuid,
         'bulk-' || item,
         'credential',
-        '2026-01-02T03:04:05.000Z',
-        'legacy-hash'
+        '2026-01-02T03:04:05.000Z'
       FROM generate_series(1, 1001) AS item
     `);
 

@@ -11,7 +11,6 @@ describe('parseBootstrapInput', () => {
           organizationName: 'Acme',
           name: 'Admin',
           email: 'not-an-email',
-          password: 'short',
         }),
       BadRequestException,
     );
