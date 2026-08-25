@@ -8,12 +8,19 @@ const EXPECTED_TABLES = [
   'sync_records',
   'workflow_definitions',
   'workflow_definition_versions',
+  'workflow_approval_assignments',
 ] as const;
 
 const EXPECTED_COLUMNS = [
   { table: 'approval_requests', column: 'definition_version_id' },
   { table: 'approval_requests', column: 'current_node_id' },
   { table: 'approval_requests', column: 'attempt' },
+  { table: 'approval_requests', column: 'organization_id' },
+  { table: 'approval_requests', column: 'initiated_by' },
+  { table: 'approval_requests', column: 'workflow_context' },
+  { table: 'approval_actions', column: 'node_id' },
+  { table: 'approval_actions', column: 'metadata' },
+  { table: 'users', column: 'manager_id' },
   { table: 'workflow_definition_versions', column: 'organization_id' },
 ] as const;
 
@@ -115,11 +122,53 @@ const EXPECTED_FOREIGN_KEYS = [
     parentColumns: ['id', 'organization_id'],
   },
   {
-    name: 'approval_requests_definition_version_fk',
+    name: 'users_manager_org_fk',
+    child: 'users',
+    parent: 'users',
+    childColumns: ['manager_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'approval_requests_definition_version_org_fk',
     child: 'approval_requests',
     parent: 'workflow_definition_versions',
-    childColumns: ['definition_version_id'],
-    parentColumns: ['id'],
+    childColumns: ['definition_version_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'approval_requests_initiated_by_org_fk',
+    child: 'approval_requests',
+    parent: 'users',
+    childColumns: ['initiated_by', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'workflow_approval_assignments_request_org_fk',
+    child: 'workflow_approval_assignments',
+    parent: 'approval_requests',
+    childColumns: ['approval_request_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'workflow_approval_assignments_resolved_approver_org_fk',
+    child: 'workflow_approval_assignments',
+    parent: 'users',
+    childColumns: ['resolved_approver_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'workflow_approval_assignments_assigned_approver_org_fk',
+    child: 'workflow_approval_assignments',
+    parent: 'users',
+    childColumns: ['assigned_approver_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'workflow_approval_assignments_acted_by_org_fk',
+    child: 'workflow_approval_assignments',
+    parent: 'users',
+    childColumns: ['acted_by', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
   },
 ] as const;
 

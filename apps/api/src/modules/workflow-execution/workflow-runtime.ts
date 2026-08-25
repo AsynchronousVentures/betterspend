@@ -1,0 +1,116 @@
+import type { ExecutableStep, ExecutableTransition, WorkflowCondition } from '@betterspend/shared';
+
+export type WorkflowAssignmentStatus = 'waiting' | 'pending' | 'approved' | 'rejected' | 'skipped';
+
+export type WorkflowQuorum =
+  { type: 'all' } | { type: 'majority' } | { type: 'count'; count: number };
+
+function readContextValue(context: Record<string, unknown>, field: string): unknown {
+  return field.split('.').reduce<unknown>((value, segment) => {
+    if (typeof value !== 'object' || value === null || !Object.hasOwn(value, segment)) {
+      return undefined;
+    }
+    return (value as Record<string, unknown>)[segment];
+  }, context);
+}
+
+function compareValues(left: unknown, right: unknown): number | null {
+  const leftNumber = typeof left === 'number' ? left : Number(left);
+  const rightNumber = typeof right === 'number' ? right : Number(right);
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+    return leftNumber === rightNumber ? 0 : leftNumber < rightNumber ? -1 : 1;
+  }
+  if (left === right) return 0;
+  if (left == null || right == null) return null;
+  const leftText = String(left);
+  const rightText = String(right);
+  return leftText === rightText ? 0 : leftText < rightText ? -1 : 1;
+}
+
+export function evaluateWorkflowCondition(
+  condition: WorkflowCondition,
+  context: Record<string, unknown>,
+): boolean {
+  if ('conditions' in condition) {
+    const results = condition.conditions.map((nested) =>
+      evaluateWorkflowCondition(nested, context),
+    );
+    return condition.operator === 'AND' ? results.every(Boolean) : results.some(Boolean);
+  }
+
+  const comparison = compareValues(readContextValue(context, condition.field), condition.value);
+  if (comparison == null) return condition.operator === '!=' || condition.operator === 'neq';
+  switch (condition.operator) {
+    case '>=':
+      return comparison >= 0;
+    case '>':
+      return comparison > 0;
+    case '<=':
+      return comparison <= 0;
+    case '<':
+      return comparison < 0;
+    case '==':
+    case 'eq':
+      return comparison === 0;
+    case '!=':
+    case 'neq':
+      return comparison !== 0;
+  }
+}
+
+/** Select one deterministic transition from a compiled step. */
+export function selectWorkflowTransition(
+  step: ExecutableStep,
+  context: Record<string, unknown>,
+  sourceHandle?: string,
+): ExecutableTransition | null {
+  const eligible = sourceHandle
+    ? step.transitions.filter((transition) => transition.sourceHandle === sourceHandle)
+    : step.transitions;
+  const conditional = eligible.find(
+    (transition) =>
+      !transition.isDefault &&
+      !!transition.condition &&
+      evaluateWorkflowCondition(transition.condition, context),
+  );
+  return conditional ?? eligible.find((transition) => transition.isDefault) ?? eligible[0] ?? null;
+}
+
+export function requiredWorkflowApprovals(quorum: WorkflowQuorum, total: number): number {
+  if (total < 1) throw new Error('Approval groups require at least one assignment');
+  if (quorum.type === 'all') return total;
+  if (quorum.type === 'majority') return Math.floor(total / 2) + 1;
+  if (quorum.count > total) throw new Error('Approval quorum exceeds the assignment count');
+  return quorum.count;
+}
+
+export type WorkflowQuorumProgress =
+  | { state: 'approved'; nextSequence: null }
+  | { state: 'rejected'; nextSequence: null }
+  | { state: 'pending'; nextSequence: number | null };
+
+export function evaluateWorkflowQuorum(
+  execution: 'serial' | 'parallel',
+  quorum: WorkflowQuorum,
+  assignments: Array<{ sequence: number; status: WorkflowAssignmentStatus }>,
+): WorkflowQuorumProgress {
+  const required = requiredWorkflowApprovals(quorum, assignments.length);
+  const approved = assignments.filter((assignment) => assignment.status === 'approved').length;
+  if (approved >= required) return { state: 'approved', nextSequence: null };
+
+  const available = assignments.filter(
+    (assignment) =>
+      assignment.status === 'waiting' ||
+      assignment.status === 'pending' ||
+      assignment.status === 'approved',
+  ).length;
+  if (available < required) return { state: 'rejected', nextSequence: null };
+
+  if (execution === 'serial') {
+    const next = assignments
+      .filter((assignment) => assignment.status === 'waiting')
+      .sort((left, right) => left.sequence - right.sequence)[0];
+    return { state: 'pending', nextSequence: next?.sequence ?? null };
+  }
+  return { state: 'pending', nextSequence: null };
+}

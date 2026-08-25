@@ -42,7 +42,10 @@ function createService(
         from() {
           return {
             where() {
-              return { for: async () => (lockedRequest ? [lockedRequest] : []) };
+              return {
+                for: async () =>
+                  lockedRequest ? [{ organizationId: 'organization-1', ...lockedRequest }] : [],
+              };
             },
           };
         },
@@ -151,9 +154,11 @@ describe('ApprovalEngineService required approvals', () => {
 
     assert.equal(result.autoApproved, false);
     assert.deepEqual(approvalRequestValues[0], {
+      organizationId: 'organization-1',
       approvableType: 'requisition',
       approvableId: 'requisition-1',
       approvalRuleId: null,
+      initiatedBy: 'requester-1',
       currentStep: 1,
       status: 'pending',
       requiredApproverId: 'owner-1',

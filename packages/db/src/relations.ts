@@ -13,6 +13,7 @@ import {
   approvalRuleSteps,
   approvalRequests,
   approvalActions,
+  workflowApprovalAssignments,
 } from './schema/approvals';
 import { workflowDefinitions, workflowDefinitionVersions } from './schema/workflow-definitions';
 import { webhookEndpoints, webhookDeliveries } from './schema/webhooks';
@@ -145,6 +146,12 @@ export const usersRelations = relations(users, ({ one, many }) => ({
     references: [organizations.id],
   }),
   department: one(departments, { fields: [users.departmentId], references: [departments.id] }),
+  manager: one(users, {
+    fields: [users.managerId, users.organizationId],
+    references: [users.id, users.organizationId],
+    relationName: 'managerReports',
+  }),
+  reports: many(users, { relationName: 'managerReports' }),
   userRoles: many(userRoles),
   notifications: many(notifications),
   softwareLicenses: many(softwareLicenses),
@@ -325,16 +332,59 @@ export const approvalRuleStepsRelations = relations(approvalRuleSteps, ({ one })
 }));
 
 export const approvalRequestsRelations = relations(approvalRequests, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [approvalRequests.organizationId],
+    references: [organizations.id],
+  }),
   rule: one(approvalRules, {
     fields: [approvalRequests.approvalRuleId],
     references: [approvalRules.id],
   }),
   definitionVersion: one(workflowDefinitionVersions, {
-    fields: [approvalRequests.definitionVersionId],
-    references: [workflowDefinitionVersions.id],
+    fields: [approvalRequests.definitionVersionId, approvalRequests.organizationId],
+    references: [workflowDefinitionVersions.id, workflowDefinitionVersions.organizationId],
+  }),
+  initiator: one(users, {
+    fields: [approvalRequests.initiatedBy, approvalRequests.organizationId],
+    references: [users.id, users.organizationId],
   }),
   actions: many(approvalActions),
+  workflowAssignments: many(workflowApprovalAssignments),
 }));
+
+export const workflowApprovalAssignmentsRelations = relations(
+  workflowApprovalAssignments,
+  ({ one }) => ({
+    request: one(approvalRequests, {
+      fields: [
+        workflowApprovalAssignments.approvalRequestId,
+        workflowApprovalAssignments.organizationId,
+      ],
+      references: [approvalRequests.id, approvalRequests.organizationId],
+    }),
+    resolvedApprover: one(users, {
+      fields: [
+        workflowApprovalAssignments.resolvedApproverId,
+        workflowApprovalAssignments.organizationId,
+      ],
+      references: [users.id, users.organizationId],
+      relationName: 'workflowAssignmentResolvedApprover',
+    }),
+    assignedApprover: one(users, {
+      fields: [
+        workflowApprovalAssignments.assignedApproverId,
+        workflowApprovalAssignments.organizationId,
+      ],
+      references: [users.id, users.organizationId],
+      relationName: 'workflowAssignmentAssignedApprover',
+    }),
+    actor: one(users, {
+      fields: [workflowApprovalAssignments.actedBy, workflowApprovalAssignments.organizationId],
+      references: [users.id, users.organizationId],
+      relationName: 'workflowAssignmentActor',
+    }),
+  }),
+);
 
 export const approvalActionsRelations = relations(approvalActions, ({ one }) => ({
   request: one(approvalRequests, {
