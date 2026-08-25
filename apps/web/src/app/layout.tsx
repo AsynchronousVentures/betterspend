@@ -3,6 +3,7 @@ import { Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
 import AppShell from '../components/app-shell';
 import { ToastProvider } from '../components/toast';
 import { PwaRegister } from '../components/pwa-register';
+import { ReleaseVersionProvider } from '../components/release-version-provider';
 import './globals.css';
 
 const sans = Plus_Jakarta_Sans({
@@ -28,11 +29,7 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${sans.variable} ${mono.variable}`}>
       <head>
@@ -45,9 +42,9 @@ export default function RootLayout({
       <body className="font-sans">
         <PwaRegister />
         <ToastProvider>
-          <AppShell>
-            {children}
-          </AppShell>
+          <ReleaseVersionProvider>
+            <AppShell>{children}</AppShell>
+          </ReleaseVersionProvider>
         </ToastProvider>
       </body>
     </html>

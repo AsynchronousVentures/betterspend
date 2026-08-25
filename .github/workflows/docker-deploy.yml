@@ -3,8 +3,8 @@ name: Docker CI/CD
 # Flow:
 #   PR                -> review gate + fast CI in parallel -> validate result
 #   merge group       -> full CI -> validate result
-#   push to main      -> full CI -> validate result -> publish immutable images + latest aliases
-#   push v* tag       -> full CI -> validate result -> publish -> deploy
+#   push to main      -> full CI -> validate result -> publish immutable images
+#   push v* tag       -> full CI -> validate result -> promote -> deploy
 #   workflow_dispatch -> full CI -> validate result (manual re-check / republish)
 #
 # Releases are tags. Any merge to main is instantly deployable because its
@@ -64,6 +64,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+
+      - name: Test release workflow policy
+        run: node --test .github/scripts/release-workflow-policy.test.mjs
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -132,6 +135,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+
+      - name: Test release workflow policy
+        run: node --test .github/scripts/release-workflow-policy.test.mjs
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -244,10 +250,12 @@ jobs:
 
   publish:
     name: Publish Images
-    # Every merge to main produces deployable artifacts. Publishing for the
-    # same commit is serialized, and existing sha-* tags are never replaced.
+    # Every merge to main produces deployable artifacts. Release tags promote
+    # those immutable artifacts without rebuilding or replacing sha-* tags.
     if: always() && github.event_name == 'push' && needs.validate.result == 'success'
     needs: validate
+    outputs:
+      release_tag: ${{ steps.release_ref.outputs.release_tag }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     concurrency:
       group: publish-${{ github.sha }}
@@ -259,11 +267,19 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Validate release ref
+        id: release_ref
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: node .github/scripts/release-policy.mjs validate-ref
+
       - name: Configure image settings
         id: image_settings
         env:
           GHCR_IMAGE_NAMESPACE: ${{ vars.GHCR_IMAGE_NAMESPACE }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
+          RELEASE_TAG: ${{ steps.release_ref.outputs.release_tag }}
         run: |
           namespace="${GHCR_IMAGE_NAMESPACE:-$REPOSITORY_OWNER}"
           namespace="$(printf '%s' "$namespace" | tr '[:upper:]' '[:lower:]')"
@@ -272,9 +288,14 @@ jobs:
             printf 'api_tag=%s/%s/betterspend-api:%s\n' "$REGISTRY" "$namespace" "$IMAGE_TAG"
             printf 'web_tag=%s/%s/betterspend-web:%s\n' "$REGISTRY" "$namespace" "$IMAGE_TAG"
             printf 'migrator_tag=%s/%s/betterspend-migrator:%s\n' "$REGISTRY" "$namespace" "$IMAGE_TAG"
-            printf 'api_latest_tag=%s/%s/betterspend-api:latest\n' "$REGISTRY" "$namespace"
-            printf 'web_latest_tag=%s/%s/betterspend-web:latest\n' "$REGISTRY" "$namespace"
-            printf 'migrator_latest_tag=%s/%s/betterspend-migrator:latest\n' "$REGISTRY" "$namespace"
+            if [ -n "$RELEASE_TAG" ]; then
+              printf 'api_release_tag=%s/%s/betterspend-api:%s\n' "$REGISTRY" "$namespace" "$RELEASE_TAG"
+              printf 'web_release_tag=%s/%s/betterspend-web:%s\n' "$REGISTRY" "$namespace" "$RELEASE_TAG"
+              printf 'migrator_release_tag=%s/%s/betterspend-migrator:%s\n' "$REGISTRY" "$namespace" "$RELEASE_TAG"
+              printf 'api_latest_tag=%s/%s/betterspend-api:latest\n' "$REGISTRY" "$namespace"
+              printf 'web_latest_tag=%s/%s/betterspend-web:latest\n' "$REGISTRY" "$namespace"
+              printf 'migrator_latest_tag=%s/%s/betterspend-migrator:latest\n' "$REGISTRY" "$namespace"
+            fi
           } >> "$GITHUB_OUTPUT"
 
       - name: Setup Blacksmith Builder
@@ -318,8 +339,24 @@ jobs:
             done
           done
 
+      - name: Require immutable source images for release
+        if: steps.release_ref.outputs.release_tag != ''
+        env:
+          API_EXISTS: ${{ steps.existing_images.outputs.api_exists }}
+          WEB_EXISTS: ${{ steps.existing_images.outputs.web_exists }}
+          MIGRATOR_EXISTS: ${{ steps.existing_images.outputs.migrator_exists }}
+          RELEASE_TAG: ${{ steps.release_ref.outputs.release_tag }}
+        run: |
+          for image in API WEB MIGRATOR; do
+            exists_variable="${image}_EXISTS"
+            if [ "${!exists_variable}" != "true" ]; then
+              echo "Missing immutable ${image,,} image for release $RELEASE_TAG." >&2
+              exit 1
+            fi
+          done
+
       - name: Build and push API image
-        if: steps.existing_images.outputs.api_exists != 'true'
+        if: github.ref == 'refs/heads/main' && steps.existing_images.outputs.api_exists != 'true'
         uses: useblacksmith/build-push-action@v2
         with:
           context: .
@@ -329,7 +366,7 @@ jobs:
           tags: ${{ steps.image_settings.outputs.api_tag }}
 
       - name: Build and push web image
-        if: steps.existing_images.outputs.web_exists != 'true'
+        if: github.ref == 'refs/heads/main' && steps.existing_images.outputs.web_exists != 'true'
         uses: useblacksmith/build-push-action@v2
         with:
           context: .
@@ -339,7 +376,7 @@ jobs:
           tags: ${{ steps.image_settings.outputs.web_tag }}
 
       - name: Build and push migrator image
-        if: steps.existing_images.outputs.migrator_exists != 'true'
+        if: github.ref == 'refs/heads/main' && steps.existing_images.outputs.migrator_exists != 'true'
         uses: useblacksmith/build-push-action@v2
         with:
           context: .
@@ -348,20 +385,25 @@ jobs:
           push: true
           tags: ${{ steps.image_settings.outputs.migrator_tag }}
 
-      - name: Update latest image aliases
-        if: github.ref == 'refs/heads/main'
+      - name: Promote release image aliases
+        if: steps.release_ref.outputs.release_tag != ''
         env:
-          API_TAG: ${{ steps.image_settings.outputs.api_tag }}
+          API_SOURCE_TAG: ${{ steps.image_settings.outputs.api_tag }}
+          API_RELEASE_TAG: ${{ steps.image_settings.outputs.api_release_tag }}
           API_LATEST_TAG: ${{ steps.image_settings.outputs.api_latest_tag }}
-          WEB_TAG: ${{ steps.image_settings.outputs.web_tag }}
+          WEB_SOURCE_TAG: ${{ steps.image_settings.outputs.web_tag }}
+          WEB_RELEASE_TAG: ${{ steps.image_settings.outputs.web_release_tag }}
           WEB_LATEST_TAG: ${{ steps.image_settings.outputs.web_latest_tag }}
-          MIGRATOR_TAG: ${{ steps.image_settings.outputs.migrator_tag }}
+          MIGRATOR_SOURCE_TAG: ${{ steps.image_settings.outputs.migrator_tag }}
+          MIGRATOR_RELEASE_TAG: ${{ steps.image_settings.outputs.migrator_release_tag }}
           MIGRATOR_LATEST_TAG: ${{ steps.image_settings.outputs.migrator_latest_tag }}
         run: |
           for image in API WEB MIGRATOR; do
-            source_variable="${image}_TAG"
+            source_variable="${image}_SOURCE_TAG"
+            release_variable="${image}_RELEASE_TAG"
             latest_variable="${image}_LATEST_TAG"
             docker buildx imagetools create \
+              --tag "${!release_variable}" \
               --tag "${!latest_variable}" \
               "${!source_variable}"
           done
@@ -435,6 +477,7 @@ jobs:
             compose.prod.yaml \
             deploy/deploy.sh \
             deploy/rollback.sh \
+            deploy/release-version.sh \
             deploy/Caddyfile \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:/opt/betterspend/"
 
@@ -443,7 +486,7 @@ jobs:
           DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
         run: |
-          # Expand IMAGE_TAG locally (hex-only sha, safe to interpolate);
+          # The publish job validates this tag before exposing it as an output;
           # single quotes keep the remote shell from touching anything else.
           ssh -o StrictHostKeyChecking=yes "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            "cd /opt/betterspend && ./deploy/deploy.sh '$IMAGE_TAG'"
+            "cd /opt/betterspend && ./deploy/deploy.sh '${{ needs.publish.outputs.release_tag }}'"

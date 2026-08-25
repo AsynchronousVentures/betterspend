@@ -1,6 +1,6 @@
 {
   "name": "betterspend",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "private": true,
   "packageManager": "pnpm@10.15.1",
   "scripts": {
@@ -15,7 +15,7 @@
     "db:seed:random": "pnpm --filter @betterspend/db db:seed:random --",
     "db:studio": "turbo db:studio",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
-    "release:tag": "git tag -a v$npm_package_version -m \"Release v$npm_package_version\"",
+    "release:tag": "node scripts/release-tag.mjs",
     "release:push": "git push origin main --follow-tags"
   },
   "devDependencies": {

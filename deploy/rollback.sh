@@ -10,6 +10,8 @@ COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-betterspend}"
 
 cd "$DEPLOY_DIR"
 
+source "$DEPLOY_DIR/deploy/release-version.sh"
+
 IMAGE_TAG="${1:-}"
 if [ -z "$IMAGE_TAG" ]; then
   if [ ! -f .previous_image_tag ]; then
@@ -24,7 +26,9 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-export COMPOSE_PROJECT_NAME IMAGE_TAG PRODUCTION_ENV_FILE
+APP_VERSION="${APP_VERSION:-$(release_version_from_image_tag "$IMAGE_TAG")}"
+
+export APP_VERSION COMPOSE_PROJECT_NAME IMAGE_TAG PRODUCTION_ENV_FILE
 
 compose() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_BASE_FILE" -f "$COMPOSE_PROD_FILE" "$@"
@@ -42,4 +46,4 @@ fi
 
 printf '%s\n' "$IMAGE_TAG" > .current_image_tag
 
-echo "Rollback complete. Database migrations are forward-only and were not reverted."
+echo "Rollback complete at image tag $IMAGE_TAG (version $APP_VERSION). Database migrations are forward-only and were not reverted."

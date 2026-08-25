@@ -164,7 +164,9 @@ A fresh production database still needs organization and first-admin provisionin
 
 ### Automated releases
 
-Every merge to `main` publishes immutable `sha-<commit>` images and updates the `latest` aliases. Pushing a `v*` tag publishes the same immutable images and deploys that commit when the protected `production` environment and `DEPLOY_SSH_*` secrets are configured. If the secrets are absent, publishing succeeds and deployment is skipped.
+Every merge to `main` publishes only immutable `sha-<commit>` images. Pushing a valid `vX.Y.Z` tag promotes that commit's existing API, web, and migrator manifests to both `vX.Y.Z` and `latest`, then deploys the version tag when the protected `production` environment and `DEPLOY_SSH_*` secrets are configured. The SHA images remain available for exact testing and manual deploys. If the secrets are absent, promotion succeeds and deployment is skipped.
+
+The containers receive `APP_VERSION` at deploy time, so the API health response and web UI show the selected release without rebuilding the image. Version tags display without `v`; SHA deploys display `sha-<commit>`. With no runtime value, both fall back to the synchronized workspace package version. Rollback updates the image and displayed version together. After synchronizing the workspace package versions in a release preparation change, run `pnpm release:tag 0.2.4` from a clean, current `main` checkout, then push the annotated tag manually.
 
 See [Production deployment](docs/deployment.md) for the ingress contract, GitHub configuration, manual operations, backups, recovery, and rollback behavior.
 
@@ -196,6 +198,7 @@ pnpm db:migrate       # Apply pending migrations
 pnpm db:seed          # Load the small local demo organization
 pnpm db:seed:random   # Generate an opt-in repeatable local workload
 pnpm db:studio        # Open Drizzle Studio
+pnpm release:tag 0.2.4 # Validate workspace versions and create an annotated release tag
 ```
 
 Load `.env` into the shell before database commands. Read [Database migrations](docs/database-migrations.md) before creating or resolving a schema change.
