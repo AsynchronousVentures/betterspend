@@ -2332,8 +2332,8 @@
         }
       },
       "foreignKeys": {
-        "workflow_approval_assignments_organization_id_organizations_id_fk": {
-          "name": "workflow_approval_assignments_organization_id_organizations_id_fk",
+        "workflow_approval_assignments_organization_fk": {
+          "name": "workflow_approval_assignments_organization_fk",
           "tableFrom": "workflow_approval_assignments",
           "tableTo": "organizations",
           "columnsFrom": [
@@ -2409,7 +2409,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "workflow_approval_assignments_status_check": {
+          "name": "workflow_approval_assignments_status_check",
+          "value": "\"workflow_approval_assignments\".\"status\" in ('waiting', 'pending', 'approved', 'rejected', 'skipped')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.workflow_definition_versions": {

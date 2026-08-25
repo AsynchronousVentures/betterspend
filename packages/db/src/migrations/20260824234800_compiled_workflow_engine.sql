@@ -34,14 +34,51 @@ BEGIN
 END
 $$;
 --> statement-breakpoint
-UPDATE "approval_requests" AS request
-SET "initiated_by" = COALESCE(
-  (SELECT requisition."requester_id" FROM "requisitions" AS requisition JOIN "users" AS actor ON actor."id" = requisition."requester_id" AND actor."organization_id" = request."organization_id" WHERE request."approvable_type" = 'requisition' AND requisition."id" = request."approvable_id"),
-  (SELECT purchase_order."issued_by" FROM "purchase_orders" AS purchase_order JOIN "users" AS actor ON actor."id" = purchase_order."issued_by" AND actor."organization_id" = request."organization_id" WHERE request."approvable_type" = 'purchase_order' AND purchase_order."id" = request."approvable_id"),
-  (SELECT invoice."created_by" FROM "invoices" AS invoice JOIN "users" AS actor ON actor."id" = invoice."created_by" AND actor."organization_id" = request."organization_id" WHERE request."approvable_type" = 'invoice' AND invoice."id" = request."approvable_id"),
-  (SELECT action."approver_id" FROM "approval_actions" AS action JOIN "users" AS actor ON actor."id" = action."approver_id" AND actor."organization_id" = request."organization_id" WHERE action."approval_request_id" = request."id" ORDER BY action."acted_at", action."id" LIMIT 1)
+WITH first_action_actor AS (
+  SELECT DISTINCT ON (action."approval_request_id")
+    action."approval_request_id",
+    action."approver_id"
+  FROM "approval_actions" AS action
+  ORDER BY action."approval_request_id", action."acted_at", action."id"
+), initiator_candidates AS (
+  SELECT
+    request."id",
+    COALESCE(
+      requisition_actor."id",
+      purchase_order_actor."id",
+      invoice_actor."id",
+      action_actor."id"
+    ) AS "initiated_by"
+  FROM "approval_requests" AS request
+  LEFT JOIN "requisitions" AS requisition
+    ON request."approvable_type" = 'requisition'
+    AND requisition."id" = request."approvable_id"
+  LEFT JOIN "users" AS requisition_actor
+    ON requisition_actor."id" = requisition."requester_id"
+    AND requisition_actor."organization_id" = request."organization_id"
+  LEFT JOIN "purchase_orders" AS purchase_order
+    ON request."approvable_type" = 'purchase_order'
+    AND purchase_order."id" = request."approvable_id"
+  LEFT JOIN "users" AS purchase_order_actor
+    ON purchase_order_actor."id" = purchase_order."issued_by"
+    AND purchase_order_actor."organization_id" = request."organization_id"
+  LEFT JOIN "invoices" AS invoice
+    ON request."approvable_type" = 'invoice'
+    AND invoice."id" = request."approvable_id"
+  LEFT JOIN "users" AS invoice_actor
+    ON invoice_actor."id" = invoice."created_by"
+    AND invoice_actor."organization_id" = request."organization_id"
+  LEFT JOIN first_action_actor AS first_action
+    ON first_action."approval_request_id" = request."id"
+  LEFT JOIN "users" AS action_actor
+    ON action_actor."id" = first_action."approver_id"
+    AND action_actor."organization_id" = request."organization_id"
+  WHERE request."initiated_by" IS NULL
 )
-WHERE request."initiated_by" IS NULL;
+UPDATE "approval_requests" AS request
+SET "initiated_by" = candidate."initiated_by"
+FROM initiator_candidates AS candidate
+WHERE request."id" = candidate."id";
 --> statement-breakpoint
 ALTER TABLE "approval_requests" ALTER COLUMN "organization_id" SET NOT NULL;
 --> statement-breakpoint
@@ -70,10 +107,11 @@ CREATE TABLE "workflow_approval_assignments" (
 	"acted_by" uuid,
 	"acted_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "workflow_approval_assignments_status_check" CHECK ("workflow_approval_assignments"."status" in ('waiting', 'pending', 'approved', 'rejected', 'skipped'))
 );
 --> statement-breakpoint
-ALTER TABLE "workflow_approval_assignments" ADD CONSTRAINT "workflow_approval_assignments_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "workflow_approval_assignments" ADD CONSTRAINT "workflow_approval_assignments_organization_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
 ALTER TABLE "workflow_approval_assignments" ADD CONSTRAINT "workflow_approval_assignments_request_org_fk" FOREIGN KEY ("approval_request_id", "organization_id") REFERENCES "public"."approval_requests"("id", "organization_id") ON DELETE cascade ON UPDATE no action;
 --> statement-breakpoint

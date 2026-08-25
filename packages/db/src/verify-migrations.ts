@@ -129,6 +129,13 @@ const EXPECTED_FOREIGN_KEYS = [
     parentColumns: ['id', 'organization_id'],
   },
   {
+    name: 'approval_requests_organization_id_organizations_id_fk',
+    child: 'approval_requests',
+    parent: 'organizations',
+    childColumns: ['organization_id'],
+    parentColumns: ['id'],
+  },
+  {
     name: 'approval_requests_definition_version_org_fk',
     child: 'approval_requests',
     parent: 'workflow_definition_versions',
@@ -141,6 +148,13 @@ const EXPECTED_FOREIGN_KEYS = [
     parent: 'users',
     childColumns: ['initiated_by', 'organization_id'],
     parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'workflow_approval_assignments_organization_fk',
+    child: 'workflow_approval_assignments',
+    parent: 'organizations',
+    childColumns: ['organization_id'],
+    parentColumns: ['id'],
   },
   {
     name: 'workflow_approval_assignments_request_org_fk',

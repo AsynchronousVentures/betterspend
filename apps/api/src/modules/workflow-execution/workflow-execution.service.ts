@@ -394,11 +394,38 @@ export class WorkflowExecutionService {
       if (!latest) throw new ConflictException('The published workflow version is unavailable');
       const executable = executableDefinitionSchema.parse(latest.executableJson);
       const now = new Date();
+      if (request.approvableType !== 'requisition' && request.approvableType !== 'purchase_order') {
+        throw new ConflictException(
+          `Workflow restart does not support ${request.approvableType} requests`,
+        );
+      }
+      const freshContext = await this.loadWorkflowContext(
+        tx,
+        organizationId,
+        request.approvableType,
+        request.approvableId,
+        request.initiatedBy ?? actorId,
+        {},
+      );
+      const supplementalContext = Object.fromEntries(
+        Object.entries(request.workflowContext).filter(
+          ([key]) => !Object.hasOwn(freshContext, key),
+        ),
+      );
 
       await tx
         .update(approvalRequests)
         .set({ status: 'cancelled', updatedAt: now })
         .where(eq(approvalRequests.id, request.id));
+      await tx
+        .update(workflowApprovalAssignments)
+        .set({ status: 'skipped', updatedAt: now })
+        .where(
+          and(
+            eq(workflowApprovalAssignments.approvalRequestId, request.id),
+            inArray(workflowApprovalAssignments.status, ['waiting', 'pending']),
+          ),
+        );
       const [replacement] = await tx
         .insert(approvalRequests)
         .values({
@@ -409,7 +436,7 @@ export class WorkflowExecutionService {
           definitionVersionId: latest.id,
           initiatedBy: request.initiatedBy ?? actorId,
           currentNodeId: executable.entryStepId,
-          workflowContext: request.workflowContext,
+          workflowContext: { ...supplementalContext, ...freshContext },
           attempt: request.attempt + 1,
           currentStep: 0,
           status: 'pending',
@@ -804,7 +831,8 @@ export class WorkflowExecutionService {
         resolver: item.resolver,
         resolvedApproverId: item.resolvedApproverId,
         assignedApproverId: item.assignedApproverId,
-        status: execution === 'parallel' || index === 0 ? 'pending' : 'waiting',
+        status:
+          execution === 'parallel' || index === 0 ? ('pending' as const) : ('waiting' as const),
       }));
       const created = await tx.insert(workflowApprovalAssignments).values(assignments).returning();
       await tx.insert(approvalActions).values(
@@ -1218,7 +1246,7 @@ export class WorkflowExecutionService {
           resolver: item.resolver,
           resolvedApproverId: item.resolvedApproverId,
           assignedApproverId: item.assignedApproverId,
-          status: 'pending',
+          status: 'pending' as const,
         })),
       );
       await tx.insert(approvalActions).values({
