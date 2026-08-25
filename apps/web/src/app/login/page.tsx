@@ -34,7 +34,7 @@ function LoginForm() {
         router.refresh();
       }
     } catch {
-      setError('Network error — please try again');
+      setError('Network error - please try again');
     } finally {
       setLoading(false);
     }
@@ -47,7 +47,10 @@ function LoginForm() {
       footer={
         <>
           Don&apos;t have an account?{' '}
-          <Link href="/signup" className="font-medium text-primary transition-colors hover:text-primary/80">
+          <Link
+            href="/signup"
+            className="font-medium text-primary transition-colors hover:text-primary/80"
+          >
             Sign up
           </Link>
         </>
@@ -55,7 +58,9 @@ function LoginForm() {
     >
       {passwordReset ? (
         <Alert variant="success">
-          <AlertDescription>Password reset successful. Please sign in with your new password.</AlertDescription>
+          <AlertDescription>
+            Password reset successful. Please sign in with your new password.
+          </AlertDescription>
         </Alert>
       ) : null}
 
@@ -79,7 +84,10 @@ function LoginForm() {
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <label className="text-sm font-medium text-foreground">Password</label>
-            <Link href="/forgot-password" className="text-sm font-medium text-primary transition-colors hover:text-primary/80">
+            <Link
+              href="/forgot-password"
+              className="text-sm font-medium text-primary transition-colors hover:text-primary/80"
+            >
               Forgot password?
             </Link>
           </div>

@@ -10,6 +10,27 @@ export interface SignInResult {
   message?: string;
 }
 
+export async function parseAuthResponse(res: Response): Promise<SignInResult> {
+  const text = await res.text();
+  let data: SignInResult = {};
+  if (text) {
+    try {
+      data = JSON.parse(text) as SignInResult;
+    } catch {
+      data = {};
+    }
+  }
+
+  if (!res.ok) {
+    const status =
+      res.status >= 500
+        ? `Authentication server error (${res.status})`
+        : `Request failed (${res.status})`;
+    return { ...data, error: data.message || data.error || status };
+  }
+  return data;
+}
+
 function saveToken(token: string) {
   document.cookie = `${SESSION_COOKIE}=${token}; path=/; max-age=${SESSION_MAX_AGE}; SameSite=Lax`;
 }
@@ -25,21 +46,26 @@ export async function signIn(email: string, password: string): Promise<SignInRes
     body: JSON.stringify({ email, password }),
     credentials: 'include',
   });
-  const data: SignInResult = await res.json();
+  const data = await parseAuthResponse(res);
   if (data.token) saveToken(data.token);
   return data;
 }
 
-export async function signUp(email: string, password: string, name: string): Promise<SignInResult> {
-  const res = await fetch(apiUrl('/api/auth/sign-up/email'), {
+export async function signUp(
+  email: string,
+  password: string,
+  name: string,
+  organizationName: string,
+): Promise<SignInResult> {
+  const res = await fetch(apiUrl('/api/v1/bootstrap'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, name }),
+    body: JSON.stringify({ email, password, name, organizationName }),
     credentials: 'include',
   });
-  const data: SignInResult = await res.json();
-  if (data.token) saveToken(data.token);
-  return data;
+  const data = await parseAuthResponse(res);
+  if (data.error || data.message) return data;
+  return signIn(email, password);
 }
 
 export async function signOut(): Promise<void> {

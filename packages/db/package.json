@@ -11,6 +11,7 @@
     "db:validate-history": "tsx src/validate-migration-history.ts",
     "db:migrate": "tsx src/migrate.ts",
     "db:verify-migrations": "tsx src/verify-migrations.ts",
+    "db:verify-auth-upgrade": "tsx src/verify-auth-upgrade.ts",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/seed.ts"
   },
