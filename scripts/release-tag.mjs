@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,14 +35,16 @@ function isValidPrereleaseIdentifier(value) {
 }
 
 export function isValidReleaseVersion(value) {
-  if (typeof value !== 'string' || !value || value.length > 127 || value.includes('+')) return false;
+  if (typeof value !== 'string' || !value || value.length > 127 || value.includes('+'))
+    return false;
 
   const prereleaseSeparator = value.indexOf('-');
   const core = prereleaseSeparator === -1 ? value : value.slice(0, prereleaseSeparator);
   const prerelease = prereleaseSeparator === -1 ? null : value.slice(prereleaseSeparator + 1);
   const coreIdentifiers = core.split('.');
 
-  if (coreIdentifiers.length !== 3 || !coreIdentifiers.every(isValidNumericIdentifier)) return false;
+  if (coreIdentifiers.length !== 3 || !coreIdentifiers.every(isValidNumericIdentifier))
+    return false;
   return prerelease === null || prerelease.split('.').every(isValidPrereleaseIdentifier);
 }
 
@@ -89,12 +91,13 @@ function runGit(rootDirectory, args) {
   return execFileSync('git', args, { cwd: rootDirectory, encoding: 'utf8' }).trim();
 }
 
-function runGitOptional(rootDirectory, args) {
-  try {
-    return runGit(rootDirectory, args);
-  } catch {
-    return '';
-  }
+export function gitOutputIfPresent(rootDirectory, args, notFoundStatus) {
+  const result = spawnSync('git', args, { cwd: rootDirectory, encoding: 'utf8' });
+  if (result.status === 0) return result.stdout.trim();
+  if (result.status === notFoundStatus) return '';
+
+  const detail = result.stderr.trim() || result.error?.message || 'unknown git error';
+  throw new Error(`git ${args.join(' ')} failed: ${detail}`);
 }
 
 export function assertReleaseState(rootDirectory, requestedVersion) {
@@ -113,24 +116,21 @@ export function assertReleaseState(rootDirectory, requestedVersion) {
   }
 
   if (
-    runGitOptional(rootDirectory, [
-      'rev-parse',
-      '--verify',
-      '--quiet',
-      `refs/tags/v${requestedVersion}`,
-    ])
+    gitOutputIfPresent(
+      rootDirectory,
+      ['rev-parse', '--verify', '--quiet', `refs/tags/v${requestedVersion}`],
+      1,
+    )
   ) {
     throw new Error(`Tag v${requestedVersion} already exists.`);
   }
 
   if (
-    runGitOptional(rootDirectory, [
-      'ls-remote',
-      '--exit-code',
-      '--tags',
-      'origin',
-      `refs/tags/v${requestedVersion}`,
-    ])
+    gitOutputIfPresent(
+      rootDirectory,
+      ['ls-remote', '--exit-code', '--tags', 'origin', `refs/tags/v${requestedVersion}`],
+      2,
+    )
   ) {
     throw new Error(`Tag v${requestedVersion} already exists on origin.`);
   }

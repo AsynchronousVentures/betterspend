@@ -72,7 +72,7 @@ function SettingsContent() {
   const [session, setSession] = useState<SessionUser | null>(null);
   const [versionCheck, setVersionCheck] = useState<VersionCheckState>({ status: 'idle' });
   const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
-  const appReleaseVersion = useReleaseVersion();
+  const { version: appReleaseVersion, isLoading: isReleaseVersionLoading } = useReleaseVersion();
 
   useEffect(() => {
     const nextTab = (searchParams.get('tab') as Tab | null) ?? 'branding';
@@ -319,6 +319,7 @@ function SettingsContent() {
   }
 
   async function handleVersionCheck() {
+    if (isReleaseVersionLoading) return;
     setVersionCheck({ status: 'checking' });
     try {
       const health = await api.health.check();
@@ -578,9 +579,17 @@ function SettingsContent() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-wrap items-center gap-3">
-                <Button type="button" onClick={handleVersionCheck} disabled={versionCheck.status === 'checking'}>
+                <Button
+                  type="button"
+                  onClick={handleVersionCheck}
+                  disabled={isReleaseVersionLoading || versionCheck.status === 'checking'}
+                >
                   <RefreshCw className={`mr-2 h-4 w-4 ${versionCheck.status === 'checking' ? 'animate-spin' : ''}`} />
-                  {versionCheck.status === 'checking' ? 'Checking...' : 'Check Server Version'}
+                  {isReleaseVersionLoading
+                    ? 'Loading Version...'
+                    : versionCheck.status === 'checking'
+                      ? 'Checking...'
+                      : 'Check Server Version'}
                 </Button>
                 {versionCheck.status === 'up_to_date' ? <Badge variant="success">Up to date</Badge> : null}
                 {versionCheck.status === 'mismatch' ? <Badge variant="warning">Version mismatch</Badge> : null}

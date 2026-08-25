@@ -213,7 +213,7 @@ export default function SidebarNav({
   const [spendGuardCount, setSpendGuardCount] = useState(0);
   const [softwareRenewalCount, setSoftwareRenewalCount] = useState(0);
   const branding = useBranding();
-  const appReleaseVersion = useReleaseVersion();
+  const { version: appReleaseVersion } = useReleaseVersion();
 
   const getInitialOpen = useCallback(() => {
     const initial = new Set<string>();

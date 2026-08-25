@@ -5,12 +5,16 @@ import test from 'node:test';
 import { isValidReleaseTag, releaseTagFromRef, releaseVersionFromTag } from './release-policy.mjs';
 import {
   assertMatchingWorkspaceVersions,
+  gitOutputIfPresent,
   normalizeRequestedVersion,
 } from '../../scripts/release-tag.mjs';
 
 const workflow = readFileSync(new URL('../workflows/docker-deploy.yml', import.meta.url), 'utf8');
 const releasePolicy = readFileSync(new URL('./release-policy.mjs', import.meta.url), 'utf8');
-const releaseTagScript = readFileSync(new URL('../../scripts/release-tag.mjs', import.meta.url), 'utf8');
+const releaseTagScript = readFileSync(
+  new URL('../../scripts/release-tag.mjs', import.meta.url),
+  'utf8',
+);
 const rollbackScript = readFileSync(new URL('../../deploy/rollback.sh', import.meta.url), 'utf8');
 
 test('accepts strict semantic version release tags only', () => {
@@ -55,6 +59,18 @@ test('checks the live main tip and keeps rollback metadata tied to its target', 
   assert.match(releaseTagScript, /\['rev-parse', 'FETCH_HEAD'\]/);
   assert.match(rollbackScript, /APP_VERSION="\$\(release_version_from_image_tag "\$IMAGE_TAG"\)"/);
   assert.doesNotMatch(rollbackScript, /APP_VERSION="\$\{APP_VERSION:-/);
+  assert.equal(
+    gitOutputIfPresent(
+      new URL('../..', import.meta.url),
+      ['rev-parse', '--verify', '--quiet', 'refs/tags/v9999.9999.9999-missing'],
+      1,
+    ),
+    '',
+  );
+  assert.throws(
+    () => gitOutputIfPresent(new URL('../..', import.meta.url), ['not-a-git-command'], 2),
+    /failed/,
+  );
 });
 
 test('extracts and normalizes a validated release ref', () => {
@@ -81,7 +97,12 @@ test('derives runtime versions from supported deployment image tags', () => {
   assert.equal(deriveVersion('sha-0123456789abcdef'), 'sha-0123456789abcdef');
   const unsupported = spawnSync(
     'bash',
-    ['-c', 'source deploy/release-version.sh && release_version_from_image_tag "$1"', '_', 'latest'],
+    [
+      '-c',
+      'source deploy/release-version.sh && release_version_from_image_tag "$1"',
+      '_',
+      'latest',
+    ],
     { cwd: new URL('../..', import.meta.url), encoding: 'utf8' },
   );
   assert.notEqual(unsupported.status, 0);
@@ -100,21 +121,31 @@ test('derives runtime versions from supported deployment image tags', () => {
 });
 
 test('keeps immutable SHA images as the publication source', () => {
-  assert.match(workflow, /IMAGE_TAG: sha-\$\{\{ github\.sha \}\}/);
+  assert.match(workflow, /commit_sha="\$\(git rev-parse 'HEAD\^\{commit\}'\)"/);
+  assert.match(workflow, /SOURCE_IMAGE_TAG: \$\{\{ steps\.source_commit\.outputs\.image_tag \}\}/);
+  assert.doesNotMatch(workflow, /IMAGE_TAG: sha-\$\{\{ github\.sha \}\}/);
   assert.match(workflow, /tags: \$\{\{ steps\.image_settings\.outputs\.api_tag \}\}/);
   assert.match(workflow, /tags: \$\{\{ steps\.image_settings\.outputs\.web_tag \}\}/);
   assert.match(workflow, /tags: \$\{\{ steps\.image_settings\.outputs\.migrator_tag \}\}/);
 });
 
 test('promotes all release images to the version and latest aliases', () => {
-  const promotion = workflow.slice(workflow.indexOf('- name: Promote release image aliases'));
-  assert.match(promotion, /if: steps\.release_ref\.outputs\.release_tag != ''/);
+  const stageIndex = workflow.indexOf('- name: Stage release version aliases');
+  const verifyIndex = workflow.indexOf('- name: Verify staged release aliases');
+  const latestIndex = workflow.indexOf('- name: Update latest image aliases');
+  assert.ok(stageIndex > -1 && stageIndex < verifyIndex && verifyIndex < latestIndex);
+
+  const staging = workflow.slice(stageIndex, verifyIndex);
+  const verification = workflow.slice(verifyIndex, latestIndex);
+  const latest = workflow.slice(latestIndex, workflow.indexOf('  deploy-preflight:'));
   for (const image of ['API', 'WEB', 'MIGRATOR']) {
-    assert.match(promotion, new RegExp(`${image}_SOURCE_TAG`));
-    assert.match(promotion, new RegExp(`${image}_RELEASE_TAG`));
-    assert.match(promotion, new RegExp(`${image}_LATEST_TAG`));
+    assert.match(staging, new RegExp(`${image}_SOURCE_TAG`));
+    assert.match(staging, new RegExp(`${image}_RELEASE_TAG`));
+    assert.match(verification, new RegExp(`${image}_RELEASE_TAG`));
+    assert.match(latest, new RegExp(`${image}_RELEASE_TAG`));
+    assert.match(latest, new RegExp(`${image}_LATEST_TAG`));
   }
-  assert.doesNotMatch(workflow, /Update latest image aliases/);
+  assert.match(latest, /if: steps\.release_ref\.outputs\.release_tag != ''/);
 });
 
 test('deploys the validated release tag and runs this policy in fast and full CI', () => {

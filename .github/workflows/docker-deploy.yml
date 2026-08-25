@@ -32,7 +32,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
 
 env:
-  IMAGE_TAG: sha-${{ github.sha }}
   REGISTRY: ghcr.io
 
 jobs:
@@ -267,6 +266,16 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Resolve immutable source commit
+        id: source_commit
+        run: |
+          commit_sha="$(git rev-parse 'HEAD^{commit}')"
+          if ! printf '%s' "$commit_sha" | grep -Eq '^[0-9a-f]{40}([0-9a-f]{24})?$'; then
+            echo "Unable to resolve an immutable source commit." >&2
+            exit 1
+          fi
+          printf 'image_tag=sha-%s\n' "$commit_sha" >> "$GITHUB_OUTPUT"
+
       - name: Validate release ref
         id: release_ref
         env:
@@ -280,14 +289,15 @@ jobs:
           GHCR_IMAGE_NAMESPACE: ${{ vars.GHCR_IMAGE_NAMESPACE }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
           RELEASE_TAG: ${{ steps.release_ref.outputs.release_tag }}
+          SOURCE_IMAGE_TAG: ${{ steps.source_commit.outputs.image_tag }}
         run: |
           namespace="${GHCR_IMAGE_NAMESPACE:-$REPOSITORY_OWNER}"
           namespace="$(printf '%s' "$namespace" | tr '[:upper:]' '[:lower:]')"
           test -n "$namespace"
           {
-            printf 'api_tag=%s/%s/betterspend-api:%s\n' "$REGISTRY" "$namespace" "$IMAGE_TAG"
-            printf 'web_tag=%s/%s/betterspend-web:%s\n' "$REGISTRY" "$namespace" "$IMAGE_TAG"
-            printf 'migrator_tag=%s/%s/betterspend-migrator:%s\n' "$REGISTRY" "$namespace" "$IMAGE_TAG"
+            printf 'api_tag=%s/%s/betterspend-api:%s\n' "$REGISTRY" "$namespace" "$SOURCE_IMAGE_TAG"
+            printf 'web_tag=%s/%s/betterspend-web:%s\n' "$REGISTRY" "$namespace" "$SOURCE_IMAGE_TAG"
+            printf 'migrator_tag=%s/%s/betterspend-migrator:%s\n' "$REGISTRY" "$namespace" "$SOURCE_IMAGE_TAG"
             if [ -n "$RELEASE_TAG" ]; then
               printf 'api_release_tag=%s/%s/betterspend-api:%s\n' "$REGISTRY" "$namespace" "$RELEASE_TAG"
               printf 'web_release_tag=%s/%s/betterspend-web:%s\n' "$REGISTRY" "$namespace" "$RELEASE_TAG"
@@ -385,27 +395,52 @@ jobs:
           push: true
           tags: ${{ steps.image_settings.outputs.migrator_tag }}
 
-      - name: Promote release image aliases
+      - name: Stage release version aliases
         if: steps.release_ref.outputs.release_tag != ''
         env:
           API_SOURCE_TAG: ${{ steps.image_settings.outputs.api_tag }}
           API_RELEASE_TAG: ${{ steps.image_settings.outputs.api_release_tag }}
-          API_LATEST_TAG: ${{ steps.image_settings.outputs.api_latest_tag }}
           WEB_SOURCE_TAG: ${{ steps.image_settings.outputs.web_tag }}
           WEB_RELEASE_TAG: ${{ steps.image_settings.outputs.web_release_tag }}
-          WEB_LATEST_TAG: ${{ steps.image_settings.outputs.web_latest_tag }}
           MIGRATOR_SOURCE_TAG: ${{ steps.image_settings.outputs.migrator_tag }}
           MIGRATOR_RELEASE_TAG: ${{ steps.image_settings.outputs.migrator_release_tag }}
-          MIGRATOR_LATEST_TAG: ${{ steps.image_settings.outputs.migrator_latest_tag }}
         run: |
           for image in API WEB MIGRATOR; do
             source_variable="${image}_SOURCE_TAG"
             release_variable="${image}_RELEASE_TAG"
-            latest_variable="${image}_LATEST_TAG"
             docker buildx imagetools create \
               --tag "${!release_variable}" \
-              --tag "${!latest_variable}" \
               "${!source_variable}"
+          done
+
+      - name: Verify staged release aliases
+        if: steps.release_ref.outputs.release_tag != ''
+        env:
+          API_RELEASE_TAG: ${{ steps.image_settings.outputs.api_release_tag }}
+          WEB_RELEASE_TAG: ${{ steps.image_settings.outputs.web_release_tag }}
+          MIGRATOR_RELEASE_TAG: ${{ steps.image_settings.outputs.migrator_release_tag }}
+        run: |
+          for image in API WEB MIGRATOR; do
+            release_variable="${image}_RELEASE_TAG"
+            docker buildx imagetools inspect "${!release_variable}" >/dev/null
+          done
+
+      - name: Update latest image aliases
+        if: steps.release_ref.outputs.release_tag != ''
+        env:
+          API_RELEASE_TAG: ${{ steps.image_settings.outputs.api_release_tag }}
+          API_LATEST_TAG: ${{ steps.image_settings.outputs.api_latest_tag }}
+          WEB_RELEASE_TAG: ${{ steps.image_settings.outputs.web_release_tag }}
+          WEB_LATEST_TAG: ${{ steps.image_settings.outputs.web_latest_tag }}
+          MIGRATOR_RELEASE_TAG: ${{ steps.image_settings.outputs.migrator_release_tag }}
+          MIGRATOR_LATEST_TAG: ${{ steps.image_settings.outputs.migrator_latest_tag }}
+        run: |
+          for image in API WEB MIGRATOR; do
+            release_variable="${image}_RELEASE_TAG"
+            latest_variable="${image}_LATEST_TAG"
+            docker buildx imagetools create \
+              --tag "${!latest_variable}" \
+              "${!release_variable}"
           done
 
   deploy-preflight:
