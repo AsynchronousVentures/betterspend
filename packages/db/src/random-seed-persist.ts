@@ -67,6 +67,7 @@ import {
   softwareLicenses,
   spendGuardAlerts,
   syncRecords,
+  systemSettings,
   taxCodes,
   userRoles,
   users,
@@ -79,8 +80,12 @@ import {
 } from './schema';
 import {
   assertRandomSeedCountMatches,
+  assertRandomSeedMetadataMatches,
+  encodeRandomSeedMetadata,
   generateRandomSeedDataset,
+  randomSeedMetadataKey,
   randomSeedRequisitionPrefix,
+  stableUuid,
   type RandomSeedDataset,
 } from './random-seed';
 
@@ -125,13 +130,35 @@ export async function persistRandomSeed(
   const dataset = generateRandomSeedDataset(options);
 
   await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext(${`betterspend-random-seed:${options.seed}`}))`,
-    );
-    const existingCount = await countExistingSeedRequisitions(tx, options.seed);
-    assertRandomSeedCountMatches(options.seed, options.count, existingCount);
+    const metadataKey = randomSeedMetadataKey(options.seed);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${metadataKey}, 0))`);
+    let needsMetadata = false;
+    const [metadata] = await tx
+      .select({ value: systemSettings.value })
+      .from(systemSettings)
+      .where(
+        and(eq(systemSettings.organizationId, DEMO_ORG_ID), eq(systemSettings.key, metadataKey)),
+      );
+    if (metadata) {
+      assertRandomSeedMetadataMatches(options.seed, options.count, metadata.value);
+    } else {
+      const existingCount = await countExistingSeedRequisitions(tx, options.seed);
+      assertRandomSeedCountMatches(options.seed, options.count, existingCount);
+      needsMetadata = true;
+    }
 
     await upsertDemoFixtures(tx);
+    if (needsMetadata) {
+      await tx
+        .insert(systemSettings)
+        .values({
+          id: stableUuid(options.seed, 'seed-metadata', 0),
+          organizationId: DEMO_ORG_ID,
+          key: metadataKey,
+          value: encodeRandomSeedMetadata(options.count),
+        })
+        .onConflictDoNothing();
+    }
 
     await insertBatches(tx, legalEntities, dataset.legalEntities);
     await insertBatches(tx, departments, dataset.departments);

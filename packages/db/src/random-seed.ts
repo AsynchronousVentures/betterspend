@@ -86,6 +86,7 @@ export const DEFAULT_RANDOM_COUNT = 500;
 export const DEFAULT_RANDOM_SEED = 'betterspend-demo-2026';
 export const MIN_RANDOM_COUNT = 1;
 export const MAX_RANDOM_COUNT = 5_000;
+export const RANDOM_SEED_METADATA_VERSION = 1;
 
 export interface RandomSeedOptions {
   count: number;
@@ -237,8 +238,66 @@ export function stableUuid(seed: string, kind: string, index: number): string {
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-${variant}${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
 }
 
+/** Return the full digest used to namespace durable generated records. */
+export function stableSeedDigest(seed: string): string {
+  return createHash('sha256').update(seed).digest('hex');
+}
+
 export function stableSeedToken(seed: string): string {
-  return createHash('sha256').update(seed).digest('hex').slice(0, 8);
+  return stableSeedDigest(seed).slice(0, 32);
+}
+
+export function randomSeedMetadataKey(seed: string): string {
+  return `random_seed_v${RANDOM_SEED_METADATA_VERSION}_${stableSeedDigest(seed)}`;
+}
+
+export interface RandomSeedMetadata {
+  schemaVersion: typeof RANDOM_SEED_METADATA_VERSION;
+  count: number;
+}
+
+export function encodeRandomSeedMetadata(count: number): string {
+  return JSON.stringify({ schemaVersion: RANDOM_SEED_METADATA_VERSION, count });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function decodeRandomSeedMetadata(value: string | null | undefined): RandomSeedMetadata {
+  if (!value) throw new Error('Random seed metadata is missing its value.');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    throw new Error('Random seed metadata is not valid JSON.');
+  }
+  if (
+    !isRecord(parsed) ||
+    parsed.schemaVersion !== RANDOM_SEED_METADATA_VERSION ||
+    !Number.isSafeInteger(parsed.count) ||
+    (parsed.count as number) < MIN_RANDOM_COUNT ||
+    (parsed.count as number) > MAX_RANDOM_COUNT
+  ) {
+    throw new Error('Random seed metadata has an unsupported schema or count.');
+  }
+  return {
+    schemaVersion: RANDOM_SEED_METADATA_VERSION,
+    count: parsed.count as number,
+  };
+}
+
+export function assertRandomSeedMetadataMatches(
+  seed: string,
+  requestedCount: number,
+  value: string | null | undefined,
+): void {
+  const metadata = decodeRandomSeedMetadata(value);
+  if (metadata.count !== requestedCount) {
+    throw new Error(
+      `Seed "${seed}" is recorded with original count ${metadata.count}; requested ${requestedCount}. Reuse --count ${metadata.count} or choose a new --seed.`,
+    );
+  }
 }
 
 export function randomSeedRequisitionPrefix(seed: string): string {
@@ -269,15 +328,14 @@ export function stableDate(
   minDays: number,
   maxDays: number,
 ): Date {
-  const digest = createHash('sha256').update(`${seed}\0${kind}\0${index}`).digest();
-  const fraction = digest.readUInt32BE(0) / 0xffffffff;
+  const fraction = stableFraction(seed, kind, index);
   const days = Math.floor(minDays + fraction * (maxDays - minDays + 1));
   return new Date(ANCHOR_MS + days * DAY_MS);
 }
 
-function value(seed: string, kind: string, index: number): number {
+export function stableFraction(seed: string, kind: string, index: number): number {
   const digest = createHash('sha256').update(`${seed}\0${kind}\0${index}`).digest();
-  return digest.readUInt32BE(0) / 0xffffffff;
+  return digest.readUInt32BE(0) / 0x100000000;
 }
 
 /** Return a deterministic date offset from a lifecycle milestone. */
@@ -289,12 +347,33 @@ function dateAfter(
   minDays: number,
   maxDays: number,
 ): Date {
-  const days = Math.floor(minDays + value(seed, kind, index) * (maxDays - minDays + 1));
+  const days = Math.floor(minDays + stableFraction(seed, kind, index) * (maxDays - minDays + 1));
   return new Date(base.getTime() + days * DAY_MS);
 }
 
 function choose<T>(items: readonly T[], seed: string, kind: string, index: number): T {
-  return items[Math.floor(value(seed, kind, index) * items.length)] as T;
+  return items[Math.floor(stableFraction(seed, kind, index) * items.length)] as T;
+}
+
+type TimestampedRow = {
+  createdAt?: unknown;
+  updatedAt?: unknown;
+};
+
+/** Keep generic support-row timestamps monotonic at the graph boundary. */
+function normalizeUpdatedAt(rows: Rows): void {
+  for (const tableRows of Object.values(rows)) {
+    for (const row of tableRows) {
+      const timestamped = row as TimestampedRow;
+      if (
+        timestamped.createdAt instanceof Date &&
+        timestamped.updatedAt instanceof Date &&
+        timestamped.updatedAt.getTime() < timestamped.createdAt.getTime()
+      ) {
+        timestamped.updatedAt = timestamped.createdAt;
+      }
+    }
+  }
 }
 
 function money(cents: number): string {
@@ -538,7 +617,8 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
     'Miller',
     'Davis',
   ];
-  const seedToken = createHash('sha256').update(seed).digest('hex').slice(0, 8);
+  const seedToken = stableSeedToken(seed);
+  const seedDigest = stableSeedDigest(seed);
   for (let index = 0; index < userCount; index += 1) {
     const id = stableUuid(seed, 'user', index);
     userIds.push(id);
@@ -594,7 +674,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
       entityId: entityIds[index % entityIds.length],
       name: `${vendorNames[index % vendorNames.length]} ${['Systems', 'Supply Co.', 'Consulting', 'Industries'][index % 4]}`,
       code: `VND-${seedToken.toUpperCase()}-${String(index + 1).padStart(3, '0')}`,
-      taxId: `DEMO-VAT-${String(index + 1).padStart(6, '0')}`,
+      taxId: `DEMO-VAT-${seedToken}-${String(index + 1).padStart(6, '0')}`,
       paymentTerms: choose(['Net 15', 'Net 30', 'Net 45', 'Net 60'] as const, seed, 'terms', index),
       address: {
         street: `${index + 10} Market Street`,
@@ -779,8 +859,17 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
           : index % 13 === 0
             ? 'draft'
             : 'active';
-    const startDate = stableDate(seed, 'contract-start', index, -330, -20);
-    const endDate = stableDate(seed, 'contract-end', index, 15, 420);
+    const startDate =
+      status === 'expired'
+        ? stableDate(seed, 'contract-start', index, -360, -240)
+        : stableDate(seed, 'contract-start', index, -360, -60);
+    const endDate =
+      status === 'expired'
+        ? stableDate(seed, 'contract-end', index, -180, -30)
+        : status === 'expiring_soon'
+          ? stableDate(seed, 'contract-end', index, 1, 60)
+          : stableDate(seed, 'contract-end', index, 15, 420);
+    const contractCreatedAt = stableDate(seed, 'contract-created', index, -360, -30);
     rows.contracts.push({
       id,
       organizationId: DEMO_ORG_ID,
@@ -804,11 +893,11 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
       approvedBy: status === 'active' || status === 'expiring_soon' ? DEMO_APPROVER_ID : undefined,
       approvedAt:
         status === 'active' || status === 'expiring_soon'
-          ? stableDate(seed, 'contract-approved', index, -300, -10)
+          ? dateAfter(contractCreatedAt, seed, 'contract-approved', index, 1, 14)
           : undefined,
       createdBy: DEMO_ADMIN_ID,
-      createdAt: stableDate(seed, 'contract-created', index, -360, -30),
-      updatedAt: stableDate(seed, 'contract-updated', index, -35, 0),
+      createdAt: contractCreatedAt,
+      updatedAt: dateAfter(contractCreatedAt, seed, 'contract-updated', index, 1, 20),
     });
     rows.contractLines.push({
       id: stableUuid(seed, 'contract-line', index),
@@ -1562,7 +1651,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
       externalEntity: 'bill',
       status: 'skipped',
       attempts: 0,
-      requestId: `demo-request-${index + 1}`,
+      requestId: `req-${seedToken}-${index + 1}`,
       docNumber: stableBusinessNumber(seed, 'INV', invoice.index),
       errorCode: 'DISABLED',
       errorMessage: 'Synthetic integration is revoked and cannot make network calls.',
@@ -1608,19 +1697,6 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         changes: { status: po.status, totalAmount: money(po.totalCents) },
         metadata: { generatedIndex: index },
         createdAt: po.createdAt,
-      });
-    const invoice = invoiceContext.find((candidate) => candidate.index === index);
-    if (invoice)
-      rows.auditLog.push({
-        id: stableUuid(seed, 'audit-invoice', index),
-        organizationId: DEMO_ORG_ID,
-        userId: DEMO_ADMIN_ID,
-        entityType: 'invoice',
-        entityId: invoice.id,
-        action: invoice.status,
-        changes: { status: invoice.status, totalAmount: money(invoice.totalCents) },
-        metadata: { generatedIndex: index },
-        createdAt: invoice.createdAt,
       });
   }
   for (const [index, po] of poContext.entries()) {
@@ -1711,7 +1787,9 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         index % 4 === 0 ? dateOnly(new Date(invoiceDate.getTime() + 10 * DAY_MS)) : undefined,
       paidAt,
       paymentReference:
-        status === 'paid' ? `DEMO-PAY-${String(index + 1).padStart(6, '0')}` : undefined,
+        status === 'paid'
+          ? `DEMO-PAY-${seedToken}-${String(index + 1).padStart(6, '0')}`
+          : undefined,
       subtotal: money(invoiceSubtotalCents),
       taxAmount: money(tax),
       totalAmount: money(invoiceSubtotalCents + tax),
@@ -1809,6 +1887,18 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         updatedAt: dateAfter(invoiceDate, seed, 'ocr-updated', index, 1, 20),
       });
   }
+  for (const invoice of invoiceContext)
+    rows.auditLog.push({
+      id: stableUuid(seed, 'audit-invoice', invoice.index),
+      organizationId: DEMO_ORG_ID,
+      userId: DEMO_ADMIN_ID,
+      entityType: 'invoice',
+      entityId: invoice.id,
+      action: invoice.status,
+      changes: { status: invoice.status, totalAmount: money(invoice.totalCents) },
+      metadata: { generatedIndex: invoice.index },
+      createdAt: invoice.createdAt,
+    });
   if (rows.syncRecords.length === 0) {
     const integrationId = stableUuid('betterspend-random-support', 'integration', 0);
     for (const [index, invoice] of invoiceContext.slice(0, 5).entries())
@@ -1823,7 +1913,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         externalEntity: 'bill',
         status: 'skipped',
         attempts: 0,
-        requestId: `demo-request-${index + 1}`,
+        requestId: `req-${seedToken}-${index + 1}`,
         docNumber: stableBusinessNumber(seed, 'INV', invoice.index),
         errorCode: 'DISABLED',
         errorMessage: 'Synthetic integration is revoked and cannot make network calls.',
@@ -1843,7 +1933,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
       requisitionId: req?.id,
       purchaseOrderId: po?.id,
       invoiceId: invoice?.id,
-      eventKey: `random:${seed}:${index}:reserved`,
+      eventKey: `random:${seedDigest}:${index}:reserved`,
       eventType: 'requisition_reserved',
       baseReservedDelta: money(req?.totalCents ?? 0),
       baseCommittedDelta: '0',
@@ -1868,7 +1958,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         budgetId: budgetIds[index % budgetIds.length],
         requisitionId: req?.id,
         purchaseOrderId: po.id,
-        eventKey: `random:${seed}:${index}:committed`,
+        eventKey: `random:${seedDigest}:${index}:committed`,
         eventType: 'purchase_order_committed',
         baseReservedDelta: money(-(req?.totalCents ?? 0)),
         baseCommittedDelta: money(po.totalCents),
@@ -1885,7 +1975,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         requisitionId: req?.id,
         purchaseOrderId: po?.id,
         invoiceId: invoice.id,
-        eventKey: `random:${seed}:${index}:expended`,
+        eventKey: `random:${seedDigest}:${index}:expended`,
         eventType: 'invoice_expended',
         baseReservedDelta: '0',
         baseCommittedDelta: money(-(po?.totalCents ?? 0)),
@@ -1905,9 +1995,15 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
   const rfqCount = Math.max(8, Math.min(100, Math.ceil(count / 8)));
   for (let index = 0; index < rfqCount; index += 1) {
     const id = stableUuid(seed, 'rfq', index);
-    const awarded = index % 4 === 0;
-    const status =
-      index % 13 === 0 ? 'cancelled' : awarded ? 'awarded' : index % 3 === 0 ? 'closed' : 'open';
+    const cancelled = index % 13 === 0;
+    const awarded = !cancelled && index % 4 === 0;
+    const status = cancelled
+      ? 'cancelled'
+      : awarded
+        ? 'awarded'
+        : index % 3 === 0
+          ? 'closed'
+          : 'open';
     const awardedVendorId = awarded ? vendorIds[index % vendorIds.length] : undefined;
     rows.rfqRequests.push({
       id,
@@ -2043,10 +2139,10 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         status: invoice.status === 'paid' ? 'paid' : 'scheduled',
         paymentReference:
           invoice.status === 'paid'
-            ? `DEMO-PAY-${String(invoice.index + 1).padStart(6, '0')}`
+            ? `DEMO-PAY-${seedToken}-${String(invoice.index + 1).padStart(6, '0')}`
             : undefined,
         providerPaymentId:
-          invoice.status === 'paid' ? `demo-provider-${invoice.index + 1}` : undefined,
+          invoice.status === 'paid' ? `demo-provider-${seedToken}-${invoice.index + 1}` : undefined,
         createdAt: runDate,
         updatedAt: dateAfter(
           runDate,
@@ -2099,7 +2195,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         invoiceId: invoice.id,
         status: 'cancelled',
         provider: 'demo-manual',
-        providerCardId: `demo-card-${index + 1}`,
+        providerCardId: `demo-card-${seedToken}-${index + 1}`,
         maskedCard: `**** **** **** ${String(4000 + index).slice(-4)}`,
         limitAmount: money(invoice.totalCents),
         currency: 'USD',
@@ -2248,7 +2344,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         attempts: invoice.status === 'paid' ? 1 : 0,
         exportedAt,
         payload: { invoiceId: invoice.id, demo: true },
-        externalId: invoice.status === 'paid' ? `demo-gl-${index + 1}` : undefined,
+        externalId: invoice.status === 'paid' ? `demo-gl-${seedToken}-${index + 1}` : undefined,
         createdAt: exportBaseDate,
         updatedAt: dateAfter(exportedAt ?? exportBaseDate, seed, 'gl-export-updated', index, 1, 20),
       });
@@ -2355,6 +2451,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
       },
     );
   }
+  normalizeUpdatedAt(rows);
   const summary = Object.fromEntries(
     Object.entries(rows).map(([key, rowsForTable]) => [key, rowsForTable.length]),
   ) as Record<keyof Rows, number>;

@@ -4,15 +4,17 @@ import { assertRandomSeedAllowed, seedRandomWorkload } from './random-seed-persi
 
 const HELP = `Usage: pnpm db:seed:random -- [options]
 
-Generate a deterministic local workload in the fixed Acme demo organization.
+Generate a repeatable local workload in the fixed Acme demo organization.
 
 Options:
   --count <n>  Purchase-to-pay stories, 1-5000 (default: 500)
   --seed <s>   Deterministic seed string (default: betterspend-demo-2026)
   --help       Show this help
 
-The same seed and count are safe to rerun. A seed namespace may only be rerun
-with its original count. To change the count, choose a new seed.
+The same seed and count are safe to rerun. A durable seed marker records the
+original count, so a namespace may only be rerun with that count. Once present,
+the marker permits repair of deleted generated rows. To change the count,
+choose a new seed. Webhook secrets are random at first insert.
 This command refuses to run with NODE_ENV=production.
 `;
 

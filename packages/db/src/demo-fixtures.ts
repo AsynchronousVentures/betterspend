@@ -1,4 +1,5 @@
 import type { DbTransaction } from './client';
+import { sql } from 'drizzle-orm';
 import { departments, legalEntities, organizations, userRoles, users, vendors } from './schema';
 
 /** IDs used by the demo controllers and the ordinary, small seed. */
@@ -28,10 +29,17 @@ export async function upsertDemoFixtures(tx: DbTransaction): Promise<void> {
       slug: 'acme-corp',
       baseCurrency: 'USD',
       settings: { currency: 'USD', fiscalYearStart: 1 },
+      logoUrl: null,
     })
     .onConflictDoUpdate({
       target: organizations.id,
-      set: { name: 'Acme Corp', slug: 'acme-corp', baseCurrency: 'USD' },
+      set: {
+        name: 'Acme Corp',
+        slug: 'acme-corp',
+        baseCurrency: 'USD',
+        settings: { currency: 'USD', fiscalYearStart: 1 },
+        logoUrl: null,
+      },
     });
 
   await tx
@@ -43,22 +51,53 @@ export async function upsertDemoFixtures(tx: DbTransaction): Promise<void> {
       code: 'ACME-HQ',
       currency: 'USD',
       glAccountPrefix: '100',
+      address: {},
       taxId: '99-9999999',
+      isActive: true,
     })
     .onConflictDoUpdate({
       target: legalEntities.id,
-      set: { name: 'Acme Holdings', code: 'ACME-HQ', currency: 'USD' },
+      set: {
+        organizationId: DEMO_ORG_ID,
+        name: 'Acme Holdings',
+        code: 'ACME-HQ',
+        currency: 'USD',
+        glAccountPrefix: '100',
+        address: {},
+        taxId: '99-9999999',
+        isActive: true,
+      },
     });
 
   await tx
     .insert(departments)
     .values([
-      { id: DEMO_ENG_DEPT_ID, organizationId: DEMO_ORG_ID, name: 'Engineering', code: 'ENG' },
-      { id: DEMO_MKT_DEPT_ID, organizationId: DEMO_ORG_ID, name: 'Marketing', code: 'MKT' },
+      {
+        id: DEMO_ENG_DEPT_ID,
+        organizationId: DEMO_ORG_ID,
+        name: 'Engineering',
+        code: 'ENG',
+        parentId: null,
+        budgetOwnerId: null,
+      },
+      {
+        id: DEMO_MKT_DEPT_ID,
+        organizationId: DEMO_ORG_ID,
+        name: 'Marketing',
+        code: 'MKT',
+        parentId: null,
+        budgetOwnerId: null,
+      },
     ])
     .onConflictDoUpdate({
       target: departments.id,
-      set: { organizationId: DEMO_ORG_ID },
+      set: {
+        organizationId: sql`excluded.organization_id`,
+        name: sql`excluded.name`,
+        code: sql`excluded.code`,
+        parentId: sql`excluded.parent_id`,
+        budgetOwnerId: sql`excluded.budget_owner_id`,
+      },
     });
 
   await tx
@@ -71,6 +110,9 @@ export async function upsertDemoFixtures(tx: DbTransaction): Promise<void> {
         name: 'Admin User',
         departmentId: DEMO_ENG_DEPT_ID,
         emailVerified: true,
+        image: null,
+        managerId: null,
+        isActive: true,
       },
       {
         id: DEMO_REQUESTER_ID,
@@ -79,6 +121,9 @@ export async function upsertDemoFixtures(tx: DbTransaction): Promise<void> {
         name: 'Jane Requester',
         departmentId: DEMO_ENG_DEPT_ID,
         emailVerified: true,
+        image: null,
+        managerId: null,
+        isActive: true,
       },
       {
         id: DEMO_APPROVER_ID,
@@ -87,11 +132,23 @@ export async function upsertDemoFixtures(tx: DbTransaction): Promise<void> {
         name: 'Bob Approver',
         departmentId: DEMO_ENG_DEPT_ID,
         emailVerified: true,
+        image: null,
+        managerId: null,
+        isActive: true,
       },
     ])
     .onConflictDoUpdate({
       target: users.id,
-      set: { organizationId: DEMO_ORG_ID },
+      set: {
+        organizationId: sql`excluded.organization_id`,
+        email: sql`excluded.email`,
+        name: sql`excluded.name`,
+        emailVerified: sql`excluded.email_verified`,
+        image: sql`excluded.image`,
+        departmentId: sql`excluded.department_id`,
+        managerId: sql`excluded.manager_id`,
+        isActive: sql`excluded.is_active`,
+      },
     });
 
   await tx
@@ -116,7 +173,16 @@ export async function upsertDemoFixtures(tx: DbTransaction): Promise<void> {
         scopeType: 'global',
       },
     ])
-    .onConflictDoNothing({ target: userRoles.id });
+    .onConflictDoUpdate({
+      target: userRoles.id,
+      set: {
+        userId: sql`excluded.user_id`,
+        role: sql`excluded.role`,
+        customRoleId: sql`excluded.custom_role_id`,
+        scopeType: sql`excluded.scope_type`,
+        scopeId: sql`excluded.scope_id`,
+      },
+    });
 
   await tx
     .insert(vendors)
@@ -127,9 +193,27 @@ export async function upsertDemoFixtures(tx: DbTransaction): Promise<void> {
         entityId: DEMO_PARENT_ENTITY_ID,
         name: 'Acme Supplies Inc.',
         code: 'ACME-SUP',
+        taxId: null,
         paymentTerms: 'Net 30',
-        status: 'active',
+        address: {},
         contactInfo: { email: 'sales@acmesupplies.com', phone: '+1-555-0100' },
+        status: 'active',
+        onboardingStatus: 'not_started',
+        onboardingRiskScore: 0,
+        onboardingRiskLevel: 'low',
+        onboardingApprovedAt: null,
+        onboardingLastSubmittedAt: null,
+        punchoutEnabled: false,
+        punchoutConfig: null,
+        diversityCategories: [],
+        esgRating: null,
+        carbonFootprintTons: null,
+        sustainabilityCertifications: [],
+        esgNotes: null,
+        diversityVerifiedAt: null,
+        sanctionsStatus: 'untested',
+        sanctionsCheckedAt: null,
+        sanctionsNote: null,
       },
       {
         id: DEMO_VENDOR_IDS[1],
@@ -137,13 +221,57 @@ export async function upsertDemoFixtures(tx: DbTransaction): Promise<void> {
         entityId: DEMO_PARENT_ENTITY_ID,
         name: 'TechParts Global',
         code: 'TECHPARTS',
+        taxId: null,
         paymentTerms: 'Net 60',
-        status: 'active',
+        address: {},
         contactInfo: { email: 'orders@techparts.com', phone: '+1-555-0200' },
+        status: 'active',
+        onboardingStatus: 'not_started',
+        onboardingRiskScore: 0,
+        onboardingRiskLevel: 'low',
+        onboardingApprovedAt: null,
+        onboardingLastSubmittedAt: null,
+        punchoutEnabled: false,
+        punchoutConfig: null,
+        diversityCategories: [],
+        esgRating: null,
+        carbonFootprintTons: null,
+        sustainabilityCertifications: [],
+        esgNotes: null,
+        diversityVerifiedAt: null,
+        sanctionsStatus: 'untested',
+        sanctionsCheckedAt: null,
+        sanctionsNote: null,
       },
     ])
     .onConflictDoUpdate({
       target: vendors.id,
-      set: { organizationId: DEMO_ORG_ID, entityId: DEMO_PARENT_ENTITY_ID },
+      set: {
+        organizationId: sql`excluded.organization_id`,
+        entityId: sql`excluded.entity_id`,
+        name: sql`excluded.name`,
+        code: sql`excluded.code`,
+        taxId: sql`excluded.tax_id`,
+        paymentTerms: sql`excluded.payment_terms`,
+        address: sql`excluded.address`,
+        contactInfo: sql`excluded.contact_info`,
+        status: sql`excluded.status`,
+        onboardingStatus: sql`excluded.onboarding_status`,
+        onboardingRiskScore: sql`excluded.onboarding_risk_score`,
+        onboardingRiskLevel: sql`excluded.onboarding_risk_level`,
+        onboardingApprovedAt: sql`excluded.onboarding_approved_at`,
+        onboardingLastSubmittedAt: sql`excluded.onboarding_last_submitted_at`,
+        punchoutEnabled: sql`excluded.punchout_enabled`,
+        punchoutConfig: sql`excluded.punchout_config`,
+        diversityCategories: sql`excluded.diversity_categories`,
+        esgRating: sql`excluded.esg_rating`,
+        carbonFootprintTons: sql`excluded.carbon_footprint_tons`,
+        sustainabilityCertifications: sql`excluded.sustainability_certifications`,
+        esgNotes: sql`excluded.esg_notes`,
+        diversityVerifiedAt: sql`excluded.diversity_verified_at`,
+        sanctionsStatus: sql`excluded.sanctions_status`,
+        sanctionsCheckedAt: sql`excluded.sanctions_checked_at`,
+        sanctionsNote: sql`excluded.sanctions_note`,
+      },
     });
 }

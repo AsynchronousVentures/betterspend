@@ -4,11 +4,18 @@ import {
   DEFAULT_RANDOM_COUNT,
   DEFAULT_RANDOM_SEED,
   MAX_RANDOM_COUNT,
+  assertRandomSeedMetadataMatches,
   assertRandomSeedCountMatches,
+  decodeRandomSeedMetadata,
+  encodeRandomSeedMetadata,
   generateRandomSeedDataset,
   parseRandomSeedArgs,
+  randomSeedMetadataKey,
   randomSeedRequisitionPrefix,
   stableBusinessNumber,
+  stableFraction,
+  stableSeedDigest,
+  stableSeedToken,
   stableUuid,
 } from './random-seed';
 import { materializeWebhookSecrets } from './random-seed-secrets';
@@ -40,13 +47,38 @@ test('rejects malformed and unknown options', () => {
 });
 
 test('requires an existing seed namespace to keep its original count', () => {
-  assert.equal(randomSeedRequisitionPrefix('42'), 'REQ-73475CB4-');
+  assert.equal(randomSeedRequisitionPrefix('42'), 'REQ-73475CB40A568E8DA8A045CED110137E-');
   assert.doesNotThrow(() => assertRandomSeedCountMatches('42', 100, 0));
   assert.doesNotThrow(() => assertRandomSeedCountMatches('42', 100, 100));
   assert.throws(
     () => assertRandomSeedCountMatches('42', 500, 100),
     /already has 100 generated requisitions.*requested 500.*new --seed/,
   );
+});
+
+test('uses durable metadata as the authority for repair reruns', () => {
+  const seed = 'metadata-test';
+  const digest = stableSeedDigest(seed);
+  const key = randomSeedMetadataKey(seed);
+  assert.equal(digest.length, 64);
+  assert.equal(stableSeedToken(seed).length, 32);
+  assert.equal(key, `random_seed_v1_${digest}`);
+  assert.equal(key.length <= 100, true);
+  const encoded = encodeRandomSeedMetadata(42);
+  assert.deepEqual(decodeRandomSeedMetadata(encoded), { schemaVersion: 1, count: 42 });
+  // The marker check intentionally has no current-row count. Missing rows are repaired by inserts.
+  assert.doesNotThrow(() => assertRandomSeedMetadataMatches(seed, 42, encoded));
+  assert.throws(
+    () => assertRandomSeedMetadataMatches(seed, 43, encoded),
+    /original count 42.*requested 43/,
+  );
+});
+
+test('keeps seeded fractions in a half-open interval', () => {
+  for (let index = 0; index < 100; index += 1) {
+    const fraction = stableFraction('fraction-test', 'value', index);
+    assert.equal(fraction >= 0 && fraction < 1, true);
+  }
 });
 
 test('generates identical graphs for the same seed and count', () => {
@@ -231,6 +263,57 @@ test('keeps core lifecycle timestamps and money allocations coherent', () => {
           dateValue(invoice.paidAt ?? invoice.approvedAt ?? invoice.createdAt),
         true,
       );
+    }
+  }
+
+  const invoiceAudits = dataset.auditLog.filter((row) => row.entityType === 'invoice');
+  assert.equal(invoiceAudits.length, dataset.invoices.length);
+  assert.deepEqual(
+    new Set(invoiceAudits.map((row) => row.entityId)),
+    new Set(dataset.invoices.map((row) => row.id)),
+  );
+
+  for (const contract of dataset.contracts) {
+    const start = dateValue(contract.startDate);
+    const end = dateValue(contract.endDate);
+    assert.equal(end > start, true);
+    if (contract.status === 'expired') assert.equal(end <= Date.UTC(2026, 7, 25), true);
+    if (contract.status === 'expiring_soon') {
+      assert.equal(end > Date.UTC(2026, 7, 25), true);
+      assert.equal(end <= Date.UTC(2026, 9, 25), true);
+    }
+    if (contract.status === 'active' || contract.status === 'draft')
+      assert.equal(end > Date.UTC(2026, 7, 25), true);
+  }
+});
+
+test('normalizes every generated created and updated timestamp pair', () => {
+  const dataset = generateRandomSeedDataset({ count: 250, seed: 'timestamp-pairs' });
+  for (const tableRows of Object.values(dataset)) {
+    if (!Array.isArray(tableRows)) continue;
+    for (const row of tableRows) {
+      const timestamped = row as { createdAt?: unknown; updatedAt?: unknown };
+      if (timestamped.createdAt instanceof Date && timestamped.updatedAt instanceof Date)
+        assert.equal(timestamped.updatedAt.getTime() >= timestamped.createdAt.getTime(), true);
+    }
+  }
+});
+
+test('keeps RFQ award state consistent with cancellation and responses', () => {
+  const dataset = generateRandomSeedDataset({ count: 120, seed: 'rfq-state-test' });
+  for (const rfq of dataset.rfqRequests) {
+    const responses = dataset.rfqResponses.filter((response) => response.rfqId === rfq.id);
+    const awardedResponses = responses.filter((response) => response.awarded);
+    if (rfq.status === 'cancelled') {
+      assert.equal(rfq.awardedVendorId, undefined);
+      assert.equal(awardedResponses.length, 0);
+    } else if (rfq.status === 'awarded') {
+      assert.ok(rfq.awardedVendorId);
+      assert.equal(awardedResponses.length, 1);
+      assert.equal(awardedResponses[0]?.vendorId, rfq.awardedVendorId);
+    } else {
+      assert.equal(rfq.awardedVendorId, undefined);
+      assert.equal(awardedResponses.length, 0);
     }
   }
 });
