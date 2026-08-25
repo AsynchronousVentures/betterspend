@@ -290,7 +290,7 @@ export class EmailIntakeService implements OnModuleInit {
       topLevelIndex += 1;
       attachments.push({
         id: this.stableUuid('attachment', messageId, String(attachmentIndex)),
-        content: attachment.content,
+        content: decision.status === 'accepted' ? decision.content : attachment.content,
         decision,
         invoiceNumberHint: extractInvoiceNumberHint(subject, body, attachment.filename),
       });
@@ -1051,6 +1051,7 @@ export class EmailIntakeService implements OnModuleInit {
           'archive_not_allowed',
           'encrypted_pdf',
           'invalid_pdf',
+          'invalid_image',
           'attachment_too_large',
           'attachment_count_exceeded',
         ].includes(attachment.rejectionReason ?? ''),
@@ -1094,6 +1095,7 @@ export class EmailIntakeService implements OnModuleInit {
     if (reason === 'archive_not_allowed') return 'archives are not accepted';
     if (reason === 'encrypted_pdf') return 'password-protected PDFs are not accepted';
     if (reason === 'invalid_pdf') return 'the PDF is malformed or unreadable';
+    if (reason === 'invalid_image') return 'the image is malformed or unreadable';
     if (reason === 'attachment_too_large') return 'the file exceeds 25 MB';
     if (reason === 'attachment_count_exceeded') return 'the email exceeds 10 attachments';
     return 'the file was not accepted';

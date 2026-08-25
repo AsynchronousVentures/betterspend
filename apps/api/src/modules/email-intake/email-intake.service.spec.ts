@@ -148,6 +148,7 @@ describe('EmailIntakeService attachment promotion', () => {
               filename: 'invoice.pdf',
               contentType: 'application/pdf',
               contentHash: 'a'.repeat(64),
+              content: Buffer.from('%PDF-1'),
             },
             invoiceNumberHint: '123',
           },

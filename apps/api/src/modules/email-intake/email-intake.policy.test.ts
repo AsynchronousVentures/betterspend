@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import sharp from 'sharp';
 import {
   MAX_EMAIL_ATTACHMENT_BYTES,
   allowsAttachmentPromotion,
@@ -195,6 +196,63 @@ describe('email intake policy', () => {
         )
       ).status,
       'accepted',
+    );
+  });
+
+  it('fully decodes and re-encodes valid images while rejecting malformed image prefixes', async () => {
+    const image = sharp({
+      create: { width: 2, height: 2, channels: 3, background: '#ffffff' },
+    });
+    const validImages = await Promise.all([
+      image.clone().png().toBuffer(),
+      image.clone().jpeg().toBuffer(),
+      image.clone().webp().toBuffer(),
+    ]);
+    const expectedTypes = ['image/png', 'image/jpeg', 'image/webp'];
+
+    for (const [index, content] of validImages.entries()) {
+      const trailingPayload = Buffer.from(`untrusted-trailing-payload-${index}`);
+      const decision = await decideAttachment(
+        {
+          filename: `scan-${index}`,
+          content: Buffer.concat([content, trailingPayload]),
+        },
+        0,
+      );
+      assert.equal(decision.status, 'accepted');
+      if (decision.status !== 'accepted') continue;
+      assert.equal(decision.contentType, expectedTypes[index]);
+      assert.equal(decision.content.includes(trailingPayload), false);
+      const metadata = await sharp(decision.content).metadata();
+      assert.equal(metadata.width, 2);
+      assert.equal(metadata.height, 2);
+    }
+
+    const malformedImages = [
+      Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        Buffer.from('not-a-png'),
+      ]),
+      Buffer.from([0xff, 0xd8, 0xff, 0x00]),
+      Buffer.from('RIFF\x04\x00\x00\x00WEBPbad', 'binary'),
+    ];
+    for (const content of malformedImages) {
+      const decision = await decideAttachment({ filename: 'broken-image', content }, 0);
+      assert.equal(decision.status === 'rejected' && decision.reason, 'invalid_image');
+    }
+
+    const overDimension = await sharp({
+      create: { width: 12_001, height: 1, channels: 3, background: '#ffffff' },
+    })
+      .png()
+      .toBuffer();
+    const overDimensionDecision = await decideAttachment(
+      { filename: 'too-wide.png', content: overDimension },
+      0,
+    );
+    assert.equal(
+      overDimensionDecision.status === 'rejected' && overDimensionDecision.reason,
+      'invalid_image',
     );
   });
 

@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
 import { EncryptedPDFError, PDFDocument } from 'pdf-lib';
+import sharp from 'sharp';
 
 export const MAX_EMAIL_ATTACHMENTS = 10;
 export const MAX_EMAIL_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const MAX_EMAIL_IMAGE_DIMENSION = 12_000;
+const MAX_EMAIL_IMAGE_PIXELS = 40_000_000;
 
 export type SenderClassification = 'known_vendor' | 'employee' | 'unknown';
 
@@ -40,6 +43,7 @@ export type AttachmentDecision =
       filename: string;
       contentType: string;
       contentHash: string;
+      content: Buffer;
     };
 
 const ARCHIVE_CONTENT_TYPES = new Set([
@@ -267,6 +271,43 @@ function detectedContentType(content: Buffer): string | null {
   return null;
 }
 
+async function sanitizedImage(
+  content: Buffer,
+  contentType: string,
+): Promise<{ status: 'accepted'; content: Buffer } | { status: 'rejected'; reason: string }> {
+  try {
+    const image = sharp(content, {
+      failOn: 'warning',
+      limitInputPixels: MAX_EMAIL_IMAGE_PIXELS,
+      sequentialRead: true,
+    });
+    const metadata = await image.metadata();
+    if (
+      !metadata.width ||
+      !metadata.height ||
+      metadata.width > MAX_EMAIL_IMAGE_DIMENSION ||
+      metadata.height > MAX_EMAIL_IMAGE_DIMENSION ||
+      (metadata.pages ?? 1) !== 1
+    ) {
+      return { status: 'rejected', reason: 'invalid_image' };
+    }
+
+    const oriented = image.rotate();
+    const sanitized =
+      contentType === 'image/png'
+        ? await oriented.png({ compressionLevel: 9 }).toBuffer()
+        : contentType === 'image/jpeg'
+          ? await oriented.jpeg({ quality: 90 }).toBuffer()
+          : await oriented.webp({ quality: 90 }).toBuffer();
+    if (sanitized.length > MAX_EMAIL_ATTACHMENT_BYTES) {
+      return { status: 'rejected', reason: 'attachment_too_large' };
+    }
+    return { status: 'accepted', content: sanitized };
+  } catch {
+    return { status: 'rejected', reason: 'invalid_image' };
+  }
+}
+
 async function pdfRejectionReason(
   content: Buffer,
 ): Promise<'encrypted_pdf' | 'invalid_pdf' | null> {
@@ -350,11 +391,21 @@ export async function decideAttachment(
     }
   }
 
+  let acceptedContent = attachment.content;
+  if (contentType.startsWith('image/')) {
+    const sanitized = await sanitizedImage(attachment.content, contentType);
+    if (sanitized.status === 'rejected') {
+      return { status: 'rejected', reason: sanitized.reason, filename, contentType };
+    }
+    acceptedContent = sanitized.content;
+  }
+
   return {
     status: 'accepted',
     filename,
     contentType,
-    contentHash: createHash('sha256').update(attachment.content).digest('hex'),
+    contentHash: createHash('sha256').update(acceptedContent).digest('hex'),
+    content: acceptedContent,
   };
 }
 
