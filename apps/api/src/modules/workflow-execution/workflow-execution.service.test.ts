@@ -96,6 +96,7 @@ function createRestartFixture(
   requestStatus: 'pending' | 'approved' = 'pending',
   queueFails = false,
   glExportFails = false,
+  serializeTransactions = false,
 ) {
   const executable = executableWithApproval(enforceSeparationOfDuties);
   const oldRequest = {
@@ -221,9 +222,16 @@ function createRestartFixture(
     },
     select(fields?: Record<string, unknown>) {
       return {
-        from() {
+        from(table: unknown) {
           if (!fields) {
-            return { where: () => ({ for: async () => [replacement ?? oldRequest] }) };
+            return {
+              where: () => ({
+                for: async () =>
+                  table === workflowRuntimePublications
+                    ? publications.filter((publication) => publication.status === 'pending')
+                    : [replacement ?? oldRequest],
+              }),
+            };
           }
           return {
             innerJoin: () => ({
@@ -319,7 +327,16 @@ function createRestartFixture(
               }
               if (table === workflowRuntimePublications) {
                 const publication = publications.find((item) => item.status === 'pending');
-                if (publication) Object.assign(publication, values);
+                if (publication) {
+                  const nextValues = { ...values };
+                  if (
+                    'deliveryAttempts' in nextValues &&
+                    typeof nextValues.deliveryAttempts !== 'number'
+                  ) {
+                    nextValues.deliveryAttempts = Number(publication.deliveryAttempts) + 1;
+                  }
+                  Object.assign(publication, nextValues);
+                }
                 return { returning: async () => (publication ? [publication] : []) };
               }
               if (table !== approvalRequests) {
@@ -336,9 +353,22 @@ function createRestartFixture(
       };
     },
   };
+  let transactionTail = Promise.resolve();
   const db = {
-    transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) =>
-      callback(transaction),
+    transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) => {
+      if (!serializeTransactions) return callback(transaction);
+      const previous = transactionTail;
+      let release: () => void = () => undefined;
+      transactionTail = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await previous;
+      try {
+        return await callback(transaction);
+      } finally {
+        release();
+      }
+    },
     query: {
       approvalRequests: { findFirst: async () => replacement },
       workflowDefinitionVersions: { findFirst: async () => latest },
@@ -640,6 +670,25 @@ describe('WorkflowExecutionService restart', () => {
 
     assert.equal(publication.status, 'pending');
     assert.equal(publication.deliveryAttempts, 1);
+  });
+
+  it('delivers a runtime publication once when workers handle it concurrently', async () => {
+    const fixture = createRestartFixture(false, false, 'allow', 'pending', false, false, true);
+
+    await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+    const publicationId = String(fixture.publications[0]?.id);
+
+    await Promise.all([
+      fixture.service.handleRuntimePublication(publicationId),
+      fixture.service.handleRuntimePublication(publicationId),
+    ]);
+
+    assert.deepEqual(fixture.notifications, [DELEGATE_ID]);
+    assert.equal(fixture.publications[0]?.status, 'published');
   });
 
   it('uses the separation-of-duties fallback when delegation resolves to an excluded actor', async () => {

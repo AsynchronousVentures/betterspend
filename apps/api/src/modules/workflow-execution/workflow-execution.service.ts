@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
-import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type {
   ApprovalNode,
@@ -767,14 +767,20 @@ export class WorkflowExecutionService implements OnModuleInit {
   }
 
   async handleRuntimePublication(publicationId: string): Promise<void> {
-    const publication = await this.db.query.workflowRuntimePublications.findFirst({
-      where: (record, { and, eq }) =>
-        and(eq(record.id, publicationId), eq(record.status, 'pending')),
-    });
-    if (!publication) return;
-
     try {
       await this.db.transaction(async (tx) => {
+        const [publication] = await tx
+          .select()
+          .from(workflowRuntimePublications)
+          .where(
+            and(
+              eq(workflowRuntimePublications.id, publicationId),
+              eq(workflowRuntimePublications.status, 'pending'),
+            ),
+          )
+          .for('update');
+        if (!publication) return;
+
         const request = await this.lockVersionedRequest(
           tx,
           publication.approvalRequestId,
@@ -819,11 +825,16 @@ export class WorkflowExecutionService implements OnModuleInit {
       await this.db
         .update(workflowRuntimePublications)
         .set({
-          deliveryAttempts: publication.deliveryAttempts + 1,
+          deliveryAttempts: sql`${workflowRuntimePublications.deliveryAttempts} + 1`,
           lastError: message.slice(0, 2_000),
           updatedAt: new Date(),
         })
-        .where(eq(workflowRuntimePublications.id, publication.id));
+        .where(
+          and(
+            eq(workflowRuntimePublications.id, publicationId),
+            eq(workflowRuntimePublications.status, 'pending'),
+          ),
+        );
       throw error;
     }
   }
