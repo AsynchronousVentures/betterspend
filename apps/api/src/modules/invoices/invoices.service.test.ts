@@ -390,7 +390,7 @@ describe('InvoicesService creation audit', () => {
 
 describe('InvoicesService material edits', () => {
   const createEditService = (
-    status: 'approved' | 'matched' = 'approved',
+    status: 'approved' | 'matched' | 'rejected' | 'cancelled' = 'approved',
     rerunMatchStatus: 'full_match' | 'partial_match' | 'exception' = 'full_match',
   ) => {
     const invoice = {
@@ -453,6 +453,7 @@ describe('InvoicesService material edits', () => {
     let reopened = false;
     let restarted = false;
     let cancelled = false;
+    let initiated = false;
     let published = false;
     const transaction = {
       query: {
@@ -461,11 +462,14 @@ describe('InvoicesService material edits', () => {
         vendors: { findFirst: async () => ({ id: 'vendor-2' }) },
         purchaseOrders: { findFirst: async () => ({ vendorId: 'vendor-1' }) },
         approvalRequests: {
-          findFirst: async () => ({
-            id: 'request-1',
-            status,
-            definitionVersionId: 'version-1',
-          }),
+          findFirst: async () =>
+            status === 'rejected' || status === 'cancelled'
+              ? null
+              : {
+                  id: 'request-1',
+                  status,
+                  definitionVersionId: 'version-1',
+                },
         },
         invoices: {
           findFirst: async () => ({ ...invoice, lines: [line], vendor: {}, entity: {} }),
@@ -505,6 +509,10 @@ describe('InvoicesService material edits', () => {
       },
       cancelForEditInTransaction: async () => {
         cancelled = true;
+      },
+      initiateIfConfigured: async () => {
+        initiated = true;
+        return { requestId: 'request-2', status: 'pending' as const };
       },
       publishCommittedRequest: async () => {
         published = true;
@@ -550,7 +558,7 @@ describe('InvoicesService material edits', () => {
       invoiceUpdates,
       lineUpdates,
       auditActions,
-      state: () => ({ reopened, restarted, cancelled, published }),
+      state: () => ({ reopened, restarted, cancelled, initiated, published }),
     };
   };
 
@@ -565,6 +573,7 @@ describe('InvoicesService material edits', () => {
       reopened: true,
       restarted: true,
       cancelled: false,
+      initiated: false,
       published: true,
     });
     assert.ok(fixture.invoiceUpdates.some((update) => update.approvedBy === null));
@@ -589,6 +598,7 @@ describe('InvoicesService material edits', () => {
       reopened: false,
       restarted: false,
       cancelled: false,
+      initiated: false,
       published: false,
     });
     assert.ok(!fixture.invoiceUpdates.some((update) => update.approvedBy === null));
@@ -607,10 +617,46 @@ describe('InvoicesService material edits', () => {
       reopened: true,
       restarted: false,
       cancelled: true,
+      initiated: false,
       published: false,
     });
     assert.ok(fixture.invoiceUpdates.some((update) => update.status === 'partial_match'));
     assert.ok(!fixture.invoiceUpdates.some((update) => update.status === 'pending_approval'));
+  });
+
+  it('starts a fresh workflow for a materially edited rejected invoice', async () => {
+    const fixture = createEditService('rejected');
+
+    await fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+      lines: [{ id: '00000000-0000-4000-8000-000000000101', quantity: 2 }],
+    });
+
+    assert.deepEqual(fixture.state(), {
+      reopened: false,
+      restarted: false,
+      cancelled: false,
+      initiated: true,
+      published: true,
+    });
+    assert.ok(fixture.invoiceUpdates.some((update) => update.status === 'pending_approval'));
+  });
+
+  it('does not revive a cancelled invoice through editing', async () => {
+    const fixture = createEditService('cancelled');
+
+    await assert.rejects(
+      fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+        lines: [{ id: '00000000-0000-4000-8000-000000000101', quantity: 2 }],
+      }),
+      /Cancelled invoices cannot be edited/,
+    );
+    assert.deepEqual(fixture.state(), {
+      reopened: false,
+      restarted: false,
+      cancelled: false,
+      initiated: false,
+      published: false,
+    });
   });
 
   it('rejects a vendor that does not match the linked purchase order', async () => {
@@ -626,6 +672,7 @@ describe('InvoicesService material edits', () => {
       reopened: false,
       restarted: false,
       cancelled: false,
+      initiated: false,
       published: false,
     });
   });

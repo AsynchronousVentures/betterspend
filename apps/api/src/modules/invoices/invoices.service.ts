@@ -244,6 +244,9 @@ export class InvoicesService {
       if (lockedInvoice.status === 'paid') {
         throw new BadRequestException('Paid invoices cannot be edited');
       }
+      if (lockedInvoice.status === 'cancelled') {
+        throw new BadRequestException('Cancelled invoices cannot be edited');
+      }
 
       const existingLines = await tx.query.invoiceLines.findMany({
         where: (line, { eq }) => eq(line.invoiceId, id),
@@ -524,7 +527,7 @@ export class InvoicesService {
           }
         } else if (
           approvalEligible &&
-          ['matched', 'pending_approval', 'approved'].includes(lockedInvoice.status)
+          ['matched', 'pending_approval', 'approved', 'rejected'].includes(lockedInvoice.status)
         ) {
           const initiated = await this.workflowExecution.initiateIfConfigured(
             organizationId,
