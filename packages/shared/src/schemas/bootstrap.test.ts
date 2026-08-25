@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { bootstrapInstanceSchema } from './bootstrap';
 
@@ -8,7 +9,7 @@ describe('bootstrapInstanceSchema', () => {
       organizationName: '  Acme Corp  ',
       name: '  First Admin  ',
       email: '  ADMIN@EXAMPLE.TEST  ',
-      password: 'a secure password',
+      password: randomBytes(24).toString('base64url'),
     });
     assert.equal(parsed.organizationName, 'Acme Corp');
     assert.equal(parsed.name, 'First Admin');
@@ -21,9 +22,18 @@ describe('bootstrapInstanceSchema', () => {
       name: 'First Admin',
       email: 'admin@example.test',
     };
-    assert.equal(bootstrapInstanceSchema.safeParse({ ...input, password: 'short' }).success, false);
     assert.equal(
-      bootstrapInstanceSchema.safeParse({ ...input, password: 'x'.repeat(129) }).success,
+      bootstrapInstanceSchema.safeParse({
+        ...input,
+        password: randomBytes(3).toString('hex'),
+      }).success,
+      false,
+    );
+    assert.equal(
+      bootstrapInstanceSchema.safeParse({
+        ...input,
+        password: randomBytes(128).toString('base64url'),
+      }).success,
       false,
     );
   });
