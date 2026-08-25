@@ -1,13 +1,21 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const PUBLIC_PATHS = ['/login', '/signup', '/punchout'];
+const PUBLIC_PATH_PREFIXES = ['/login', '/signup', '/punchout'];
+const PUBLIC_EXACT_PATHS = new Set(['/runtime-version']);
+
+export function isPublicPath(pathname: string): boolean {
+  return (
+    PUBLIC_EXACT_PATHS.has(pathname) ||
+    PUBLIC_PATH_PREFIXES.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+  );
+}
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Allow public auth pages
-  if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'))) {
+  if (isPublicPath(pathname)) {
     return NextResponse.next();
   }
 

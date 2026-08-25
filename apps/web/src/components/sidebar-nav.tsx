@@ -49,7 +49,7 @@ import {
 import { signOut } from '../lib/auth-client';
 import { api } from '../lib/api';
 import { useBranding } from '../lib/branding';
-import { appReleaseVersion } from '../lib/release';
+import { useReleaseVersion } from './release-version-provider';
 import { Badge } from './ui/badge';
 import { cn } from '../lib/utils';
 import { SidebarAccount } from './sidebar-account';
@@ -213,6 +213,7 @@ export default function SidebarNav({
   const [spendGuardCount, setSpendGuardCount] = useState(0);
   const [softwareRenewalCount, setSoftwareRenewalCount] = useState(0);
   const branding = useBranding();
+  const { version: appReleaseVersion } = useReleaseVersion();
 
   const getInitialOpen = useCallback(() => {
     const initial = new Set<string>();

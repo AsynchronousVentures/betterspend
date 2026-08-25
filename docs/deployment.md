@@ -12,6 +12,7 @@ Any reverse proxy or ingress controller can run BetterSpend when it preserves th
 
 - Send `/api/*` on the public app origin to the API container on port `4001`. Do not strip the `/api` prefix.
 - Send all other paths on the public app origin to the web container on port `3000`.
+- Preserve `/runtime-version` as a web route. The web client uses it to read the container's runtime release value.
 - Forward the original host and protocol headers.
 - Expose the configured S3-compatible public endpoint without rewriting signed request paths. A separate object-storage hostname is the simplest setup.
 
@@ -63,7 +64,7 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
 ## Required GitHub configuration
 
-The validation job runs for pull requests, pushes to `main`, and `v*` tags. Pushes to `main` publish application images to GHCR after validation succeeds. A `v*` tag publishes the same immutable images and deploys them to production when the deployment secrets below are configured.
+The validation job runs for pull requests, pushes to `main`, and `v*` tags. Pushes to `main` publish immutable SHA images to GHCR after validation succeeds. A strict `vX.Y.Z` tag promotes the existing SHA manifests to that version and `latest`, then deploys the version tag when the deployment secrets below are configured.
 
 Repository variables:
 
@@ -103,9 +104,9 @@ ghcr.io/<namespace>/betterspend-web:sha-<commit>
 ghcr.io/<namespace>/betterspend-migrator:sha-<commit>
 ```
 
-After all three immutable images are available, a `main` push also moves each image's `latest` alias to that commit. Release tag workflows do not update `latest`, so tagging an older commit cannot move the aliases backward.
+Main pushes do not move `latest`. Pushing a valid `vX.Y.Z` tag waits for all three SHA manifests when the matching `main` publication is still finishing, then promotes each one to both `vX.Y.Z` and `latest` with `docker buildx imagetools create`. It does not rebuild or replace the SHA source. Existing version aliases must already match the source manifests, otherwise the release fails instead of moving a published version. The workflow synchronizes the explicit deployment file list to `/opt/betterspend` and invokes `./deploy/deploy.sh vX.Y.Z` over SSH. Registry administrators must preserve `sha-*` immutability.
 
-Pushing a `v*` tag runs validation, publishes the immutable `sha-<commit>` images, synchronizes the explicit deployment file list to `/opt/betterspend`, and invokes `./deploy/deploy.sh sha-<commit>` over SSH. Publish jobs for the same commit are serialized, and the workflow skips any image tag that already exists rather than overwriting it. Registry administrators must preserve that `sha-*` immutability convention for any out-of-band operations. The deploy script backs up PostgreSQL, runs migrations, restarts the application containers, and smoke-checks production. Deployments are serialized by the workflow's production concurrency group.
+The deploy script derives `APP_VERSION` from the selected tag unless an explicit value is supplied. It displays `0.2.4` for `v0.2.4` and `sha-<commit>` for an exact SHA deployment. The API and web containers receive the same value. With no runtime override they fall back to the synchronized workspace package version. Rollback always derives the value from the restored image tag, so an inherited shell override cannot make the displayed release stale.
 
 Tag-driven deployment never synchronizes `.env.production` and does not use `rsync --delete`; production secrets remain server-side.
 
@@ -118,6 +119,12 @@ Deploy a known image tag manually (for example, when automated deployment is not
 ```bash
 cd /opt/betterspend
 ./deploy/deploy.sh sha-<commit>
+```
+
+Deploy a promoted release tag when the exact version is preferred:
+
+```bash
+./deploy/deploy.sh v0.2.3
 ```
 
 Tail logs:
@@ -144,6 +151,15 @@ Roll back to a specific tag:
 ```bash
 ./deploy/rollback.sh sha-<commit>
 ```
+
+Prepare a release tag locally with the checked-in guardrails:
+
+```bash
+pnpm release:tag 0.2.4
+git push origin v0.2.4
+```
+
+The command requires a clean `main` checkout and synchronized workspace package versions that match the requested tag. It fetches `origin/main`, verifies `HEAD` against that live remote tip, and refuses an existing local or remote tag. It creates the annotated tag but does not push it. Package versions remain the local fallback and must be advanced deliberately in a release preparation change.
 
 Database migrations are forward-only. The rollback script does not revert schema changes; use the compressed dumps in `/opt/betterspend/backups` for disaster recovery.
 

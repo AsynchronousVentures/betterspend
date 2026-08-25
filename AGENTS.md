@@ -36,18 +36,21 @@ pnpm install                  # install all workspace deps
 
 ### Production Deployment (Docker Compose)
 
-Production runs from immutable GHCR images under `/opt/betterspend`. The app process manager is Docker Compose, not pm2.
+Production runs from immutable GHCR images under `/opt/betterspend`. The app process manager is Docker Compose, not pm2. Main pushes publish only `sha-<full-sha>` images. A validated `vX.Y.Z` release promotes those same manifests to `vX.Y.Z` and `latest`.
 
 ```bash
 cd /opt/betterspend
 export IMAGE_TAG="$(cat .current_image_tag)"
 docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml ps
 docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml logs -f api web caddy
-./deploy/deploy.sh sha-<commit>           # deploy an immutable image tag
-./deploy/rollback.sh                      # roll back to the previous recorded image tag
+./deploy/deploy.sh sha-<commit>           # deploy an immutable image tag for exact testing
+./deploy/deploy.sh v0.2.3                 # deploy a version-tagged release
+./deploy/rollback.sh                      # roll back the image and displayed version together
 ```
 
-GitHub Actions publishes immutable `sha-<commit>` images on every merge to `main`. Pushing a `v*` tag is a release: it validates, republishes that commit's images, and (once deploy secrets are configured) deploys to production via the protected `production` environment (requires `DEPLOY_SSH_HOST`, `DEPLOY_SSH_USER`, `DEPLOY_SSH_KEY`, and pinned-host `DEPLOY_SSH_KNOWN_HOSTS` secrets; without them the deploy job is skipped). Server secrets stay in `/opt/betterspend/.env.production`; CI syncs only the explicit Compose and deployment file list and passes the image tag.
+GitHub Actions publishes immutable `sha-<commit>` images on every merge to `main`. Pushing a valid `vX.Y.Z` tag promotes that commit's existing SHA manifests to the matching version and `latest`, then (once deploy secrets are configured) deploys the version tag to production through the protected `production` environment. The deployment requires `DEPLOY_SSH_HOST`, `DEPLOY_SSH_USER`, `DEPLOY_SSH_KEY`, and pinned-host `DEPLOY_SSH_KNOWN_HOSTS` secrets; without them the deploy job is skipped. Server secrets stay in `/opt/betterspend/.env.production`; CI syncs only the explicit Compose and deployment file list and passes the validated version tag.
+
+`APP_VERSION` is injected into the API and web containers. Version tags display without their leading `v`; manual `sha-*` deploys display the SHA tag. When `APP_VERSION` is unset, both services use the synchronized package version. Rollback derives the same value from the selected image tag. After advancing every workspace package version together, use `pnpm release:tag 0.2.4` from a clean, current `main` checkout to validate them and create the matching annotated tag, then push that tag manually.
 
 To roll back a bad release, run `./deploy/rollback.sh` on the server to switch the application image only; it does not roll back database migrations or restore the pre-migration backup, so restore the database separately when required (or re-tag an earlier commit).
 

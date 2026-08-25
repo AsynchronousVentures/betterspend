@@ -3,8 +3,8 @@ name: Docker CI/CD
 # Flow:
 #   PR                -> review gate + fast CI in parallel -> validate result
 #   merge group       -> full CI -> validate result
-#   push to main      -> full CI -> validate result -> publish immutable images + latest aliases
-#   push v* tag       -> full CI -> validate result -> publish -> deploy
+#   push to main      -> full CI -> validate result -> publish immutable images
+#   push v* tag       -> full CI -> validate result -> promote -> deploy
 #   workflow_dispatch -> full CI -> validate result (manual re-check / republish)
 #
 # Releases are tags. Any merge to main is instantly deployable because its
@@ -32,7 +32,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
 
 env:
-  IMAGE_TAG: sha-${{ github.sha }}
   REGISTRY: ghcr.io
 
 jobs:
@@ -64,6 +63,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+
+      - name: Test release workflow policy
+        run: node --test .github/scripts/release-workflow-policy.test.mjs
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -132,6 +134,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+
+      - name: Test release workflow policy
+        run: node --test .github/scripts/release-workflow-policy.test.mjs
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -244,10 +249,12 @@ jobs:
 
   publish:
     name: Publish Images
-    # Every merge to main produces deployable artifacts. Publishing for the
-    # same commit is serialized, and existing sha-* tags are never replaced.
+    # Every merge to main produces deployable artifacts. Release tags promote
+    # those immutable artifacts without rebuilding or replacing sha-* tags.
     if: always() && github.event_name == 'push' && needs.validate.result == 'success'
     needs: validate
+    outputs:
+      release_tag: ${{ steps.release_ref.outputs.release_tag }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     concurrency:
       group: publish-${{ github.sha }}
@@ -259,22 +266,46 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Resolve immutable source commit
+        id: source_commit
+        run: |
+          commit_sha="$(git rev-parse 'HEAD^{commit}')"
+          if ! printf '%s' "$commit_sha" | grep -Eq '^[0-9a-f]{40}([0-9a-f]{24})?$'; then
+            echo "Unable to resolve an immutable source commit." >&2
+            exit 1
+          fi
+          printf 'image_tag=sha-%s\n' "$commit_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Validate release ref
+        id: release_ref
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: node .github/scripts/release-policy.mjs validate-ref
+
       - name: Configure image settings
         id: image_settings
         env:
           GHCR_IMAGE_NAMESPACE: ${{ vars.GHCR_IMAGE_NAMESPACE }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
+          RELEASE_TAG: ${{ steps.release_ref.outputs.release_tag }}
+          SOURCE_IMAGE_TAG: ${{ steps.source_commit.outputs.image_tag }}
         run: |
           namespace="${GHCR_IMAGE_NAMESPACE:-$REPOSITORY_OWNER}"
           namespace="$(printf '%s' "$namespace" | tr '[:upper:]' '[:lower:]')"
           test -n "$namespace"
           {
-            printf 'api_tag=%s/%s/betterspend-api:%s\n' "$REGISTRY" "$namespace" "$IMAGE_TAG"
-            printf 'web_tag=%s/%s/betterspend-web:%s\n' "$REGISTRY" "$namespace" "$IMAGE_TAG"
-            printf 'migrator_tag=%s/%s/betterspend-migrator:%s\n' "$REGISTRY" "$namespace" "$IMAGE_TAG"
-            printf 'api_latest_tag=%s/%s/betterspend-api:latest\n' "$REGISTRY" "$namespace"
-            printf 'web_latest_tag=%s/%s/betterspend-web:latest\n' "$REGISTRY" "$namespace"
-            printf 'migrator_latest_tag=%s/%s/betterspend-migrator:latest\n' "$REGISTRY" "$namespace"
+            printf 'api_tag=%s/%s/betterspend-api:%s\n' "$REGISTRY" "$namespace" "$SOURCE_IMAGE_TAG"
+            printf 'web_tag=%s/%s/betterspend-web:%s\n' "$REGISTRY" "$namespace" "$SOURCE_IMAGE_TAG"
+            printf 'migrator_tag=%s/%s/betterspend-migrator:%s\n' "$REGISTRY" "$namespace" "$SOURCE_IMAGE_TAG"
+            if [ -n "$RELEASE_TAG" ]; then
+              printf 'api_release_tag=%s/%s/betterspend-api:%s\n' "$REGISTRY" "$namespace" "$RELEASE_TAG"
+              printf 'web_release_tag=%s/%s/betterspend-web:%s\n' "$REGISTRY" "$namespace" "$RELEASE_TAG"
+              printf 'migrator_release_tag=%s/%s/betterspend-migrator:%s\n' "$REGISTRY" "$namespace" "$RELEASE_TAG"
+              printf 'api_latest_tag=%s/%s/betterspend-api:latest\n' "$REGISTRY" "$namespace"
+              printf 'web_latest_tag=%s/%s/betterspend-web:latest\n' "$REGISTRY" "$namespace"
+              printf 'migrator_latest_tag=%s/%s/betterspend-migrator:latest\n' "$REGISTRY" "$namespace"
+            fi
           } >> "$GITHUB_OUTPUT"
 
       - name: Setup Blacksmith Builder
@@ -296,30 +327,59 @@ jobs:
           API_TAG: ${{ steps.image_settings.outputs.api_tag }}
           WEB_TAG: ${{ steps.image_settings.outputs.web_tag }}
           MIGRATOR_TAG: ${{ steps.image_settings.outputs.migrator_tag }}
+          RELEASE_TAG: ${{ steps.release_ref.outputs.release_tag }}
         run: |
+          max_attempts=3
+          retry_delay=5
+          if [ -n "$RELEASE_TAG" ]; then
+            # A tag push can finish CI before the matching main run publishes
+            # its immutable images. Give that run time to finish.
+            max_attempts=90
+            retry_delay=10
+          fi
+
           for image in API WEB MIGRATOR; do
             tag_variable="${image}_TAG"
             tag="${!tag_variable}"
             output_name="$(printf '%s' "$image" | tr '[:upper:]' '[:lower:]')_exists"
-            for attempt in 1 2 3; do
+            for ((attempt = 1; attempt <= max_attempts; attempt++)); do
               if inspect_output="$(docker buildx imagetools inspect "$tag" 2>&1)"; then
                 printf '%s=true\n' "$output_name" >> "$GITHUB_OUTPUT"
                 break
               fi
               if printf '%s' "$inspect_output" | grep -Eqi 'manifest unknown|name unknown|not found'; then
-                printf '%s=false\n' "$output_name" >> "$GITHUB_OUTPUT"
-                break
-              fi
-              if [ "$attempt" -eq 3 ]; then
+                if [ -z "$RELEASE_TAG" ] || [ "$attempt" -eq "$max_attempts" ]; then
+                  printf '%s=false\n' "$output_name" >> "$GITHUB_OUTPUT"
+                  break
+                fi
+                printf 'Waiting for immutable image %s (attempt %s/%s).\n' \
+                  "$tag" "$attempt" "$max_attempts"
+              elif [ "$attempt" -eq "$max_attempts" ]; then
                 printf 'Unable to determine whether %s exists:\n%s\n' "$tag" "$inspect_output" >&2
                 exit 1
               fi
-              sleep $((attempt * 5))
+              sleep "$retry_delay"
             done
           done
 
+      - name: Require immutable source images for release
+        if: steps.release_ref.outputs.release_tag != ''
+        env:
+          API_EXISTS: ${{ steps.existing_images.outputs.api_exists }}
+          WEB_EXISTS: ${{ steps.existing_images.outputs.web_exists }}
+          MIGRATOR_EXISTS: ${{ steps.existing_images.outputs.migrator_exists }}
+          RELEASE_TAG: ${{ steps.release_ref.outputs.release_tag }}
+        run: |
+          for image in API WEB MIGRATOR; do
+            exists_variable="${image}_EXISTS"
+            if [ "${!exists_variable}" != "true" ]; then
+              echo "Missing immutable ${image,,} image for release $RELEASE_TAG." >&2
+              exit 1
+            fi
+          done
+
       - name: Build and push API image
-        if: steps.existing_images.outputs.api_exists != 'true'
+        if: github.ref == 'refs/heads/main' && steps.existing_images.outputs.api_exists != 'true'
         uses: useblacksmith/build-push-action@v2
         with:
           context: .
@@ -329,7 +389,7 @@ jobs:
           tags: ${{ steps.image_settings.outputs.api_tag }}
 
       - name: Build and push web image
-        if: steps.existing_images.outputs.web_exists != 'true'
+        if: github.ref == 'refs/heads/main' && steps.existing_images.outputs.web_exists != 'true'
         uses: useblacksmith/build-push-action@v2
         with:
           context: .
@@ -339,7 +399,7 @@ jobs:
           tags: ${{ steps.image_settings.outputs.web_tag }}
 
       - name: Build and push migrator image
-        if: steps.existing_images.outputs.migrator_exists != 'true'
+        if: github.ref == 'refs/heads/main' && steps.existing_images.outputs.migrator_exists != 'true'
         uses: useblacksmith/build-push-action@v2
         with:
           context: .
@@ -348,22 +408,92 @@ jobs:
           push: true
           tags: ${{ steps.image_settings.outputs.migrator_tag }}
 
-      - name: Update latest image aliases
-        if: github.ref == 'refs/heads/main'
+      - name: Stage release version aliases
+        if: steps.release_ref.outputs.release_tag != ''
         env:
-          API_TAG: ${{ steps.image_settings.outputs.api_tag }}
+          API_SOURCE_TAG: ${{ steps.image_settings.outputs.api_tag }}
+          API_RELEASE_TAG: ${{ steps.image_settings.outputs.api_release_tag }}
+          WEB_SOURCE_TAG: ${{ steps.image_settings.outputs.web_tag }}
+          WEB_RELEASE_TAG: ${{ steps.image_settings.outputs.web_release_tag }}
+          MIGRATOR_SOURCE_TAG: ${{ steps.image_settings.outputs.migrator_tag }}
+          MIGRATOR_RELEASE_TAG: ${{ steps.image_settings.outputs.migrator_release_tag }}
+        run: |
+          # Validate every existing version alias before writing any of them.
+          # A released version may never move to a different manifest.
+          for image in API WEB MIGRATOR; do
+            source_variable="${image}_SOURCE_TAG"
+            release_variable="${image}_RELEASE_TAG"
+            source_tag="${!source_variable}"
+            release_tag="${!release_variable}"
+            output_name="$(printf '%s' "$image" | tr '[:upper:]' '[:lower:]')_release_exists"
+
+            if ! source_manifest="$(docker buildx imagetools inspect --raw "$source_tag" 2>&1)"; then
+              printf 'Unable to inspect source image %s:\n%s\n' "$source_tag" "$source_manifest" >&2
+              exit 1
+            fi
+            if release_manifest="$(docker buildx imagetools inspect --raw "$release_tag" 2>&1)"; then
+              if [ "$release_manifest" != "$source_manifest" ]; then
+                echo "Release image $release_tag already refers to a different manifest." >&2
+                exit 1
+              fi
+              printf -v "$output_name" '%s' true
+            elif printf '%s' "$release_manifest" | grep -Eqi 'manifest unknown|name unknown|not found'; then
+              printf -v "$output_name" '%s' false
+            else
+              printf 'Unable to inspect release image %s:\n%s\n' "$release_tag" "$release_manifest" >&2
+              exit 1
+            fi
+          done
+
+          for image in API WEB MIGRATOR; do
+            source_variable="${image}_SOURCE_TAG"
+            release_variable="${image}_RELEASE_TAG"
+            exists_variable="$(printf '%s' "$image" | tr '[:upper:]' '[:lower:]')_release_exists"
+            if [ "${!exists_variable}" = "true" ]; then
+              continue
+            fi
+            docker buildx imagetools create \
+              --tag "${!release_variable}" \
+              "${!source_variable}"
+          done
+
+      - name: Verify staged release aliases
+        if: steps.release_ref.outputs.release_tag != ''
+        env:
+          API_SOURCE_TAG: ${{ steps.image_settings.outputs.api_tag }}
+          API_RELEASE_TAG: ${{ steps.image_settings.outputs.api_release_tag }}
+          WEB_SOURCE_TAG: ${{ steps.image_settings.outputs.web_tag }}
+          WEB_RELEASE_TAG: ${{ steps.image_settings.outputs.web_release_tag }}
+          MIGRATOR_SOURCE_TAG: ${{ steps.image_settings.outputs.migrator_tag }}
+          MIGRATOR_RELEASE_TAG: ${{ steps.image_settings.outputs.migrator_release_tag }}
+        run: |
+          for image in API WEB MIGRATOR; do
+            source_variable="${image}_SOURCE_TAG"
+            release_variable="${image}_RELEASE_TAG"
+            source_manifest="$(docker buildx imagetools inspect --raw "${!source_variable}")"
+            release_manifest="$(docker buildx imagetools inspect --raw "${!release_variable}")"
+            if [ "$release_manifest" != "$source_manifest" ]; then
+              echo "Release image ${!release_variable} does not match ${!source_variable}." >&2
+              exit 1
+            fi
+          done
+
+      - name: Update latest image aliases
+        if: steps.release_ref.outputs.release_tag != ''
+        env:
+          API_RELEASE_TAG: ${{ steps.image_settings.outputs.api_release_tag }}
           API_LATEST_TAG: ${{ steps.image_settings.outputs.api_latest_tag }}
-          WEB_TAG: ${{ steps.image_settings.outputs.web_tag }}
+          WEB_RELEASE_TAG: ${{ steps.image_settings.outputs.web_release_tag }}
           WEB_LATEST_TAG: ${{ steps.image_settings.outputs.web_latest_tag }}
-          MIGRATOR_TAG: ${{ steps.image_settings.outputs.migrator_tag }}
+          MIGRATOR_RELEASE_TAG: ${{ steps.image_settings.outputs.migrator_release_tag }}
           MIGRATOR_LATEST_TAG: ${{ steps.image_settings.outputs.migrator_latest_tag }}
         run: |
           for image in API WEB MIGRATOR; do
-            source_variable="${image}_TAG"
+            release_variable="${image}_RELEASE_TAG"
             latest_variable="${image}_LATEST_TAG"
             docker buildx imagetools create \
               --tag "${!latest_variable}" \
-              "${!source_variable}"
+              "${!release_variable}"
           done
 
   deploy-preflight:
@@ -435,6 +565,7 @@ jobs:
             compose.prod.yaml \
             deploy/deploy.sh \
             deploy/rollback.sh \
+            deploy/release-version.sh \
             deploy/Caddyfile \
             "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:/opt/betterspend/"
 
@@ -442,8 +573,10 @@ jobs:
         env:
           DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+          RELEASE_TAG: ${{ needs.publish.outputs.release_tag }}
         run: |
-          # Expand IMAGE_TAG locally (hex-only sha, safe to interpolate);
-          # single quotes keep the remote shell from touching anything else.
-          ssh -o StrictHostKeyChecking=yes "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            "cd /opt/betterspend && ./deploy/deploy.sh '$IMAGE_TAG'"
+          # Keep the validated tag out of the remote command string. The remote
+          # shell reads it as data, then passes it to deploy.sh as one argument.
+          printf '%s\n' "$RELEASE_TAG" | \
+            ssh -o StrictHostKeyChecking=yes "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+              'cd /opt/betterspend && IFS= read -r image_tag && ./deploy/deploy.sh "$image_tag"'
