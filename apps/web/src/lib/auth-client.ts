@@ -1,4 +1,5 @@
 import { apiUrl } from './api-url';
+import type { BootstrapInstanceInput } from '@betterspend/shared';
 
 const SESSION_COOKIE = 'bs_token';
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60; // 7 days in seconds
@@ -8,6 +9,31 @@ export interface SignInResult {
   user?: { id: string; email: string; name: string };
   error?: string;
   message?: string;
+  accountCreated?: boolean;
+}
+
+export async function parseAuthResponse(res: Response): Promise<SignInResult> {
+  const text = await res.text();
+  let data: SignInResult = {};
+  if (!text) {
+    if (res.ok) throw new Error('Invalid authentication response');
+  } else {
+    try {
+      data = JSON.parse(text) as SignInResult;
+    } catch {
+      if (res.ok) throw new Error('Invalid authentication response');
+      data = {};
+    }
+  }
+
+  if (!res.ok) {
+    const status =
+      res.status >= 500
+        ? `Authentication server error (${res.status})`
+        : `Request failed (${res.status})`;
+    return { ...data, error: data.message || data.error || status };
+  }
+  return data;
 }
 
 function saveToken(token: string) {
@@ -25,21 +51,35 @@ export async function signIn(email: string, password: string): Promise<SignInRes
     body: JSON.stringify({ email, password }),
     credentials: 'include',
   });
-  const data: SignInResult = await res.json();
+  const data = await parseAuthResponse(res);
   if (data.token) saveToken(data.token);
   return data;
 }
 
-export async function signUp(email: string, password: string, name: string): Promise<SignInResult> {
-  const res = await fetch(apiUrl('/api/auth/sign-up/email'), {
+export async function signUp(input: BootstrapInstanceInput): Promise<SignInResult> {
+  const res = await fetch(apiUrl('/api/v1/bootstrap'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, name }),
+    body: JSON.stringify(input),
     credentials: 'include',
   });
-  const data: SignInResult = await res.json();
-  if (data.token) saveToken(data.token);
-  return data;
+  const data = await parseAuthResponse(res);
+  if (data.error || data.message) return data;
+  try {
+    const signedIn = await signIn(input.email, input.password);
+    if (signedIn.error || !signedIn.token) {
+      return {
+        accountCreated: true,
+        error: 'Account created. Sign in to continue.',
+      };
+    }
+    return signedIn;
+  } catch {
+    return {
+      accountCreated: true,
+      error: 'Account created. Sign in to continue.',
+    };
+  }
 }
 
 export async function signOut(): Promise<void> {

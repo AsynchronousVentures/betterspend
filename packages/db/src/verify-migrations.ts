@@ -16,6 +16,10 @@ const EXPECTED_TABLES = [
 ] as const;
 
 const EXPECTED_COLUMNS = [
+  { table: 'auth_accounts', column: 'issuer' },
+  { table: 'auth_accounts', column: 'access_token_expires_at' },
+  { table: 'auth_accounts', column: 'refresh_token_expires_at' },
+  { table: 'auth_accounts', column: 'scope' },
   { table: 'approval_requests', column: 'definition_version_id' },
   { table: 'approval_requests', column: 'current_node_id' },
   { table: 'approval_requests', column: 'attempt' },
@@ -27,6 +31,27 @@ const EXPECTED_COLUMNS = [
   { table: 'users', column: 'manager_id' },
   { table: 'workflow_definition_versions', column: 'organization_id' },
   { table: 'workflow_runtime_publications', column: 'outcome_status' },
+] as const;
+
+const EXPECTED_INDEXES = [
+  {
+    name: 'auth_accounts_user_id_idx',
+    table: 'auth_accounts',
+    columns: ['user_id'],
+    unique: false,
+  },
+  {
+    name: 'auth_accounts_issuer_account_id_unique',
+    table: 'auth_accounts',
+    columns: ['issuer', 'account_id'],
+    unique: true,
+  },
+  {
+    name: 'users_email_normalized_unique',
+    table: 'users',
+    columns: ['lower(email::text)'],
+    unique: true,
+  },
 ] as const;
 
 const EXPECTED_TRIGGERS = [
@@ -235,6 +260,13 @@ type ForeignKeyDescription = {
   parentColumns: readonly string[];
 };
 
+type IndexDescription = {
+  name: string;
+  table: string;
+  columns: readonly string[];
+  unique: boolean;
+};
+
 function foreignKeySignature(foreignKey: ForeignKeyDescription): string {
   return [
     foreignKey.name,
@@ -243,6 +275,10 @@ function foreignKeySignature(foreignKey: ForeignKeyDescription): string {
     foreignKey.childColumns.join(','),
     foreignKey.parentColumns.join(','),
   ].join(':');
+}
+
+function indexSignature(index: IndexDescription): string {
+  return [index.name, index.table, index.columns.join(','), index.unique].join(':');
 }
 
 async function main(): Promise<void> {
@@ -301,10 +337,36 @@ async function main(): Promise<void> {
         AND trigger.tgenabled IN ('O', 'A')
         AND trigger.tgname IN ${client(EXPECTED_TRIGGERS)}
     `;
+    const indexes = await client<IndexDescription[]>`
+      SELECT
+        index_class.relname AS name,
+        table_class.relname AS table,
+        index_data.indisunique AS "unique",
+        ARRAY(
+          SELECT pg_get_indexdef(index_data.indexrelid, position, true)
+          FROM generate_series(1, index_data.indnkeyatts) AS position
+          ORDER BY position
+        ) AS columns
+      FROM pg_index AS index_data
+      JOIN pg_class AS index_class ON index_class.oid = index_data.indexrelid
+      JOIN pg_class AS table_class ON table_class.oid = index_data.indrelid
+      JOIN pg_namespace AS table_namespace ON table_namespace.oid = table_class.relnamespace
+      WHERE table_namespace.nspname = 'public'
+        AND index_data.indisvalid
+        AND index_class.relname IN ${client(EXPECTED_INDEXES.map((index) => index.name))}
+    `;
+    const [issuerColumn] = await client<{ nullable: string }[]>`
+      SELECT is_nullable AS nullable
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'auth_accounts'
+        AND column_name = 'issuer'
+    `;
     const foundTables = new Set(tables.map((row) => row.name));
     const foundConstraints = new Set(constraints.map(foreignKeySignature));
     const foundColumns = new Set(columns.map((row) => `${row.table}.${row.column}`));
     const foundTriggers = new Set(triggers.map((row) => row.name));
+    const foundIndexes = new Set(indexes.map(indexSignature));
     const missingTables = EXPECTED_TABLES.filter((name) => !foundTables.has(name));
     const missingConstraints = EXPECTED_FOREIGN_KEYS.filter(
       (item) => !foundConstraints.has(foreignKeySignature(item)),
@@ -313,18 +375,26 @@ async function main(): Promise<void> {
       (item) => !foundColumns.has(`${item.table}.${item.column}`),
     ).map((item) => `${item.table}.${item.column}`);
     const missingTriggers = EXPECTED_TRIGGERS.filter((name) => !foundTriggers.has(name));
+    const missingIndexes = EXPECTED_INDEXES.filter(
+      (index) => !foundIndexes.has(indexSignature(index)),
+    ).map((index) => index.name);
+    const invalidAuthIssuer = issuerColumn?.nullable !== 'NO';
 
     if (
       missingTables.length ||
       missingConstraints.length ||
       missingColumns.length ||
-      missingTriggers.length
+      missingTriggers.length ||
+      missingIndexes.length ||
+      invalidAuthIssuer
     ) {
       throw new Error(
         `Migration verification failed. Missing tables: ${missingTables.join(', ') || 'none'}. ` +
           `Missing constraints: ${missingConstraints.join(', ') || 'none'}. ` +
           `Missing columns: ${missingColumns.join(', ') || 'none'}. ` +
-          `Missing triggers: ${missingTriggers.join(', ') || 'none'}.`,
+          `Missing triggers: ${missingTriggers.join(', ') || 'none'}. ` +
+          `Missing indexes: ${missingIndexes.join(', ') || 'none'}. ` +
+          `Auth issuer nullable: ${invalidAuthIssuer}.`,
       );
     }
     console.log('Migration verification passed.');

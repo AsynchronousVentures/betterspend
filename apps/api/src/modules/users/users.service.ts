@@ -1,27 +1,36 @@
-import { BadRequestException, Injectable, Inject, NotFoundException, ConflictException } from '@nestjs/common';
-import { eq, and } from 'drizzle-orm';
-import { randomUUID, scrypt, randomBytes } from 'crypto';
+import {
+  BadRequestException,
+  Injectable,
+  Inject,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
+import { eq, and, sql } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { users, userRoles, authAccounts, customRoles } from '@betterspend/db';
 import { PERMISSION_CATALOG, normalizePermissions } from '../../common/permissions';
+import { hashCredentialPassword } from '../../auth/credential-password';
 
-async function hashPassword(password: string): Promise<string> {
-  const salt = randomBytes(16).toString('hex');
-  // Node's scrypt: promisified version takes (password, salt, keylen, callback)
-  // Options must be passed via the promisified wrapper differently
-  return new Promise((resolve, reject) => {
-    scrypt(
-      Buffer.from(password.normalize('NFKC')),
-      salt,
-      64,
-      { N: 16384, r: 16, p: 1, maxmem: 128 * 16384 * 16 * 2 },
-      (err, key) => {
-        if (err) reject(err);
-        else resolve(`${salt}:${key.toString('hex')}`);
-      },
-    );
-  });
+const EMAIL_UNIQUE_CONSTRAINTS = new Set(['users_email_unique', 'users_email_normalized_unique']);
+
+function isEmailUniqueViolation(error: unknown): boolean {
+  const seen = new Set<object>();
+  let current = error;
+  while (typeof current === 'object' && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const candidate = current as Record<string, unknown>;
+    if (
+      candidate.code === '23505' &&
+      typeof candidate.constraint_name === 'string' &&
+      EMAIL_UNIQUE_CONSTRAINTS.has(candidate.constraint_name)
+    ) {
+      return true;
+    }
+    current = candidate.cause;
+  }
+  return false;
 }
 
 @Injectable()
@@ -38,8 +47,7 @@ export class UsersService {
 
   async findOne(id: string, organizationId: string) {
     const user = await this.db.query.users.findFirst({
-      where: (u, { and, eq }) =>
-        and(eq(u.id, id), eq(u.organizationId, organizationId)),
+      where: (u, { and, eq }) => and(eq(u.id, id), eq(u.organizationId, organizationId)),
       with: { userRoles: { with: { customRole: true } } },
     });
 
@@ -97,30 +105,46 @@ export class UsersService {
       .where(and(eq(userRoles.id, roleId), eq(userRoles.userId, userId)));
   }
 
-  async create(organizationId: string, data: { name: string; email: string; password: string; role?: string }) {
-    const existing = await this.db.query.users.findFirst({ where: eq(users.email, data.email) });
-    if (existing) throw new ConflictException(`Email ${data.email} is already in use`);
-
-    const userId = randomUUID();
-    const [user] = await this.db.insert(users).values({
-      id: userId,
-      organizationId,
-      email: data.email,
-      name: data.name,
-      emailVerified: true,
-    }).returning();
-
-    const hashed = await hashPassword(data.password);
-    await this.db.insert(authAccounts).values({
-      id: randomUUID(),
-      userId,
-      accountId: data.email,
-      providerId: 'credential',
-      password: hashed,
+  async create(
+    organizationId: string,
+    data: { name: string; email: string; password: string; role?: string },
+  ) {
+    const email = data.email.trim().toLowerCase();
+    const existing = await this.db.query.users.findFirst({
+      where: sql`lower(${users.email}) = ${email}`,
     });
+    if (existing) throw new ConflictException(`Email ${email} is already in use`);
+    const userId = randomUUID();
+    const password = await hashCredentialPassword(data.password);
+    try {
+      await this.db.transaction(async (transaction) => {
+        await transaction.insert(users).values({
+          id: userId,
+          organizationId,
+          email,
+          name: data.name,
+          emailVerified: true,
+        });
+        await transaction.insert(authAccounts).values({
+          id: randomUUID(),
+          userId,
+          issuer: 'local:credential',
+          accountId: userId,
+          providerId: 'credential',
+          password,
+        });
 
-    if (data.role) {
-      await this.db.insert(userRoles).values({ userId, role: data.role, scopeType: 'global' });
+        if (data.role) {
+          await transaction
+            .insert(userRoles)
+            .values({ userId, role: data.role, scopeType: 'global' });
+        }
+      });
+    } catch (error: unknown) {
+      if (isEmailUniqueViolation(error)) {
+        throw new ConflictException(`Email ${email} is already in use`);
+      }
+      throw error;
     }
 
     return this.findOne(userId, organizationId);
@@ -172,8 +196,12 @@ export class UsersService {
       .update(customRoles)
       .set({
         name: nextName,
-        description: data.description === undefined ? existing.description : data.description?.trim() || null,
-        permissions: data.permissions === undefined ? existing.permissions : normalizePermissions(data.permissions),
+        description:
+          data.description === undefined ? existing.description : data.description?.trim() || null,
+        permissions:
+          data.permissions === undefined
+            ? existing.permissions
+            : normalizePermissions(data.permissions),
         updatedAt: new Date(),
       })
       .where(and(eq(customRoles.id, id), eq(customRoles.organizationId, organizationId)))
@@ -197,7 +225,11 @@ export class UsersService {
     return role;
   }
 
-  private async assertUniqueCustomRoleName(organizationId: string, name: string, ignoreId?: string) {
+  private async assertUniqueCustomRoleName(
+    organizationId: string,
+    name: string,
+    ignoreId?: string,
+  ) {
     const roles = await this.listCustomRoles(organizationId);
     const duplicate = roles.find(
       (role) => role.name.toLowerCase() === name.toLowerCase() && role.id !== ignoreId,

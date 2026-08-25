@@ -6,6 +6,7 @@
     "dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/main",
+    "auth:verify-integration": "tsx src/auth/verify-auth-integration.ts",
     "lint": "eslint src --max-warnings 0",
     "test": "jest && tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit"

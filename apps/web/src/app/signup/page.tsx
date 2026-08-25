@@ -3,7 +3,8 @@
 import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowRight, KeyRound, Mail, UserRound } from 'lucide-react';
+import { ArrowRight, Building2, KeyRound, Mail, UserRound } from 'lucide-react';
+import { bootstrapInstanceSchema } from '@betterspend/shared';
 import { signUp } from '../../lib/auth-client';
 import { AuthShell } from '../../components/auth-shell';
 import { Alert, AlertDescription } from '../../components/ui/alert';
@@ -13,6 +14,7 @@ import { Input } from '../../components/ui/input';
 export default function SignUpPage() {
   const router = useRouter();
   const [name, setName] = useState('');
+  const [organizationName, setOrganizationName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -27,22 +29,30 @@ export default function SignUpPage() {
       setError('Passwords do not match');
       return;
     }
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters');
+    const parsed = bootstrapInstanceSchema.safeParse({
+      organizationName,
+      name,
+      email,
+      password,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || 'Check the account details');
       return;
     }
 
     setLoading(true);
     try {
-      const result = await signUp(email, password, name);
-      if (result.error || result.message?.toLowerCase().includes('already')) {
+      const result = await signUp(parsed.data);
+      if (result.accountCreated) {
+        router.push('/login?created=1');
+      } else if (result.error || result.message?.toLowerCase().includes('already')) {
         setError(result.message || result.error || 'Sign-up failed');
       } else {
         router.push('/');
         router.refresh();
       }
     } catch {
-      setError('Network error — please try again');
+      setError('Network error - please try again');
     } finally {
       setLoading(false);
     }
@@ -55,7 +65,10 @@ export default function SignUpPage() {
       footer={
         <>
           Already have an account?{' '}
-          <Link href="/login" className="font-medium text-primary transition-colors hover:text-primary/80">
+          <Link
+            href="/login"
+            className="font-medium text-primary transition-colors hover:text-primary/80"
+          >
             Sign in
           </Link>
         </>
@@ -63,10 +76,30 @@ export default function SignUpPage() {
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-2">
+          <label className="text-sm font-medium text-foreground">Organization name</label>
+          <div className="relative">
+            <Building2 className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={organizationName}
+              onChange={(e) => setOrganizationName(e.target.value)}
+              required
+              placeholder="Acme Corp"
+              className="h-11 pl-10"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">Full name</label>
           <div className="relative">
             <UserRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Jane Smith" className="h-11 pl-10" />
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              placeholder="Jane Smith"
+              className="h-11 pl-10"
+            />
           </div>
         </div>
 
@@ -74,7 +107,14 @@ export default function SignUpPage() {
           <label className="text-sm font-medium text-foreground">Email</label>
           <div className="relative">
             <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@company.com" className="h-11 pl-10" />
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              placeholder="you@company.com"
+              className="h-11 pl-10"
+            />
           </div>
         </div>
 
@@ -82,7 +122,15 @@ export default function SignUpPage() {
           <label className="text-sm font-medium text-foreground">Password</label>
           <div className="relative">
             <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="new-password" placeholder="••••••••" className="h-11 pl-10" />
+            <Input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              autoComplete="new-password"
+              placeholder="••••••••"
+              className="h-11 pl-10"
+            />
           </div>
         </div>
 
@@ -90,7 +138,15 @@ export default function SignUpPage() {
           <label className="text-sm font-medium text-foreground">Confirm password</label>
           <div className="relative">
             <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required autoComplete="new-password" placeholder="••••••••" className="h-11 pl-10" />
+            <Input
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              required
+              autoComplete="new-password"
+              placeholder="••••••••"
+              className="h-11 pl-10"
+            />
           </div>
         </div>
 

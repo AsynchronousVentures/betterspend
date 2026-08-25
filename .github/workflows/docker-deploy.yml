@@ -160,12 +160,20 @@ jobs:
           pnpm --filter @betterspend/db db:validate-history
           pnpm --filter @betterspend/db db:migrate
           pnpm --filter @betterspend/db db:verify-migrations
+          pnpm --filter @betterspend/db db:verify-auth-upgrade
 
       - name: Build shared package
         run: pnpm --filter @betterspend/shared build
 
       - name: Build database package
         run: pnpm --filter @betterspend/db build
+
+      - name: Verify authentication integration
+        env:
+          DATABASE_URL: postgresql://betterspend@127.0.0.1:5432/betterspend_test
+        run: |
+          BETTER_AUTH_SECRET="$(openssl rand -hex 32)" \
+            pnpm --filter @betterspend/api auth:verify-integration
 
       - name: Typecheck API
         run: pnpm --filter @betterspend/api typecheck

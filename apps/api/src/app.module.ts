@@ -54,12 +54,14 @@ import { AiProvidersModule } from './modules/ai-providers/ai-providers.module';
 import { MessagesModule } from './modules/messages/messages.module';
 import { RiskScreeningModule } from './modules/risk-screening/risk-screening.module';
 import { WorkflowDefinitionsModule } from './modules/workflow-definitions/workflow-definitions.module';
+import { BootstrapModule } from './modules/bootstrap/bootstrap.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 300 }]),
     DatabaseModule,
+    BootstrapModule,
     QueueModule,
     StorageModule,
     NotificationsModule,
