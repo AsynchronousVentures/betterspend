@@ -389,7 +389,10 @@ describe('InvoicesService creation audit', () => {
 });
 
 describe('InvoicesService material edits', () => {
-  const createEditService = (status: 'approved' | 'matched' = 'approved') => {
+  const createEditService = (
+    status: 'approved' | 'matched' = 'approved',
+    rerunMatchStatus: 'full_match' | 'partial_match' | 'exception' = 'full_match',
+  ) => {
     const invoice = {
       id: 'invoice-1',
       organizationId: 'organization-1',
@@ -449,6 +452,7 @@ describe('InvoicesService material edits', () => {
     const auditActions: string[] = [];
     let reopened = false;
     let restarted = false;
+    let cancelled = false;
     let published = false;
     const transaction = {
       query: {
@@ -499,6 +503,9 @@ describe('InvoicesService material edits', () => {
           status: 'pending' as const,
         };
       },
+      cancelForEditInTransaction: async () => {
+        cancelled = true;
+      },
       publishCommittedRequest: async () => {
         published = true;
       },
@@ -507,7 +514,7 @@ describe('InvoicesService material edits', () => {
       db,
       undefined as unknown as SequenceService,
       {
-        runMatch: async () => ({ matchStatus: 'full_match', lineResults: [] }),
+        runMatch: async () => ({ matchStatus: rerunMatchStatus, lineResults: [] }),
       } as unknown as MatchingService,
       { emit() {} } as unknown as WebhookEventService,
       { enqueue() {} } as unknown as GlExportService,
@@ -543,7 +550,7 @@ describe('InvoicesService material edits', () => {
       invoiceUpdates,
       lineUpdates,
       auditActions,
-      state: () => ({ reopened, restarted, published }),
+      state: () => ({ reopened, restarted, cancelled, published }),
     };
   };
 
@@ -554,7 +561,12 @@ describe('InvoicesService material edits', () => {
       lines: [{ id: '00000000-0000-4000-8000-000000000101', quantity: 2 }],
     });
 
-    assert.deepEqual(fixture.state(), { reopened: true, restarted: true, published: true });
+    assert.deepEqual(fixture.state(), {
+      reopened: true,
+      restarted: true,
+      cancelled: false,
+      published: true,
+    });
     assert.ok(fixture.invoiceUpdates.some((update) => update.approvedBy === null));
     assert.ok(fixture.invoiceUpdates.some((update) => update.status === 'pending_approval'));
     assert.ok(fixture.lineUpdates.some((update) => update.quantity === '2.00'));
@@ -573,10 +585,32 @@ describe('InvoicesService material edits', () => {
       ],
     });
 
-    assert.deepEqual(fixture.state(), { reopened: false, restarted: false, published: false });
+    assert.deepEqual(fixture.state(), {
+      reopened: false,
+      restarted: false,
+      cancelled: false,
+      published: false,
+    });
     assert.ok(!fixture.invoiceUpdates.some((update) => update.approvedBy === null));
     assert.ok(fixture.lineUpdates.some((update) => update.description === 'Consulting service'));
     assert.deepEqual(fixture.auditActions, ['updated']);
+  });
+
+  it('cancels approval without restarting when the edited invoice no longer fully matches', async () => {
+    const fixture = createEditService('approved', 'partial_match');
+
+    await fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+      lines: [{ id: '00000000-0000-4000-8000-000000000101', quantity: 2 }],
+    });
+
+    assert.deepEqual(fixture.state(), {
+      reopened: true,
+      restarted: false,
+      cancelled: true,
+      published: false,
+    });
+    assert.ok(fixture.invoiceUpdates.some((update) => update.status === 'partial_match'));
+    assert.ok(!fixture.invoiceUpdates.some((update) => update.status === 'pending_approval'));
   });
 
   it('rejects a vendor that does not match the linked purchase order', async () => {
@@ -588,6 +622,11 @@ describe('InvoicesService material edits', () => {
       }),
       /must match its purchase order vendor/,
     );
-    assert.deepEqual(fixture.state(), { reopened: false, restarted: false, published: false });
+    assert.deepEqual(fixture.state(), {
+      reopened: false,
+      restarted: false,
+      cancelled: false,
+      published: false,
+    });
   });
 });

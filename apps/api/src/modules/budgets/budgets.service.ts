@@ -814,6 +814,7 @@ export class BudgetsService {
     baseAmount: string,
     fiscalYear: number,
     executor: Db | DbTransaction = this.db,
+    recordedAt = new Date(),
   ) {
     const budget = await executor.query.budgets.findFirst({
       where: (b, { and, eq }) =>
@@ -828,7 +829,6 @@ export class BudgetsService {
 
     if (!budget) return { updated: false, message: 'No budget configured' };
 
-    const today = new Date();
     const budgetAmount = convertMoneyFromBase(baseAmount, budget.exchangeRate || '1');
 
     await executor
@@ -840,7 +840,7 @@ export class BudgetsService {
       })
       .where(and(eq(budgets.id, budget.id), eq(budgets.organizationId, organizationId)));
 
-    // Also update the period that covers today's date
+    // Keep the period ledger aligned with the date of the spend being recorded or reversed.
     await executor
       .update(budgetPeriods)
       .set({
@@ -849,8 +849,8 @@ export class BudgetsService {
       .where(
         and(
           eq(budgetPeriods.budgetId, budget.id),
-          sql`${budgetPeriods.periodStart} <= ${today}`,
-          sql`${budgetPeriods.periodEnd} >= ${today}`,
+          sql`${budgetPeriods.periodStart} <= ${recordedAt}`,
+          sql`${budgetPeriods.periodEnd} >= ${recordedAt}`,
         ),
       );
 
@@ -1049,6 +1049,7 @@ export class BudgetsService {
       baseExpenseAmount,
       context.requisition.createdAt.getUTCFullYear(),
       executor,
+      approvedAt,
     );
     const current = await this.getCommitmentBalance(
       executor,
@@ -1119,6 +1120,7 @@ export class BudgetsService {
       `-${invoiceBalance.expended}`,
       context.requisition.createdAt.getUTCFullYear(),
       executor,
+      invoice.approvedAt ?? editedAt,
     );
     await this.appendCommitmentEvent(
       executor,

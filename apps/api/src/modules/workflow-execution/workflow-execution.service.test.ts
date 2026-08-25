@@ -100,11 +100,10 @@ function createRestartFixture(
     approvableId: '00000000-0000-0000-0000-000000000401',
     approvalRuleId: null,
     definitionVersionId: '00000000-0000-0000-0000-000000000501',
-    initiatedBy: '00000000-0000-0000-0000-000000000601',
+    initiatedBy: enforceSeparationOfDuties ? DELEGATE_ID : '00000000-0000-0000-0000-000000000601',
     currentNodeId: 'old-review',
     workflowContext: {
       totalAmount: '100',
-      ...(enforceSeparationOfDuties ? { actors: { submitter: DELEGATE_ID } } : {}),
     },
     attempt: 1,
     currentStep: 1,
@@ -123,8 +122,36 @@ function createRestartFixture(
     version: 2,
     executableJson: executable,
   };
+  const currentEntity = {
+    id: oldRequest.approvableId,
+    organizationId: ORGANIZATION_ID,
+    requesterId: oldRequest.initiatedBy,
+    departmentId: '00000000-0000-0000-0000-000000000801',
+    totalAmount: '250',
+    baseTotalAmount: '250',
+    currency: 'USD',
+    status: 'pending_approval',
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    updatedAt: new Date(),
+  };
   let replacement: Record<string, unknown> | null = null;
-  const assignments: Array<Record<string, unknown>> = [];
+  const assignments: Array<Record<string, unknown>> = [
+    {
+      id: '00000000-0000-0000-0000-000000000700',
+      organizationId: ORGANIZATION_ID,
+      approvalRequestId: oldRequest.id,
+      nodeId: oldRequest.currentNodeId,
+      sequence: 1,
+      resolver: { type: 'user', userId: APPROVER_ID },
+      resolvedApproverId: APPROVER_ID,
+      assignedApproverId: APPROVER_ID,
+      status: 'pending',
+      actedBy: null,
+      actedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+  ];
   const requestUpdates: Array<Record<string, unknown>> = [];
   const entityUpdates: Array<Record<string, unknown>> = [];
   const actions: Array<Record<string, unknown>> = [];
@@ -133,7 +160,15 @@ function createRestartFixture(
   const transaction = {
     query: {
       workflowDefinitionVersions: { findFirst: async () => latest },
-      workflowApprovalAssignments: { findMany: async () => assignments },
+      workflowApprovalAssignments: {
+        findMany: async () => {
+          const activeRequest = replacement ?? oldRequest;
+          return assignments.filter(
+            (assignment) => assignment.approvalRequestId === activeRequest.id,
+          );
+        },
+      },
+      requisitions: { findFirst: async () => currentEntity },
       users: {
         findMany: async () => [
           {
@@ -157,7 +192,7 @@ function createRestartFixture(
       return {
         from() {
           if (!fields) {
-            return { where: () => ({ for: async () => [oldRequest] }) };
+            return { where: () => ({ for: async () => [replacement ?? oldRequest] }) };
           }
           return {
             innerJoin: () => ({
@@ -188,7 +223,7 @@ function createRestartFixture(
           if (table === workflowApprovalAssignments) {
             const created = rows.map((row, index) => ({
               ...row,
-              id: `00000000-0000-0000-0000-${String(index + 701).padStart(12, '0')}`,
+              id: `00000000-0000-0000-0000-${String(assignments.length + index + 701).padStart(12, '0')}`,
               createdAt: new Date(),
               updatedAt: new Date(),
               actedBy: null,
@@ -207,9 +242,20 @@ function createRestartFixture(
         set(values: Record<string, unknown>) {
           return {
             where() {
+              if (table === workflowApprovalAssignments) {
+                const activeRequest = replacement ?? oldRequest;
+                const candidates = assignments.filter(
+                  (assignment) =>
+                    assignment.approvalRequestId === activeRequest.id &&
+                    (assignment.status === 'waiting' || assignment.status === 'pending'),
+                );
+                const targets = values.status === 'skipped' ? candidates : candidates.slice(0, 1);
+                targets.forEach((assignment) => Object.assign(assignment, values));
+                return { returning: async () => targets };
+              }
               if (table !== approvalRequests) {
                 entityUpdates.push(values);
-                return { returning: async () => [] };
+                return { returning: async () => [{ id: currentEntity.id }] };
               }
               requestUpdates.push(values);
               if (values.status === 'cancelled') Object.assign(oldRequest, values);
@@ -227,7 +273,10 @@ function createRestartFixture(
     query: {
       approvalRequests: { findFirst: async () => replacement },
       workflowDefinitionVersions: { findFirst: async () => latest },
-      workflowApprovalAssignments: { findMany: async () => assignments },
+      workflowApprovalAssignments: {
+        findMany: async () =>
+          assignments.filter((assignment) => assignment.approvalRequestId === replacement?.id),
+      },
     },
   } as unknown as Db;
   const queue = { add: async () => undefined } as unknown as Queue;
@@ -253,7 +302,10 @@ function createRestartFixture(
   return {
     actions,
     assignments,
+    currentEntity,
     entityUpdates,
+    executable,
+    getReplacement: () => replacement,
     notifications,
     oldRequest,
     requestUpdates,
@@ -286,9 +338,19 @@ describe('WorkflowExecutionService restart', () => {
     assert.ok(fixture.requestUpdates.some((update) => update.currentNodeId === 'review'));
     assert.ok(!fixture.requestUpdates.some((update) => update.status === 'approved'));
     assert.deepEqual(fixture.entityUpdates, []);
-    assert.equal(fixture.assignments.length, 1);
-    assert.equal(fixture.assignments[0]?.resolvedApproverId, APPROVER_ID);
-    assert.equal(fixture.assignments[0]?.assignedApproverId, DELEGATE_ID);
+    const oldAssignment = fixture.assignments.find(
+      (assignment) => assignment.approvalRequestId === fixture.oldRequest.id,
+    );
+    const replacementAssignment = fixture.assignments.find(
+      (assignment) => assignment.approvalRequestId !== fixture.oldRequest.id,
+    );
+    assert.equal(oldAssignment?.status, 'skipped');
+    assert.equal(replacementAssignment?.resolvedApproverId, APPROVER_ID);
+    assert.equal(replacementAssignment?.assignedApproverId, DELEGATE_ID);
+    assert.equal(
+      (fixture.getReplacement()?.workflowContext as Record<string, unknown>).totalAmount,
+      '250',
+    );
     assert.deepEqual(fixture.notifications, [DELEGATE_ID]);
     assert.ok(fixture.actions.some((action) => action.action === 'restarted'));
     assert.ok(fixture.actions.some((action) => action.action === 'assigned'));
@@ -355,9 +417,64 @@ describe('WorkflowExecutionService restart', () => {
       fixture.oldRequest.initiatedBy,
     );
 
-    assert.equal(fixture.assignments.length, 1);
-    assert.equal(fixture.assignments[0]?.resolvedApproverId, FALLBACK_ID);
-    assert.equal(fixture.assignments[0]?.assignedApproverId, FALLBACK_ID);
+    const replacementAssignment = fixture.assignments.find(
+      (assignment) => assignment.approvalRequestId !== fixture.oldRequest.id,
+    );
+    assert.equal(replacementAssignment?.resolvedApproverId, FALLBACK_ID);
+    assert.equal(replacementAssignment?.assignedApproverId, FALLBACK_ID);
+  });
+
+  it('approves after an SLA reassign skips the obsolete assignment', async () => {
+    const fixture = createRestartFixture();
+    await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+    fixture.executable.steps.push({
+      node: {
+        id: 'review-timer',
+        name: 'Review SLA',
+        type: 'escalation_timer',
+        disabled: false,
+        config: {
+          parentNodeId: 'review',
+          slaHours: 1,
+          warningPercent: 50,
+          action: { type: 'reassign', resolvers: [{ type: 'user', userId: FALLBACK_ID }] },
+        },
+      },
+      transitions: [],
+    });
+    const replacement = fixture.getReplacement();
+    assert.ok(replacement);
+
+    await fixture.service.handleEscalation({
+      organizationId: ORGANIZATION_ID,
+      approvalRequestId: String(replacement.id),
+      definitionVersionId: String(replacement.definitionVersionId),
+      parentNodeId: 'review',
+      timerNodeId: 'review-timer',
+      attempt: Number(replacement.attempt),
+      kind: 'action',
+    });
+    const result = await fixture.service.processAction(
+      String(replacement.id),
+      FALLBACK_ID,
+      'approve',
+      undefined,
+      ORGANIZATION_ID,
+    );
+
+    assert.equal(result.status, 'approved');
+    const replacementAssignments = fixture.assignments.filter(
+      (assignment) => assignment.approvalRequestId === replacement.id,
+    );
+    assert.deepEqual(
+      replacementAssignments.map((assignment) => assignment.status),
+      ['skipped', 'approved'],
+    );
+    assert.equal(replacement.status, 'approved');
   });
 
   it('restarts an approved instance when a material edit invalidates its approval', async () => {

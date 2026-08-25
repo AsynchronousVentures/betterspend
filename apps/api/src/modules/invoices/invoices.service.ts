@@ -465,8 +465,11 @@ export class InvoicesService {
           .where(and(eq(invoiceLines.id, line.id), eq(invoiceLines.invoiceId, id)));
       }
 
+      let approvalEligible =
+        lockedInvoice.purchaseOrderId !== null && lockedInvoice.matchStatus === 'full_match';
       if (material && lockedInvoice.purchaseOrderId) {
         const match = await this.matchingService.runMatch(id, tx);
+        approvalEligible = match.matchStatus === 'full_match';
         const status =
           match.matchStatus === 'full_match'
             ? 'matched'
@@ -494,22 +497,35 @@ export class InvoicesService {
           orderBy: (request, { desc }) => desc(request.createdAt),
         });
         if (currentRequest) {
-          const restarted = await this.workflowExecution.restartOnLatestInTransaction(
-            currentRequest.id,
-            organizationId,
-            actorId,
-            tx,
-            { allowApproved: true, refreshContext: true },
-          );
-          publishRequestId = restarted.replacementRequestId;
-          approvalRequestId = restarted.replacementRequestId;
-          if (restarted.status === 'pending') {
-            await tx
-              .update(invoices)
-              .set({ status: 'pending_approval', updatedAt: editedAt })
-              .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+          if (approvalEligible) {
+            const restarted = await this.workflowExecution.restartOnLatestInTransaction(
+              currentRequest.id,
+              organizationId,
+              actorId,
+              tx,
+              { allowApproved: true },
+            );
+            publishRequestId = restarted.replacementRequestId;
+            approvalRequestId = restarted.replacementRequestId;
+            if (restarted.status === 'pending') {
+              await tx
+                .update(invoices)
+                .set({ status: 'pending_approval', updatedAt: editedAt })
+                .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+            }
+          } else {
+            await this.workflowExecution.cancelForEditInTransaction(
+              currentRequest.id,
+              organizationId,
+              actorId,
+              tx,
+              { allowApproved: true },
+            );
           }
-        } else if (['matched', 'pending_approval', 'approved'].includes(lockedInvoice.status)) {
+        } else if (
+          approvalEligible &&
+          ['matched', 'pending_approval', 'approved'].includes(lockedInvoice.status)
+        ) {
           const initiated = await this.workflowExecution.initiateIfConfigured(
             organizationId,
             'invoice',

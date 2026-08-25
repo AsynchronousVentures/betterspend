@@ -1,5 +1,6 @@
 import {
   boolean,
+  check,
   foreignKey,
   index,
   integer,
@@ -11,7 +12,12 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
-import type { ApproverResolver } from '@betterspend/shared';
+import { sql } from 'drizzle-orm';
+import {
+  WORKFLOW_ASSIGNMENT_STATUSES,
+  type ApproverResolver,
+  type WorkflowAssignmentStatus,
+} from '@betterspend/shared';
 import { organizations, legalEntities } from './organizations';
 import { users } from './users';
 import { workflowDefinitionVersions } from './workflow-definitions';
@@ -92,16 +98,17 @@ export const workflowApprovalAssignments = pgTable(
   'workflow_approval_assignments',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id),
+    organizationId: uuid('organization_id').notNull(),
     approvalRequestId: uuid('approval_request_id').notNull(),
     nodeId: varchar('node_id', { length: 100 }).notNull(),
     sequence: integer('sequence').notNull(),
     resolver: jsonb('resolver').$type<ApproverResolver>().notNull(),
     resolvedApproverId: uuid('resolved_approver_id').notNull(),
     assignedApproverId: uuid('assigned_approver_id').notNull(),
-    status: varchar('status', { length: 20 }).notNull().default('pending'),
+    status: varchar('status', { length: 20 })
+      .$type<WorkflowAssignmentStatus>()
+      .notNull()
+      .default('pending'),
     actedBy: uuid('acted_by'),
     actedAt: timestamp('acted_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -118,6 +125,15 @@ export const workflowApprovalAssignments = pgTable(
       table.assignedApproverId,
       table.status,
     ),
+    check(
+      'workflow_approval_assignments_status_check',
+      sql`${table.status} in (${sql.raw(WORKFLOW_ASSIGNMENT_STATUSES.map((status) => `'${status}'`).join(', '))})`,
+    ),
+    foreignKey({
+      columns: [table.organizationId],
+      foreignColumns: [organizations.id],
+      name: 'workflow_approval_assignments_organization_fk',
+    }),
     foreignKey({
       columns: [table.approvalRequestId, table.organizationId],
       foreignColumns: [approvalRequests.id, approvalRequests.organizationId],

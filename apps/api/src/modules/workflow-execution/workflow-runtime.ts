@@ -1,6 +1,11 @@
-import type { ExecutableStep, ExecutableTransition, WorkflowCondition } from '@betterspend/shared';
+import type {
+  ExecutableStep,
+  ExecutableTransition,
+  WorkflowAssignmentStatus,
+  WorkflowCondition,
+} from '@betterspend/shared';
 
-export type WorkflowAssignmentStatus = 'waiting' | 'pending' | 'approved' | 'rejected' | 'skipped';
+export type { WorkflowAssignmentStatus } from '@betterspend/shared';
 
 export type WorkflowQuorum =
   { type: 'all' } | { type: 'majority' } | { type: 'count'; count: number };
@@ -82,16 +87,28 @@ export function selectWorkflowTransition(
   context: Record<string, unknown>,
   sourceHandle?: string,
 ): ExecutableTransition | null {
-  const eligible = sourceHandle
-    ? step.transitions.filter((transition) => transition.sourceHandle === sourceHandle)
-    : step.transitions;
+  const eligible = (
+    sourceHandle
+      ? step.transitions.filter((transition) => transition.sourceHandle === sourceHandle)
+      : step.transitions
+  )
+    .slice()
+    .sort(
+      (left, right) =>
+        (left.priority ?? Number.MAX_SAFE_INTEGER) - (right.priority ?? Number.MAX_SAFE_INTEGER) ||
+        left.edgeId.localeCompare(right.edgeId),
+    );
   const conditional = eligible.find(
     (transition) =>
       !transition.isDefault &&
       !!transition.condition &&
       evaluateWorkflowCondition(transition.condition, context),
   );
-  return conditional ?? eligible.find((transition) => transition.isDefault) ?? eligible[0] ?? null;
+  return (
+    conditional ??
+    eligible.find((transition) => transition.isDefault || !transition.condition) ??
+    null
+  );
 }
 
 export function requiredWorkflowApprovals(quorum: WorkflowQuorum, total: number): number {
@@ -112,11 +129,12 @@ export function evaluateWorkflowQuorum(
   quorum: WorkflowQuorum,
   assignments: Array<{ sequence: number; status: WorkflowAssignmentStatus }>,
 ): WorkflowQuorumProgress {
-  const required = requiredWorkflowApprovals(quorum, assignments.length);
-  const approved = assignments.filter((assignment) => assignment.status === 'approved').length;
+  const active = assignments.filter((assignment) => assignment.status !== 'skipped');
+  const required = requiredWorkflowApprovals(quorum, active.length);
+  const approved = active.filter((assignment) => assignment.status === 'approved').length;
   if (approved >= required) return { state: 'approved', nextSequence: null };
 
-  const available = assignments.filter(
+  const available = active.filter(
     (assignment) =>
       assignment.status === 'waiting' ||
       assignment.status === 'pending' ||
@@ -125,7 +143,7 @@ export function evaluateWorkflowQuorum(
   if (available < required) return { state: 'rejected', nextSequence: null };
 
   if (execution === 'serial') {
-    const next = assignments
+    const next = active
       .filter((assignment) => assignment.status === 'waiting')
       .sort((left, right) => left.sequence - right.sequence)[0];
     return { state: 'pending', nextSequence: next?.sequence ?? null };

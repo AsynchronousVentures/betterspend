@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
 import type {
   ApprovalNode,
@@ -380,7 +380,7 @@ export class WorkflowExecutionService {
     organizationId: string,
     actorId: string,
     tx: DbTransaction,
-    options: { allowApproved?: boolean; refreshContext?: boolean } = {},
+    options: { allowApproved?: boolean } = {},
   ): Promise<WorkflowRestartResult> {
     const request = await this.lockVersionedRequest(tx, requestId, organizationId);
     if (request.status !== 'pending' && !(options.allowApproved && request.status === 'approved')) {
@@ -419,22 +419,32 @@ export class WorkflowExecutionService {
     });
     if (!latest) throw new ConflictException('The published workflow version is unavailable');
     const executable = executableDefinitionSchema.parse(latest.executableJson);
-    const workflowContext = options.refreshContext
-      ? await this.loadWorkflowContext(
-          tx,
-          organizationId,
-          supportedApprovableType(request.approvableType),
-          request.approvableId,
-          actorId,
-          {},
-        )
-      : request.workflowContext;
+    const freshContext = await this.loadWorkflowContext(
+      tx,
+      organizationId,
+      supportedApprovableType(request.approvableType),
+      request.approvableId,
+      request.initiatedBy ?? actorId,
+      {},
+    );
+    const supplementalContext = Object.fromEntries(
+      Object.entries(request.workflowContext).filter(([key]) => !Object.hasOwn(freshContext, key)),
+    );
     const now = new Date();
 
     await tx
       .update(approvalRequests)
       .set({ status: 'cancelled', updatedAt: now })
       .where(eq(approvalRequests.id, request.id));
+    await tx
+      .update(workflowApprovalAssignments)
+      .set({ status: 'skipped', updatedAt: now })
+      .where(
+        and(
+          eq(workflowApprovalAssignments.approvalRequestId, request.id),
+          inArray(workflowApprovalAssignments.status, ['waiting', 'pending']),
+        ),
+      );
     const [replacement] = await tx
       .insert(approvalRequests)
       .values({
@@ -445,7 +455,7 @@ export class WorkflowExecutionService {
         definitionVersionId: latest.id,
         initiatedBy: request.initiatedBy ?? actorId,
         currentNodeId: executable.entryStepId,
-        workflowContext,
+        workflowContext: { ...supplementalContext, ...freshContext },
         attempt: request.attempt + 1,
         currentStep: 0,
         status: 'pending',
@@ -498,6 +508,53 @@ export class WorkflowExecutionService {
       attempt: replacement.attempt,
       status: outcome.status,
     };
+  }
+
+  /** Cancel a workflow invalidated by an entity edit without creating a replacement instance. */
+  async cancelForEditInTransaction(
+    requestId: string,
+    organizationId: string,
+    actorId: string,
+    tx: DbTransaction,
+    options: { allowApproved?: boolean } = {},
+  ): Promise<void> {
+    const request = await this.lockVersionedRequest(tx, requestId, organizationId);
+    if (request.status !== 'pending' && !(options.allowApproved && request.status === 'approved')) {
+      throw new ConflictException('Only pending workflow instances can be cancelled for an edit');
+    }
+    const now = new Date();
+    await tx
+      .update(approvalRequests)
+      .set({ status: 'cancelled', updatedAt: now })
+      .where(eq(approvalRequests.id, request.id));
+    await tx
+      .update(workflowApprovalAssignments)
+      .set({ status: 'skipped', updatedAt: now })
+      .where(
+        and(
+          eq(workflowApprovalAssignments.approvalRequestId, request.id),
+          inArray(workflowApprovalAssignments.status, ['waiting', 'pending']),
+        ),
+      );
+    await tx.insert(approvalActions).values({
+      approvalRequestId: request.id,
+      stepOrder: request.currentStep,
+      approverId: actorId,
+      action: 'cancelled',
+      nodeId: request.currentNodeId,
+      comment: 'Cancelled because a material edit requires a new successful match',
+      metadata: { reason: 'material_edit_requires_rematch' },
+    });
+    await this.audit.log(
+      organizationId,
+      actorId,
+      'approval_request',
+      request.id,
+      'cancelled_for_material_edit',
+      { approvableType: request.approvableType, approvableId: request.approvableId },
+      undefined,
+      tx,
+    );
   }
 
   async publishCommittedRequest(requestId: string, organizationId: string): Promise<void> {
@@ -859,7 +916,8 @@ export class WorkflowExecutionService {
         resolver: item.resolver,
         resolvedApproverId: item.resolvedApproverId,
         assignedApproverId: item.assignedApproverId,
-        status: execution === 'parallel' || index === 0 ? 'pending' : 'waiting',
+        status:
+          execution === 'parallel' || index === 0 ? ('pending' as const) : ('waiting' as const),
       }));
       const created = await tx.insert(workflowApprovalAssignments).values(assignments).returning();
       await tx.insert(approvalActions).values(
@@ -1163,6 +1221,20 @@ export class WorkflowExecutionService {
       return;
     }
     if (request.approvableType === 'invoice') {
+      const transitionCondition =
+        status === 'approved'
+          ? and(
+              eq(invoices.status, 'pending_approval'),
+              isNotNull(invoices.purchaseOrderId),
+              eq(invoices.matchStatus, 'full_match'),
+            )
+          : inArray(invoices.status, [
+              'pending_match',
+              'partial_match',
+              'exception',
+              'matched',
+              'pending_approval',
+            ]);
       const [transitioned] = await tx
         .update(invoices)
         .set({
@@ -1175,13 +1247,7 @@ export class WorkflowExecutionService {
           and(
             eq(invoices.id, request.approvableId),
             eq(invoices.organizationId, request.organizationId),
-            inArray(invoices.status, [
-              'pending_match',
-              'partial_match',
-              'exception',
-              'matched',
-              'pending_approval',
-            ]),
+            transitionCondition,
           ),
         )
         .returning({ id: invoices.id });
@@ -1335,7 +1401,7 @@ export class WorkflowExecutionService {
           resolver: item.resolver,
           resolvedApproverId: item.resolvedApproverId,
           assignedApproverId: item.assignedApproverId,
-          status: 'pending',
+          status: 'pending' as const,
         })),
       );
       await tx.insert(approvalActions).values({

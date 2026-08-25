@@ -38,7 +38,7 @@ describe('workflow runtime', () => {
     );
   });
 
-  it('uses compiled priority order and falls back deterministically', () => {
+  it('uses transition priority and falls back only to an explicit default', () => {
     const step = {
       node: {
         id: 'condition',
@@ -49,11 +49,19 @@ describe('workflow runtime', () => {
       },
       transitions: [
         {
+          edgeId: 'medium',
+          targetStepId: 'manager',
+          sourceHandle: 'branch',
+          condition: { field: 'amount', operator: '>=', value: 1_000 },
+          priority: 20,
+          isDefault: false,
+        },
+        {
           edgeId: 'high',
           targetStepId: 'director',
           sourceHandle: 'branch',
           condition: { field: 'amount', operator: '>=', value: 10_000 },
-          priority: 1,
+          priority: 10,
           isDefault: false,
         },
         {
@@ -67,6 +75,9 @@ describe('workflow runtime', () => {
 
     assert.equal(selectWorkflowTransition(step, { amount: '12000' })?.targetStepId, 'director');
     assert.equal(selectWorkflowTransition(step, { amount: '500' })?.targetStepId, 'manager');
+
+    const conditionalOnly = { ...step, transitions: step.transitions.slice(0, 2) };
+    assert.equal(selectWorkflowTransition(conditionalOnly, { amount: '500' }), null);
   });
 
   it('calculates all, count, and majority quorum sizes', () => {
@@ -91,6 +102,13 @@ describe('workflow runtime', () => {
         { sequence: 3, status: 'rejected' },
       ]),
       { state: 'rejected', nextSequence: null },
+    );
+    assert.deepEqual(
+      evaluateWorkflowQuorum('serial', { type: 'all' }, [
+        { sequence: 1, status: 'skipped' },
+        { sequence: 2, status: 'approved' },
+      ]),
+      { state: 'approved', nextSequence: null },
     );
   });
 });
