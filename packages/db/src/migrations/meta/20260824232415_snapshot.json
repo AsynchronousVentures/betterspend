@@ -1,6 +1,6 @@
 {
-  "id": "8014133c-2200-476c-8c9d-ea17b5579642",
-  "prevId": "fd9030a8-a462-4af5-acd9-21a3f5c192af",
+  "id": "fd9030a8-a462-4af5-acd9-21a3f5c192af",
+  "prevId": "2358f30b-a43d-4692-b165-8e567c0a8820",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -596,12 +596,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "manager_id": {
-          "name": "manager_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "is_active": {
           "name": "is_active",
           "type": "boolean",
@@ -670,21 +664,6 @@
           ],
           "columnsTo": [
             "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "users_manager_org_fk": {
-          "name": "users_manager_org_fk",
-          "tableFrom": "users",
-          "tableTo": "users",
-          "columnsFrom": [
-            "manager_id",
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id",
-            "organization_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -1679,7 +1658,7 @@
           "name": "approver_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "action": {
           "name": "action",
@@ -1692,19 +1671,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "node_id": {
-          "name": "node_id",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "metadata": {
-          "name": "metadata",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::jsonb"
         },
         "acted_at": {
           "name": "acted_at",
@@ -1767,12 +1733,6 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
         "approvable_type": {
           "name": "approvable_type",
           "type": "varchar(50)",
@@ -1797,24 +1757,11 @@
           "primaryKey": false,
           "notNull": false
         },
-        "initiated_by": {
-          "name": "initiated_by",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "current_node_id": {
           "name": "current_node_id",
           "type": "varchar(100)",
           "primaryKey": false,
           "notNull": false
-        },
-        "workflow_context": {
-          "name": "workflow_context",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::jsonb"
         },
         "attempt": {
           "name": "attempt",
@@ -1876,64 +1823,8 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "approval_requests_id_organization_id_unique": {
-          "name": "approval_requests_id_organization_id_unique",
-          "columns": [
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "approval_requests_org_status_idx": {
-          "name": "approval_requests_org_status_idx",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
-        "approval_requests_organization_id_organizations_id_fk": {
-          "name": "approval_requests_organization_id_organizations_id_fk",
-          "tableFrom": "approval_requests",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "approval_requests_approval_rule_id_approval_rules_id_fk": {
           "name": "approval_requests_approval_rule_id_approval_rules_id_fk",
           "tableFrom": "approval_requests",
@@ -1960,32 +1851,15 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "approval_requests_definition_version_org_fk": {
-          "name": "approval_requests_definition_version_org_fk",
+        "approval_requests_definition_version_fk": {
+          "name": "approval_requests_definition_version_fk",
           "tableFrom": "approval_requests",
           "tableTo": "workflow_definition_versions",
           "columnsFrom": [
-            "definition_version_id",
-            "organization_id"
+            "definition_version_id"
           ],
           "columnsTo": [
-            "id",
-            "organization_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "approval_requests_initiated_by_org_fk": {
-          "name": "approval_requests_initiated_by_org_fk",
-          "tableFrom": "approval_requests",
-          "tableTo": "users",
-          "columnsFrom": [
-            "initiated_by",
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id",
-            "organization_id"
+            "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -2186,235 +2060,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.workflow_approval_assignments": {
-      "name": "workflow_approval_assignments",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "approval_request_id": {
-          "name": "approval_request_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "node_id": {
-          "name": "node_id",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "sequence": {
-          "name": "sequence",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "resolver": {
-          "name": "resolver",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "resolved_approver_id": {
-          "name": "resolved_approver_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "assigned_approver_id": {
-          "name": "assigned_approver_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "acted_by": {
-          "name": "acted_by",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "acted_at": {
-          "name": "acted_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "workflow_approval_assignments_request_node_sequence_unique": {
-          "name": "workflow_approval_assignments_request_node_sequence_unique",
-          "columns": [
-            {
-              "expression": "approval_request_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "node_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "sequence",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "workflow_approval_assignments_assignee_status_idx": {
-          "name": "workflow_approval_assignments_assignee_status_idx",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "assigned_approver_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "workflow_approval_assignments_organization_fk": {
-          "name": "workflow_approval_assignments_organization_fk",
-          "tableFrom": "workflow_approval_assignments",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "workflow_approval_assignments_request_org_fk": {
-          "name": "workflow_approval_assignments_request_org_fk",
-          "tableFrom": "workflow_approval_assignments",
-          "tableTo": "approval_requests",
-          "columnsFrom": [
-            "approval_request_id",
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id",
-            "organization_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "workflow_approval_assignments_resolved_approver_org_fk": {
-          "name": "workflow_approval_assignments_resolved_approver_org_fk",
-          "tableFrom": "workflow_approval_assignments",
-          "tableTo": "users",
-          "columnsFrom": [
-            "resolved_approver_id",
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id",
-            "organization_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "workflow_approval_assignments_assigned_approver_org_fk": {
-          "name": "workflow_approval_assignments_assigned_approver_org_fk",
-          "tableFrom": "workflow_approval_assignments",
-          "tableTo": "users",
-          "columnsFrom": [
-            "assigned_approver_id",
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id",
-            "organization_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "workflow_approval_assignments_acted_by_org_fk": {
-          "name": "workflow_approval_assignments_acted_by_org_fk",
-          "tableFrom": "workflow_approval_assignments",
-          "tableTo": "users",
-          "columnsFrom": [
-            "acted_by",
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id",
-            "organization_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "workflow_approval_assignments_status_check": {
-          "name": "workflow_approval_assignments_status_check",
-          "value": "\"workflow_approval_assignments\".\"status\" in ('waiting', 'pending', 'approved', 'rejected', 'skipped')"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.workflow_definition_versions": {
@@ -9597,6 +9242,273 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.email_intake_addresses": {
+      "name": "email_intake_addresses",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token": {
+          "name": "token",
+          "type": "varchar(48)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "email_intake_addresses_org_unique": {
+          "name": "email_intake_addresses_org_unique",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "email_intake_addresses_token_unique": {
+          "name": "email_intake_addresses_token_unique",
+          "columns": [
+            {
+              "expression": "token",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "email_intake_addresses_organization_id_organizations_id_fk": {
+          "name": "email_intake_addresses_organization_id_organizations_id_fk",
+          "tableFrom": "email_intake_addresses",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.email_intake_attachments": {
+      "name": "email_intake_attachments",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "message_id": {
+          "name": "message_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email_intake_item_id": {
+          "name": "email_intake_item_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "filename": {
+          "name": "filename",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content_type": {
+          "name": "content_type",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "size_bytes": {
+          "name": "size_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "storage_key": {
+          "name": "storage_key",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rejection_reason": {
+          "name": "rejection_reason",
+          "type": "varchar(80)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "invoice_number_hint": {
+          "name": "invoice_number_hint",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "email_intake_attachments_message_idx": {
+          "name": "email_intake_attachments_message_idx",
+          "columns": [
+            {
+              "expression": "message_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "email_intake_attachments_org_hash_idx": {
+          "name": "email_intake_attachments_org_hash_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "content_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "email_intake_attachments_organization_id_organizations_id_fk": {
+          "name": "email_intake_attachments_organization_id_organizations_id_fk",
+          "tableFrom": "email_intake_attachments",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "email_intake_attachments_message_org_fk": {
+          "name": "email_intake_attachments_message_org_fk",
+          "tableFrom": "email_intake_attachments",
+          "tableTo": "email_intake_messages",
+          "columnsFrom": [
+            "message_id",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "email_intake_attachments_item_org_fk": {
+          "name": "email_intake_attachments_item_org_fk",
+          "tableFrom": "email_intake_attachments",
+          "tableTo": "email_intake_items",
+          "columnsFrom": [
+            "email_intake_item_id",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "email_intake_attachments_status_check": {
+          "name": "email_intake_attachments_status_check",
+          "value": "\"email_intake_attachments\".\"status\" IN ('pending', 'accepted', 'duplicate', 'rejected')"
+        },
+        "email_intake_attachments_outcome_check": {
+          "name": "email_intake_attachments_outcome_check",
+          "value": "(\"email_intake_attachments\".\"status\" IN ('pending', 'accepted') AND \"email_intake_attachments\".\"storage_key\" IS NOT NULL AND \"email_intake_attachments\".\"rejection_reason\" IS NULL) OR (\"email_intake_attachments\".\"status\" IN ('duplicate', 'rejected') AND \"email_intake_attachments\".\"storage_key\" IS NULL AND \"email_intake_attachments\".\"rejection_reason\" IS NOT NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.email_intake_items": {
       "name": "email_intake_items",
       "schema": "",
@@ -9698,7 +9610,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "email_intake_items_id_org_unique": {
+          "name": "email_intake_items_id_org_unique",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "email_intake_items_organization_id_organizations_id_fk": {
           "name": "email_intake_items_organization_id_organizations_id_fk",
@@ -9718,6 +9652,224 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.email_intake_messages": {
+      "name": "email_intake_messages",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ses_message_id": {
+          "name": "ses_message_id",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "raw_storage_key": {
+          "name": "raw_storage_key",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_email": {
+          "name": "source_email",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "envelope_source": {
+          "name": "envelope_source",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recipients": {
+          "name": "recipients",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject": {
+          "name": "subject",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "received_at": {
+          "name": "received_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "auth_verdicts": {
+          "name": "auth_verdicts",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sender_classification": {
+          "name": "sender_classification",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "vendor_id": {
+          "name": "vendor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "risk_score": {
+          "name": "risk_score",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "risk_signals": {
+          "name": "risk_signals",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "email_intake_messages_org_ses_id_unique": {
+          "name": "email_intake_messages_org_ses_id_unique",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "ses_message_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "email_intake_messages_id_org_unique": {
+          "name": "email_intake_messages_id_org_unique",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "email_intake_messages_org_received_idx": {
+          "name": "email_intake_messages_org_received_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "received_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "email_intake_messages_organization_id_organizations_id_fk": {
+          "name": "email_intake_messages_organization_id_organizations_id_fk",
+          "tableFrom": "email_intake_messages",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "email_intake_messages_vendor_org_fk": {
+          "name": "email_intake_messages_vendor_org_fk",
+          "tableFrom": "email_intake_messages",
+          "tableTo": "vendors",
+          "columnsFrom": [
+            "vendor_id",
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id",
+            "organization_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "email_intake_messages_sender_classification_check": {
+          "name": "email_intake_messages_sender_classification_check",
+          "value": "\"email_intake_messages\".\"sender_classification\" IN ('known_vendor', 'employee', 'unknown')"
+        },
+        "email_intake_messages_status_check": {
+          "name": "email_intake_messages_status_check",
+          "value": "\"email_intake_messages\".\"status\" IN ('accepted', 'partial', 'rejected', 'duplicate')"
+        },
+        "email_intake_messages_risk_score_check": {
+          "name": "email_intake_messages_risk_score_check",
+          "value": "\"email_intake_messages\".\"risk_score\" BETWEEN 0 AND 100"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.onboarding_questionnaires": {

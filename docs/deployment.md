@@ -1,8 +1,10 @@
-# Dockerized BetterSpend deployment
+# Production deployment
 
 The published API, web, and migrator images are infrastructure-neutral. The web image sends API requests to its own origin, so the same immutable image can run on any hostname. The included Compose and Caddy files are a reference deployment, not a requirement.
 
 `compose.yaml` owns the infrastructure shared with local development. `compose.prod.yaml` adds the production application images, Caddy, secrets, persistence settings, and restart policies. Production commands always load both files in that order.
+
+Do not run a bare `docker compose up` in production. Without both explicit `-f` arguments, Compose may load the development override and publish stateful service ports. The `deploy/deploy.sh` and `deploy/rollback.sh` scripts assemble the production files correctly.
 
 ## Ingress contract
 
@@ -44,8 +46,8 @@ sudo mkdir -p /opt/betterspend
 sudo chown "$USER":"$USER" /opt/betterspend
 ```
 
-3. Copy `compose.yaml`, `compose.prod.yaml`, and `deploy/` into `/opt/betterspend`, preserving the `deploy/` directory.
-4. Create `/opt/betterspend/.env.production` from `.env.production.example`.
+3. Copy `compose.yaml`, `compose.prod.yaml`, `.env.production.example`, and `deploy/` into `/opt/betterspend`, preserving the `deploy/` directory.
+4. Create `/opt/betterspend/.env.production` from `.env.production.example`. Replace every example domain, image name, password, secret, and encryption key before continuing. Keep this file only on the server.
 5. Point DNS records at the VPS:
 
 ```text
@@ -76,9 +78,22 @@ Repository secrets for automated tag deployments:
 
 Configure the `production` GitHub environment for any required approval rules. If the deployment secrets are absent, validation and publishing still run, but the deploy job is skipped. If GHCR packages are private, configure pull credentials on the server or local machine that pulls the images.
 
-## Publish flow
+## Optional production configuration
 
-Pull requests run install, typecheck, builds, compose validation, and Docker image builds. They do not deploy.
+QuickBooks Online and Xero connections require platform OAuth applications. Set the matching client ID and secret in `.env.production` and register these exact callbacks with the provider:
+
+```text
+https://<app-domain>/api/v1/gl/oauth/qbo/callback
+https://<app-domain>/api/v1/gl/oauth/xero/callback
+```
+
+The callbacks are derived from `API_URL`. Explicit `QBO_REDIRECT_URI` or `XERO_REDIRECT_URI` values are accepted only when they exactly match the derived URL.
+
+SMTP and AI provider credentials are configured in the authenticated settings and add-ons screens after the first administrator exists. BetterSpend encrypts accounting OAuth tokens and AI provider credentials with `CREDENTIAL_ENCRYPTION_KEY`. Keep that key stable and back it up outside the server.
+
+## Publish and release flow
+
+Pull requests run lint, tests, package builds, type checks, and Compose validation. They do not publish images or deploy. Merge queue groups, pushes to `main`, tags, and manual workflow runs use the full validation path, including migration verification and Docker image builds.
 
 Pushes to `main` always run the same validation, then publish these images to GHCR:
 
@@ -93,6 +108,8 @@ After all three immutable images are available, a `main` push also moves each im
 Pushing a `v*` tag runs validation, publishes the immutable `sha-<commit>` images, synchronizes the explicit deployment file list to `/opt/betterspend`, and invokes `./deploy/deploy.sh sha-<commit>` over SSH. Publish jobs for the same commit are serialized, and the workflow skips any image tag that already exists rather than overwriting it. Registry administrators must preserve that `sha-*` immutability convention for any out-of-band operations. The deploy script backs up PostgreSQL, runs migrations, restarts the application containers, and smoke-checks production. Deployments are serialized by the workflow's production concurrency group.
 
 Tag-driven deployment never synchronizes `.env.production` and does not use `rsync --delete`; production secrets remain server-side.
+
+The deploy script does not seed data or create the first organization and administrator. Provision those separately for a new production database. Do not use the Acme development seed as an implicit production bootstrap.
 
 ## Manual operations
 

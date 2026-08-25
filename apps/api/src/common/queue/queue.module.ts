@@ -28,7 +28,12 @@ function getRedisConnection() {
     BullModule.forRoot({
       connection: getRedisConnection(),
     }),
-    BullModule.registerQueue({ name: 'gl-export' }, { name: 'webhook-delivery' }, { name: 'ocr' }),
+    BullModule.registerQueue(
+      { name: 'gl-export' },
+      { name: 'webhook-delivery' },
+      { name: 'ocr' },
+      { name: 'email-intake' },
+    ),
   ],
   exports: [BullModule],
 })
