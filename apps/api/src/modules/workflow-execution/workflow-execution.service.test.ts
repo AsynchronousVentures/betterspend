@@ -7,6 +7,7 @@ import {
   approvalRequests,
   requisitions,
   workflowApprovalAssignments,
+  workflowRuntimePublications,
 } from '@betterspend/db';
 import type { ExecutableDefinition } from '@betterspend/shared';
 import type { ApprovalDelegationsService } from '../approval-delegations/approval-delegations.service';
@@ -157,6 +158,8 @@ function createRestartFixture(
   const entityUpdates: Array<Record<string, unknown>> = [];
   const actions: Array<Record<string, unknown>> = [];
   const notifications: string[] = [];
+  const publications: Array<Record<string, unknown>> = [];
+  const queueJobs: Array<{ name: string; data: Record<string, unknown> }> = [];
 
   const transaction = {
     query: {
@@ -253,6 +256,20 @@ function createRestartFixture(
               },
             };
           }
+          if (table === workflowRuntimePublications) {
+            const created = rows.map((row, index) => ({
+              ...row,
+              id: `00000000-0000-4000-8000-${String(publications.length + index + 1).padStart(12, '0')}`,
+              status: 'pending',
+              deliveryAttempts: 0,
+              lastError: null,
+              publishedAt: null,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            }));
+            publications.push(...created);
+            return { returning: async () => created };
+          }
           return { returning: async () => rows };
         },
       };
@@ -272,6 +289,11 @@ function createRestartFixture(
                 const targets = values.status === 'skipped' ? candidates : candidates.slice(0, 1);
                 targets.forEach((assignment) => Object.assign(assignment, values));
                 return { returning: async () => targets };
+              }
+              if (table === workflowRuntimePublications) {
+                const publication = publications.find((item) => item.status === 'pending');
+                if (publication) Object.assign(publication, values);
+                return { returning: async () => (publication ? [publication] : []) };
               }
               if (table !== approvalRequests) {
                 entityUpdates.push(values);
@@ -297,40 +319,52 @@ function createRestartFixture(
         findMany: async () =>
           assignments.filter((assignment) => assignment.approvalRequestId === replacement?.id),
       },
+      workflowRuntimePublications: {
+        findFirst: async () => publications.find((publication) => publication.status === 'pending'),
+        findMany: async () =>
+          publications.filter((publication) => publication.status === 'pending'),
+      },
     },
+    update: transaction.update,
   } as unknown as Db;
-  const queue = { add: async () => undefined } as unknown as Queue;
+  const queue = {
+    add: async (name: string, data: Record<string, unknown>) => {
+      queueJobs.push({ name, data });
+    },
+  } as unknown as Queue;
   const delegations = {
     getActiveDelegatee: async (_organizationId: string, userId: string) =>
       userId === APPROVER_ID ? DELEGATE_ID : null,
   } as unknown as ApprovalDelegationsService;
-  const budgets = {
-    evaluateEnforcement: async () => {
-      if (budgetAction === 'require_approval') {
-        return {
-          action: 'require_approval',
-          withinBudget: false,
-          reason: 'overrun',
-          budgetId: '00000000-0000-4000-8000-000000000901',
-          ownerUserId: FALLBACK_ID,
-          message: 'Current budget needs owner approval',
-        };
-      }
-      if (budgetAction === 'block') {
-        return {
-          action: 'block',
-          withinBudget: false,
-          reason: 'overrun',
-          message: 'Current budget blocks this request',
-        };
-      }
+  const evaluateBudget = async () => {
+    if (budgetAction === 'require_approval') {
       return {
-        action: 'allow',
+        action: 'require_approval',
         withinBudget: false,
         reason: 'overrun',
-        message: 'Current budget is overrun',
+        budgetId: '00000000-0000-4000-8000-000000000901',
+        ownerUserId: FALLBACK_ID,
+        message: 'Current budget needs owner approval',
       };
-    },
+    }
+    if (budgetAction === 'block') {
+      return {
+        action: 'block',
+        withinBudget: false,
+        reason: 'overrun',
+        message: 'Current budget blocks this request',
+      };
+    }
+    return {
+      action: 'allow',
+      withinBudget: false,
+      reason: 'overrun',
+      message: 'Current budget is overrun',
+    };
+  };
+  const budgets = {
+    evaluateEnforcement: evaluateBudget,
+    evaluateEnforcementLocked: evaluateBudget,
     recordRequisitionApproval: async () => entityUpdates.push({ budget: 'approved' }),
     releaseRequisition: async () => entityUpdates.push({ budget: 'released' }),
   } as unknown as BudgetsService;
@@ -354,6 +388,8 @@ function createRestartFixture(
     getReplacement: () => replacement,
     notifications,
     oldRequest,
+    publications,
+    queueJobs,
     requestUpdates,
     service: new WorkflowExecutionService(
       db,
@@ -400,7 +436,12 @@ describe('WorkflowExecutionService restart', () => {
       (fixture.getReplacement()?.workflowContext as Record<string, unknown>).budgetAvailable,
       false,
     );
+    assert.deepEqual(fixture.notifications, []);
+    assert.equal(fixture.publications.length, 1);
+    assert.equal(fixture.queueJobs[0]?.name, 'publication');
+    await fixture.service.handleRuntimePublication(String(fixture.publications[0]?.id));
     assert.deepEqual(fixture.notifications, [DELEGATE_ID]);
+    assert.equal(fixture.publications[0]?.status, 'published');
     assert.ok(fixture.actions.some((action) => action.action === 'restarted'));
     assert.ok(fixture.actions.some((action) => action.action === 'assigned'));
   });
@@ -443,7 +484,7 @@ describe('WorkflowExecutionService restart', () => {
     assert.deepEqual(writes, []);
   });
 
-  it('does not turn a committed restart into an API failure when publication fails', async () => {
+  it('keeps a committed restart retryable when publication delivery fails', async () => {
     const fixture = createRestartFixture(true);
 
     const result = await fixture.service.restartOnLatest(
@@ -455,6 +496,23 @@ describe('WorkflowExecutionService restart', () => {
     assert.equal(result.replacementRequestId, '00000000-0000-0000-0000-000000000302');
     assert.ok(fixture.requestUpdates.some((update) => update.status === 'cancelled'));
     assert.ok(fixture.requestUpdates.some((update) => update.currentNodeId === 'review'));
+    await assert.rejects(
+      fixture.service.handleRuntimePublication(String(fixture.publications[0]?.id)),
+      /notification transport unavailable/,
+    );
+    assert.equal(fixture.publications[0]?.status, 'pending');
+    assert.equal(fixture.publications[0]?.deliveryAttempts, 1);
+    fixture.queueJobs.splice(0);
+    await fixture.service.onModuleInit();
+    assert.deepEqual(fixture.queueJobs, [
+      {
+        name: 'publication',
+        data: {
+          kind: 'publication',
+          publicationId: fixture.publications[0]?.id,
+        },
+      },
+    ]);
   });
 
   it('uses the separation-of-duties fallback when delegation resolves to an excluded actor', async () => {

@@ -398,30 +398,34 @@ export class BudgetsService {
     input: EnforcementInput,
     apply: (tx: DbTransaction, decision: BudgetEnforcementDecision) => Promise<T>,
   ): Promise<T> {
-    if (!input.departmentId) {
-      return this.db.transaction((tx) => apply(tx, noDepartmentDecision()));
-    }
-    const departmentId = input.departmentId;
-    const context = await this.loadEnforcementContext(input);
     return this.db.transaction(async (tx) => {
-      const [budget] = await tx
-        .select()
-        .from(budgets)
-        .where(
-          and(
-            eq(budgets.organizationId, input.organizationId),
-            eq(budgets.budgetType, 'department'),
-            eq(budgets.scopeId, departmentId),
-            eq(budgets.fiscalYear, input.fiscalYear),
-          ),
-        )
-        .orderBy(...departmentBudgetOrder(budgets))
-        .for('update');
-      if (!budget) return apply(tx, noBudgetDecision());
-
-      const decision = await this.evaluateBudget(input, budget, tx, context);
+      const decision = await this.evaluateEnforcementLocked(tx, input);
       return apply(tx, decision);
     });
+  }
+
+  /** Evaluate against a locked budget row inside an existing business transaction. */
+  async evaluateEnforcementLocked(
+    tx: DbTransaction,
+    input: EnforcementInput,
+  ): Promise<BudgetEnforcementDecision> {
+    if (!input.departmentId) return noDepartmentDecision();
+    const context = await this.loadEnforcementContext(input);
+    const [budget] = await tx
+      .select()
+      .from(budgets)
+      .where(
+        and(
+          eq(budgets.organizationId, input.organizationId),
+          eq(budgets.budgetType, 'department'),
+          eq(budgets.scopeId, input.departmentId),
+          eq(budgets.fiscalYear, input.fiscalYear),
+        ),
+      )
+      .orderBy(...departmentBudgetOrder(budgets))
+      .for('update');
+    if (!budget) return noBudgetDecision();
+    return this.evaluateBudget(input, budget, tx, context);
   }
 
   private async loadEnforcementContext(input: EnforcementInput): Promise<EnforcementContext> {

@@ -2,8 +2,8 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import type { Job } from 'bullmq';
 import {
   WorkflowExecutionService,
-  workflowEscalationJobDataSchema,
-  type WorkflowEscalationJobData,
+  workflowQueueJobDataSchema,
+  type WorkflowQueueJobData,
 } from './workflow-execution.service';
 
 @Processor('workflow-escalation')
@@ -12,7 +12,11 @@ export class WorkflowEscalationProcessor extends WorkerHost {
     super();
   }
 
-  process(job: Job<WorkflowEscalationJobData>): Promise<void> {
-    return this.workflows.handleEscalation(workflowEscalationJobDataSchema.parse(job.data));
+  process(job: Job<WorkflowQueueJobData>): Promise<void> {
+    const data = workflowQueueJobDataSchema.parse(job.data);
+    if (data.kind === 'publication') {
+      return this.workflows.handleRuntimePublication(data.publicationId);
+    }
+    return this.workflows.handleEscalation(data);
   }
 }

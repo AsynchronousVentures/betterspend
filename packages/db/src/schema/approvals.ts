@@ -157,6 +157,36 @@ export const workflowApprovalAssignments = pgTable(
   ],
 );
 
+export const workflowRuntimePublications = pgTable(
+  'workflow_runtime_publications',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id').notNull(),
+    approvalRequestId: uuid('approval_request_id').notNull(),
+    nodeId: varchar('node_id', { length: 100 }).notNull(),
+    attempt: integer('attempt').notNull(),
+    status: varchar('status', { length: 20 }).notNull().default('pending'),
+    deliveryAttempts: integer('delivery_attempts').notNull().default(0),
+    lastError: text('last_error'),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('workflow_runtime_publications_status_idx').on(table.status, table.createdAt),
+    foreignKey({
+      columns: [table.organizationId],
+      foreignColumns: [organizations.id],
+      name: 'workflow_runtime_publications_organization_fk',
+    }),
+    foreignKey({
+      columns: [table.approvalRequestId, table.organizationId],
+      foreignColumns: [approvalRequests.id, approvalRequests.organizationId],
+      name: 'workflow_runtime_publications_request_org_fk',
+    }).onDelete('cascade'),
+  ],
+);
+
 export const approvalActions = pgTable(
   'approval_actions',
   {
