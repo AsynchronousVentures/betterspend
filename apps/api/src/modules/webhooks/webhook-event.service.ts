@@ -31,17 +31,25 @@ export class WebhookEventService {
     eventType: WebhookEventType,
     payload: Record<string, unknown>,
   ): void {
-    this.webhookQueue
-      .add(
-        'dispatch',
-        { kind: 'dispatch', organizationId, eventType, payload },
-        {
-          attempts: 5,
-          backoff: { type: 'exponential', delay: 1000 },
-        },
-      )
-      .catch((err: unknown) =>
-        this.logger.error(`Failed to enqueue webhook event ${eventType}: ${String(err)}`),
-      );
+    this.enqueue(organizationId, eventType, payload).catch((err: unknown) =>
+      this.logger.error(`Failed to enqueue webhook event ${eventType}: ${String(err)}`),
+    );
+  }
+
+  async enqueue(
+    organizationId: string,
+    eventType: WebhookEventType,
+    payload: Record<string, unknown>,
+    jobId?: string,
+  ): Promise<void> {
+    await this.webhookQueue.add(
+      'dispatch',
+      { kind: 'dispatch', organizationId, eventType, payload },
+      {
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 1000 },
+        ...(jobId ? { jobId } : {}),
+      },
+    );
   }
 }

@@ -7,6 +7,7 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  type OnModuleInit,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
@@ -31,6 +32,7 @@ import {
   workflowApprovalAssignments,
   workflowDefinitionVersions,
   workflowDefinitions,
+  workflowRuntimePublications,
 } from '@betterspend/db';
 import { DB_TOKEN } from '../../database/database.module';
 import { ApprovalDelegationsService } from '../approval-delegations/approval-delegations.service';
@@ -47,6 +49,7 @@ import {
   evaluateWorkflowQuorum,
   selectWorkflowTransition,
   type WorkflowAssignmentStatus,
+  type WorkflowQuorum,
 } from './workflow-runtime';
 
 type SupportedApprovableType = 'requisition' | 'purchase_order' | 'invoice';
@@ -59,6 +62,7 @@ export interface WorkflowExecutionResult {
   requestId: string;
   definitionVersionId: string;
   status: 'pending' | 'approved' | 'rejected';
+  publicationId?: string;
   fastLane?: undefined;
   threshold?: undefined;
 }
@@ -86,6 +90,20 @@ export const workflowEscalationJobDataSchema = z
 
 export type WorkflowEscalationJobData = z.infer<typeof workflowEscalationJobDataSchema>;
 
+export const workflowPublicationJobDataSchema = z
+  .object({
+    kind: z.literal('publication'),
+    publicationId: z.string().uuid(),
+  })
+  .strict();
+
+export type WorkflowPublicationJobData = z.infer<typeof workflowPublicationJobDataSchema>;
+export const workflowQueueJobDataSchema = z.union([
+  workflowEscalationJobDataSchema,
+  workflowPublicationJobDataSchema,
+]);
+export type WorkflowQueueJobData = z.infer<typeof workflowQueueJobDataSchema>;
+
 type RuntimeRequest = typeof approvalRequests.$inferSelect;
 type RuntimeAssignment = typeof workflowApprovalAssignments.$inferSelect;
 
@@ -93,7 +111,10 @@ type RuntimeOutcome = {
   request: RuntimeRequest;
   status: 'pending' | 'approved' | 'rejected';
   entityStatus?: 'approved' | 'rejected';
+  publicationId?: string;
 };
+
+const REQUIRED_APPROVAL_TERMINAL_CONTEXT_KEY = '__requiredApprovalTerminalNodeId';
 
 function workflowDomainFor(entityType: SupportedApprovableType): WorkflowDomain {
   if (entityType === 'requisition') return 'requisition';
@@ -119,7 +140,7 @@ function assignmentStatus(value: string): WorkflowAssignmentStatus {
 }
 
 @Injectable()
-export class WorkflowExecutionService {
+export class WorkflowExecutionService implements OnModuleInit {
   private readonly logger = new Logger(WorkflowExecutionService.name);
 
   constructor(
@@ -133,6 +154,17 @@ export class WorkflowExecutionService {
     @Optional() private readonly glExport?: GlExportService,
     @Optional() private readonly settings?: SettingsService,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    const pending = await this.db.query.workflowRuntimePublications.findMany({
+      where: (publication, { eq }) => eq(publication.status, 'pending'),
+      columns: { id: true },
+    });
+    await Promise.all(pending.map((publication) => this.enqueueRuntimePublication(publication.id)));
+    if (pending.length > 0) {
+      this.logger.log(`Recovered ${pending.length} workflow publications awaiting delivery`);
+    }
+  }
 
   async initiateIfConfigured(
     organizationId: string,
@@ -208,7 +240,8 @@ export class WorkflowExecutionService {
         undefined,
         tx,
       );
-      return this.advanceAutomaticSteps(tx, request, executable, initiatedBy);
+      const outcome = await this.advanceAutomaticSteps(tx, request, executable, initiatedBy);
+      return this.recordRuntimePublication(tx, outcome);
     };
 
     const outcome = transaction ? await run(transaction) : await this.db.transaction(run);
@@ -220,6 +253,7 @@ export class WorkflowExecutionService {
       requestId: outcome.request.id,
       definitionVersionId: version.id,
       status: outcome.status,
+      publicationId: outcome.publicationId,
     };
   }
 
@@ -253,7 +287,15 @@ export class WorkflowExecutionService {
 
       const executable = await this.loadExecutable(tx, request);
       if (request.currentNodeId === REQUIRED_APPROVAL_NODE_ID) {
-        return this.processRequiredApproval(tx, request, actorId, action, comment, executable);
+        const outcome = await this.processRequiredApproval(
+          tx,
+          request,
+          actorId,
+          action,
+          comment,
+          executable,
+        );
+        return this.recordRuntimePublication(tx, outcome);
       }
       const step = this.getStep(executable, request.currentNodeId);
       if (step.node.type !== 'approver_group' && step.node.type !== 'resolver') {
@@ -318,6 +360,7 @@ export class WorkflowExecutionService {
       );
 
       if (progress.state === 'pending') {
+        let pendingRequest = request;
         if (progress.nextSequence != null) {
           await tx
             .update(workflowApprovalAssignments)
@@ -329,8 +372,16 @@ export class WorkflowExecutionService {
                 eq(workflowApprovalAssignments.sequence, progress.nextSequence),
               ),
             );
+          [pendingRequest] = await tx
+            .update(approvalRequests)
+            .set({ updatedAt: now })
+            .where(eq(approvalRequests.id, request.id))
+            .returning();
         }
-        return { request, status: 'pending' as const };
+        return this.recordRuntimePublication(tx, {
+          request: pendingRequest,
+          status: 'pending' as const,
+        });
       }
 
       await tx
@@ -344,7 +395,8 @@ export class WorkflowExecutionService {
           ),
         );
       if (progress.state === 'rejected') {
-        return this.finishRequest(tx, request, 'rejected', actorId, step.node.id);
+        const outcome = await this.finishRequest(tx, request, 'rejected', actorId, step.node.id);
+        return this.recordRuntimePublication(tx, outcome);
       }
 
       const transition = selectWorkflowTransition(step, request.workflowContext);
@@ -355,7 +407,8 @@ export class WorkflowExecutionService {
         .set({ currentNodeId: transition.targetStepId, updatedAt: now })
         .where(eq(approvalRequests.id, request.id))
         .returning();
-      return this.advanceAutomaticSteps(tx, advanced, executable, actorId);
+      const outcome = await this.advanceAutomaticSteps(tx, advanced, executable, actorId);
+      return this.recordRuntimePublication(tx, outcome);
     });
 
     await this.publishRuntimeOutcomeAfterCommit(outcome);
@@ -451,6 +504,9 @@ export class WorkflowExecutionService {
       );
       freshContext = restartContext.workflowContext;
       const { budgetDecision } = restartContext;
+      if (budgetDecision.action === 'block') {
+        throw new ConflictException('Budget policy blocks this workflow restart');
+      }
       if (budgetDecision.action === 'require_approval') {
         if (!budgetDecision.ownerUserId || !budgetDecision.budgetId) {
           throw new ConflictException('The current budget approval has no eligible owner');
@@ -522,6 +578,7 @@ export class WorkflowExecutionService {
       },
     ]);
     const outcome = await this.advanceAutomaticSteps(tx, replacement, executable, actorId);
+    const recordedOutcome = await this.recordRuntimePublication(tx, outcome);
     await this.audit.log(
       organizationId,
       actorId,
@@ -543,7 +600,7 @@ export class WorkflowExecutionService {
       definitionVersionId: latest.id,
       version: latest.version,
       attempt: replacement.attempt,
-      status: outcome.status,
+      status: recordedOutcome.status,
     };
   }
 
@@ -602,32 +659,24 @@ export class WorkflowExecutionService {
   }
 
   async publishCommittedRequest(requestId: string, organizationId: string): Promise<void> {
-    const request = await this.db.query.approvalRequests.findFirst({
+    const publication = await this.db.query.workflowRuntimePublications.findFirst({
       where: (record, { and, eq }) =>
-        and(eq(record.id, requestId), eq(record.organizationId, organizationId)),
+        and(
+          eq(record.approvalRequestId, requestId),
+          eq(record.organizationId, organizationId),
+          eq(record.status, 'pending'),
+        ),
+      orderBy: (record, { desc }) => desc(record.createdAt),
     });
-    if (!request || !['pending', 'approved', 'rejected'].includes(request.status)) return;
-    const status = request.status as 'pending' | 'approved' | 'rejected';
-    await this.publishRuntimeOutcomeAfterCommit({
-      request,
-      status,
-      ...(status === 'approved' || status === 'rejected' ? { entityStatus: status } : {}),
-    });
+    if (publication) await this.enqueueRuntimePublication(publication.id);
   }
 
   async publishInitiation(result: WorkflowExecutionResult): Promise<void> {
-    const request = await this.db.query.approvalRequests.findFirst({
-      where: (record, { and, eq }) =>
-        and(eq(record.id, result.requestId), eq(record.organizationId, result.organizationId)),
-    });
-    if (!request) return;
-    await this.publishRuntimeOutcomeAfterCommit({
-      request,
-      status: result.status,
-      ...(result.status === 'approved' || result.status === 'rejected'
-        ? { entityStatus: result.status }
-        : {}),
-    });
+    if (!result.publicationId) {
+      this.logger.error(`Workflow ${result.requestId} has no durable publication record`);
+      return;
+    }
+    await this.enqueueRuntimePublication(result.publicationId);
   }
 
   async scheduleEscalations(requestId: string, organizationId: string): Promise<void> {
@@ -638,9 +687,22 @@ export class WorkflowExecutionService {
     if (!request?.definitionVersionId || !request.currentNodeId || request.status !== 'pending') {
       return;
     }
-    const version = await this.db.query.workflowDefinitionVersions.findFirst({
+    await this.scheduleEscalationsForRequest(this.db, request);
+  }
+
+  private async scheduleEscalationsForRequest(
+    executor: Db | DbTransaction,
+    request: RuntimeRequest,
+  ): Promise<void> {
+    if (!request.definitionVersionId || !request.currentNodeId || request.status !== 'pending') {
+      return;
+    }
+    const version = await executor.query.workflowDefinitionVersions.findFirst({
       where: (record, { and, eq }) =>
-        and(eq(record.id, request.definitionVersionId!), eq(record.organizationId, organizationId)),
+        and(
+          eq(record.id, request.definitionVersionId!),
+          eq(record.organizationId, request.organizationId),
+        ),
     });
     if (!version) return;
     const executable = executableDefinitionSchema.parse(version.executableJson);
@@ -652,8 +714,9 @@ export class WorkflowExecutionService {
     for (const timer of timers) {
       if (timer.node.type !== 'escalation_timer') continue;
       const totalDelay = timer.node.config.slaHours * 60 * 60 * 1_000;
+      const elapsed = Math.max(0, Date.now() - request.updatedAt.getTime());
       const baseData = {
-        organizationId,
+        organizationId: request.organizationId,
         approvalRequestId: request.id,
         definitionVersionId: version.id,
         parentNodeId: request.currentNodeId,
@@ -665,23 +728,87 @@ export class WorkflowExecutionService {
           'warning',
           { ...baseData, kind: 'warning' } satisfies WorkflowEscalationJobData,
           {
-            delay: Math.max(0, totalDelay * (timer.node.config.warningPercent / 100)),
+            delay: Math.max(0, totalDelay * (timer.node.config.warningPercent / 100) - elapsed),
             jobId: `workflow-warning-${request.id}-${request.attempt}-${timer.node.id}`,
+            attempts: 5,
+            backoff: { type: 'exponential', delay: 1_000 },
             removeOnComplete: true,
-            removeOnFail: true,
           },
         ),
         this.escalationQueue.add(
           'action',
           { ...baseData, kind: 'action' } satisfies WorkflowEscalationJobData,
           {
-            delay: Math.max(0, totalDelay),
+            delay: Math.max(0, totalDelay - elapsed),
             jobId: `workflow-action-${request.id}-${request.attempt}-${timer.node.id}`,
+            attempts: 5,
+            backoff: { type: 'exponential', delay: 1_000 },
             removeOnComplete: true,
-            removeOnFail: true,
           },
         ),
       ]);
+    }
+  }
+
+  async handleRuntimePublication(publicationId: string): Promise<void> {
+    const publication = await this.db.query.workflowRuntimePublications.findFirst({
+      where: (record, { and, eq }) =>
+        and(eq(record.id, publicationId), eq(record.status, 'pending')),
+    });
+    if (!publication) return;
+
+    try {
+      await this.db.transaction(async (tx) => {
+        const request = await this.lockVersionedRequest(
+          tx,
+          publication.approvalRequestId,
+          publication.organizationId,
+        );
+        const isCurrent =
+          request.status === publication.outcomeStatus &&
+          request.currentNodeId === publication.nodeId &&
+          request.attempt === publication.attempt;
+        if (isCurrent) {
+          if (publication.outcomeStatus === 'pending') {
+            await this.notifyCurrentAssignments(request, tx);
+            await this.scheduleEscalationsForRequest(tx, request);
+          } else if (
+            publication.outcomeStatus === 'approved' ||
+            publication.outcomeStatus === 'rejected'
+          ) {
+            await this.publishRuntimeOutcome({
+              request,
+              status: publication.outcomeStatus,
+              entityStatus: publication.outcomeStatus,
+              publicationId: publication.id,
+            });
+          } else {
+            throw new ConflictException(
+              `Unsupported workflow publication outcome ${publication.outcomeStatus}`,
+            );
+          }
+        }
+        await tx
+          .update(workflowRuntimePublications)
+          .set({ status: 'published', publishedAt: new Date(), updatedAt: new Date() })
+          .where(
+            and(
+              eq(workflowRuntimePublications.id, publication.id),
+              eq(workflowRuntimePublications.status, 'pending'),
+            ),
+          );
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.db
+        .update(workflowRuntimePublications)
+        .set({
+          deliveryAttempts: publication.deliveryAttempts + 1,
+          lastError: message.slice(0, 2_000),
+          updatedAt: new Date(),
+        })
+        .where(eq(workflowRuntimePublications.id, publication.id));
+      throw error;
     }
   }
 
@@ -707,42 +834,38 @@ export class WorkflowExecutionService {
     ) {
       return;
     }
+    const timerNode = timer.node;
     const elapsedMilliseconds = Date.now() - current.updatedAt.getTime();
-    const slaMilliseconds = timer.node.config.slaHours * 60 * 60 * 1_000;
+    const slaMilliseconds = timerNode.config.slaHours * 60 * 60 * 1_000;
     const minimumElapsed =
       data.kind === 'warning'
-        ? slaMilliseconds * (timer.node.config.warningPercent / 100)
+        ? slaMilliseconds * (timerNode.config.warningPercent / 100)
         : slaMilliseconds;
     if (elapsedMilliseconds < minimumElapsed) return;
 
-    const assignments = await this.db.query.workflowApprovalAssignments.findMany({
-      where: (assignment, { and, eq }) =>
-        and(
-          eq(assignment.approvalRequestId, current.id),
-          eq(assignment.nodeId, data.parentNodeId),
-          eq(assignment.status, 'pending'),
-        ),
-    });
     if (data.kind === 'warning') {
-      await this.notifyAssignees(current, assignments, 'Workflow approval is nearing its SLA');
+      await this.notifyClaimedEscalation(
+        current,
+        data,
+        timerNode,
+        'Workflow approval is nearing its SLA',
+      );
       return;
     }
-    const action = timer.node.config.action;
+    const action = timerNode.config.action;
     if (action.type === 'notify') {
-      await this.notifyAssignees(current, assignments, 'Workflow approval exceeded its SLA');
+      await this.notifyClaimedEscalation(
+        current,
+        data,
+        timerNode,
+        'Workflow approval exceeded its SLA',
+      );
       return;
     }
     if (action.type === 'auto_reject') {
       const outcome = await this.db.transaction(async (tx) => {
-        const locked = await this.lockVersionedRequest(tx, current.id, current.organizationId);
-        if (
-          locked.status !== 'pending' ||
-          locked.currentNodeId !== data.parentNodeId ||
-          locked.definitionVersionId !== data.definitionVersionId ||
-          locked.attempt !== data.attempt
-        ) {
-          return null;
-        }
+        const locked = await this.claimEscalation(tx, current, data, timerNode);
+        if (!locked) return null;
         await tx
           .update(workflowApprovalAssignments)
           .set({ status: 'skipped', updatedAt: new Date() })
@@ -753,20 +876,84 @@ export class WorkflowExecutionService {
               inArray(workflowApprovalAssignments.status, ['waiting', 'pending']),
             ),
           );
-        return this.finishRequest(tx, locked, 'rejected', null, data.parentNodeId);
+        const outcome = await this.finishRequest(tx, locked, 'rejected', null, data.parentNodeId);
+        return this.recordRuntimePublication(tx, outcome);
       });
       if (outcome) await this.publishRuntimeOutcomeAfterCommit(outcome);
       return;
     }
     if (action.type === 'auto_approve') {
-      await this.autoApproveEscalatedStep(current, data.parentNodeId);
+      await this.autoApproveEscalatedStep(current, data, timerNode);
       return;
     }
     const parentStep = this.getStep(executable, data.parentNodeId);
     if (parentStep.node.type !== 'approver_group' && parentStep.node.type !== 'resolver') return;
     const execution =
       parentStep.node.type === 'approver_group' ? parentStep.node.config.execution : 'serial';
-    await this.reassignEscalatedStep(current, timer, action.resolvers, execution);
+    const quorum =
+      parentStep.node.type === 'approver_group'
+        ? parentStep.node.config.quorum
+        : ({ type: 'all' } as const);
+    await this.reassignEscalatedStep(current, data, timerNode, action.resolvers, execution, quorum);
+  }
+
+  private async claimEscalation(
+    tx: DbTransaction,
+    request: RuntimeRequest,
+    data: WorkflowEscalationJobData,
+    timer: Extract<ExecutableStep['node'], { type: 'escalation_timer' }>,
+  ): Promise<RuntimeRequest | null> {
+    const locked = await this.lockVersionedRequest(tx, request.id, request.organizationId);
+    if (
+      locked.status !== 'pending' ||
+      locked.currentNodeId !== data.parentNodeId ||
+      locked.definitionVersionId !== data.definitionVersionId ||
+      locked.attempt !== data.attempt
+    ) {
+      return null;
+    }
+
+    const slaMilliseconds = timer.config.slaHours * 60 * 60 * 1_000;
+    const minimumElapsed =
+      data.kind === 'warning'
+        ? slaMilliseconds * (timer.config.warningPercent / 100)
+        : slaMilliseconds;
+    if (Date.now() - locked.updatedAt.getTime() < minimumElapsed) return null;
+
+    const [claim] = await tx
+      .insert(approvalActions)
+      .values({
+        approvalRequestId: locked.id,
+        stepOrder: locked.currentStep,
+        approverId: null,
+        action: data.kind === 'warning' ? 'escalation_warning' : 'escalation_action',
+        nodeId: data.timerNodeId,
+        comment: `Claimed workflow escalation ${data.kind}`,
+        metadata: {
+          attempt: data.attempt,
+          definitionVersionId: data.definitionVersionId,
+          parentNodeId: data.parentNodeId,
+        },
+      })
+      .onConflictDoNothing()
+      .returning({ id: approvalActions.id });
+    return claim ? locked : null;
+  }
+
+  private async notifyClaimedEscalation(
+    request: RuntimeRequest,
+    data: WorkflowEscalationJobData,
+    timer: Extract<ExecutableStep['node'], { type: 'escalation_timer' }>,
+    message: string,
+  ): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const locked = await this.claimEscalation(tx, request, data, timer);
+      if (!locked) return;
+      const assignments = (await this.getAssignments(tx, locked.id, data.parentNodeId)).filter(
+        (assignment) => assignment.status === 'pending',
+      );
+      await this.notifyAssignees(locked, assignments, message, tx);
+    });
   }
 
   private async findPublishedVersion(
@@ -821,6 +1008,17 @@ export class WorkflowExecutionService {
       if (!purchaseOrder) throw new NotFoundException(`Entity ${entityId} not found`);
       entity = purchaseOrder;
       poCreatorId = purchaseOrder.issuedBy;
+      if (purchaseOrder.requisitionId) {
+        const linkedRequisition = await executor.query.requisitions.findFirst({
+          where: (record, { and, eq }) =>
+            and(
+              eq(record.id, purchaseOrder.requisitionId!),
+              eq(record.organizationId, organizationId),
+            ),
+          columns: { requesterId: true },
+        });
+        requesterId = linkedRequisition?.requesterId ?? null;
+      }
     } else {
       const invoice = await executor.query.invoices.findFirst({
         where: (record, { and, eq }) =>
@@ -841,7 +1039,9 @@ export class WorkflowExecutionService {
       legalEntityId:
         entityType !== 'requisition' && typeof entity.entityId === 'string'
           ? entity.entityId
-          : null,
+          : typeof additionalContext.legalEntityId === 'string'
+            ? additionalContext.legalEntityId
+            : null,
       actors: {
         requester: requesterId,
         submitter: initiatedBy,
@@ -908,7 +1108,7 @@ export class WorkflowExecutionService {
       }
     }
 
-    const budgetDecision = await this.budgets.evaluateEnforcement({
+    const budgetDecision = await this.budgets.evaluateEnforcementLocked(tx, {
       organizationId: request.organizationId,
       departmentId,
       requestedAmount: totalAmount,
@@ -986,7 +1186,7 @@ export class WorkflowExecutionService {
       }
       if (step.node.type === 'approved' || step.node.type === 'auto_approve') {
         if (request.requiredApproverId) {
-          request = await this.enterRequiredApproval(tx, request);
+          request = await this.enterRequiredApproval(tx, request, step.node.id);
           return { request, status: 'pending' };
         }
         return this.finishRequest(tx, request, 'approved', actorId, step.node.id);
@@ -1000,7 +1200,7 @@ export class WorkflowExecutionService {
 
       const sourceHandle =
         step.node.type === 'match_check'
-          ? request.workflowContext.matchStatus === 'matched'
+          ? request.workflowContext.matchStatus === 'full_match'
             ? 'within_tolerance'
             : 'exception'
           : step.node.type === 'budget_check'
@@ -1091,6 +1291,7 @@ export class WorkflowExecutionService {
   private async enterRequiredApproval(
     tx: DbTransaction,
     request: RuntimeRequest,
+    terminalNodeId: string,
   ): Promise<RuntimeRequest> {
     const approverId = request.requiredApproverId!;
     const assignedApproverId =
@@ -1111,6 +1312,10 @@ export class WorkflowExecutionService {
       .set({
         currentNodeId: REQUIRED_APPROVAL_NODE_ID,
         currentStep: request.currentStep + 1,
+        workflowContext: {
+          ...request.workflowContext,
+          [REQUIRED_APPROVAL_TERMINAL_CONTEXT_KEY]: terminalNodeId,
+        },
         updatedAt: new Date(),
       })
       .where(eq(approvalRequests.id, request.id))
@@ -1152,19 +1357,32 @@ export class WorkflowExecutionService {
       comment: comment ?? request.requiredApprovalReason,
       metadata: { requiredApprovalKey: request.requiredApprovalKey },
     });
+    await this.audit.log(
+      request.organizationId,
+      actorId,
+      'approval_request',
+      request.id,
+      action === 'approve' ? 'workflow_step_approved' : 'workflow_step_rejected',
+      { nodeId: REQUIRED_APPROVAL_NODE_ID, assignmentId: assignment.id },
+      undefined,
+      tx,
+    );
     if (action === 'reject') {
       return this.finishRequest(tx, request, 'rejected', actorId, REQUIRED_APPROVAL_NODE_ID);
     }
-    const terminal = executable.steps.find(
-      (step) => step.node.type === 'approved' || step.node.type === 'auto_approve',
-    );
-    return this.finishRequest(
-      tx,
-      request,
-      'approved',
-      actorId,
-      terminal?.node.id ?? REQUIRED_APPROVAL_NODE_ID,
-    );
+    const terminalNodeId = request.workflowContext[REQUIRED_APPROVAL_TERMINAL_CONTEXT_KEY];
+    const terminal =
+      typeof terminalNodeId === 'string'
+        ? executable.steps.find(
+            (step) =>
+              step.node.id === terminalNodeId &&
+              (step.node.type === 'approved' || step.node.type === 'auto_approve'),
+          )
+        : undefined;
+    if (!terminal) {
+      throw new ConflictException('The required approval terminal node is unavailable');
+    }
+    return this.finishRequest(tx, request, 'approved', actorId, terminal.node.id);
   }
 
   private async resolveApprovers(
@@ -1451,58 +1669,115 @@ export class WorkflowExecutionService {
   }
 
   private async publishRuntimeOutcome(outcome: RuntimeOutcome): Promise<void> {
-    if (outcome.status === 'pending') {
-      await Promise.all([
-        this.scheduleEscalations(outcome.request.id, outcome.request.organizationId),
-        this.notifyCurrentAssignments(outcome.request),
-      ]);
-      return;
+    if (outcome.status === 'pending') return;
+    if (!outcome.publicationId) {
+      throw new ConflictException('Terminal workflow publication has no durable identifier');
     }
     const type = outcome.request.approvableType;
     const entityId = outcome.request.approvableId;
+    const jobs: Promise<void>[] = [];
     if (type === 'requisition') {
-      this.webhookEvents.emit(
-        outcome.request.organizationId,
-        outcome.status === 'approved' ? 'requisition.approved' : 'requisition.rejected',
-        { requisitionId: entityId },
+      const eventType =
+        outcome.status === 'approved' ? 'requisition.approved' : 'requisition.rejected';
+      jobs.push(
+        this.webhookEvents.enqueue(
+          outcome.request.organizationId,
+          eventType,
+          { requisitionId: entityId },
+          `workflow-publication-${outcome.publicationId}-${eventType.replace('.', '-')}`,
+        ),
       );
     } else if (type === 'purchase_order') {
-      this.webhookEvents.emit(
-        outcome.request.organizationId,
-        outcome.status === 'approved' ? 'po.approved' : 'po.rejected',
-        { purchaseOrderId: entityId },
+      const eventType = outcome.status === 'approved' ? 'po.approved' : 'po.rejected';
+      jobs.push(
+        this.webhookEvents.enqueue(
+          outcome.request.organizationId,
+          eventType,
+          { purchaseOrderId: entityId },
+          `workflow-publication-${outcome.publicationId}-${eventType.replace('.', '-')}`,
+        ),
       );
     } else if (type === 'invoice') {
-      this.webhookEvents.emit(
-        outcome.request.organizationId,
-        outcome.status === 'approved' ? 'invoice.approved' : 'invoice.rejected',
-        { invoiceId: entityId },
+      const eventType = outcome.status === 'approved' ? 'invoice.approved' : 'invoice.rejected';
+      jobs.push(
+        this.webhookEvents.enqueue(
+          outcome.request.organizationId,
+          eventType,
+          { invoiceId: entityId },
+          `workflow-publication-${outcome.publicationId}-${eventType.replace('.', '-')}`,
+        ),
       );
       if (outcome.status === 'approved') {
         this.glExport?.enqueue(outcome.request.organizationId, entityId, 'qbo');
       }
     }
-    this.webhookEvents.emit(
-      outcome.request.organizationId,
-      outcome.status === 'approved' ? 'approval.approved' : 'approval.rejected',
-      { entityType: type, entityId },
+    const approvalEventType =
+      outcome.status === 'approved' ? 'approval.approved' : 'approval.rejected';
+    jobs.push(
+      this.webhookEvents.enqueue(
+        outcome.request.organizationId,
+        approvalEventType,
+        { entityType: type, entityId },
+        `workflow-publication-${outcome.publicationId}-${approvalEventType.replace('.', '-')}`,
+      ),
     );
+    await Promise.all(jobs);
   }
 
   private async publishRuntimeOutcomeAfterCommit(outcome: RuntimeOutcome): Promise<void> {
+    if (!outcome.publicationId) {
+      this.logger.error(`Workflow ${outcome.request.id} has no durable publication record`);
+      return;
+    }
     try {
-      await this.publishRuntimeOutcome(outcome);
+      await this.enqueueRuntimePublication(outcome.publicationId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(
-        `Workflow ${outcome.request.id} committed but publication failed: ${message}`,
+        `Workflow ${outcome.request.id} publication ${outcome.publicationId} awaits recovery: ${message}`,
       );
     }
   }
 
-  private async notifyCurrentAssignments(request: RuntimeRequest): Promise<void> {
+  private async recordRuntimePublication(
+    tx: DbTransaction,
+    outcome: RuntimeOutcome,
+  ): Promise<RuntimeOutcome> {
+    if (!outcome.request.currentNodeId) {
+      throw new ConflictException('Workflow outcome has no publication node');
+    }
+    const [publication] = await tx
+      .insert(workflowRuntimePublications)
+      .values({
+        organizationId: outcome.request.organizationId,
+        approvalRequestId: outcome.request.id,
+        nodeId: outcome.request.currentNodeId,
+        attempt: outcome.request.attempt,
+        outcomeStatus: outcome.status,
+      })
+      .returning({ id: workflowRuntimePublications.id });
+    return { ...outcome, publicationId: publication.id };
+  }
+
+  private async enqueueRuntimePublication(publicationId: string): Promise<void> {
+    await this.escalationQueue.add(
+      'publication',
+      { kind: 'publication', publicationId } satisfies WorkflowPublicationJobData,
+      {
+        jobId: `workflow-publication-${publicationId}`,
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 1_000 },
+        removeOnComplete: true,
+      },
+    );
+  }
+
+  private async notifyCurrentAssignments(
+    request: RuntimeRequest,
+    transaction?: DbTransaction,
+  ): Promise<void> {
     if (!request.currentNodeId) return;
-    const assignments = await this.db.query.workflowApprovalAssignments.findMany({
+    const assignments = await (transaction ?? this.db).query.workflowApprovalAssignments.findMany({
       where: (assignment, { and, eq }) =>
         and(
           eq(assignment.approvalRequestId, request.id),
@@ -1510,13 +1785,14 @@ export class WorkflowExecutionService {
           eq(assignment.status, 'pending'),
         ),
     });
-    await this.notifyAssignees(request, assignments, 'Workflow approval is required');
+    await this.notifyAssignees(request, assignments, 'Workflow approval is required', transaction);
   }
 
   private async notifyAssignees(
     request: RuntimeRequest,
     assignments: RuntimeAssignment[],
     message: string,
+    transaction?: DbTransaction,
   ): Promise<void> {
     await Promise.all(
       assignments.map((assignment) =>
@@ -1528,6 +1804,7 @@ export class WorkflowExecutionService {
           message,
           request.approvableType,
           request.approvableId,
+          transaction,
         ),
       ),
     );
@@ -1535,21 +1812,22 @@ export class WorkflowExecutionService {
 
   private async reassignEscalatedStep(
     request: RuntimeRequest,
-    timer: ExecutableStep,
+    data: WorkflowEscalationJobData,
+    timer: Extract<ExecutableStep['node'], { type: 'escalation_timer' }>,
     resolvers: ApproverResolver[],
     execution: 'serial' | 'parallel',
+    quorum: WorkflowQuorum,
   ): Promise<void> {
     const outcome = await this.db.transaction(async (tx) => {
-      const locked = await this.lockVersionedRequest(tx, request.id, request.organizationId);
-      if (
-        locked.status !== 'pending' ||
-        locked.currentNodeId !== request.currentNodeId ||
-        locked.attempt !== request.attempt
-      ) {
-        return null;
-      }
+      const locked = await this.claimEscalation(tx, request, data, timer);
+      if (!locked) return null;
       const resolved = await this.resolveApprovers(tx, locked, resolvers, [], []);
       if (resolved.length === 0) throw new ConflictException('Escalation resolved no approvers');
+      if (quorum.type === 'count' && resolved.length < quorum.count) {
+        throw new ConflictException(
+          `Escalation resolved ${resolved.length} approvers, but the workflow requires ${quorum.count}`,
+        );
+      }
       const current = await this.getAssignments(tx, locked.id, locked.currentNodeId!);
       const nextSequence = Math.max(0, ...current.map((assignment) => assignment.sequence)) + 1;
       await tx
@@ -1581,8 +1859,8 @@ export class WorkflowExecutionService {
         approverId: null,
         action: 'reassigned',
         nodeId: locked.currentNodeId,
-        comment: `Escalated by timer ${timer.node.id}`,
-        metadata: { timerNodeId: timer.node.id, resolverCount: resolvers.length },
+        comment: `Escalated by timer ${timer.id}`,
+        metadata: { timerNodeId: timer.id, resolverCount: resolvers.length },
       });
       await this.audit.log(
         locked.organizationId,
@@ -1590,26 +1868,27 @@ export class WorkflowExecutionService {
         'approval_request',
         locked.id,
         'workflow_reassigned',
-        { nodeId: locked.currentNodeId, timerNodeId: timer.node.id },
+        { nodeId: locked.currentNodeId, timerNodeId: timer.id },
         undefined,
         tx,
       );
-      return { request: locked, status: 'pending' as const };
+      return this.recordRuntimePublication(tx, {
+        request: locked,
+        status: 'pending' as const,
+      });
     });
     if (outcome) await this.publishRuntimeOutcomeAfterCommit(outcome);
   }
 
-  private async autoApproveEscalatedStep(request: RuntimeRequest, nodeId: string): Promise<void> {
+  private async autoApproveEscalatedStep(
+    request: RuntimeRequest,
+    data: WorkflowEscalationJobData,
+    timer: Extract<ExecutableStep['node'], { type: 'escalation_timer' }>,
+  ): Promise<void> {
     const outcome = await this.db.transaction(async (tx) => {
-      const locked = await this.lockVersionedRequest(tx, request.id, request.organizationId);
-      if (
-        locked.status !== 'pending' ||
-        locked.currentNodeId !== nodeId ||
-        locked.definitionVersionId !== request.definitionVersionId ||
-        locked.attempt !== request.attempt
-      ) {
-        return null;
-      }
+      const locked = await this.claimEscalation(tx, request, data, timer);
+      if (!locked) return null;
+      const nodeId = data.parentNodeId;
       const executable = await this.loadExecutable(tx, locked);
       const step = this.getStep(executable, nodeId);
       const now = new Date();
@@ -1632,6 +1911,16 @@ export class WorkflowExecutionService {
         comment: 'Auto-approved after the workflow SLA elapsed',
         metadata: { escalation: true },
       });
+      await this.audit.log(
+        locked.organizationId,
+        null,
+        'approval_request',
+        locked.id,
+        'workflow_step_auto_approved',
+        { nodeId, escalation: true },
+        undefined,
+        tx,
+      );
       const transition = selectWorkflowTransition(step, locked.workflowContext);
       if (!transition) throw new ConflictException(`Workflow node ${nodeId} has no transition`);
       const [advanced] = await tx
@@ -1639,7 +1928,8 @@ export class WorkflowExecutionService {
         .set({ currentNodeId: transition.targetStepId, updatedAt: now })
         .where(eq(approvalRequests.id, locked.id))
         .returning();
-      return this.advanceAutomaticSteps(tx, advanced, executable, null);
+      const advancedOutcome = await this.advanceAutomaticSteps(tx, advanced, executable, null);
+      return this.recordRuntimePublication(tx, advancedOutcome);
     });
     if (outcome) await this.publishRuntimeOutcomeAfterCommit(outcome);
   }

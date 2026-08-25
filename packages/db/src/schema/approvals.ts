@@ -157,17 +157,56 @@ export const workflowApprovalAssignments = pgTable(
   ],
 );
 
-export const approvalActions = pgTable('approval_actions', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  approvalRequestId: uuid('approval_request_id')
-    .notNull()
-    .references(() => approvalRequests.id),
-  stepOrder: integer('step_order').notNull(),
-  approverId: uuid('approver_id').references(() => users.id),
-  action: varchar('action', { length: 20 }).notNull(), // approved|rejected|delegated|returned
-  comment: text('comment'),
-  nodeId: varchar('node_id', { length: 100 }),
-  metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
-  actedAt: timestamp('acted_at', { withTimezone: true }).notNull().defaultNow(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const workflowRuntimePublications = pgTable(
+  'workflow_runtime_publications',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id').notNull(),
+    approvalRequestId: uuid('approval_request_id').notNull(),
+    nodeId: varchar('node_id', { length: 100 }).notNull(),
+    attempt: integer('attempt').notNull(),
+    outcomeStatus: varchar('outcome_status', { length: 20 }).notNull(),
+    status: varchar('status', { length: 20 }).notNull().default('pending'),
+    deliveryAttempts: integer('delivery_attempts').notNull().default(0),
+    lastError: text('last_error'),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('workflow_runtime_publications_status_idx').on(table.status, table.createdAt),
+    foreignKey({
+      columns: [table.organizationId],
+      foreignColumns: [organizations.id],
+      name: 'workflow_runtime_publications_organization_fk',
+    }),
+    foreignKey({
+      columns: [table.approvalRequestId, table.organizationId],
+      foreignColumns: [approvalRequests.id, approvalRequests.organizationId],
+      name: 'workflow_runtime_publications_request_org_fk',
+    }).onDelete('cascade'),
+  ],
+);
+
+export const approvalActions = pgTable(
+  'approval_actions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    approvalRequestId: uuid('approval_request_id')
+      .notNull()
+      .references(() => approvalRequests.id),
+    stepOrder: integer('step_order').notNull(),
+    approverId: uuid('approver_id').references(() => users.id),
+    action: varchar('action', { length: 20 }).notNull(),
+    comment: text('comment'),
+    nodeId: varchar('node_id', { length: 100 }),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    actedAt: timestamp('acted_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('approval_actions_escalation_claim_unique')
+      .on(table.approvalRequestId, table.nodeId, table.action)
+      .where(sql`${table.action} in ('escalation_warning', 'escalation_action')`),
+  ],
+);

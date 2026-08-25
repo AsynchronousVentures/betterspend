@@ -4,6 +4,7 @@ import type { Job } from 'bullmq';
 import type {
   WorkflowEscalationJobData,
   WorkflowExecutionService,
+  WorkflowQueueJobData,
 } from './workflow-execution.service';
 import { WorkflowEscalationProcessor } from './workflow-escalation.processor';
 
@@ -47,5 +48,22 @@ describe('WorkflowEscalationProcessor', () => {
     await processor.process({ data: validJob } as Job<WorkflowEscalationJobData>);
 
     assert.deepEqual(calls, [validJob]);
+  });
+
+  it('forwards a durable publication job', async () => {
+    const calls: unknown[] = [];
+    const processor = new WorkflowEscalationProcessor({
+      handleRuntimePublication: async (publicationId: string) => {
+        calls.push(publicationId);
+      },
+    } as unknown as WorkflowExecutionService);
+    const data = {
+      kind: 'publication' as const,
+      publicationId: '00000000-0000-4000-8000-000000000401',
+    };
+
+    await processor.process({ data } as Job<WorkflowQueueJobData>);
+
+    assert.deepEqual(calls, [data.publicationId]);
   });
 });

@@ -9,6 +9,7 @@ const EXPECTED_TABLES = [
   'workflow_definitions',
   'workflow_definition_versions',
   'workflow_approval_assignments',
+  'workflow_runtime_publications',
 ] as const;
 
 const EXPECTED_COLUMNS = [
@@ -22,6 +23,7 @@ const EXPECTED_COLUMNS = [
   { table: 'approval_actions', column: 'metadata' },
   { table: 'users', column: 'manager_id' },
   { table: 'workflow_definition_versions', column: 'organization_id' },
+  { table: 'workflow_runtime_publications', column: 'outcome_status' },
 ] as const;
 
 const EXPECTED_TRIGGERS = [
@@ -182,6 +184,20 @@ const EXPECTED_FOREIGN_KEYS = [
     child: 'workflow_approval_assignments',
     parent: 'users',
     childColumns: ['acted_by', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'workflow_runtime_publications_organization_fk',
+    child: 'workflow_runtime_publications',
+    parent: 'organizations',
+    childColumns: ['organization_id'],
+    parentColumns: ['id'],
+  },
+  {
+    name: 'workflow_runtime_publications_request_org_fk',
+    child: 'workflow_runtime_publications',
+    parent: 'approval_requests',
+    childColumns: ['approval_request_id', 'organization_id'],
     parentColumns: ['id', 'organization_id'],
   },
 ] as const;
