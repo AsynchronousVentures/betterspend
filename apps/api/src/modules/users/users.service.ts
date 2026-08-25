@@ -13,6 +13,26 @@ import { users, userRoles, authAccounts, customRoles } from '@betterspend/db';
 import { PERMISSION_CATALOG, normalizePermissions } from '../../common/permissions';
 import { hashCredentialPassword } from '../../auth/credential-password';
 
+const EMAIL_UNIQUE_CONSTRAINTS = new Set(['users_email_unique', 'users_email_normalized_unique']);
+
+function isEmailUniqueViolation(error: unknown): boolean {
+  const seen = new Set<object>();
+  let current = error;
+  while (typeof current === 'object' && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const candidate = current as Record<string, unknown>;
+    if (
+      candidate.code === '23505' &&
+      typeof candidate.constraint_name === 'string' &&
+      EMAIL_UNIQUE_CONSTRAINTS.has(candidate.constraint_name)
+    ) {
+      return true;
+    }
+    current = candidate.cause;
+  }
+  return false;
+}
+
 @Injectable()
 export class UsersService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
@@ -96,29 +116,36 @@ export class UsersService {
     if (existing) throw new ConflictException(`Email ${email} is already in use`);
     const userId = randomUUID();
     const password = await hashCredentialPassword(data.password);
-    await this.db.transaction(async (transaction) => {
-      await transaction.insert(users).values({
-        id: userId,
-        organizationId,
-        email,
-        name: data.name,
-        emailVerified: true,
-      });
-      await transaction.insert(authAccounts).values({
-        id: randomUUID(),
-        userId,
-        issuer: 'local:credential',
-        accountId: userId,
-        providerId: 'credential',
-        password,
-      });
+    try {
+      await this.db.transaction(async (transaction) => {
+        await transaction.insert(users).values({
+          id: userId,
+          organizationId,
+          email,
+          name: data.name,
+          emailVerified: true,
+        });
+        await transaction.insert(authAccounts).values({
+          id: randomUUID(),
+          userId,
+          issuer: 'local:credential',
+          accountId: userId,
+          providerId: 'credential',
+          password,
+        });
 
-      if (data.role) {
-        await transaction
-          .insert(userRoles)
-          .values({ userId, role: data.role, scopeType: 'global' });
+        if (data.role) {
+          await transaction
+            .insert(userRoles)
+            .values({ userId, role: data.role, scopeType: 'global' });
+        }
+      });
+    } catch (error: unknown) {
+      if (isEmailUniqueViolation(error)) {
+        throw new ConflictException(`Email ${email} is already in use`);
       }
-    });
+      throw error;
+    }
 
     return this.findOne(userId, organizationId);
   }

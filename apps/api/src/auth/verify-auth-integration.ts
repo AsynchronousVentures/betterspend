@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { ConflictException } from '@nestjs/common';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import * as schema from '@betterspend/db';
 import { migrateBetterAuthAccounts, type Db } from '@betterspend/db';
 import { createAuthForDatabase, type AuthInstance } from './auth.instance';
@@ -232,6 +233,29 @@ async function main(): Promise<void> {
         email: 'INVITED@EXAMPLE.TEST',
       }),
     );
+
+    const concurrentEmail = 'concurrent@example.test';
+    const concurrentCreates = await Promise.allSettled([
+      usersService.create(initialized.organization.id, {
+        name: 'Concurrent User One',
+        email: concurrentEmail.toUpperCase(),
+        password: testPassword(),
+      }),
+      usersService.create(initialized.organization.id, {
+        name: 'Concurrent User Two',
+        email: concurrentEmail,
+        password: testPassword(),
+      }),
+    ]);
+    assert.equal(concurrentCreates.filter((result) => result.status === 'fulfilled').length, 1);
+    const rejectedCreate = concurrentCreates.find((result) => result.status === 'rejected');
+    assert.ok(rejectedCreate);
+    assert.ok(rejectedCreate.reason instanceof ConflictException);
+    const [concurrentUserCount] = await db
+      .select({ count: sql<number>`COUNT(*)::integer` })
+      .from(schema.users)
+      .where(sql`lower(${schema.users.email}) = ${concurrentEmail}`);
+    assert.equal(concurrentUserCount?.count, 1);
 
     await client.unsafe(`
       CREATE FUNCTION auth_verification_reject_account() RETURNS trigger AS $$
