@@ -277,7 +277,11 @@ export class WorkflowExecutionService implements OnModuleInit {
     comment: string | undefined,
     organizationId: string,
   ): Promise<{ status: 'pending' | 'approved' | 'rejected'; advancedToNode?: string }> {
-    const outcome = await this.db.transaction(async (tx) => {
+    const actionResult = await this.db.transaction(async (tx) => {
+      const withPublication = async (outcome: RuntimeOutcome) => ({
+        outcome: await this.recordRuntimePublication(tx, outcome),
+        publicationRequired: true as const,
+      });
       const request = await this.lockVersionedRequest(tx, requestId, organizationId);
       if (request.status !== 'pending') {
         throw new BadRequestException(`Request is already ${request.status}`);
@@ -295,7 +299,7 @@ export class WorkflowExecutionService implements OnModuleInit {
           comment,
           executable,
         );
-        return this.recordRuntimePublication(tx, outcome);
+        return withPublication(outcome);
       }
       const step = this.getStep(executable, request.currentNodeId);
       if (step.node.type !== 'approver_group' && step.node.type !== 'resolver') {
@@ -360,7 +364,6 @@ export class WorkflowExecutionService implements OnModuleInit {
       );
 
       if (progress.state === 'pending') {
-        let pendingRequest = request;
         if (progress.nextSequence != null) {
           await tx
             .update(workflowApprovalAssignments)
@@ -372,16 +375,20 @@ export class WorkflowExecutionService implements OnModuleInit {
                 eq(workflowApprovalAssignments.sequence, progress.nextSequence),
               ),
             );
-          [pendingRequest] = await tx
+          const [pendingRequest] = await tx
             .update(approvalRequests)
             .set({ updatedAt: now })
             .where(eq(approvalRequests.id, request.id))
             .returning();
+          return withPublication({
+            request: pendingRequest,
+            status: 'pending' as const,
+          });
         }
-        return this.recordRuntimePublication(tx, {
-          request: pendingRequest,
-          status: 'pending' as const,
-        });
+        return {
+          outcome: { request, status: 'pending' as const },
+          publicationRequired: false as const,
+        };
       }
 
       await tx
@@ -396,7 +403,7 @@ export class WorkflowExecutionService implements OnModuleInit {
         );
       if (progress.state === 'rejected') {
         const outcome = await this.finishRequest(tx, request, 'rejected', actorId, step.node.id);
-        return this.recordRuntimePublication(tx, outcome);
+        return withPublication(outcome);
       }
 
       const transition = selectWorkflowTransition(step, request.workflowContext);
@@ -408,10 +415,13 @@ export class WorkflowExecutionService implements OnModuleInit {
         .where(eq(approvalRequests.id, request.id))
         .returning();
       const outcome = await this.advanceAutomaticSteps(tx, advanced, executable, actorId);
-      return this.recordRuntimePublication(tx, outcome);
+      return withPublication(outcome);
     });
 
-    await this.publishRuntimeOutcomeAfterCommit(outcome);
+    if (actionResult.publicationRequired) {
+      await this.publishRuntimeOutcomeAfterCommit(actionResult.outcome);
+    }
+    const { outcome } = actionResult;
     return {
       status: outcome.status,
       ...(outcome.status === 'pending' && outcome.request.currentNodeId
