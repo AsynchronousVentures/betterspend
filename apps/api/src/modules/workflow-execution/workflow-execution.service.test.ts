@@ -376,4 +376,63 @@ describe('WorkflowExecutionService escalation scheduling', () => {
     );
     assert.ok(jobs.every((job) => job.data.definitionVersionId === request.definitionVersionId));
   });
+
+  it('ignores a timer whose compiled parent does not match the waiting step', async () => {
+    const executable = executableWithApproval();
+    executable.steps.push({
+      node: {
+        id: 'foreign-timer',
+        name: 'Foreign SLA',
+        type: 'escalation_timer',
+        disabled: false,
+        config: {
+          parentNodeId: 'different-review',
+          slaHours: 1,
+          warningPercent: 75,
+          action: { type: 'auto_reject' },
+        },
+      },
+      transitions: [],
+    });
+    const request = {
+      id: '00000000-0000-4000-8000-000000000301',
+      organizationId: '00000000-0000-4000-8000-000000000101',
+      definitionVersionId: '00000000-0000-4000-8000-000000000502',
+      currentNodeId: 'review',
+      attempt: 1,
+      status: 'pending',
+    };
+    const writes: string[] = [];
+    const db = {
+      query: {
+        approvalRequests: { findFirst: async () => request },
+        workflowApprovalAssignments: { findMany: async () => [] },
+        workflowDefinitionVersions: {
+          findFirst: async () => ({ executableJson: executable }),
+        },
+      },
+      transaction: async () => writes.push('transaction'),
+    } as unknown as Db;
+    const service = new WorkflowExecutionService(
+      db,
+      {} as Queue,
+      {} as ApprovalDelegationsService,
+      {} as BudgetsService,
+      {} as NotificationsService,
+      {} as WebhookEventService,
+      {} as AuditService,
+    );
+
+    await service.handleEscalation({
+      organizationId: request.organizationId,
+      approvalRequestId: request.id,
+      definitionVersionId: request.definitionVersionId,
+      parentNodeId: request.currentNodeId,
+      timerNodeId: 'foreign-timer',
+      attempt: request.attempt,
+      kind: 'action',
+    });
+
+    assert.deepEqual(writes, []);
+  });
 });

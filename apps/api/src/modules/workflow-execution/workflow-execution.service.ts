@@ -9,6 +9,7 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import { and, asc, eq, inArray } from 'drizzle-orm';
+import { z } from 'zod';
 import type {
   ApprovalNode,
   ApproverResolver,
@@ -57,15 +58,19 @@ export interface WorkflowExecutionResult {
   threshold?: undefined;
 }
 
-export interface WorkflowEscalationJobData {
-  organizationId: string;
-  approvalRequestId: string;
-  definitionVersionId: string;
-  parentNodeId: string;
-  timerNodeId: string;
-  attempt: number;
-  kind: 'warning' | 'action';
-}
+export const workflowEscalationJobDataSchema = z
+  .object({
+    organizationId: z.string().uuid(),
+    approvalRequestId: z.string().uuid(),
+    definitionVersionId: z.string().uuid(),
+    parentNodeId: z.string().trim().min(1).max(100),
+    timerNodeId: z.string().trim().min(1).max(100),
+    attempt: z.number().int().positive().max(1_000_000),
+    kind: z.enum(['warning', 'action']),
+  })
+  .strict();
+
+export type WorkflowEscalationJobData = z.infer<typeof workflowEscalationJobDataSchema>;
 
 type RuntimeRequest = typeof approvalRequests.$inferSelect;
 type RuntimeAssignment = typeof workflowApprovalAssignments.$inferSelect;
@@ -559,7 +564,12 @@ export class WorkflowExecutionService {
 
     const executable = await this.loadExecutable(this.db, current);
     const timer = this.getStep(executable, data.timerNodeId);
-    if (timer.node.type !== 'escalation_timer') return;
+    if (
+      timer.node.type !== 'escalation_timer' ||
+      timer.node.config.parentNodeId !== data.parentNodeId
+    ) {
+      return;
+    }
     const action = timer.node.config.action;
     if (action.type === 'notify') {
       await this.notifyAssignees(current, assignments, 'Workflow approval exceeded its SLA');
