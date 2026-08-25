@@ -1821,14 +1821,23 @@ export class WorkflowExecutionService implements OnModuleInit {
     const outcome = await this.db.transaction(async (tx) => {
       const locked = await this.claimEscalation(tx, request, data, timer);
       if (!locked) return null;
-      const resolved = await this.resolveApprovers(tx, locked, resolvers, [], []);
+      const current = await this.getAssignments(tx, locked.id, locked.currentNodeId!);
+      const approvedApproverIds = new Set(
+        current
+          .filter((assignment) => assignment.status === 'approved')
+          .map((assignment) => assignment.assignedApproverId),
+      );
+      const resolved = (await this.resolveApprovers(tx, locked, resolvers, [], [])).filter(
+        (item) => !approvedApproverIds.has(item.assignedApproverId),
+      );
       if (resolved.length === 0) throw new ConflictException('Escalation resolved no approvers');
-      if (quorum.type === 'count' && resolved.length < quorum.count) {
+      const remainingApprovalCount =
+        quorum.type === 'count' ? Math.max(0, quorum.count - approvedApproverIds.size) : 0;
+      if (resolved.length < remainingApprovalCount) {
         throw new ConflictException(
-          `Escalation resolved ${resolved.length} approvers, but the workflow requires ${quorum.count}`,
+          `Escalation resolved ${resolved.length} replacement approvers, but ${remainingApprovalCount} are required`,
         );
       }
-      const current = await this.getAssignments(tx, locked.id, locked.currentNodeId!);
       const nextSequence = Math.max(0, ...current.map((assignment) => assignment.sequence)) + 1;
       await tx
         .update(workflowApprovalAssignments)
