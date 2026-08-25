@@ -9,6 +9,7 @@ import {
   jsonb,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { organizations, departments } from './organizations';
 
 export const users = pgTable(
@@ -29,6 +30,7 @@ export const users = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    normalizedEmail: uniqueIndex('users_email_normalized_unique').on(sql`lower(${table.email})`),
     idOrganization: uniqueIndex('users_id_organization_id_unique').on(
       table.id,
       table.organizationId,

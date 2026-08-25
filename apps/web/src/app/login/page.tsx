@@ -18,6 +18,7 @@ function LoginForm() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const passwordReset = searchParams.get('reset') === '1';
+  const accountCreated = searchParams.get('created') === '1';
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -61,6 +62,12 @@ function LoginForm() {
           <AlertDescription>
             Password reset successful. Please sign in with your new password.
           </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {accountCreated ? (
+        <Alert variant="success">
+          <AlertDescription>Account created. Sign in to continue.</AlertDescription>
         </Alert>
       ) : null}
 

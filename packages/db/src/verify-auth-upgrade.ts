@@ -5,7 +5,7 @@ import path from 'node:path';
 import postgres from 'postgres';
 import { migrateBetterAuthAccounts } from './better-auth-migration';
 
-const migrationPath = path.resolve(__dirname, 'migrations/20260825042914_amazing_hydra.sql');
+const migrationPath = path.resolve(__dirname, 'migrations/20260825044125_outgoing_marauders.sql');
 
 async function applyAuthMigration(client: postgres.Sql): Promise<void> {
   const migration = await readFile(migrationPath, 'utf8');

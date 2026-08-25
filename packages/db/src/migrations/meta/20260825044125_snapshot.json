@@ -1,5 +1,5 @@
 {
-  "id": "254f1944-59c8-43ac-ba4a-b17f7602b515",
+  "id": "3172b310-5308-45e6-933b-25de5b71e2e5",
   "prevId": "ea66fec5-d5c0-4bde-b5d9-6949d6a91f5a",
   "version": "7",
   "dialect": "postgresql",
@@ -625,6 +625,21 @@
         }
       },
       "indexes": {
+        "users_email_normalized_unique": {
+          "name": "users_email_normalized_unique",
+          "columns": [
+            {
+              "expression": "lower(\"email\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "users_id_organization_id_unique": {
           "name": "users_id_organization_id_unique",
           "columns": [

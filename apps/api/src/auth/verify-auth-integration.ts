@@ -48,6 +48,7 @@ async function verifyMigratedCredentialSignIn(databaseUrl: string): Promise<void
         email_verified boolean DEFAULT false NOT NULL,
         image text,
         department_id uuid,
+        manager_id uuid,
         is_active boolean DEFAULT true NOT NULL,
         created_at timestamp with time zone DEFAULT now() NOT NULL,
         updated_at timestamp with time zone DEFAULT now() NOT NULL
@@ -104,7 +105,7 @@ async function verifyMigratedCredentialSignIn(databaseUrl: string): Promise<void
     const migration = await readFile(
       path.resolve(
         __dirname,
-        '../../../../packages/db/src/migrations/20260825042914_amazing_hydra.sql',
+        '../../../../packages/db/src/migrations/20260825044125_outgoing_marauders.sql',
       ),
       'utf8',
     );
@@ -145,7 +146,22 @@ async function main(): Promise<void> {
       email: 'first-admin@example.test',
       password: testPassword(),
     };
+    const orphanUserId = randomUUID();
+    const [legacyOrganization] = await db
+      .insert(schema.organizations)
+      .values({ name: 'Legacy Demo Organization', slug: 'legacy-demo-organization' })
+      .returning();
+    await db.insert(schema.users).values({
+      id: orphanUserId,
+      organizationId: legacyOrganization.id,
+      name: 'Incomplete Sign-up',
+      email: 'First-Admin@Example.Test',
+    });
+
     const initialized = await bootstrapService.initialize(firstAdmin);
+    assert.equal(initialized.user.id, orphanUserId);
+    assert.equal(initialized.organization.id, legacyOrganization.id);
+    assert.equal(initialized.organization.name, firstAdmin.organizationName);
     const [account] = await db
       .select()
       .from(schema.authAccounts)
@@ -200,6 +216,22 @@ async function main(): Promise<void> {
       password: invitedPassword,
     });
     assert.equal(invitedSignIn.status, 200);
+
+    await assert.rejects(
+      usersService.create(initialized.organization.id, {
+        name: 'Duplicate Invited User',
+        email: 'INVITED@EXAMPLE.TEST',
+        password: testPassword(),
+      }),
+      /already in use/,
+    );
+    await assert.rejects(
+      db.insert(schema.users).values({
+        organizationId: initialized.organization.id,
+        name: 'Database Boundary Duplicate',
+        email: 'INVITED@EXAMPLE.TEST',
+      }),
+    );
 
     await client.unsafe(`
       CREATE FUNCTION auth_verification_reject_account() RETURNS trigger AS $$

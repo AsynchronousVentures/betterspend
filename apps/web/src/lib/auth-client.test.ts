@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { parseAuthResponse } from './auth-client';
+import { parseAuthResponse, signUp } from './auth-client';
 
 describe('parseAuthResponse', () => {
   it('turns an empty non-JSON 500 into a server error', async () => {
@@ -23,5 +23,32 @@ describe('parseAuthResponse', () => {
       parseAuthResponse(new Response('<html>proxy error</html>', { status: 200 })),
       /Invalid authentication response/,
     );
+  });
+});
+
+describe('signUp', () => {
+  it('marks bootstrap complete when automatic sign-in cannot finish', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestCount = 0;
+    globalThis.fetch = async () => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return new Response(JSON.stringify({ organization: {}, user: {} }), { status: 201 });
+      }
+      throw new TypeError('connection closed');
+    };
+
+    try {
+      const result = await signUp({
+        organizationName: 'Acme',
+        name: 'Admin',
+        email: 'admin@example.test',
+        password: 'correct horse battery staple',
+      });
+      assert.equal(result.accountCreated, true);
+      assert.equal(result.error, 'Account created. Sign in to continue.');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

@@ -43,7 +43,9 @@ export default function SignUpPage() {
     setLoading(true);
     try {
       const result = await signUp(parsed.data);
-      if (result.error || result.message?.toLowerCase().includes('already')) {
+      if (result.accountCreated) {
+        router.push('/login?created=1');
+      } else if (result.error || result.message?.toLowerCase().includes('already')) {
         setError(result.message || result.error || 'Sign-up failed');
       } else {
         router.push('/');

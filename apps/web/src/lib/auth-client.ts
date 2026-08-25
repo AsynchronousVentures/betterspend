@@ -9,6 +9,7 @@ export interface SignInResult {
   user?: { id: string; email: string; name: string };
   error?: string;
   message?: string;
+  accountCreated?: boolean;
 }
 
 export async function parseAuthResponse(res: Response): Promise<SignInResult> {
@@ -64,7 +65,21 @@ export async function signUp(input: BootstrapInstanceInput): Promise<SignInResul
   });
   const data = await parseAuthResponse(res);
   if (data.error || data.message) return data;
-  return signIn(input.email, input.password);
+  try {
+    const signedIn = await signIn(input.email, input.password);
+    if (signedIn.error || !signedIn.token) {
+      return {
+        accountCreated: true,
+        error: 'Account created. Sign in to continue.',
+      };
+    }
+    return signedIn;
+  } catch {
+    return {
+      accountCreated: true,
+      error: 'Account created. Sign in to continue.',
+    };
+  }
 }
 
 export async function signOut(): Promise<void> {

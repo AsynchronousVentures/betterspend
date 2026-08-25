@@ -5,7 +5,7 @@ import {
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
@@ -90,7 +90,9 @@ export class UsersService {
     data: { name: string; email: string; password: string; role?: string },
   ) {
     const email = data.email.trim().toLowerCase();
-    const existing = await this.db.query.users.findFirst({ where: eq(users.email, email) });
+    const existing = await this.db.query.users.findFirst({
+      where: sql`lower(${users.email}) = ${email}`,
+    });
     if (existing) throw new ConflictException(`Email ${email} is already in use`);
     const userId = randomUUID();
     const password = await hashCredentialPassword(data.password);

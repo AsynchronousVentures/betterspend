@@ -2,6 +2,7 @@ import postgres from 'postgres';
 
 const BACKFILL_BATCH_SIZE = 1_000;
 const ISSUER_CHECK = 'auth_accounts_issuer_not_null_check';
+const NORMALIZED_EMAIL_INDEX = 'users_email_normalized_unique';
 
 type IndexState = {
   exists: boolean;
@@ -58,6 +59,41 @@ async function ensureAccountIdentityIndex(client: postgres.Sql): Promise<void> {
   `;
 }
 
+async function ensureNormalizedUserEmailIndex(client: postgres.Sql): Promise<void> {
+  const [table] = await client<{ exists: boolean }[]>`
+    SELECT to_regclass('users') IS NOT NULL AS "exists"
+  `;
+  if (!table.exists) return;
+
+  const state = await indexState(client, NORMALIZED_EMAIL_INDEX);
+  if (state.exists && state.isValid) {
+    const definition = state.definition?.replaceAll('"', '').toLowerCase();
+    if (!state.isUnique || !definition?.includes('lower((email)::text)')) {
+      throw new Error(`${NORMALIZED_EMAIL_INDEX} exists with an unexpected definition`);
+    }
+    return;
+  }
+
+  const [duplicate] = await client<{ email: string }[]>`
+    SELECT lower(email) AS email
+    FROM users
+    GROUP BY lower(email)
+    HAVING COUNT(*) > 1
+    LIMIT 1
+  `;
+  if (duplicate) {
+    throw new Error(
+      `Duplicate normalized user email "${duplicate.email}" requires manual resolution before migration.`,
+    );
+  }
+
+  if (state.exists) await client`DROP INDEX CONCURRENTLY ${client(NORMALIZED_EMAIL_INDEX)}`;
+  await client`
+    CREATE UNIQUE INDEX CONCURRENTLY ${client(NORMALIZED_EMAIL_INDEX)}
+    ON users (lower(email))
+  `;
+}
+
 async function addIssuerWriteFence(client: postgres.Sql): Promise<void> {
   const [constraint] = await client<{ exists: boolean }[]>`
     SELECT EXISTS (
@@ -104,6 +140,8 @@ async function backfillAccounts(client: postgres.Sql): Promise<void> {
 
 /** Completes the online Better Auth 1.7 account rollout after additive Drizzle migrations. */
 export async function migrateBetterAuthAccounts(client: postgres.Sql): Promise<void> {
+  await ensureNormalizedUserEmailIndex(client);
+
   const [tableState] = await client<
     Array<{ exists: boolean; hasIssuer: boolean; issuerNullable: boolean }>
   >`

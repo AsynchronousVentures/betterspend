@@ -46,6 +46,12 @@ const EXPECTED_INDEXES = [
     columns: ['issuer', 'account_id'],
     unique: true,
   },
+  {
+    name: 'users_email_normalized_unique',
+    table: 'users',
+    columns: ['lower(email::text)'],
+    unique: true,
+  },
 ] as const;
 
 const EXPECTED_TRIGGERS = [
@@ -337,14 +343,9 @@ async function main(): Promise<void> {
         table_class.relname AS table,
         index_data.indisunique AS "unique",
         ARRAY(
-          SELECT index_attribute.attname
-          FROM unnest(index_data.indkey)
-            WITH ORDINALITY AS index_column(attribute_number, position)
-          JOIN pg_attribute AS index_attribute
-            ON index_attribute.attrelid = table_class.oid
-            AND index_attribute.attnum = index_column.attribute_number
-          WHERE index_column.position <= index_data.indnkeyatts
-          ORDER BY index_column.position
+          SELECT pg_get_indexdef(index_data.indexrelid, position, true)
+          FROM generate_series(1, index_data.indnkeyatts) AS position
+          ORDER BY position
         ) AS columns
       FROM pg_index AS index_data
       JOIN pg_class AS index_class ON index_class.oid = index_data.indexrelid
