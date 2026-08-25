@@ -13,6 +13,7 @@ import type { ExecutableDefinition } from '@betterspend/shared';
 import type { ApprovalDelegationsService } from '../approval-delegations/approval-delegations.service';
 import type { AuditService } from '../audit/audit.service';
 import type { BudgetsService } from '../budgets/budgets.service';
+import type { GlExportService } from '../gl/gl-export.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { WebhookEventService } from '../webhooks/webhook-event.service';
 import { WorkflowExecutionService } from './workflow-execution.service';
@@ -93,6 +94,8 @@ function createRestartFixture(
   enforceSeparationOfDuties = false,
   budgetAction: 'allow' | 'require_approval' | 'block' = 'allow',
   requestStatus: 'pending' | 'approved' = 'pending',
+  queueFails = false,
+  glExportFails = false,
 ) {
   const executable = executableWithApproval(enforceSeparationOfDuties);
   const oldRequest = {
@@ -161,6 +164,8 @@ function createRestartFixture(
   const notifications: string[] = [];
   const publications: Array<Record<string, unknown>> = [];
   const queueJobs: Array<{ name: string; data: Record<string, unknown> }> = [];
+  const glExports: Array<{ organizationId: string; invoiceId: string; jobId?: string }> = [];
+  const webhookJobs: Array<{ eventType: string; payload: Record<string, unknown> }> = [];
 
   const transaction = {
     query: {
@@ -212,6 +217,7 @@ function createRestartFixture(
           },
         ],
       },
+      invoices: { findFirst: async () => currentEntity },
     },
     select(fields?: Record<string, unknown>) {
       return {
@@ -350,6 +356,7 @@ function createRestartFixture(
   } as unknown as Db;
   const queue = {
     add: async (name: string, data: Record<string, unknown>) => {
+      if (queueFails) throw new Error('workflow queue unavailable');
       queueJobs.push({ name, data });
     },
   } as unknown as Queue;
@@ -397,10 +404,26 @@ function createRestartFixture(
   } as unknown as NotificationsService;
   const webhooks = {
     emit: () => entityUpdates.push({ webhook: true }),
-    enqueue: async () => {
+    enqueue: async (
+      _organizationId: string,
+      eventType: string,
+      payload: Record<string, unknown>,
+    ) => {
       entityUpdates.push({ webhook: true });
+      webhookJobs.push({ eventType, payload });
     },
   } as unknown as WebhookEventService;
+  const glExport = {
+    enqueue: async (
+      organizationId: string,
+      invoiceId: string,
+      _targetSystem: string,
+      jobId?: string,
+    ) => {
+      if (glExportFails) throw new Error('GL queue unavailable');
+      glExports.push({ organizationId, invoiceId, ...(jobId ? { jobId } : {}) });
+    },
+  } as unknown as GlExportService;
   const audit = { log: async () => undefined } as unknown as AuditService;
 
   return {
@@ -410,6 +433,7 @@ function createRestartFixture(
     entityUpdates,
     executable,
     getReplacement: () => replacement,
+    glExports,
     notifications,
     oldRequest,
     publications,
@@ -423,8 +447,10 @@ function createRestartFixture(
       notificationService,
       webhooks,
       audit,
+      glExport,
     ),
     transaction: transaction as unknown as DbTransaction,
+    webhookJobs,
   };
 }
 
@@ -496,6 +522,7 @@ describe('WorkflowExecutionService restart', () => {
       {} as NotificationsService,
       {} as WebhookEventService,
       {} as AuditService,
+      { enqueue: async () => undefined } as unknown as GlExportService,
     );
 
     await assert.rejects(
@@ -538,6 +565,81 @@ describe('WorkflowExecutionService restart', () => {
         },
       },
     ]);
+  });
+
+  it('does not fail a committed request when its publication queue is unavailable', async () => {
+    const fixture = createRestartFixture(false, false, 'allow', 'pending', true);
+
+    const result = await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+    await fixture.service.publishCommittedRequest(result.replacementRequestId, ORGANIZATION_ID);
+
+    assert.equal(fixture.publications[0]?.status, 'pending');
+    assert.equal(fixture.queueJobs.length, 0);
+  });
+
+  it('publishes the invoice payload and durably identifies its GL export job', async () => {
+    const fixture = createRestartFixture();
+    await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+    const replacement = fixture.getReplacement();
+    const publication = fixture.publications[0];
+    assert.ok(replacement);
+    assert.ok(publication);
+    Object.assign(replacement, {
+      approvableType: 'invoice',
+      status: 'approved',
+      currentNodeId: 'approved',
+    });
+    Object.assign(publication, { outcomeStatus: 'approved', nodeId: 'approved' });
+
+    await fixture.service.handleRuntimePublication(String(publication.id));
+
+    assert.deepEqual(
+      fixture.webhookJobs.find((job) => job.eventType === 'invoice.approved')?.payload,
+      { invoice: fixture.currentEntity },
+    );
+    assert.deepEqual(fixture.glExports, [
+      {
+        organizationId: ORGANIZATION_ID,
+        invoiceId: fixture.oldRequest.approvableId,
+        jobId: `workflow-publication-${String(publication.id)}-gl-qbo`,
+      },
+    ]);
+    assert.equal(publication.status, 'published');
+  });
+
+  it('keeps an invoice publication pending when GL enqueueing fails', async () => {
+    const fixture = createRestartFixture(false, false, 'allow', 'pending', false, true);
+    await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+    const replacement = fixture.getReplacement();
+    const publication = fixture.publications[0];
+    assert.ok(replacement);
+    assert.ok(publication);
+    Object.assign(replacement, {
+      approvableType: 'invoice',
+      status: 'approved',
+      currentNodeId: 'approved',
+    });
+    Object.assign(publication, { outcomeStatus: 'approved', nodeId: 'approved' });
+
+    await assert.rejects(
+      fixture.service.handleRuntimePublication(String(publication.id)),
+      /GL queue unavailable/,
+    );
+
+    assert.equal(publication.status, 'pending');
+    assert.equal(publication.deliveryAttempts, 1);
   });
 
   it('uses the separation-of-duties fallback when delegation resolves to an excluded actor', async () => {
@@ -1145,6 +1247,7 @@ describe('WorkflowExecutionService escalation scheduling', () => {
       {} as NotificationsService,
       {} as WebhookEventService,
       {} as AuditService,
+      { enqueue: async () => undefined } as unknown as GlExportService,
     );
 
     await service.scheduleEscalations(request.id, ORGANIZATION_ID);
@@ -1234,6 +1337,7 @@ describe('WorkflowExecutionService escalation scheduling', () => {
       {} as NotificationsService,
       {} as WebhookEventService,
       {} as AuditService,
+      { enqueue: async () => undefined } as unknown as GlExportService,
     );
 
     await service.handleEscalation({
@@ -1318,6 +1422,7 @@ describe('WorkflowExecutionService escalation scheduling', () => {
         {} as NotificationsService,
         {} as WebhookEventService,
         {} as AuditService,
+        { enqueue: async () => undefined } as unknown as GlExportService,
       );
 
       await service.handleEscalation({
@@ -1378,6 +1483,7 @@ describe('WorkflowExecutionService escalation scheduling', () => {
       {} as NotificationsService,
       {} as WebhookEventService,
       {} as AuditService,
+      { enqueue: async () => undefined } as unknown as GlExportService,
     );
 
     await service.handleEscalation({

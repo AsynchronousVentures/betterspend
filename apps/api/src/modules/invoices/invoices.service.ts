@@ -1275,7 +1275,7 @@ export class InvoicesService {
         )
         .catch(() => {});
     }
-    this.glExport.enqueue(organizationId, id, 'qbo');
+    void this.glExport.enqueue(organizationId, id, 'qbo').catch(() => {});
 
     return approved;
   }

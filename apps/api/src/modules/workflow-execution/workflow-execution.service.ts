@@ -151,7 +151,7 @@ export class WorkflowExecutionService implements OnModuleInit {
     private readonly notifications: NotificationsService,
     private readonly webhookEvents: WebhookEventService,
     private readonly audit: AuditService,
-    @Optional() private readonly glExport?: GlExportService,
+    private readonly glExport: GlExportService,
     @Optional() private readonly settings?: SettingsService,
   ) {}
 
@@ -678,7 +678,13 @@ export class WorkflowExecutionService implements OnModuleInit {
         ),
       orderBy: (record, { desc }) => desc(record.createdAt),
     });
-    if (publication) await this.enqueueRuntimePublication(publication.id);
+    if (!publication) return;
+    try {
+      await this.enqueueRuntimePublication(publication.id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Workflow publication ${publication.id} awaits recovery: ${message}`);
+    }
   }
 
   async publishInitiation(result: WorkflowExecutionResult): Promise<void> {
@@ -786,7 +792,7 @@ export class WorkflowExecutionService implements OnModuleInit {
             publication.outcomeStatus === 'approved' ||
             publication.outcomeStatus === 'rejected'
           ) {
-            await this.publishRuntimeOutcome({
+            await this.publishRuntimeOutcome(tx, {
               request,
               status: publication.outcomeStatus,
               entityStatus: publication.outcomeStatus,
@@ -1678,7 +1684,7 @@ export class WorkflowExecutionService implements OnModuleInit {
     }
   }
 
-  private async publishRuntimeOutcome(outcome: RuntimeOutcome): Promise<void> {
+  private async publishRuntimeOutcome(tx: DbTransaction, outcome: RuntimeOutcome): Promise<void> {
     if (outcome.status === 'pending') return;
     if (!outcome.publicationId) {
       throw new ConflictException('Terminal workflow publication has no durable identifier');
@@ -1709,16 +1715,28 @@ export class WorkflowExecutionService implements OnModuleInit {
       );
     } else if (type === 'invoice') {
       const eventType = outcome.status === 'approved' ? 'invoice.approved' : 'invoice.rejected';
+      const invoice = await tx.query.invoices.findFirst({
+        where: (record, { and, eq }) =>
+          and(eq(record.id, entityId), eq(record.organizationId, outcome.request.organizationId)),
+      });
+      if (!invoice) throw new ConflictException(`Invoice ${entityId} not found for publication`);
       jobs.push(
         this.webhookEvents.enqueue(
           outcome.request.organizationId,
           eventType,
-          { invoiceId: entityId },
+          { invoice },
           `workflow-publication-${outcome.publicationId}-${eventType.replace('.', '-')}`,
         ),
       );
       if (outcome.status === 'approved') {
-        this.glExport?.enqueue(outcome.request.organizationId, entityId, 'qbo');
+        jobs.push(
+          this.glExport.enqueue(
+            outcome.request.organizationId,
+            entityId,
+            'qbo',
+            `workflow-publication-${outcome.publicationId}-gl-qbo`,
+          ),
+        );
       }
     }
     const approvalEventType =

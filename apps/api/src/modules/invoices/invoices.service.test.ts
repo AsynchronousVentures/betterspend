@@ -103,7 +103,7 @@ function createService(
       callback(transaction),
   } as unknown as Db;
   const webhookEvents = { emit() {} } as unknown as WebhookEventService;
-  const glExport = { enqueue() {} } as unknown as GlExportService;
+  const glExport = { enqueue: async () => undefined } as unknown as GlExportService;
   const budgets = { expenseInvoice } as unknown as BudgetsService;
   const audit = {
     log: async (
@@ -348,7 +348,7 @@ describe('InvoicesService creation audit', () => {
       { next: async () => 'INV-2026-0001' } as unknown as SequenceService,
       undefined as unknown as MatchingService,
       { emit() {} } as unknown as WebhookEventService,
-      { enqueue() {} } as unknown as GlExportService,
+      { enqueue: async () => undefined } as unknown as GlExportService,
       undefined as unknown as BudgetsService,
       undefined as unknown as AuditService,
       undefined as unknown as NotificationsService,
@@ -390,8 +390,13 @@ describe('InvoicesService creation audit', () => {
 
 describe('InvoicesService material edits', () => {
   const createEditService = (
-    status: 'approved' | 'matched' | 'rejected' | 'cancelled' | 'partial_match' | 'exception' =
-      'approved',
+    status:
+      | 'approved'
+      | 'matched'
+      | 'rejected'
+      | 'cancelled'
+      | 'partial_match'
+      | 'exception' = 'approved',
     rerunMatchStatus: 'full_match' | 'partial_match' | 'exception' = 'full_match',
     duplicateInvoice = false,
     poVendorId = 'vendor-1',
@@ -423,8 +428,7 @@ describe('InvoicesService material edits', () => {
       baseTaxAmount: '0.00',
       baseTotalAmount: '100.00',
       documentId: null,
-      matchStatus:
-        status === 'partial_match' || status === 'exception' ? status : 'full_match',
+      matchStatus: status === 'partial_match' || status === 'exception' ? status : 'full_match',
       matchDetails: {},
       submissionSource: 'internal',
       createdBy: 'maker-1',
@@ -529,9 +533,7 @@ describe('InvoicesService material edits', () => {
       initiateIfConfigured: async () => {
         workflowStartedFromStatus = invoiceUpdates.at(-1)?.status;
         initiated = true;
-        return workflowConfigured
-          ? { requestId: 'request-2', status: 'pending' as const }
-          : null;
+        return workflowConfigured ? { requestId: 'request-2', status: 'pending' as const } : null;
       },
       publishCommittedRequest: async () => {
         published = true;
@@ -544,7 +546,7 @@ describe('InvoicesService material edits', () => {
         runMatch: async () => ({ matchStatus: rerunMatchStatus, lineResults: [] }),
       } as unknown as MatchingService,
       { emit() {} } as unknown as WebhookEventService,
-      { enqueue() {} } as unknown as GlExportService,
+      { enqueue: async () => undefined } as unknown as GlExportService,
       {
         reopenInvoice: async () => {
           reopened = true;
