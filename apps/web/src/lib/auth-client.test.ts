@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { parseAuthResponse, signUp } from './auth-client';
 
@@ -43,7 +44,7 @@ describe('signUp', () => {
         organizationName: 'Acme',
         name: 'Admin',
         email: 'admin@example.test',
-        password: 'correct horse battery staple',
+        password: randomBytes(24).toString('base64url'),
       });
       assert.equal(result.accountCreated, true);
       assert.equal(result.error, 'Account created. Sign in to continue.');
