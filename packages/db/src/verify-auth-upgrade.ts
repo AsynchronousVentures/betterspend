@@ -156,12 +156,37 @@ async function verifyCollisionRefusal(client: postgres.Sql): Promise<void> {
   });
 }
 
+async function verifyPartialEmailIndexRefusal(client: postgres.Sql): Promise<void> {
+  const schemaName = `email_index_${randomUUID().replaceAll('-', '')}`;
+  await client`CREATE SCHEMA ${client(schemaName)}`;
+  try {
+    await client`SELECT set_config('search_path', ${schemaName}, false)`;
+    await client.unsafe(`
+      CREATE TABLE users (
+        id uuid PRIMARY KEY,
+        email varchar(255) NOT NULL
+      );
+      CREATE UNIQUE INDEX users_email_normalized_unique
+      ON users (lower(email))
+      WHERE email <> ''
+    `);
+    await assert.rejects(
+      migrateBetterAuthAccounts(client),
+      /users_email_normalized_unique exists with an unexpected definition/,
+    );
+  } finally {
+    await client`SELECT set_config('search_path', 'public', false)`;
+    await client`DROP SCHEMA ${client(schemaName)} CASCADE`;
+  }
+}
+
 async function main(): Promise<void> {
   const client = postgres(process.env.DATABASE_URL!, { max: 1 });
   try {
     await verifyCredentialBackfill(client);
     await verifyUnknownProviderRefusal(client);
     await verifyCollisionRefusal(client);
+    await verifyPartialEmailIndexRefusal(client);
     console.log('Better Auth upgrade verification passed.');
   } finally {
     await client.end();

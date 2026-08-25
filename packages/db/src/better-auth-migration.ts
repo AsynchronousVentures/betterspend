@@ -8,7 +8,10 @@ type IndexState = {
   exists: boolean;
   isValid: boolean;
   isUnique: boolean;
-  definition: string | null;
+  tableName: string | null;
+  keyCount: number;
+  keys: string[];
+  hasPredicate: boolean;
 };
 
 async function indexState(client: postgres.Sql, name: string): Promise<IndexState> {
@@ -17,10 +20,18 @@ async function indexState(client: postgres.Sql, name: string): Promise<IndexStat
       index_class.oid IS NOT NULL AS "exists",
       COALESCE(index_data.indisvalid, false) AS "isValid",
       COALESCE(index_data.indisunique, false) AS "isUnique",
-      pg_get_indexdef(index_class.oid) AS definition
+      table_class.relname AS "tableName",
+      COALESCE(index_data.indnkeyatts, 0)::integer AS "keyCount",
+      COALESCE(ARRAY(
+        SELECT pg_get_indexdef(index_class.oid, position, true)
+        FROM generate_series(1, index_data.indnkeyatts) AS position
+        ORDER BY position
+      ), ARRAY[]::text[]) AS keys,
+      index_data.indpred IS NOT NULL AS "hasPredicate"
     FROM (VALUES (1)) AS singleton(value)
     LEFT JOIN pg_class AS index_class ON index_class.oid = to_regclass(${name})
     LEFT JOIN pg_index AS index_data ON index_data.indexrelid = index_class.oid
+    LEFT JOIN pg_class AS table_class ON table_class.oid = index_data.indrelid
   `;
   return state;
 }
@@ -28,7 +39,13 @@ async function indexState(client: postgres.Sql, name: string): Promise<IndexStat
 async function ensureUserIdIndex(client: postgres.Sql): Promise<void> {
   const state = await indexState(client, 'auth_accounts_user_id_idx');
   if (state.exists && state.isValid) {
-    if (state.isUnique || !state.definition?.includes('(user_id)')) {
+    if (
+      state.isUnique ||
+      state.tableName !== 'auth_accounts' ||
+      state.keyCount !== 1 ||
+      state.keys[0] !== 'user_id' ||
+      state.hasPredicate
+    ) {
       throw new Error('auth_accounts_user_id_idx exists with an unexpected definition');
     }
     return;
@@ -43,7 +60,14 @@ async function ensureUserIdIndex(client: postgres.Sql): Promise<void> {
 async function ensureAccountIdentityIndex(client: postgres.Sql): Promise<void> {
   const state = await indexState(client, 'auth_accounts_issuer_account_id_unique');
   if (state.exists && state.isValid) {
-    if (!state.isUnique || !state.definition?.includes('(issuer, account_id)')) {
+    if (
+      !state.isUnique ||
+      state.tableName !== 'auth_accounts' ||
+      state.keyCount !== 2 ||
+      state.keys[0] !== 'issuer' ||
+      state.keys[1] !== 'account_id' ||
+      state.hasPredicate
+    ) {
       throw new Error(
         'auth_accounts_issuer_account_id_unique exists with an unexpected definition',
       );
@@ -67,8 +91,13 @@ async function ensureNormalizedUserEmailIndex(client: postgres.Sql): Promise<voi
 
   const state = await indexState(client, NORMALIZED_EMAIL_INDEX);
   if (state.exists && state.isValid) {
-    const definition = state.definition?.replaceAll('"', '').toLowerCase();
-    if (!state.isUnique || !definition?.includes('lower((email)::text)')) {
+    if (
+      !state.isUnique ||
+      state.tableName !== 'users' ||
+      state.keyCount !== 1 ||
+      state.keys[0] !== 'lower(email::text)' ||
+      state.hasPredicate
+    ) {
       throw new Error(`${NORMALIZED_EMAIL_INDEX} exists with an unexpected definition`);
     }
     return;
