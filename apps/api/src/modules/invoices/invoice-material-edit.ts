@@ -1,25 +1,3 @@
-export interface UpdateInvoiceInput {
-  vendorId?: string;
-  invoiceDate?: string;
-  dueDate?: string | null;
-  paymentTerms?: string | null;
-  earlyPaymentDiscountPercent?: number | null;
-  earlyPaymentDiscountBy?: string | null;
-  currency?: string;
-  exchangeRate?: number;
-  lines?: Array<{
-    id: string;
-    lineNumber?: number;
-    poLineId?: string | null;
-    description?: string;
-    quantity?: number;
-    unitPrice?: number;
-    glAccount?: string | null;
-    taxCodeId?: string | null;
-    taxInclusive?: boolean;
-  }>;
-}
-
 export interface MaterialInvoiceState {
   vendorId: string;
   invoiceDate: string;

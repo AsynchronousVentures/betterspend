@@ -50,4 +50,12 @@ describe('invoice material edit classification', () => {
       'lines.glAccount',
     ]);
   });
+
+  it('does not discard decimal precision when comparing line values', () => {
+    const previous = invoice();
+    const next = invoice();
+    next.lines[0] = { ...next.lines[0], unitPrice: '100.001' };
+
+    assert.deepEqual(changedMaterialInvoiceFields(previous, next), ['lines.unitPrice']);
+  });
 });

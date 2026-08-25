@@ -426,7 +426,7 @@ describe('InvoicesService material edits', () => {
       updatedAt: new Date('2026-08-10T00:00:00Z'),
     };
     const line = {
-      id: 'line-1',
+      id: '00000000-0000-4000-8000-000000000101',
       invoiceId: 'invoice-1',
       poLineId: 'po-line-1',
       lineNumber: '1',
@@ -454,6 +454,8 @@ describe('InvoicesService material edits', () => {
       query: {
         invoiceLines: { findMany: async () => [line] },
         taxCodes: { findMany: async () => [] },
+        vendors: { findFirst: async () => ({ id: 'vendor-2' }) },
+        purchaseOrders: { findFirst: async () => ({ vendorId: 'vendor-1' }) },
         approvalRequests: {
           findFirst: async () => ({
             id: 'request-1',
@@ -549,13 +551,13 @@ describe('InvoicesService material edits', () => {
     const fixture = createEditService();
 
     await fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
-      lines: [{ id: 'line-1', quantity: 2 }],
+      lines: [{ id: '00000000-0000-4000-8000-000000000101', quantity: 2 }],
     });
 
     assert.deepEqual(fixture.state(), { reopened: true, restarted: true, published: true });
     assert.ok(fixture.invoiceUpdates.some((update) => update.approvedBy === null));
     assert.ok(fixture.invoiceUpdates.some((update) => update.status === 'pending_approval'));
-    assert.ok(fixture.lineUpdates.some((update) => update.quantity === '2'));
+    assert.ok(fixture.lineUpdates.some((update) => update.quantity === '2.00'));
     assert.deepEqual(fixture.auditActions, ['material_edit_reapproval']);
   });
 
@@ -563,12 +565,29 @@ describe('InvoicesService material edits', () => {
     const fixture = createEditService();
 
     await fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
-      lines: [{ id: 'line-1', description: 'Consulting service' }],
+      lines: [
+        {
+          id: '00000000-0000-4000-8000-000000000101',
+          description: 'Consulting service',
+        },
+      ],
     });
 
     assert.deepEqual(fixture.state(), { reopened: false, restarted: false, published: false });
     assert.ok(!fixture.invoiceUpdates.some((update) => update.approvedBy === null));
     assert.ok(fixture.lineUpdates.some((update) => update.description === 'Consulting service'));
     assert.deepEqual(fixture.auditActions, ['updated']);
+  });
+
+  it('rejects a vendor that does not match the linked purchase order', async () => {
+    const fixture = createEditService();
+
+    await assert.rejects(
+      fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+        vendorId: '00000000-0000-4000-8000-000000000202',
+      }),
+      /must match its purchase order vendor/,
+    );
+    assert.deepEqual(fixture.state(), { reopened: false, restarted: false, published: false });
   });
 });

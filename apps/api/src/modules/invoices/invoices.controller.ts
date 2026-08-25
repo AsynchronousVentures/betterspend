@@ -10,12 +10,8 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import {
-  InvoicesService,
-  CreateInvoiceInput,
-  MarkPaidInput,
-  UpdateInvoiceInput,
-} from './invoices.service';
+import { InvoicesService, CreateInvoiceInput, MarkPaidInput } from './invoices.service';
+import { updateInvoiceSchema } from '@betterspend/shared';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
@@ -72,11 +68,11 @@ export class InvoicesController {
   @ApiOperation({ summary: 'Edit an unpaid invoice and force reapproval for material changes' })
   update(
     @Param('id') id: string,
-    @Body() body: UpdateInvoiceInput,
+    @Body() body: unknown,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
   ) {
-    return this.invoicesService.update(id, orgId, userId, body);
+    return this.invoicesService.update(id, orgId, userId, updateInvoiceSchema.parse(body));
   }
 
   @Post(':id/match')

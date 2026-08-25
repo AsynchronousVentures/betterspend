@@ -9,6 +9,7 @@ import {
 import { eq, and, ne, isNull, lte, gte, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
+import { updateInvoiceSchema, type UpdateInvoiceInput } from '@betterspend/shared';
 import {
   auditLog,
   invoices,
@@ -22,7 +23,12 @@ import { MatchingService } from './matching.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { GlExportService } from '../gl/gl-export.service';
 import { BudgetsService } from '../budgets/budgets.service';
-import { addMoney, convertMoney } from '../budgets/budget-enforcement';
+import {
+  addMoney,
+  convertMoney,
+  normalizeMoney,
+  normalizeRate,
+} from '../budgets/budget-enforcement';
 import { invoiceCommitmentAmounts } from '../budgets/budget-commitments';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -32,13 +38,10 @@ import { SpendGuardService } from '../spend-guard/spend-guard.service';
 import { SettingsService } from '../settings/settings.service';
 import { resolveIndependentInvoiceApprover } from './invoice-approval-policy';
 import { WorkflowExecutionService } from '../workflow-execution/workflow-execution.service';
-import {
-  changedMaterialInvoiceFields,
-  type MaterialInvoiceState,
-  type UpdateInvoiceInput,
-} from './invoice-material-edit';
+import { changedMaterialInvoiceFields, type MaterialInvoiceState } from './invoice-material-edit';
+import { calculateInvoiceLineAmounts } from './invoice-money';
 
-export type { UpdateInvoiceInput } from './invoice-material-edit';
+export type { UpdateInvoiceInput } from '@betterspend/shared';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 
@@ -147,9 +150,13 @@ export class InvoicesService {
     return parsed.toISOString().slice(0, 10);
   }
 
-  private decimalKey(value: string | number | null, scale: number): string | null {
+  private decimalKey(value: string | number | null): string | null {
     if (value == null) return null;
-    return Number(value).toFixed(scale);
+    const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(String(value));
+    if (!match) throw new BadRequestException(`Invalid decimal value "${value}"`);
+    const whole = match[2].replace(/^0+(?=\d)/, '');
+    const fraction = (match[3] ?? '').replace(/0+$/, '');
+    return `${match[1]}${whole}${fraction ? `.${fraction}` : ''}`;
   }
 
   private materialState(
@@ -161,27 +168,21 @@ export class InvoicesService {
       invoiceDate: this.dateKey(invoice.invoiceDate)!,
       dueDate: this.dateKey(invoice.dueDate),
       paymentTerms: invoice.paymentTerms,
-      earlyPaymentDiscountPercent: this.decimalKey(invoice.earlyPaymentDiscountPercent, 2),
+      earlyPaymentDiscountPercent: this.decimalKey(invoice.earlyPaymentDiscountPercent),
       earlyPaymentDiscountBy: this.dateKey(invoice.earlyPaymentDiscountBy),
       currency: invoice.currency.toUpperCase(),
-      exchangeRate: this.decimalKey(invoice.exchangeRate, 8)!,
+      exchangeRate: this.decimalKey(invoice.exchangeRate)!,
       lines: lines.map((line) => ({
         id: line.id,
-        lineNumber: this.decimalKey(line.lineNumber, 0)!,
+        lineNumber: this.decimalKey(line.lineNumber)!,
         poLineId: line.poLineId,
-        quantity: this.decimalKey(line.quantity, 2)!,
-        unitPrice: this.decimalKey(line.unitPrice, 2)!,
+        quantity: this.decimalKey(line.quantity)!,
+        unitPrice: this.decimalKey(line.unitPrice)!,
         glAccount: line.glAccount,
         taxCodeId: line.taxCodeId,
         taxInclusive: line.taxInclusive,
       })),
     };
-  }
-
-  private assertNonNegative(value: number, field: string): void {
-    if (!Number.isFinite(value) || value < 0) {
-      throw new BadRequestException(`${field} must be a non-negative number`);
-    }
   }
 
   private async getTaxCodeMap(
@@ -231,7 +232,8 @@ export class InvoicesService {
     return this.findOneWithExecutor(id, organizationId, this.db);
   }
 
-  async update(id: string, organizationId: string, actorId: string, input: UpdateInvoiceInput) {
+  async update(id: string, organizationId: string, actorId: string, rawInput: UpdateInvoiceInput) {
+    const input = updateInvoiceSchema.parse(rawInput);
     const result = await this.db.transaction(async (tx) => {
       const [lockedInvoice] = await tx
         .select()
@@ -264,51 +266,64 @@ export class InvoicesService {
           columns: { id: true },
         });
         if (!vendor) throw new BadRequestException(`Vendor ${input.vendorId} not found`);
+        if (lockedInvoice.purchaseOrderId) {
+          const purchaseOrder = await tx.query.purchaseOrders.findFirst({
+            where: (record, { and, eq }) =>
+              and(
+                eq(record.id, lockedInvoice.purchaseOrderId!),
+                eq(record.organizationId, organizationId),
+              ),
+            columns: { vendorId: true },
+          });
+          if (!purchaseOrder) {
+            throw new BadRequestException(
+              `Purchase order ${lockedInvoice.purchaseOrderId} not found`,
+            );
+          }
+          if (purchaseOrder.vendorId !== input.vendorId) {
+            throw new BadRequestException(
+              'A PO-backed invoice vendor must match its purchase order vendor',
+            );
+          }
+        }
       }
 
       const currency = (input.currency ?? lockedInvoice.currency).trim().toUpperCase();
       if (!/^[A-Z]{3}$/.test(currency)) {
         throw new BadRequestException('Currency must be a 3-letter currency code');
       }
-      if (input.exchangeRate !== undefined) {
-        if (!Number.isFinite(input.exchangeRate) || input.exchangeRate <= 0) {
-          throw new BadRequestException('Exchange rate must be greater than zero');
-        }
-      }
-      if (input.earlyPaymentDiscountPercent != null) {
-        this.assertNonNegative(input.earlyPaymentDiscountPercent, 'Early payment discount percent');
-      }
-
       const baseCurrency = await this.exchangeRatesService.getOrganizationBaseCurrency(
         organizationId,
         tx,
       );
-      const exchangeRate = await this.exchangeRatesService.getRateDecimal(
-        organizationId,
-        currency,
-        baseCurrency,
-        input.exchangeRate !== undefined
-          ? String(input.exchangeRate)
-          : currency === lockedInvoice.currency
-            ? lockedInvoice.exchangeRate
-            : undefined,
-        tx,
+      const exchangeRate = normalizeRate(
+        await this.exchangeRatesService.getRateDecimal(
+          organizationId,
+          currency,
+          baseCurrency,
+          input.exchangeRate !== undefined
+            ? input.exchangeRate.toFixed(8)
+            : currency === lockedInvoice.currency
+              ? lockedInvoice.exchangeRate
+              : undefined,
+          tx,
+        ),
       );
       const nextLines = existingLines.map((line) => {
         const patch = patches.get(line.id);
-        const quantity = patch?.quantity ?? Number(line.quantity);
-        const unitPrice = patch?.unitPrice ?? Number(line.unitPrice);
-        const lineNumber = patch?.lineNumber ?? Number(line.lineNumber);
-        this.assertNonNegative(quantity, `Quantity for line ${line.id}`);
-        this.assertNonNegative(unitPrice, `Unit price for line ${line.id}`);
-        this.assertNonNegative(lineNumber, `Line number for line ${line.id}`);
         return {
           ...line,
-          lineNumber: String(lineNumber),
+          lineNumber: patch?.lineNumber !== undefined ? String(patch.lineNumber) : line.lineNumber,
           poLineId: patch?.poLineId !== undefined ? patch.poLineId : line.poLineId,
           description: patch?.description ?? line.description,
-          quantity: String(quantity),
-          unitPrice: String(unitPrice),
+          quantity:
+            patch?.quantity !== undefined
+              ? normalizeMoney(String(patch.quantity))
+              : normalizeMoney(line.quantity),
+          unitPrice:
+            patch?.unitPrice !== undefined
+              ? normalizeMoney(String(patch.unitPrice))
+              : normalizeMoney(line.unitPrice),
           glAccount: patch?.glAccount !== undefined ? patch.glAccount : line.glAccount,
           taxCodeId: patch?.taxCodeId !== undefined ? patch.taxCodeId : line.taxCodeId,
           taxInclusive: patch?.taxInclusive ?? line.taxInclusive,
@@ -321,17 +336,16 @@ export class InvoicesService {
       );
       const lineAmounts = nextLines.map((line) => {
         const taxCode = line.taxCodeId ? taxCodeMap.get(line.taxCodeId) : null;
-        return this.calculateLineTax(
-          Number(line.quantity),
-          Number(line.unitPrice),
-          taxCode ? Number(taxCode.ratePercent ?? '0') : 0,
+        return calculateInvoiceLineAmounts(
+          line.quantity,
+          line.unitPrice,
+          String(taxCode?.ratePercent ?? '0'),
           line.taxInclusive,
         );
       });
-      const subtotal = lineAmounts.reduce((sum, line) => sum + line.subtotal, 0);
-      const taxAmount = lineAmounts.reduce((sum, line) => sum + line.taxAmount, 0);
-      const totalAmount = lineAmounts.reduce((sum, line) => sum + line.totalAmount, 0);
-      const exchangeRateNumber = Number(exchangeRate);
+      const subtotal = addMoney(lineAmounts.map((line) => line.subtotal));
+      const taxAmount = addMoney(lineAmounts.map((line) => line.taxAmount));
+      const totalAmount = addMoney(lineAmounts.map((line) => line.totalAmount));
       const editedAt = new Date();
       const nextInvoice = {
         ...lockedInvoice,
@@ -365,18 +379,12 @@ export class InvoicesService {
         currency,
         baseCurrency,
         exchangeRate,
-        subtotal: subtotal.toFixed(2),
-        taxAmount: taxAmount.toFixed(2),
-        totalAmount: totalAmount.toFixed(2),
-        baseSubtotal: this.exchangeRatesService
-          .roundMoney(subtotal * exchangeRateNumber)
-          .toFixed(2),
-        baseTaxAmount: this.exchangeRatesService
-          .roundMoney(taxAmount * exchangeRateNumber)
-          .toFixed(2),
-        baseTotalAmount: this.exchangeRatesService
-          .roundMoney(totalAmount * exchangeRateNumber)
-          .toFixed(2),
+        subtotal,
+        taxAmount,
+        totalAmount,
+        baseSubtotal: convertMoney(subtotal, exchangeRate),
+        baseTaxAmount: convertMoney(taxAmount, exchangeRate),
+        baseTotalAmount: convertMoney(totalAmount, exchangeRate),
         updatedAt: editedAt,
       };
       const changedFields = changedMaterialInvoiceFields(
@@ -443,18 +451,14 @@ export class InvoicesService {
             glAccount: line.glAccount,
             taxCodeId: line.taxCodeId,
             taxInclusive: line.taxInclusive,
-            taxAmount: material ? amounts.taxAmount.toFixed(2) : line.taxAmount,
-            totalPrice: material ? amounts.totalAmount.toFixed(2) : line.totalPrice,
+            taxAmount: material ? amounts.taxAmount : line.taxAmount,
+            totalPrice: material ? amounts.totalAmount : line.totalPrice,
             exchangeRate: material ? exchangeRate : line.exchangeRate,
             baseUnitPrice: material
-              ? this.exchangeRatesService
-                  .roundMoney(Number(line.unitPrice) * exchangeRateNumber)
-                  .toFixed(2)
+              ? convertMoney(line.unitPrice, exchangeRate)
               : line.baseUnitPrice,
             baseTotalPrice: material
-              ? this.exchangeRatesService
-                  .roundMoney(amounts.totalAmount * exchangeRateNumber)
-                  .toFixed(2)
+              ? convertMoney(amounts.totalAmount, exchangeRate)
               : line.baseTotalPrice,
             updatedAt: editedAt,
           })
