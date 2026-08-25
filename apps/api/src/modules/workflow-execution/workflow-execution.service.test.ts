@@ -137,6 +137,7 @@ function createRestartFixture(
     totalAmount: '250',
     baseTotalAmount: '250',
     currency: 'USD',
+    createdBy: null as string | null,
     status: 'pending_approval',
     createdAt: new Date('2026-01-01T00:00:00Z'),
     updatedAt: new Date(),
@@ -170,6 +171,17 @@ function createRestartFixture(
 
   const transaction = {
     query: {
+      approvalActions: {
+        findFirst: async () => {
+          const activeRequest = replacement ?? oldRequest;
+          return actions.find(
+            (action) =>
+              action.approvalRequestId === activeRequest.id &&
+              action.approverId === currentEntity.createdBy &&
+              (action.action === 'approve' || action.action === 'approved'),
+          );
+        },
+      },
       workflowDefinitionVersions: { findFirst: async () => latest },
       workflowApprovalAssignments: {
         findMany: async (query?: {
@@ -891,6 +903,54 @@ describe('WorkflowExecutionService restart', () => {
 
     assert.equal(result.status, 'approved');
     assert.equal(replacement.currentNodeId, 'approved');
+  });
+
+  it('rejects final invoice approval when its creator approved an earlier step', async () => {
+    const fixture = createRestartFixture();
+    const review = fixture.executable.steps.find((step) => step.node.id === 'review');
+    assert.ok(review?.node.type === 'approver_group');
+    review.node.config.resolvers.push({ type: 'user', userId: FALLBACK_ID });
+    Object.assign(fixture.oldRequest, { approvableType: 'invoice' });
+    Object.assign(fixture.currentEntity, {
+      createdBy: DELEGATE_ID,
+      submissionSource: 'manual',
+      purchaseOrderId: '00000000-0000-0000-0000-000000000901',
+      matchStatus: 'full_match',
+      lines: [],
+    });
+
+    await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+    const replacement = fixture.getReplacement();
+    assert.ok(replacement);
+    const [creatorAssignment, finalAssignment] = fixture.assignments.filter(
+      (assignment) => assignment.approvalRequestId === replacement.id,
+    );
+    assert.ok(creatorAssignment);
+    assert.ok(finalAssignment);
+    Object.assign(creatorAssignment, { status: 'approved', actedBy: DELEGATE_ID });
+    Object.assign(finalAssignment, { status: 'pending' });
+    fixture.actions.push({
+      approvalRequestId: replacement.id,
+      stepOrder: replacement.currentStep,
+      approverId: DELEGATE_ID,
+      action: 'approve',
+      nodeId: replacement.currentNodeId,
+    });
+
+    await assert.rejects(
+      fixture.service.processAction(
+        String(replacement.id),
+        FALLBACK_ID,
+        'approve',
+        undefined,
+        ORGANIZATION_ID,
+      ),
+      /maker-checker policy blocks this approval/,
+    );
   });
 
   it('does not replace a request blocked by the current budget policy', async () => {

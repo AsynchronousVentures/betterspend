@@ -1629,11 +1629,25 @@ export class WorkflowExecutionService implements OnModuleInit {
             'prevent_invoice_self_approval',
             tx,
           )) !== 'false';
+        const invoiceCreatorId = invoice?.createdBy;
+        const creatorApproval =
+          makerCheckerEnabled && invoiceCreatorId
+            ? await tx.query.approvalActions.findFirst({
+                where: (record, { and, eq, inArray }) =>
+                  and(
+                    eq(record.approvalRequestId, request.id),
+                    eq(record.approverId, invoiceCreatorId),
+                    inArray(record.action, ['approve', 'approved']),
+                  ),
+                columns: { id: true },
+              })
+            : null;
         if (
           makerCheckerEnabled &&
           ((actorId === null && invoice?.submissionSource !== 'vendor_portal') ||
             (actorId !== null && invoice?.createdBy === actorId) ||
-            (invoice?.submissionSource !== 'vendor_portal' && !invoice?.createdBy))
+            (invoice?.submissionSource !== 'vendor_portal' && !invoice?.createdBy) ||
+            creatorApproval)
         ) {
           throw new ForbiddenException('Invoice maker-checker policy blocks this approval');
         }
