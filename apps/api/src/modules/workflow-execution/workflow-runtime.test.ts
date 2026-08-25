@@ -38,7 +38,7 @@ describe('workflow runtime', () => {
     );
   });
 
-  it('uses transition priority and falls back only to an explicit default', () => {
+  it('uses transition priority and falls back only to an unconditional transition', () => {
     const step = {
       node: {
         id: 'condition',
