@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Queue } from 'bullmq';
-import type { Db } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
 import {
   approvalActions,
   approvalRequests,
@@ -87,7 +87,11 @@ function executableWithApproval(enforceSeparationOfDuties = false): ExecutableDe
   };
 }
 
-function createRestartFixture(publicationFails = false, enforceSeparationOfDuties = false) {
+function createRestartFixture(
+  publicationFails = false,
+  enforceSeparationOfDuties = false,
+  requestStatus = 'pending',
+) {
   const executable = executableWithApproval(enforceSeparationOfDuties);
   const oldRequest = {
     id: '00000000-0000-0000-0000-000000000301',
@@ -104,7 +108,7 @@ function createRestartFixture(publicationFails = false, enforceSeparationOfDutie
     },
     attempt: 1,
     currentStep: 1,
-    status: 'pending',
+    status: requestStatus,
     requiredApproverId: null,
     requiredApprovalStep: null,
     requiredApprovalReason: null,
@@ -262,6 +266,7 @@ function createRestartFixture(publicationFails = false, enforceSeparationOfDutie
       webhooks,
       audit,
     ),
+    transaction: transaction as unknown as DbTransaction,
   };
 }
 
@@ -353,6 +358,36 @@ describe('WorkflowExecutionService restart', () => {
     assert.equal(fixture.assignments.length, 1);
     assert.equal(fixture.assignments[0]?.resolvedApproverId, FALLBACK_ID);
     assert.equal(fixture.assignments[0]?.assignedApproverId, FALLBACK_ID);
+  });
+
+  it('restarts an approved instance when a material edit invalidates its approval', async () => {
+    const fixture = createRestartFixture(false, false, 'approved');
+
+    const result = await fixture.service.restartOnLatestInTransaction(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+      fixture.transaction,
+      { allowApproved: true },
+    );
+
+    assert.equal(result.attempt, 2);
+    assert.equal(result.status, 'pending');
+    assert.ok(fixture.requestUpdates.some((update) => update.status === 'cancelled'));
+  });
+
+  it('does not let the administrative endpoint reopen an approved entity by itself', async () => {
+    const fixture = createRestartFixture(false, false, 'approved');
+
+    await assert.rejects(
+      fixture.service.restartOnLatest(
+        fixture.oldRequest.id,
+        ORGANIZATION_ID,
+        fixture.oldRequest.initiatedBy,
+      ),
+      /Only pending workflow instances/,
+    );
+    assert.deepEqual(fixture.requestUpdates, []);
   });
 });
 

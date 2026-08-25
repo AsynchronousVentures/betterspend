@@ -14,6 +14,7 @@ export type WebhookEventType =
   | 'invoice.matched'
   | 'invoice.exception'
   | 'invoice.approved'
+  | 'invoice.rejected'
   | 'invoice.paid'
   | 'approval.requested'
   | 'approval.approved'
@@ -23,11 +24,13 @@ export type WebhookEventType =
 export class WebhookEventService {
   private readonly logger = new Logger(WebhookEventService.name);
 
-  constructor(
-    @InjectQueue('webhook-delivery') private readonly webhookQueue: Queue,
-  ) {}
+  constructor(@InjectQueue('webhook-delivery') private readonly webhookQueue: Queue) {}
 
-  emit(organizationId: string, eventType: WebhookEventType, payload: Record<string, unknown>): void {
+  emit(
+    organizationId: string,
+    eventType: WebhookEventType,
+    payload: Record<string, unknown>,
+  ): void {
     this.webhookQueue
       .add(
         'dispatch',

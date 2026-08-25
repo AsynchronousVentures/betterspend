@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { auditLog, invoices, type Db, type DbTransaction } from '@betterspend/db';
+import { auditLog, invoiceLines, invoices, type Db, type DbTransaction } from '@betterspend/db';
 import type { SequenceService } from '../../common/services/sequence.service';
 import type { AuditService } from '../audit/audit.service';
 import type { BudgetsService } from '../budgets/budgets.service';
@@ -11,6 +11,7 @@ import type { NotificationsService } from '../notifications/notifications.servic
 import type { SpendGuardService } from '../spend-guard/spend-guard.service';
 import type { SettingsService } from '../settings/settings.service';
 import type { WebhookEventService } from '../webhooks/webhook-event.service';
+import type { WorkflowExecutionService } from '../workflow-execution/workflow-execution.service';
 import type { MatchingService } from './matching.service';
 import { InvoicesService } from './invoices.service';
 
@@ -133,6 +134,7 @@ function createService(
       undefined as unknown as ExchangeRatesService,
       undefined as unknown as SpendGuardService,
       settings,
+      undefined as unknown as WorkflowExecutionService,
     ),
     transaction: transaction as unknown as DbTransaction,
     auditActions,
@@ -357,6 +359,7 @@ describe('InvoicesService creation audit', () => {
       } as unknown as ExchangeRatesService,
       { analyzeInvoice: async () => {} } as unknown as SpendGuardService,
       undefined as unknown as SettingsService,
+      undefined as unknown as WorkflowExecutionService,
     );
 
     await service.create('organization-1', 'maker-1', {
@@ -382,5 +385,190 @@ describe('InvoicesService creation audit', () => {
       action: 'created',
       changes: { invoiceNumber: 'VENDOR-100', totalAmount: '100.00' },
     });
+  });
+});
+
+describe('InvoicesService material edits', () => {
+  const createEditService = (status: 'approved' | 'matched' = 'approved') => {
+    const invoice = {
+      id: 'invoice-1',
+      organizationId: 'organization-1',
+      entityId: 'entity-1',
+      purchaseOrderId: 'po-1',
+      vendorId: 'vendor-1',
+      invoiceNumber: 'VENDOR-100',
+      internalNumber: 'INV-2026-0001',
+      status,
+      invoiceDate: new Date('2026-08-01T00:00:00Z'),
+      dueDate: new Date('2026-08-31T00:00:00Z'),
+      paymentTerms: 'NET30',
+      earlyPaymentDiscountPercent: null,
+      earlyPaymentDiscountBy: null,
+      paidAt: null,
+      paymentReference: null,
+      subtotal: '100.00',
+      taxAmount: '0.00',
+      totalAmount: '100.00',
+      currency: 'USD',
+      baseCurrency: 'USD',
+      exchangeRate: '1.00000000',
+      baseSubtotal: '100.00',
+      baseTaxAmount: '0.00',
+      baseTotalAmount: '100.00',
+      documentId: null,
+      matchStatus: 'full_match',
+      matchDetails: {},
+      submissionSource: 'internal',
+      createdBy: 'maker-1',
+      approvedBy: status === 'approved' ? 'approver-1' : null,
+      approvedAt: status === 'approved' ? new Date('2026-08-10T00:00:00Z') : null,
+      createdAt: new Date('2026-08-01T00:00:00Z'),
+      updatedAt: new Date('2026-08-10T00:00:00Z'),
+    };
+    const line = {
+      id: 'line-1',
+      invoiceId: 'invoice-1',
+      poLineId: 'po-line-1',
+      lineNumber: '1',
+      taxCodeId: null,
+      description: 'Consulting services',
+      quantity: '1.00',
+      unitPrice: '100.00',
+      taxAmount: '0.00',
+      taxInclusive: false,
+      totalPrice: '100.00',
+      exchangeRate: '1.00000000',
+      baseUnitPrice: '100.00',
+      baseTotalPrice: '100.00',
+      glAccount: '6000',
+      createdAt: new Date('2026-08-01T00:00:00Z'),
+      updatedAt: new Date('2026-08-01T00:00:00Z'),
+    };
+    const invoiceUpdates: Array<Record<string, unknown>> = [];
+    const lineUpdates: Array<Record<string, unknown>> = [];
+    const auditActions: string[] = [];
+    let reopened = false;
+    let restarted = false;
+    let published = false;
+    const transaction = {
+      query: {
+        invoiceLines: { findMany: async () => [line] },
+        taxCodes: { findMany: async () => [] },
+        approvalRequests: {
+          findFirst: async () => ({
+            id: 'request-1',
+            status,
+            definitionVersionId: 'version-1',
+          }),
+        },
+        invoices: {
+          findFirst: async () => ({ ...invoice, lines: [line], vendor: {}, entity: {} }),
+        },
+      },
+      select() {
+        return {
+          from() {
+            return { where: () => ({ for: async () => [invoice] }) };
+          },
+        };
+      },
+      update(table: unknown) {
+        return {
+          set(values: Record<string, unknown>) {
+            (table === invoices ? invoiceUpdates : lineUpdates).push(values);
+            return { where: async () => undefined };
+          },
+        };
+      },
+    };
+    const db = {
+      transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) =>
+        callback(transaction),
+    } as unknown as Db;
+    const workflow = {
+      restartOnLatestInTransaction: async () => {
+        restarted = true;
+        return {
+          cancelledRequestId: 'request-1',
+          replacementRequestId: 'request-2',
+          definitionVersionId: 'version-2',
+          version: 2,
+          attempt: 2,
+          status: 'pending' as const,
+        };
+      },
+      publishCommittedRequest: async () => {
+        published = true;
+      },
+    } as unknown as WorkflowExecutionService;
+    const service = new InvoicesService(
+      db,
+      undefined as unknown as SequenceService,
+      {
+        runMatch: async () => ({ matchStatus: 'full_match', lineResults: [] }),
+      } as unknown as MatchingService,
+      { emit() {} } as unknown as WebhookEventService,
+      { enqueue() {} } as unknown as GlExportService,
+      {
+        reopenInvoice: async () => {
+          reopened = true;
+        },
+      } as unknown as BudgetsService,
+      {
+        log: async (
+          _organizationId: string,
+          _actorId: string,
+          _entityType: string,
+          _entityId: string,
+          action: string,
+        ) => {
+          auditActions.push(action);
+        },
+      } as unknown as AuditService,
+      undefined as unknown as NotificationsService,
+      undefined as unknown as EntitiesService,
+      {
+        getOrganizationBaseCurrency: async () => 'USD',
+        getRateDecimal: async () => '1.00000000',
+        roundMoney: (value: number) => value,
+      } as unknown as ExchangeRatesService,
+      undefined as unknown as SpendGuardService,
+      undefined as unknown as SettingsService,
+      workflow,
+    );
+    return {
+      service,
+      invoiceUpdates,
+      lineUpdates,
+      auditActions,
+      state: () => ({ reopened, restarted, published }),
+    };
+  };
+
+  it('atomically reopens budget posting and restarts approval for an amount edit', async () => {
+    const fixture = createEditService();
+
+    await fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+      lines: [{ id: 'line-1', quantity: 2 }],
+    });
+
+    assert.deepEqual(fixture.state(), { reopened: true, restarted: true, published: true });
+    assert.ok(fixture.invoiceUpdates.some((update) => update.approvedBy === null));
+    assert.ok(fixture.invoiceUpdates.some((update) => update.status === 'pending_approval'));
+    assert.ok(fixture.lineUpdates.some((update) => update.quantity === '2'));
+    assert.deepEqual(fixture.auditActions, ['material_edit_reapproval']);
+  });
+
+  it('keeps approval intact for a description-only correction', async () => {
+    const fixture = createEditService();
+
+    await fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+      lines: [{ id: 'line-1', description: 'Consulting service' }],
+    });
+
+    assert.deepEqual(fixture.state(), { reopened: false, restarted: false, published: false });
+    assert.ok(!fixture.invoiceUpdates.some((update) => update.approvedBy === null));
+    assert.ok(fixture.lineUpdates.some((update) => update.description === 'Consulting service'));
+    assert.deepEqual(fixture.auditActions, ['updated']);
   });
 });

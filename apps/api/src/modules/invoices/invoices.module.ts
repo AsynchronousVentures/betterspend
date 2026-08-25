@@ -7,9 +7,17 @@ import { EntitiesModule } from '../entities/entities.module';
 import { ExchangeRatesModule } from '../exchange-rates/exchange-rates.module';
 import { SpendGuardModule } from '../spend-guard/spend-guard.module';
 import { SettingsModule } from '../settings/settings.module';
+import { WorkflowExecutionModule } from '../workflow-execution/workflow-execution.module';
 
 @Module({
-  imports: [BudgetsModule, EntitiesModule, ExchangeRatesModule, SpendGuardModule, SettingsModule],
+  imports: [
+    BudgetsModule,
+    EntitiesModule,
+    ExchangeRatesModule,
+    SpendGuardModule,
+    SettingsModule,
+    WorkflowExecutionModule,
+  ],
   controllers: [InvoicesController],
   providers: [InvoicesService, MatchingService],
   exports: [InvoicesService, MatchingService],

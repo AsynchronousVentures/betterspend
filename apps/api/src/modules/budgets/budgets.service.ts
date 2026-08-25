@@ -37,6 +37,7 @@ import {
 import {
   commitmentDeltas,
   committedPurchaseOrderBalance,
+  reopenedInvoiceBalance,
   reducedPurchaseOrderBalance,
   releasedPurchaseOrderBalance,
   type CommitmentBalance,
@@ -1028,6 +1029,7 @@ export class BudgetsService {
     invoiceId: string,
     baseExpenseAmount: string,
     baseCommitmentReleaseAmount: string,
+    approvedAt = new Date(),
   ): Promise<void> {
     const invoice = await executor.query.invoices.findFirst({
       where: (record, { and, eq }) =>
@@ -1067,7 +1069,7 @@ export class BudgetsService {
       executor,
       { ...context, invoiceId },
       {
-        eventKey: budgetCommitmentEventKey.invoiceApproved(invoiceId),
+        eventKey: budgetCommitmentEventKey.invoiceApproved(invoiceId, approvedAt),
         eventType: BUDGET_COMMITMENT_EVENT_TYPE.INVOICE_EXPENDED,
         reason: 'Approved invoice converted commitment to spend',
         desired: {
@@ -1075,6 +1077,57 @@ export class BudgetsService {
           committed: subtractMoneyFloorZero(current.committed, releasedCommitment),
           expended: addMoney([current.expended, baseExpenseAmount]),
         },
+      },
+    );
+  }
+
+  async reopenInvoice(
+    executor: DbTransaction,
+    organizationId: string,
+    invoiceId: string,
+    editedAt: Date,
+  ): Promise<void> {
+    const invoice = await executor.query.invoices.findFirst({
+      where: (record, { and, eq }) =>
+        and(eq(record.id, invoiceId), eq(record.organizationId, organizationId)),
+    });
+    if (!invoice?.purchaseOrderId) return;
+    const context = await this.getPurchaseOrderCommitmentContext(
+      executor,
+      organizationId,
+      invoice.purchaseOrderId,
+    );
+    if (!context) return;
+    await this.lockRequisitionCommitments(executor, organizationId, context.requisition.id);
+    const current = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisition.id,
+    );
+    const invoiceBalance = await this.getCommitmentBalance(
+      executor,
+      context.budget.id,
+      context.requisition.id,
+      invoice.purchaseOrderId,
+      invoiceId,
+    );
+    if (isZeroMoney(invoiceBalance.expended) && isZeroMoney(invoiceBalance.invoiced)) return;
+
+    await this.recordSpend(
+      organizationId,
+      context.requisition.departmentId!,
+      `-${invoiceBalance.expended}`,
+      context.requisition.createdAt.getUTCFullYear(),
+      executor,
+    );
+    await this.appendCommitmentEvent(
+      executor,
+      { ...context, invoiceId },
+      {
+        eventKey: budgetCommitmentEventKey.invoiceReopened(invoiceId, editedAt),
+        eventType: BUDGET_COMMITMENT_EVENT_TYPE.INVOICE_REOPENED,
+        reason: 'Material invoice edit reopened approval and restored commitment',
+        desired: reopenedInvoiceBalance(current, invoiceBalance),
       },
     );
   }
@@ -1168,6 +1221,7 @@ export class BudgetsService {
     budgetId: string,
     requisitionId: string,
     purchaseOrderId?: string,
+    invoiceId?: string,
   ): Promise<PurchaseOrderCommitmentBalance> {
     const conditions = [
       eq(budgetCommitmentEvents.budgetId, budgetId),
@@ -1176,14 +1230,16 @@ export class BudgetsService {
     if (purchaseOrderId) {
       conditions.push(eq(budgetCommitmentEvents.purchaseOrderId, purchaseOrderId));
     }
+    if (invoiceId) {
+      conditions.push(eq(budgetCommitmentEvents.invoiceId, invoiceId));
+    }
     const [balance] = await executor
       .select({
         reserved: sql<string>`coalesce(sum(${budgetCommitmentEvents.baseReservedDelta}), 0)`,
         committed: sql<string>`coalesce(sum(${budgetCommitmentEvents.baseCommittedDelta}), 0)`,
         expended: sql<string>`coalesce(sum(${budgetCommitmentEvents.baseExpendedDelta}), 0)`,
         invoiced: sql<string>`coalesce(sum(CASE
-          WHEN ${budgetCommitmentEvents.eventType} = ${BUDGET_COMMITMENT_EVENT_TYPE.INVOICE_EXPENDED}
-            AND ${budgetCommitmentEvents.baseCommittedDelta} < 0
+          WHEN ${budgetCommitmentEvents.invoiceId} IS NOT NULL
           THEN -${budgetCommitmentEvents.baseCommittedDelta}
           ELSE 0
         END), 0)`,

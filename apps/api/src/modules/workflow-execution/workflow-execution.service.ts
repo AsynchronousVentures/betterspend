@@ -23,6 +23,7 @@ import type { Db, DbTransaction } from '@betterspend/db';
 import {
   approvalActions,
   approvalRequests,
+  invoices,
   purchaseOrders,
   requisitions,
   users,
@@ -33,6 +34,8 @@ import {
 import { DB_TOKEN } from '../../database/database.module';
 import { ApprovalDelegationsService } from '../approval-delegations/approval-delegations.service';
 import { AuditService } from '../audit/audit.service';
+import { addMoney, convertMoney } from '../budgets/budget-enforcement';
+import { invoiceCommitmentAmounts } from '../budgets/budget-commitments';
 import { BudgetsService } from '../budgets/budgets.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
@@ -43,7 +46,7 @@ import {
   type WorkflowAssignmentStatus,
 } from './workflow-runtime';
 
-type SupportedApprovableType = 'requisition' | 'purchase_order';
+type SupportedApprovableType = 'requisition' | 'purchase_order' | 'invoice';
 
 export interface WorkflowExecutionResult {
   workflow: true;
@@ -55,6 +58,15 @@ export interface WorkflowExecutionResult {
   status: 'pending' | 'approved' | 'rejected';
   fastLane?: undefined;
   threshold?: undefined;
+}
+
+export interface WorkflowRestartResult {
+  cancelledRequestId: string;
+  replacementRequestId: string;
+  definitionVersionId: string;
+  version: number;
+  attempt: number;
+  status: 'pending' | 'approved' | 'rejected';
 }
 
 export const workflowEscalationJobDataSchema = z
@@ -81,7 +93,13 @@ type RuntimeOutcome = {
 };
 
 function workflowDomainFor(entityType: SupportedApprovableType): WorkflowDomain {
-  return entityType === 'requisition' ? 'requisition' : 'po_change';
+  if (entityType === 'requisition') return 'requisition';
+  return entityType === 'invoice' ? 'invoice' : 'po_change';
+}
+
+function supportedApprovableType(value: string): SupportedApprovableType {
+  if (value === 'requisition' || value === 'purchase_order' || value === 'invoice') return value;
+  throw new ConflictException(`Unsupported versioned approvable type ${value}`);
 }
 
 function assignmentStatus(value: string): WorkflowAssignmentStatus {
@@ -348,125 +366,152 @@ export class WorkflowExecutionService {
     requestId: string,
     organizationId: string,
     actorId: string,
-  ): Promise<{
-    cancelledRequestId: string;
-    replacementRequestId: string;
-    definitionVersionId: string;
-    version: number;
-    attempt: number;
-  }> {
-    const result = await this.db.transaction(async (tx) => {
-      const request = await this.lockVersionedRequest(tx, requestId, organizationId);
-      if (request.status !== 'pending') {
-        throw new ConflictException('Only pending workflow instances can be restarted');
-      }
-      const [scope] = await tx
-        .select({
-          definitionId: workflowDefinitionVersions.definitionId,
-          publishedVersionId: workflowDefinitions.publishedVersionId,
-        })
-        .from(workflowDefinitionVersions)
-        .innerJoin(
-          workflowDefinitions,
-          and(
-            eq(workflowDefinitions.id, workflowDefinitionVersions.definitionId),
-            eq(workflowDefinitions.organizationId, workflowDefinitionVersions.organizationId),
-          ),
-        )
-        .where(
-          and(
-            eq(workflowDefinitionVersions.id, request.definitionVersionId!),
-            eq(workflowDefinitionVersions.organizationId, organizationId),
-          ),
-        )
-        .for('update');
-      if (!scope?.publishedVersionId) {
-        throw new ConflictException('The workflow definition has no published version');
-      }
-      const latest = await tx.query.workflowDefinitionVersions.findFirst({
-        where: (version, { and, eq }) =>
-          and(
-            eq(version.id, scope.publishedVersionId!),
-            eq(version.definitionId, scope.definitionId),
-            eq(version.organizationId, organizationId),
-          ),
-      });
-      if (!latest) throw new ConflictException('The published workflow version is unavailable');
-      const executable = executableDefinitionSchema.parse(latest.executableJson);
-      const now = new Date();
+  ): Promise<WorkflowRestartResult> {
+    const result = await this.db.transaction((tx) =>
+      this.restartOnLatestInTransaction(requestId, organizationId, actorId, tx),
+    );
+    await this.publishCommittedRequest(result.replacementRequestId, organizationId);
+    return result;
+  }
 
-      await tx
-        .update(approvalRequests)
-        .set({ status: 'cancelled', updatedAt: now })
-        .where(eq(approvalRequests.id, request.id));
-      const [replacement] = await tx
-        .insert(approvalRequests)
-        .values({
-          organizationId,
-          approvableType: request.approvableType,
-          approvableId: request.approvableId,
-          approvalRuleId: null,
-          definitionVersionId: latest.id,
-          initiatedBy: request.initiatedBy ?? actorId,
-          currentNodeId: executable.entryStepId,
-          workflowContext: request.workflowContext,
-          attempt: request.attempt + 1,
-          currentStep: 0,
-          status: 'pending',
-          requiredApproverId: request.requiredApproverId,
-          requiredApprovalReason: request.requiredApprovalReason,
-          requiredApprovalKey: request.requiredApprovalKey,
-        })
-        .returning();
-      await tx.insert(approvalActions).values([
-        {
-          approvalRequestId: request.id,
-          stepOrder: request.currentStep,
-          approverId: actorId,
-          action: 'cancelled',
-          nodeId: request.currentNodeId,
-          comment: `Restarted as ${replacement.id} on workflow version ${latest.version}`,
-          metadata: { replacementRequestId: replacement.id, definitionVersionId: latest.id },
-        },
-        {
-          approvalRequestId: replacement.id,
-          stepOrder: 0,
-          approverId: actorId,
-          action: 'restarted',
-          nodeId: executable.entryStepId,
-          comment: `Restarted from ${request.id} on workflow version ${latest.version}`,
-          metadata: { cancelledRequestId: request.id, definitionVersionId: latest.id },
-        },
-      ]);
-      const outcome = await this.advanceAutomaticSteps(tx, replacement, executable, actorId);
-      await this.audit.log(
-        organizationId,
-        actorId,
-        'approval_request',
-        request.id,
-        'restarted_on_latest',
-        {
-          replacementRequestId: replacement.id,
-          definitionVersionId: latest.id,
-          version: latest.version,
-          attempt: replacement.attempt,
-        },
-        undefined,
-        tx,
-      );
-      return {
-        outcome,
-        response: {
-          cancelledRequestId: request.id,
-          replacementRequestId: replacement.id,
-          definitionVersionId: latest.id,
-          version: latest.version,
-          attempt: replacement.attempt,
-        },
-      };
+  /** Restart inside a caller-owned transaction so a material edit and reapproval are atomic. */
+  async restartOnLatestInTransaction(
+    requestId: string,
+    organizationId: string,
+    actorId: string,
+    tx: DbTransaction,
+    options: { allowApproved?: boolean; refreshContext?: boolean } = {},
+  ): Promise<WorkflowRestartResult> {
+    const request = await this.lockVersionedRequest(tx, requestId, organizationId);
+    if (request.status !== 'pending' && !(options.allowApproved && request.status === 'approved')) {
+      throw new ConflictException('Only pending workflow instances can be restarted');
+    }
+    const [scope] = await tx
+      .select({
+        definitionId: workflowDefinitionVersions.definitionId,
+        publishedVersionId: workflowDefinitions.publishedVersionId,
+      })
+      .from(workflowDefinitionVersions)
+      .innerJoin(
+        workflowDefinitions,
+        and(
+          eq(workflowDefinitions.id, workflowDefinitionVersions.definitionId),
+          eq(workflowDefinitions.organizationId, workflowDefinitionVersions.organizationId),
+        ),
+      )
+      .where(
+        and(
+          eq(workflowDefinitionVersions.id, request.definitionVersionId!),
+          eq(workflowDefinitionVersions.organizationId, organizationId),
+        ),
+      )
+      .for('update');
+    if (!scope?.publishedVersionId) {
+      throw new ConflictException('The workflow definition has no published version');
+    }
+    const latest = await tx.query.workflowDefinitionVersions.findFirst({
+      where: (version, { and, eq }) =>
+        and(
+          eq(version.id, scope.publishedVersionId!),
+          eq(version.definitionId, scope.definitionId),
+          eq(version.organizationId, organizationId),
+        ),
     });
-    await this.publishRuntimeOutcomeAfterCommit(result.outcome);
-    return result.response;
+    if (!latest) throw new ConflictException('The published workflow version is unavailable');
+    const executable = executableDefinitionSchema.parse(latest.executableJson);
+    const workflowContext = options.refreshContext
+      ? await this.loadWorkflowContext(
+          tx,
+          organizationId,
+          supportedApprovableType(request.approvableType),
+          request.approvableId,
+          actorId,
+          {},
+        )
+      : request.workflowContext;
+    const now = new Date();
+
+    await tx
+      .update(approvalRequests)
+      .set({ status: 'cancelled', updatedAt: now })
+      .where(eq(approvalRequests.id, request.id));
+    const [replacement] = await tx
+      .insert(approvalRequests)
+      .values({
+        organizationId,
+        approvableType: request.approvableType,
+        approvableId: request.approvableId,
+        approvalRuleId: null,
+        definitionVersionId: latest.id,
+        initiatedBy: request.initiatedBy ?? actorId,
+        currentNodeId: executable.entryStepId,
+        workflowContext,
+        attempt: request.attempt + 1,
+        currentStep: 0,
+        status: 'pending',
+        requiredApproverId: request.requiredApproverId,
+        requiredApprovalReason: request.requiredApprovalReason,
+        requiredApprovalKey: request.requiredApprovalKey,
+      })
+      .returning();
+    await tx.insert(approvalActions).values([
+      {
+        approvalRequestId: request.id,
+        stepOrder: request.currentStep,
+        approverId: actorId,
+        action: 'cancelled',
+        nodeId: request.currentNodeId,
+        comment: `Restarted as ${replacement.id} on workflow version ${latest.version}`,
+        metadata: { replacementRequestId: replacement.id, definitionVersionId: latest.id },
+      },
+      {
+        approvalRequestId: replacement.id,
+        stepOrder: 0,
+        approverId: actorId,
+        action: 'restarted',
+        nodeId: executable.entryStepId,
+        comment: `Restarted from ${request.id} on workflow version ${latest.version}`,
+        metadata: { cancelledRequestId: request.id, definitionVersionId: latest.id },
+      },
+    ]);
+    const outcome = await this.advanceAutomaticSteps(tx, replacement, executable, actorId);
+    await this.audit.log(
+      organizationId,
+      actorId,
+      'approval_request',
+      request.id,
+      'restarted_on_latest',
+      {
+        replacementRequestId: replacement.id,
+        definitionVersionId: latest.id,
+        version: latest.version,
+        attempt: replacement.attempt,
+      },
+      undefined,
+      tx,
+    );
+    return {
+      cancelledRequestId: request.id,
+      replacementRequestId: replacement.id,
+      definitionVersionId: latest.id,
+      version: latest.version,
+      attempt: replacement.attempt,
+      status: outcome.status,
+    };
+  }
+
+  async publishCommittedRequest(requestId: string, organizationId: string): Promise<void> {
+    const request = await this.db.query.approvalRequests.findFirst({
+      where: (record, { and, eq }) =>
+        and(eq(record.id, requestId), eq(record.organizationId, organizationId)),
+    });
+    if (!request || !['pending', 'approved', 'rejected'].includes(request.status)) return;
+    const status = request.status as 'pending' | 'approved' | 'rejected';
+    await this.publishRuntimeOutcomeAfterCommit({
+      request,
+      status,
+      ...(status === 'approved' || status === 'rejected' ? { entityStatus: status } : {}),
+    });
   }
 
   async publishInitiation(result: WorkflowExecutionResult): Promise<void> {
@@ -636,6 +681,7 @@ export class WorkflowExecutionService {
     let entity: Record<string, unknown>;
     let requesterId: string | null = null;
     let poCreatorId: string | null = null;
+    let invoiceCreatorId: string | null = null;
     if (entityType === 'requisition') {
       const requisition = await executor.query.requisitions.findFirst({
         where: (record, { and, eq }) =>
@@ -644,7 +690,7 @@ export class WorkflowExecutionService {
       if (!requisition) throw new NotFoundException(`Entity ${entityId} not found`);
       entity = requisition;
       requesterId = requisition.requesterId;
-    } else {
+    } else if (entityType === 'purchase_order') {
       const purchaseOrder = await executor.query.purchaseOrders.findFirst({
         where: (record, { and, eq }) =>
           and(eq(record.id, entityId), eq(record.organizationId, organizationId)),
@@ -652,6 +698,15 @@ export class WorkflowExecutionService {
       if (!purchaseOrder) throw new NotFoundException(`Entity ${entityId} not found`);
       entity = purchaseOrder;
       poCreatorId = purchaseOrder.issuedBy;
+    } else {
+      const invoice = await executor.query.invoices.findFirst({
+        where: (record, { and, eq }) =>
+          and(eq(record.id, entityId), eq(record.organizationId, organizationId)),
+        with: { lines: true },
+      });
+      if (!invoice) throw new NotFoundException(`Entity ${entityId} not found`);
+      entity = { ...invoice, lines: invoice.lines };
+      invoiceCreatorId = invoice.createdBy;
     }
     return {
       ...entity,
@@ -661,14 +716,14 @@ export class WorkflowExecutionService {
       initiatedBy,
       ...additionalContext,
       legalEntityId:
-        entityType === 'purchase_order' && typeof entity.entityId === 'string'
+        entityType !== 'requisition' && typeof entity.entityId === 'string'
           ? entity.entityId
           : null,
       actors: {
         requester: requesterId,
         submitter: initiatedBy,
         po_creator: poCreatorId,
-        invoice_creator: null,
+        invoice_creator: invoiceCreatorId,
       },
     };
   }
@@ -1043,7 +1098,7 @@ export class WorkflowExecutionService {
       undefined,
       tx,
     );
-    await this.updateEntityStatus(tx, finished, status, now);
+    await this.updateEntityStatus(tx, finished, status, now, actorId);
     return { request: finished, status, entityStatus: status };
   }
 
@@ -1052,6 +1107,7 @@ export class WorkflowExecutionService {
     request: RuntimeRequest,
     status: 'approved' | 'rejected',
     now: Date,
+    actorId: string | null,
   ): Promise<void> {
     if (request.approvableType === 'requisition') {
       const [transitioned] = await tx
@@ -1104,6 +1160,61 @@ export class WorkflowExecutionService {
           'rejected',
         );
       }
+      return;
+    }
+    if (request.approvableType === 'invoice') {
+      const [transitioned] = await tx
+        .update(invoices)
+        .set({
+          status,
+          approvedBy: status === 'approved' ? actorId : null,
+          approvedAt: status === 'approved' ? now : null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(invoices.id, request.approvableId),
+            eq(invoices.organizationId, request.organizationId),
+            inArray(invoices.status, [
+              'pending_match',
+              'partial_match',
+              'exception',
+              'matched',
+              'pending_approval',
+            ]),
+          ),
+        )
+        .returning({ id: invoices.id });
+      if (!transitioned) throw new ConflictException('Invoice status changed during workflow');
+      if (status === 'approved') {
+        const invoice = await tx.query.invoices.findFirst({
+          where: (record, { and, eq }) =>
+            and(
+              eq(record.id, request.approvableId),
+              eq(record.organizationId, request.organizationId),
+            ),
+          with: { lines: { with: { taxCode: true } } },
+        });
+        if (invoice?.purchaseOrderId) {
+          const recoverableTaxAmount = addMoney(
+            invoice.lines
+              .filter((line) => line.taxCode?.isRecoverable)
+              .map((line) => String(line.taxAmount ?? '0')),
+          );
+          const amounts = invoiceCommitmentAmounts(
+            String(invoice.baseTotalAmount),
+            convertMoney(recoverableTaxAmount, String(invoice.exchangeRate)),
+          );
+          await this.budgets.expenseInvoice(
+            tx,
+            request.organizationId,
+            request.approvableId,
+            amounts.expense,
+            amounts.commitmentRelease,
+            now,
+          );
+        }
+      }
     }
   }
 
@@ -1128,6 +1239,12 @@ export class WorkflowExecutionService {
         outcome.request.organizationId,
         outcome.status === 'approved' ? 'po.approved' : 'po.rejected',
         { purchaseOrderId: entityId },
+      );
+    } else if (type === 'invoice') {
+      this.webhookEvents.emit(
+        outcome.request.organizationId,
+        outcome.status === 'approved' ? 'invoice.approved' : 'invoice.rejected',
+        { invoiceId: entityId },
       );
     }
     this.webhookEvents.emit(

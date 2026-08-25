@@ -1,0 +1,2 @@
+ALTER TABLE "budget_commitment_events" DROP CONSTRAINT "budget_commitment_events_event_type_check";--> statement-breakpoint
+ALTER TABLE "budget_commitment_events" ADD CONSTRAINT "budget_commitment_events_event_type_check" CHECK ("budget_commitment_events"."event_type" in ('requisition_reserved', 'requisition_released', 'purchase_order_committed', 'purchase_order_reduced', 'purchase_order_released', 'invoice_expended', 'invoice_reopened', 'legacy_commitment_backfill', 'legacy_reservation_backfill'));

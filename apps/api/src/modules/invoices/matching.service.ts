@@ -1,7 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { eq, inArray } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
-import type { Db } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
 import { invoices, invoiceLines, matchResults } from '@betterspend/db';
 
 // Configurable tolerances
@@ -29,7 +29,10 @@ export function overallInvoiceMatchStatus(lineResults: OverallLineMatch[]): stri
 export class MatchingService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  async runMatch(invoiceId: string): Promise<{
+  async runMatch(
+    invoiceId: string,
+    executor: Db | DbTransaction = this.db,
+  ): Promise<{
     matchStatus: string;
     lineResults: Array<{
       invoiceLineId: string;
@@ -39,7 +42,7 @@ export class MatchingService {
       status: string;
     }>;
   }> {
-    const invoice = await this.db.query.invoices.findFirst({
+    const invoice = await executor.query.invoices.findFirst({
       where: (i, { eq }) => eq(i.id, invoiceId),
       with: {
         lines: true,
@@ -49,7 +52,7 @@ export class MatchingService {
 
     if (!invoice || !invoice.purchaseOrder) {
       // No PO linked — mark as unmatched
-      await this.db
+      await executor
         .update(invoices)
         .set({ matchStatus: 'unmatched', updatedAt: new Date() })
         .where(eq(invoices.id, invoiceId));
@@ -135,13 +138,15 @@ export class MatchingService {
     }
 
     if (invoiceLineIds.length > 0) {
-      await this.db.delete(matchResults).where(inArray(matchResults.invoiceLineId, invoiceLineIds));
+      await executor
+        .delete(matchResults)
+        .where(inArray(matchResults.invoiceLineId, invoiceLineIds));
     }
 
     // Persist match results
     for (const r of lineResults) {
       if (!r.poLineId) continue;
-      await this.db.insert(matchResults).values({
+      await executor.insert(matchResults).values({
         invoiceLineId: r.invoiceLineId,
         poLineId: r.poLineId,
         grnLineId: r.grnLineId,
@@ -169,7 +174,7 @@ export class MatchingService {
       })),
     };
 
-    await this.db
+    await executor
       .update(invoices)
       .set({ matchStatus, matchDetails, updatedAt: new Date() })
       .where(eq(invoices.id, invoiceId));

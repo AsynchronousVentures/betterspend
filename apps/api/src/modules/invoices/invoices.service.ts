@@ -9,7 +9,14 @@ import {
 import { eq, and, ne, isNull, lte, gte, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
-import { auditLog, invoices, invoiceLines, purchaseOrders, requisitions } from '@betterspend/db';
+import {
+  auditLog,
+  invoices,
+  invoiceLines,
+  purchaseOrders,
+  requisitions,
+  vendors,
+} from '@betterspend/db';
 import { SequenceService } from '../../common/services/sequence.service';
 import { MatchingService } from './matching.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
@@ -24,6 +31,14 @@ import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { SpendGuardService } from '../spend-guard/spend-guard.service';
 import { SettingsService } from '../settings/settings.service';
 import { resolveIndependentInvoiceApprover } from './invoice-approval-policy';
+import { WorkflowExecutionService } from '../workflow-execution/workflow-execution.service';
+import {
+  changedMaterialInvoiceFields,
+  type MaterialInvoiceState,
+  type UpdateInvoiceInput,
+} from './invoice-material-edit';
+
+export type { UpdateInvoiceInput } from './invoice-material-edit';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 
@@ -92,6 +107,7 @@ export class InvoicesService {
     private readonly exchangeRatesService: ExchangeRatesService,
     private readonly spendGuard: SpendGuardService,
     private readonly settingsService: SettingsService,
+    private readonly workflowExecution: WorkflowExecutionService,
   ) {}
 
   private calculateLineTax(
@@ -119,9 +135,62 @@ export class InvoicesService {
     };
   }
 
-  private async getTaxCodeMap(organizationId: string, taxCodeIds: string[]) {
+  private parseDate(value: string, field: string): Date {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) throw new BadRequestException(`${field} is invalid`);
+    return parsed;
+  }
+
+  private dateKey(value: Date | string | null): string | null {
+    if (value == null) return null;
+    const parsed = value instanceof Date ? value : new Date(value);
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  private decimalKey(value: string | number | null, scale: number): string | null {
+    if (value == null) return null;
+    return Number(value).toFixed(scale);
+  }
+
+  private materialState(
+    invoice: typeof invoices.$inferSelect,
+    lines: Array<typeof invoiceLines.$inferSelect>,
+  ): MaterialInvoiceState {
+    return {
+      vendorId: invoice.vendorId,
+      invoiceDate: this.dateKey(invoice.invoiceDate)!,
+      dueDate: this.dateKey(invoice.dueDate),
+      paymentTerms: invoice.paymentTerms,
+      earlyPaymentDiscountPercent: this.decimalKey(invoice.earlyPaymentDiscountPercent, 2),
+      earlyPaymentDiscountBy: this.dateKey(invoice.earlyPaymentDiscountBy),
+      currency: invoice.currency.toUpperCase(),
+      exchangeRate: this.decimalKey(invoice.exchangeRate, 8)!,
+      lines: lines.map((line) => ({
+        id: line.id,
+        lineNumber: this.decimalKey(line.lineNumber, 0)!,
+        poLineId: line.poLineId,
+        quantity: this.decimalKey(line.quantity, 2)!,
+        unitPrice: this.decimalKey(line.unitPrice, 2)!,
+        glAccount: line.glAccount,
+        taxCodeId: line.taxCodeId,
+        taxInclusive: line.taxInclusive,
+      })),
+    };
+  }
+
+  private assertNonNegative(value: number, field: string): void {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new BadRequestException(`${field} must be a non-negative number`);
+    }
+  }
+
+  private async getTaxCodeMap(
+    organizationId: string,
+    taxCodeIds: string[],
+    executor: Db | DbTransaction = this.db,
+  ) {
     if (taxCodeIds.length === 0) return new Map<string, any>();
-    const records = await this.db.query.taxCodes.findMany({
+    const records = await executor.query.taxCodes.findMany({
       where: (record, { and, eq, inArray }) =>
         and(eq(record.orgId, organizationId), inArray(record.id, taxCodeIds)),
     });
@@ -160,6 +229,329 @@ export class InvoicesService {
 
   async findOne(id: string, organizationId: string) {
     return this.findOneWithExecutor(id, organizationId, this.db);
+  }
+
+  async update(id: string, organizationId: string, actorId: string, input: UpdateInvoiceInput) {
+    const result = await this.db.transaction(async (tx) => {
+      const [lockedInvoice] = await tx
+        .select()
+        .from(invoices)
+        .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)))
+        .for('update');
+      if (!lockedInvoice) throw new NotFoundException(`Invoice ${id} not found`);
+      if (lockedInvoice.status === 'paid') {
+        throw new BadRequestException('Paid invoices cannot be edited');
+      }
+
+      const existingLines = await tx.query.invoiceLines.findMany({
+        where: (line, { eq }) => eq(line.invoiceId, id),
+        orderBy: (line, { asc }) => asc(line.lineNumber),
+      });
+      const patches = new Map((input.lines ?? []).map((line) => [line.id, line]));
+      if (patches.size !== (input.lines ?? []).length) {
+        throw new BadRequestException('Invoice line edits must contain unique IDs');
+      }
+      for (const lineId of patches.keys()) {
+        if (!existingLines.some((line) => line.id === lineId)) {
+          throw new BadRequestException(`Invoice line ${lineId} does not belong to invoice ${id}`);
+        }
+      }
+
+      if (input.vendorId !== undefined && input.vendorId !== lockedInvoice.vendorId) {
+        const vendor = await tx.query.vendors.findFirst({
+          where: (record, { and, eq }) =>
+            and(eq(record.id, input.vendorId!), eq(record.organizationId, organizationId)),
+          columns: { id: true },
+        });
+        if (!vendor) throw new BadRequestException(`Vendor ${input.vendorId} not found`);
+      }
+
+      const currency = (input.currency ?? lockedInvoice.currency).trim().toUpperCase();
+      if (!/^[A-Z]{3}$/.test(currency)) {
+        throw new BadRequestException('Currency must be a 3-letter currency code');
+      }
+      if (input.exchangeRate !== undefined) {
+        if (!Number.isFinite(input.exchangeRate) || input.exchangeRate <= 0) {
+          throw new BadRequestException('Exchange rate must be greater than zero');
+        }
+      }
+      if (input.earlyPaymentDiscountPercent != null) {
+        this.assertNonNegative(input.earlyPaymentDiscountPercent, 'Early payment discount percent');
+      }
+
+      const baseCurrency = await this.exchangeRatesService.getOrganizationBaseCurrency(
+        organizationId,
+        tx,
+      );
+      const exchangeRate = await this.exchangeRatesService.getRateDecimal(
+        organizationId,
+        currency,
+        baseCurrency,
+        input.exchangeRate !== undefined
+          ? String(input.exchangeRate)
+          : currency === lockedInvoice.currency
+            ? lockedInvoice.exchangeRate
+            : undefined,
+        tx,
+      );
+      const nextLines = existingLines.map((line) => {
+        const patch = patches.get(line.id);
+        const quantity = patch?.quantity ?? Number(line.quantity);
+        const unitPrice = patch?.unitPrice ?? Number(line.unitPrice);
+        const lineNumber = patch?.lineNumber ?? Number(line.lineNumber);
+        this.assertNonNegative(quantity, `Quantity for line ${line.id}`);
+        this.assertNonNegative(unitPrice, `Unit price for line ${line.id}`);
+        this.assertNonNegative(lineNumber, `Line number for line ${line.id}`);
+        return {
+          ...line,
+          lineNumber: String(lineNumber),
+          poLineId: patch?.poLineId !== undefined ? patch.poLineId : line.poLineId,
+          description: patch?.description ?? line.description,
+          quantity: String(quantity),
+          unitPrice: String(unitPrice),
+          glAccount: patch?.glAccount !== undefined ? patch.glAccount : line.glAccount,
+          taxCodeId: patch?.taxCodeId !== undefined ? patch.taxCodeId : line.taxCodeId,
+          taxInclusive: patch?.taxInclusive ?? line.taxInclusive,
+        };
+      });
+      const taxCodeMap = await this.getTaxCodeMap(
+        organizationId,
+        [...new Set(nextLines.map((line) => line.taxCodeId).filter((id): id is string => !!id))],
+        tx,
+      );
+      const lineAmounts = nextLines.map((line) => {
+        const taxCode = line.taxCodeId ? taxCodeMap.get(line.taxCodeId) : null;
+        return this.calculateLineTax(
+          Number(line.quantity),
+          Number(line.unitPrice),
+          taxCode ? Number(taxCode.ratePercent ?? '0') : 0,
+          line.taxInclusive,
+        );
+      });
+      const subtotal = lineAmounts.reduce((sum, line) => sum + line.subtotal, 0);
+      const taxAmount = lineAmounts.reduce((sum, line) => sum + line.taxAmount, 0);
+      const totalAmount = lineAmounts.reduce((sum, line) => sum + line.totalAmount, 0);
+      const exchangeRateNumber = Number(exchangeRate);
+      const editedAt = new Date();
+      const nextInvoice = {
+        ...lockedInvoice,
+        vendorId: input.vendorId ?? lockedInvoice.vendorId,
+        invoiceDate:
+          input.invoiceDate !== undefined
+            ? this.parseDate(input.invoiceDate, 'Invoice date')
+            : lockedInvoice.invoiceDate,
+        dueDate:
+          input.dueDate !== undefined
+            ? input.dueDate === null
+              ? null
+              : this.parseDate(input.dueDate, 'Due date')
+            : lockedInvoice.dueDate,
+        paymentTerms:
+          input.paymentTerms !== undefined ? input.paymentTerms : lockedInvoice.paymentTerms,
+        earlyPaymentDiscountPercent:
+          input.earlyPaymentDiscountPercent !== undefined
+            ? input.earlyPaymentDiscountPercent === null
+              ? null
+              : String(input.earlyPaymentDiscountPercent)
+            : lockedInvoice.earlyPaymentDiscountPercent,
+        earlyPaymentDiscountBy:
+          input.earlyPaymentDiscountBy !== undefined
+            ? input.earlyPaymentDiscountBy === null
+              ? null
+              : this.dateKey(
+                  this.parseDate(input.earlyPaymentDiscountBy, 'Early payment discount date'),
+                )
+            : lockedInvoice.earlyPaymentDiscountBy,
+        currency,
+        baseCurrency,
+        exchangeRate,
+        subtotal: subtotal.toFixed(2),
+        taxAmount: taxAmount.toFixed(2),
+        totalAmount: totalAmount.toFixed(2),
+        baseSubtotal: this.exchangeRatesService
+          .roundMoney(subtotal * exchangeRateNumber)
+          .toFixed(2),
+        baseTaxAmount: this.exchangeRatesService
+          .roundMoney(taxAmount * exchangeRateNumber)
+          .toFixed(2),
+        baseTotalAmount: this.exchangeRatesService
+          .roundMoney(totalAmount * exchangeRateNumber)
+          .toFixed(2),
+        updatedAt: editedAt,
+      };
+      const changedFields = changedMaterialInvoiceFields(
+        this.materialState(lockedInvoice, existingLines),
+        this.materialState(nextInvoice, nextLines),
+      );
+      const material = changedFields.length > 0;
+      const persistedInvoice = material
+        ? nextInvoice
+        : {
+            ...nextInvoice,
+            baseCurrency: lockedInvoice.baseCurrency,
+            exchangeRate: lockedInvoice.exchangeRate,
+            subtotal: lockedInvoice.subtotal,
+            taxAmount: lockedInvoice.taxAmount,
+            totalAmount: lockedInvoice.totalAmount,
+            baseSubtotal: lockedInvoice.baseSubtotal,
+            baseTaxAmount: lockedInvoice.baseTaxAmount,
+            baseTotalAmount: lockedInvoice.baseTotalAmount,
+          };
+
+      if (material && lockedInvoice.status === 'approved') {
+        await this.budgets.reopenInvoice(tx, organizationId, id, editedAt);
+      }
+      await tx
+        .update(invoices)
+        .set({
+          vendorId: persistedInvoice.vendorId,
+          invoiceDate: persistedInvoice.invoiceDate,
+          dueDate: persistedInvoice.dueDate,
+          paymentTerms: persistedInvoice.paymentTerms,
+          earlyPaymentDiscountPercent: persistedInvoice.earlyPaymentDiscountPercent,
+          earlyPaymentDiscountBy: persistedInvoice.earlyPaymentDiscountBy,
+          currency: persistedInvoice.currency,
+          baseCurrency: persistedInvoice.baseCurrency,
+          exchangeRate: persistedInvoice.exchangeRate,
+          subtotal: persistedInvoice.subtotal,
+          taxAmount: persistedInvoice.taxAmount,
+          totalAmount: persistedInvoice.totalAmount,
+          baseSubtotal: persistedInvoice.baseSubtotal,
+          baseTaxAmount: persistedInvoice.baseTaxAmount,
+          baseTotalAmount: persistedInvoice.baseTotalAmount,
+          ...(material
+            ? {
+                status: lockedInvoice.matchStatus === 'full_match' ? 'matched' : 'pending_match',
+                approvedBy: null,
+                approvedAt: null,
+              }
+            : {}),
+          updatedAt: editedAt,
+        })
+        .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+
+      for (const [index, line] of nextLines.entries()) {
+        const amounts = lineAmounts[index];
+        await tx
+          .update(invoiceLines)
+          .set({
+            lineNumber: line.lineNumber,
+            poLineId: line.poLineId,
+            description: line.description,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            glAccount: line.glAccount,
+            taxCodeId: line.taxCodeId,
+            taxInclusive: line.taxInclusive,
+            taxAmount: material ? amounts.taxAmount.toFixed(2) : line.taxAmount,
+            totalPrice: material ? amounts.totalAmount.toFixed(2) : line.totalPrice,
+            exchangeRate: material ? exchangeRate : line.exchangeRate,
+            baseUnitPrice: material
+              ? this.exchangeRatesService
+                  .roundMoney(Number(line.unitPrice) * exchangeRateNumber)
+                  .toFixed(2)
+              : line.baseUnitPrice,
+            baseTotalPrice: material
+              ? this.exchangeRatesService
+                  .roundMoney(amounts.totalAmount * exchangeRateNumber)
+                  .toFixed(2)
+              : line.baseTotalPrice,
+            updatedAt: editedAt,
+          })
+          .where(and(eq(invoiceLines.id, line.id), eq(invoiceLines.invoiceId, id)));
+      }
+
+      if (material && lockedInvoice.purchaseOrderId) {
+        const match = await this.matchingService.runMatch(id, tx);
+        const status =
+          match.matchStatus === 'full_match'
+            ? 'matched'
+            : match.matchStatus === 'exception'
+              ? 'exception'
+              : 'partial_match';
+        await tx
+          .update(invoices)
+          .set({ status, updatedAt: editedAt })
+          .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+      }
+
+      let publishRequestId: string | null = null;
+      let approvalRequestId: string | null = null;
+      if (material) {
+        const currentRequest = await tx.query.approvalRequests.findFirst({
+          where: (request, { and, eq, inArray, isNotNull }) =>
+            and(
+              eq(request.organizationId, organizationId),
+              eq(request.approvableType, 'invoice'),
+              eq(request.approvableId, id),
+              isNotNull(request.definitionVersionId),
+              inArray(request.status, ['pending', 'approved']),
+            ),
+          orderBy: (request, { desc }) => desc(request.createdAt),
+        });
+        if (currentRequest) {
+          const restarted = await this.workflowExecution.restartOnLatestInTransaction(
+            currentRequest.id,
+            organizationId,
+            actorId,
+            tx,
+            { allowApproved: true, refreshContext: true },
+          );
+          publishRequestId = restarted.replacementRequestId;
+          approvalRequestId = restarted.replacementRequestId;
+          if (restarted.status === 'pending') {
+            await tx
+              .update(invoices)
+              .set({ status: 'pending_approval', updatedAt: editedAt })
+              .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+          }
+        } else if (['matched', 'pending_approval', 'approved'].includes(lockedInvoice.status)) {
+          const initiated = await this.workflowExecution.initiateIfConfigured(
+            organizationId,
+            'invoice',
+            id,
+            actorId,
+            undefined,
+            undefined,
+            tx,
+          );
+          if (initiated) {
+            publishRequestId = initiated.requestId;
+            approvalRequestId = initiated.requestId;
+            if (initiated.status === 'pending') {
+              await tx
+                .update(invoices)
+                .set({ status: 'pending_approval', updatedAt: editedAt })
+                .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+            }
+          }
+        }
+      }
+
+      await this.audit.log(
+        organizationId,
+        actorId,
+        'invoice',
+        id,
+        material ? 'material_edit_reapproval' : 'updated',
+        {
+          material,
+          changedFields,
+          approvalRequestId,
+        },
+        undefined,
+        tx,
+      );
+      return {
+        invoice: await this.findOneWithExecutor(id, organizationId, tx),
+        publishRequestId,
+      };
+    });
+
+    if (result.publishRequestId) {
+      await this.workflowExecution.publishCommittedRequest(result.publishRequestId, organizationId);
+    }
+    return result.invoice;
   }
 
   async create(organizationId: string, createdBy: string, input: CreateInvoiceInput) {
@@ -622,13 +1014,14 @@ export class InvoicesService {
         };
       }
 
+      const approvedAt = new Date();
       const [transitioned] = await tx
         .update(invoices)
         .set({
           status: 'approved',
           approvedBy: approverId,
-          approvedAt: new Date(),
-          updatedAt: new Date(),
+          approvedAt,
+          updatedAt: approvedAt,
         })
         .where(
           and(
@@ -665,6 +1058,7 @@ export class InvoicesService {
           id,
           amounts.expense,
           amounts.commitmentRelease,
+          approvedAt,
         );
       }
 
@@ -675,9 +1069,7 @@ export class InvoicesService {
       const fallbackApprover = result.blocked.fallbackApprover;
       const unknownCreator = result.blocked.reason === 'unknown_creator';
       throw new ForbiddenException({
-        code: unknownCreator
-          ? 'INVOICE_CREATOR_UNKNOWN'
-          : 'INVOICE_SELF_APPROVAL_BLOCKED',
+        code: unknownCreator ? 'INVOICE_CREATOR_UNKNOWN' : 'INVOICE_SELF_APPROVAL_BLOCKED',
         message: unknownCreator
           ? 'This invoice has no authoritative creator record. Approval is blocked while maker-checker policy is enabled.'
           : fallbackApprover

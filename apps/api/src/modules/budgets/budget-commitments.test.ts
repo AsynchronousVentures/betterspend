@@ -4,6 +4,7 @@ import {
   commitmentDeltas,
   committedPurchaseOrderBalance,
   invoiceCommitmentAmounts,
+  reopenedInvoiceBalance,
   reducedPurchaseOrderBalance,
   releasedPurchaseOrderBalance,
   type CommitmentBalance,
@@ -67,6 +68,16 @@ describe('invoice commitment amounts', () => {
       expense: '100.00',
       commitmentRelease: '125.00',
     });
+  });
+
+  it('restores an approved invoice posting before reapproval', () => {
+    assert.deepEqual(
+      reopenedInvoiceBalance(
+        { reserved: '0', committed: '400', expended: '600' },
+        { expended: '225', invoiced: '250' },
+      ),
+      { reserved: '0', committed: '650.00', expended: '375.00' },
+    );
   });
 });
 
