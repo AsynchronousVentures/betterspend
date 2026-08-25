@@ -1,6 +1,6 @@
 {
   "id": "614fb59d-db56-4701-b018-1e70dc85ed79",
-  "prevId": "ea66fec5-d5c0-4bde-b5d9-6949d6a91f5a",
+  "prevId": "8014133c-2200-476c-8c9d-ea17b5579642",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4687,7 +4687,7 @@
       "checkConstraints": {
         "budget_commitment_events_event_type_check": {
           "name": "budget_commitment_events_event_type_check",
-          "value": "\"budget_commitment_events\".\"event_type\" in ('requisition_reserved', 'requisition_released', 'purchase_order_committed', 'purchase_order_reduced', 'purchase_order_released', 'invoice_expended', 'invoice_reopened', 'legacy_commitment_backfill', 'legacy_reservation_backfill')"
+          "value": "\"budget_commitment_events\".\"event_type\" in ('requisition_reserved', 'requisition_released', 'purchase_order_committed', 'purchase_order_reduced', 'purchase_order_released', 'invoice_expended', 'legacy_commitment_backfill', 'legacy_reservation_backfill')"
         }
       },
       "isRLSEnabled": false
