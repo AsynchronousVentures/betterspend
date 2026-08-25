@@ -143,6 +143,59 @@ export interface AiProvidersStatusResponse {
   providers: AiProviderStatus[];
 }
 
+export interface AiRequisitionParseLine {
+  description: string;
+  quantity: number;
+  unitOfMeasure: string;
+  unitPrice: number;
+  glAccount?: string;
+}
+
+export interface AiRequisitionParseResponse {
+  error?: string;
+  title?: string;
+  description?: string;
+  priority?: 'low' | 'normal' | 'high' | 'urgent';
+  lines?: AiRequisitionParseLine[];
+  suggestedVendor?: string;
+  neededBy?: string;
+  notes?: string;
+}
+
+export interface VendorEsgUpdateInput {
+  diversityCategories?: string[];
+  esgRating?: string;
+  carbonFootprintTons?: string;
+  sustainabilityCertifications?: string[];
+  esgNotes?: string;
+  diversityVerifiedAt?: string;
+}
+
+export interface VendorEsgUpdateResponse {
+  id: string;
+  diversityCategories: string[] | null;
+  esgRating: string | null;
+  carbonFootprintTons: string | null;
+  sustainabilityCertifications: string[] | null;
+  esgNotes: string | null;
+  diversityVerifiedAt: string | null;
+}
+
+export interface VendorDiversitySummary {
+  totalVendors: number;
+  diverseVendors: number;
+  diversityRate: number;
+  esgRatedVendors: number;
+  diversityBreakdown: Record<string, number>;
+  esgRatingBreakdown: Record<string, number>;
+  topDiverseVendors: Array<{
+    id: string;
+    name: string;
+    categories: string[] | null;
+    esgRating: string | null;
+  }>;
+}
+
 export const api = {
   account: {
     me: () =>
@@ -250,9 +303,12 @@ export const api = {
         body: JSON.stringify(withEntityBody(data)),
       }),
     transactions: (id: string) => apiFetch<any>(`/vendors/${id}/transactions`),
-    updateEsg: (id: string, data: unknown) =>
-      apiFetch<any>(`/vendors/${id}/esg`, { method: 'PATCH', body: JSON.stringify(data) }),
-    diversitySummary: () => apiFetch<any>('/vendors/diversity/summary'),
+    updateEsg: (id: string, data: VendorEsgUpdateInput) =>
+      apiFetch<VendorEsgUpdateResponse>(`/vendors/${id}/esg`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    getDiversitySummary: () => apiFetch<VendorDiversitySummary>('/vendors/diversity/summary'),
     onboardingQuestionnaires: () => apiFetch<any[]>('/vendors/onboarding/questionnaires'),
     createOnboardingQuestionnaire: (data: unknown) =>
       apiFetch<any>('/vendors/onboarding/questionnaires', {
@@ -446,7 +502,10 @@ export const api = {
     create: (data: unknown) =>
       apiFetch<any>('/requisitions', { method: 'POST', body: JSON.stringify(data) }),
     aiParse: (text: string) =>
-      apiFetch<any>('/requisitions/ai-parse', { method: 'POST', body: JSON.stringify({ text }) }),
+      apiFetch<AiRequisitionParseResponse>('/requisitions/ai-parse', {
+        method: 'POST',
+        body: JSON.stringify({ text }),
+      }),
     submit: (id: string) => apiFetch<any>(`/requisitions/${id}/submit`, { method: 'POST' }),
     cancel: (id: string) => apiFetch<any>(`/requisitions/${id}/cancel`, { method: 'POST' }),
   },
