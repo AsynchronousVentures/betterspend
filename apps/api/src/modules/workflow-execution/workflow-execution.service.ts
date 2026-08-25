@@ -43,6 +43,7 @@ import {
   evaluateWorkflowQuorum,
   selectWorkflowTransition,
   type WorkflowAssignmentStatus,
+  type WorkflowQuorum,
 } from './workflow-runtime';
 
 type SupportedApprovableType = 'requisition' | 'purchase_order';
@@ -97,6 +98,8 @@ type RuntimeOutcome = {
   entityStatus?: 'approved' | 'rejected';
   publicationId?: string;
 };
+
+const REQUIRED_APPROVAL_TERMINAL_CONTEXT_KEY = '__requiredApprovalTerminalNodeId';
 
 function workflowDomainFor(entityType: SupportedApprovableType): WorkflowDomain {
   return entityType === 'requisition' ? 'requisition' : 'po_change';
@@ -334,6 +337,7 @@ export class WorkflowExecutionService implements OnModuleInit {
       );
 
       if (progress.state === 'pending') {
+        let pendingRequest = request;
         if (progress.nextSequence != null) {
           await tx
             .update(workflowApprovalAssignments)
@@ -345,9 +349,14 @@ export class WorkflowExecutionService implements OnModuleInit {
                 eq(workflowApprovalAssignments.sequence, progress.nextSequence),
               ),
             );
+          [pendingRequest] = await tx
+            .update(approvalRequests)
+            .set({ updatedAt: now })
+            .where(eq(approvalRequests.id, request.id))
+            .returning();
         }
         return this.recordRuntimePublication(tx, {
-          request,
+          request: pendingRequest,
           status: 'pending' as const,
         });
       }
@@ -765,7 +774,11 @@ export class WorkflowExecutionService implements OnModuleInit {
     if (parentStep.node.type !== 'approver_group' && parentStep.node.type !== 'resolver') return;
     const execution =
       parentStep.node.type === 'approver_group' ? parentStep.node.config.execution : 'serial';
-    await this.reassignEscalatedStep(current, data, timerNode, action.resolvers, execution);
+    const quorum =
+      parentStep.node.type === 'approver_group'
+        ? parentStep.node.config.quorum
+        : ({ type: 'all' } as const);
+    await this.reassignEscalatedStep(current, data, timerNode, action.resolvers, execution, quorum);
   }
 
   private async claimEscalation(
@@ -1048,7 +1061,7 @@ export class WorkflowExecutionService implements OnModuleInit {
       }
       if (step.node.type === 'approved' || step.node.type === 'auto_approve') {
         if (request.requiredApproverId) {
-          request = await this.enterRequiredApproval(tx, request);
+          request = await this.enterRequiredApproval(tx, request, step.node.id);
           return { request, status: 'pending' };
         }
         return this.finishRequest(tx, request, 'approved', actorId, step.node.id);
@@ -1153,6 +1166,7 @@ export class WorkflowExecutionService implements OnModuleInit {
   private async enterRequiredApproval(
     tx: DbTransaction,
     request: RuntimeRequest,
+    terminalNodeId: string,
   ): Promise<RuntimeRequest> {
     const approverId = request.requiredApproverId!;
     const assignedApproverId =
@@ -1173,6 +1187,10 @@ export class WorkflowExecutionService implements OnModuleInit {
       .set({
         currentNodeId: REQUIRED_APPROVAL_NODE_ID,
         currentStep: request.currentStep + 1,
+        workflowContext: {
+          ...request.workflowContext,
+          [REQUIRED_APPROVAL_TERMINAL_CONTEXT_KEY]: terminalNodeId,
+        },
         updatedAt: new Date(),
       })
       .where(eq(approvalRequests.id, request.id))
@@ -1227,16 +1245,19 @@ export class WorkflowExecutionService implements OnModuleInit {
     if (action === 'reject') {
       return this.finishRequest(tx, request, 'rejected', actorId, REQUIRED_APPROVAL_NODE_ID);
     }
-    const terminal = executable.steps.find(
-      (step) => step.node.type === 'approved' || step.node.type === 'auto_approve',
-    );
-    return this.finishRequest(
-      tx,
-      request,
-      'approved',
-      actorId,
-      terminal?.node.id ?? REQUIRED_APPROVAL_NODE_ID,
-    );
+    const terminalNodeId = request.workflowContext[REQUIRED_APPROVAL_TERMINAL_CONTEXT_KEY];
+    const terminal =
+      typeof terminalNodeId === 'string'
+        ? executable.steps.find(
+            (step) =>
+              step.node.id === terminalNodeId &&
+              (step.node.type === 'approved' || step.node.type === 'auto_approve'),
+          )
+        : undefined;
+    if (!terminal) {
+      throw new ConflictException('The required approval terminal node is unavailable');
+    }
+    return this.finishRequest(tx, request, 'approved', actorId, terminal.node.id);
   }
 
   private async resolveApprovers(
@@ -1569,12 +1590,18 @@ export class WorkflowExecutionService implements OnModuleInit {
     timer: Extract<ExecutableStep['node'], { type: 'escalation_timer' }>,
     resolvers: ApproverResolver[],
     execution: 'serial' | 'parallel',
+    quorum: WorkflowQuorum,
   ): Promise<void> {
     const outcome = await this.db.transaction(async (tx) => {
       const locked = await this.claimEscalation(tx, request, data, timer);
       if (!locked) return null;
       const resolved = await this.resolveApprovers(tx, locked, resolvers, [], []);
       if (resolved.length === 0) throw new ConflictException('Escalation resolved no approvers');
+      if (quorum.type === 'count' && resolved.length < quorum.count) {
+        throw new ConflictException(
+          `Escalation resolved ${resolved.length} approvers, but the workflow requires ${quorum.count}`,
+        );
+      }
       const current = await this.getAssignments(tx, locked.id, locked.currentNodeId!);
       const nextSequence = Math.max(0, ...current.map((assignment) => assignment.sequence)) + 1;
       await tx

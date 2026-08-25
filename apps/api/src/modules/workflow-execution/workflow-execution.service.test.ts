@@ -165,10 +165,30 @@ function createRestartFixture(
     query: {
       workflowDefinitionVersions: { findFirst: async () => latest },
       workflowApprovalAssignments: {
-        findMany: async () => {
+        findMany: async (query?: {
+          where?: (
+            assignment: typeof workflowApprovalAssignments,
+            operators: {
+              and: (...conditions: unknown[]) => unknown;
+              eq: (column: unknown, value: unknown) => unknown;
+            },
+          ) => unknown;
+        }) => {
           const activeRequest = replacement ?? oldRequest;
+          let requestedNodeId: string | undefined;
+          query?.where?.(workflowApprovalAssignments, {
+            and: (...conditions) => conditions,
+            eq: (column, value) => {
+              if (column === workflowApprovalAssignments.nodeId && typeof value === 'string') {
+                requestedNodeId = value;
+              }
+              return { column, value };
+            },
+          });
           return assignments.filter(
-            (assignment) => assignment.approvalRequestId === activeRequest.id,
+            (assignment) =>
+              assignment.approvalRequestId === activeRequest.id &&
+              (!requestedNodeId || assignment.nodeId === requestedNodeId),
           );
         },
       },
@@ -552,6 +572,84 @@ describe('WorkflowExecutionService restart', () => {
     );
   });
 
+  it('refreshes the SLA clock when a serial workflow advances to its next approver', async () => {
+    const fixture = createRestartFixture();
+    const review = fixture.executable.steps.find((step) => step.node.id === 'review');
+    assert.ok(review?.node.type === 'approver_group');
+    review.node.config.resolvers.push({ type: 'user', userId: FALLBACK_ID });
+
+    await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+    const replacement = fixture.getReplacement();
+    assert.ok(replacement);
+    const previousUpdatedAt = new Date('2026-01-01T00:00:00Z');
+    replacement.updatedAt = previousUpdatedAt;
+
+    const result = await fixture.service.processAction(
+      String(replacement.id),
+      DELEGATE_ID,
+      'approve',
+      undefined,
+      ORGANIZATION_ID,
+    );
+
+    assert.equal(result.status, 'pending');
+    assert.ok(replacement.updatedAt instanceof Date);
+    assert.ok(replacement.updatedAt.getTime() > previousUpdatedAt.getTime());
+  });
+
+  it('finishes at the terminal node that triggered required approval', async () => {
+    const fixture = createRestartFixture(false, false, 'require_approval');
+    const review = fixture.executable.steps.find((step) => step.node.id === 'review');
+    assert.ok(review);
+    review.transitions[0]!.targetStepId = 'approved-after-review';
+    fixture.executable.steps.push({
+      node: {
+        id: 'approved-after-review',
+        name: 'Approved after review',
+        type: 'approved',
+        disabled: false,
+        config: {},
+      },
+      transitions: [],
+    });
+
+    await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+    const replacement = fixture.getReplacement();
+    assert.ok(replacement);
+
+    const result = await fixture.service.processAction(
+      String(replacement.id),
+      DELEGATE_ID,
+      'approve',
+      undefined,
+      ORGANIZATION_ID,
+    );
+    assert.equal(result.status, 'pending');
+    const requiredResult = await fixture.service.processAction(
+      String(replacement.id),
+      FALLBACK_ID,
+      'approve',
+      undefined,
+      ORGANIZATION_ID,
+    );
+
+    assert.equal(requiredResult.status, 'approved');
+    assert.equal(replacement.currentNodeId, 'approved-after-review');
+    assert.ok(
+      fixture.actions.some(
+        (action) => action.action === 'approved' && action.nodeId === 'approved-after-review',
+      ),
+    );
+  });
+
   it('does not replace a request blocked by the current budget policy', async () => {
     const fixture = createRestartFixture(false, false, 'block');
 
@@ -650,9 +748,60 @@ describe('WorkflowExecutionService restart', () => {
       fixture.publications.find((publication) => publication.outcomeStatus === 'approved')?.status,
       'published',
     );
-    assert.equal(
-      fixture.entityUpdates.filter((update) => update.webhook === true).length,
-      2,
+    assert.equal(fixture.entityUpdates.filter((update) => update.webhook === true).length, 2);
+  });
+
+  it('keeps current assignments when an SLA reassign cannot satisfy a fixed quorum', async () => {
+    const fixture = createRestartFixture();
+    const review = fixture.executable.steps.find((step) => step.node.id === 'review');
+    assert.ok(review?.node.type === 'approver_group');
+    review.node.config.resolvers.push({ type: 'user', userId: FALLBACK_ID });
+    review.node.config.quorum = { type: 'count', count: 2 };
+    fixture.executable.steps.push({
+      node: {
+        id: 'review-timer',
+        name: 'Review SLA',
+        type: 'escalation_timer',
+        disabled: false,
+        config: {
+          parentNodeId: 'review',
+          slaHours: 1,
+          warningPercent: 50,
+          action: {
+            type: 'reassign',
+            resolvers: [{ type: 'user', userId: FALLBACK_ID }],
+          },
+        },
+      },
+      transitions: [],
+    });
+    await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+    const replacement = fixture.getReplacement();
+    assert.ok(replacement);
+    replacement.updatedAt = new Date(Date.now() - 2 * 60 * 60 * 1_000);
+
+    await assert.rejects(
+      fixture.service.handleEscalation({
+        organizationId: ORGANIZATION_ID,
+        approvalRequestId: String(replacement.id),
+        definitionVersionId: String(replacement.definitionVersionId),
+        parentNodeId: 'review',
+        timerNodeId: 'review-timer',
+        attempt: Number(replacement.attempt),
+        kind: 'action',
+      }),
+      /resolved 1 approvers, but the workflow requires 2/,
+    );
+
+    assert.deepEqual(
+      fixture.assignments
+        .filter((assignment) => assignment.approvalRequestId === replacement.id)
+        .map((assignment) => assignment.status),
+      ['pending', 'waiting'],
     );
   });
 
@@ -826,7 +975,7 @@ describe('WorkflowExecutionService escalation scheduling', () => {
           job.options.attempts === 5 &&
           (job.options.backoff as { type?: string }).type === 'exponential' &&
           job.options.removeOnFail === undefined,
-        ),
+      ),
     );
 
     jobs.splice(0);
