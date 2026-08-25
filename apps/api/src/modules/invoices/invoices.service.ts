@@ -4,6 +4,7 @@ import {
   Optional,
   NotFoundException,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
 import { eq, and, ne, isNull, lte, gte, sql } from 'drizzle-orm';
@@ -501,6 +502,10 @@ export class InvoicesService {
         });
         if (currentRequest) {
           if (approvalEligible) {
+            await tx
+              .update(invoices)
+              .set({ status: 'pending_approval', updatedAt: editedAt })
+              .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
             const restarted = await this.workflowExecution.restartOnLatestInTransaction(
               currentRequest.id,
               organizationId,
@@ -529,6 +534,10 @@ export class InvoicesService {
           approvalEligible &&
           ['matched', 'pending_approval', 'approved', 'rejected'].includes(lockedInvoice.status)
         ) {
+          await tx
+            .update(invoices)
+            .set({ status: 'pending_approval', updatedAt: editedAt })
+            .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
           const initiated = await this.workflowExecution.initiateIfConfigured(
             organizationId,
             'invoice',
@@ -538,16 +547,11 @@ export class InvoicesService {
             undefined,
             tx,
           );
-          if (initiated) {
-            publishRequestId = initiated.requestId;
-            approvalRequestId = initiated.requestId;
-            if (initiated.status === 'pending') {
-              await tx
-                .update(invoices)
-                .set({ status: 'pending_approval', updatedAt: editedAt })
-                .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
-            }
+          if (!initiated) {
+            throw new ConflictException('Invoice reapproval requires a published workflow');
           }
+          publishRequestId = initiated.requestId;
+          approvalRequestId = initiated.requestId;
         }
       }
 

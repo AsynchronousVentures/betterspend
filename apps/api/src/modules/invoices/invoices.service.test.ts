@@ -455,6 +455,7 @@ describe('InvoicesService material edits', () => {
     let cancelled = false;
     let initiated = false;
     let published = false;
+    let workflowStartedFromStatus: unknown;
     const transaction = {
       query: {
         invoiceLines: { findMany: async () => [line] },
@@ -497,6 +498,7 @@ describe('InvoicesService material edits', () => {
     } as unknown as Db;
     const workflow = {
       restartOnLatestInTransaction: async () => {
+        workflowStartedFromStatus = invoiceUpdates.at(-1)?.status;
         restarted = true;
         return {
           cancelledRequestId: 'request-1',
@@ -511,6 +513,7 @@ describe('InvoicesService material edits', () => {
         cancelled = true;
       },
       initiateIfConfigured: async () => {
+        workflowStartedFromStatus = invoiceUpdates.at(-1)?.status;
         initiated = true;
         return { requestId: 'request-2', status: 'pending' as const };
       },
@@ -559,6 +562,7 @@ describe('InvoicesService material edits', () => {
       lineUpdates,
       auditActions,
       state: () => ({ reopened, restarted, cancelled, initiated, published }),
+      workflowStartedFromStatus: () => workflowStartedFromStatus,
     };
   };
 
@@ -578,6 +582,7 @@ describe('InvoicesService material edits', () => {
     });
     assert.ok(fixture.invoiceUpdates.some((update) => update.approvedBy === null));
     assert.ok(fixture.invoiceUpdates.some((update) => update.status === 'pending_approval'));
+    assert.equal(fixture.workflowStartedFromStatus(), 'pending_approval');
     assert.ok(fixture.lineUpdates.some((update) => update.quantity === '2.00'));
     assert.deepEqual(fixture.auditActions, ['material_edit_reapproval']);
   });
@@ -639,6 +644,7 @@ describe('InvoicesService material edits', () => {
       published: true,
     });
     assert.ok(fixture.invoiceUpdates.some((update) => update.status === 'pending_approval'));
+    assert.equal(fixture.workflowStartedFromStatus(), 'pending_approval');
   });
 
   it('does not revive a cancelled invoice through editing', async () => {

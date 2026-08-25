@@ -815,6 +815,7 @@ export class BudgetsService {
     fiscalYear: number,
     executor: Db | DbTransaction = this.db,
     recordedAt = new Date(),
+    budgetAmountOverride?: string,
   ) {
     const budget = await executor.query.budgets.findFirst({
       where: (b, { and, eq }) =>
@@ -829,7 +830,8 @@ export class BudgetsService {
 
     if (!budget) return { updated: false, message: 'No budget configured' };
 
-    const budgetAmount = convertMoneyFromBase(baseAmount, budget.exchangeRate || '1');
+    const budgetAmount =
+      budgetAmountOverride ?? convertMoneyFromBase(baseAmount, budget.exchangeRate || '1');
 
     await executor
       .update(budgets)
@@ -854,7 +856,7 @@ export class BudgetsService {
         ),
       );
 
-    return { updated: true, budgetId: budget.id };
+    return { updated: true, budgetId: budget.id, budgetAmount };
   }
 
   async recordRequisitionApproval(
@@ -1043,7 +1045,7 @@ export class BudgetsService {
     );
     if (!context) return;
     await this.lockRequisitionCommitments(executor, organizationId, context.requisition.id);
-    await this.recordSpend(
+    const recordedSpend = await this.recordSpend(
       organizationId,
       context.requisition.departmentId!,
       baseExpenseAmount,
@@ -1073,6 +1075,7 @@ export class BudgetsService {
         eventKey: budgetCommitmentEventKey.invoiceApproved(invoiceId, approvedAt),
         eventType: BUDGET_COMMITMENT_EVENT_TYPE.INVOICE_EXPENDED,
         reason: 'Approved invoice converted commitment to spend',
+        metadata: recordedSpend.updated ? { budgetAmount: recordedSpend.budgetAmount } : undefined,
         desired: {
           reserved: current.reserved,
           committed: subtractMoneyFloorZero(current.committed, releasedCommitment),
@@ -1114,6 +1117,25 @@ export class BudgetsService {
     );
     if (isZeroMoney(invoiceBalance.expended) && isZeroMoney(invoiceBalance.invoiced)) return;
 
+    const originalPosting = await executor.query.budgetCommitmentEvents.findFirst({
+      where: (event, { and, eq }) =>
+        and(
+          eq(event.organizationId, organizationId),
+          eq(event.budgetId, context.budget.id),
+          eq(event.invoiceId, invoiceId),
+          eq(event.eventType, BUDGET_COMMITMENT_EVENT_TYPE.INVOICE_EXPENDED),
+        ),
+      orderBy: (event, { desc }) => desc(event.createdAt),
+      columns: { metadata: true },
+    });
+    const originalBudgetAmount =
+      originalPosting?.metadata &&
+      typeof originalPosting.metadata === 'object' &&
+      'budgetAmount' in originalPosting.metadata &&
+      typeof originalPosting.metadata.budgetAmount === 'string'
+        ? originalPosting.metadata.budgetAmount
+        : null;
+
     await this.recordSpend(
       organizationId,
       context.requisition.departmentId!,
@@ -1121,6 +1143,7 @@ export class BudgetsService {
       context.requisition.createdAt.getUTCFullYear(),
       executor,
       invoice.approvedAt ?? editedAt,
+      originalBudgetAmount ? `-${originalBudgetAmount}` : undefined,
     );
     await this.appendCommitmentEvent(
       executor,
@@ -1270,6 +1293,7 @@ export class BudgetsService {
       eventType: BudgetCommitmentEventType;
       reason: string;
       desired: CommitmentBalance;
+      metadata?: Record<string, unknown>;
     },
   ): Promise<void> {
     const current = await this.getCommitmentBalance(
@@ -1293,6 +1317,7 @@ export class BudgetsService {
         baseCommittedDelta: deltas.committed,
         baseExpendedDelta: deltas.expended,
         reason: event.reason,
+        metadata: event.metadata,
       })
       .onConflictDoNothing();
   }
