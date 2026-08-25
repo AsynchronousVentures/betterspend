@@ -150,9 +150,12 @@ test('promotes all release images to the version and latest aliases', () => {
 
 test('deploys the validated release tag and runs this policy in fast and full CI', () => {
   assert.match(workflow, /release_tag: \$\{\{ steps\.release_ref\.outputs\.release_tag \}\}/);
-  assert.match(
+  assert.match(workflow, /RELEASE_TAG: \$\{\{ needs\.publish\.outputs\.release_tag \}\}/);
+  assert.match(workflow, /printf '%s\\n' "\$RELEASE_TAG" \|/);
+  assert.match(workflow, /IFS= read -r image_tag && \.\/deploy\/deploy\.sh "\$image_tag"/);
+  assert.doesNotMatch(
     workflow,
-    /\.\/deploy\/deploy\.sh '\$\{\{ needs\.publish\.outputs\.release_tag \}\}'/,
+    /\.\/deploy\/deploy\.sh[^\n]*\$\{\{ needs\.publish\.outputs\.release_tag \}\}/,
   );
   assert.equal(
     (workflow.match(/node --test \.github\/scripts\/release-workflow-policy\.test\.mjs/g) ?? [])
