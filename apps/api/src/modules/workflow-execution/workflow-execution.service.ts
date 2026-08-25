@@ -18,7 +18,7 @@ import type {
   ExecutableStep,
   WorkflowDomain,
 } from '@betterspend/shared';
-import { executableDefinitionSchema } from '@betterspend/shared';
+import { executableDefinitionSchema, REQUIRED_APPROVAL_NODE_ID } from '@betterspend/shared';
 import type { Db, DbTransaction } from '@betterspend/db';
 import {
   approvalActions,
@@ -43,7 +43,6 @@ import {
   type WorkflowAssignmentStatus,
 } from './workflow-runtime';
 
-const REQUIRED_APPROVAL_NODE_ID = '__required_approval__';
 type SupportedApprovableType = 'requisition' | 'purchase_order';
 
 export interface WorkflowExecutionResult {
