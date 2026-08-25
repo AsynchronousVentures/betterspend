@@ -20,8 +20,9 @@ const ORGANIZATION_ID = '00000000-0000-0000-0000-000000000101';
 const OTHER_ORGANIZATION_ID = '00000000-0000-0000-0000-000000000102';
 const APPROVER_ID = '00000000-0000-4000-8000-000000000201';
 const DELEGATE_ID = '00000000-0000-4000-8000-000000000202';
+const FALLBACK_ID = '00000000-0000-4000-8000-000000000203';
 
-function executableWithApproval(): ExecutableDefinition {
+function executableWithApproval(enforceSeparationOfDuties = false): ExecutableDefinition {
   return {
     schemaVersion: 1,
     domain: 'requisition',
@@ -54,7 +55,13 @@ function executableWithApproval(): ExecutableDefinition {
             execution: 'serial',
             resolvers: [{ type: 'user', userId: APPROVER_ID }],
             quorum: { type: 'all' },
-            separationOfDuties: { enabled: false, exclude: [], fallbackResolvers: [] },
+            separationOfDuties: enforceSeparationOfDuties
+              ? {
+                  enabled: true,
+                  exclude: ['submitter'],
+                  fallbackResolvers: [{ type: 'user', userId: FALLBACK_ID }],
+                }
+              : { enabled: false, exclude: [], fallbackResolvers: [] },
           },
         },
         transitions: [
@@ -80,8 +87,8 @@ function executableWithApproval(): ExecutableDefinition {
   };
 }
 
-function createRestartFixture() {
-  const executable = executableWithApproval();
+function createRestartFixture(publicationFails = false, enforceSeparationOfDuties = false) {
+  const executable = executableWithApproval(enforceSeparationOfDuties);
   const oldRequest = {
     id: '00000000-0000-0000-0000-000000000301',
     organizationId: ORGANIZATION_ID,
@@ -91,7 +98,10 @@ function createRestartFixture() {
     definitionVersionId: '00000000-0000-0000-0000-000000000501',
     initiatedBy: '00000000-0000-0000-0000-000000000601',
     currentNodeId: 'old-review',
-    workflowContext: { totalAmount: '100' },
+    workflowContext: {
+      totalAmount: '100',
+      ...(enforceSeparationOfDuties ? { actors: { submitter: DELEGATE_ID } } : {}),
+    },
     attempt: 1,
     currentStep: 1,
     status: 'pending',
@@ -124,6 +134,13 @@ function createRestartFixture() {
         findMany: async () => [
           {
             id: APPROVER_ID,
+            organizationId: ORGANIZATION_ID,
+            managerId: null,
+            isActive: true,
+            userRoles: [],
+          },
+          {
+            id: FALLBACK_ID,
             organizationId: ORGANIZATION_ID,
             managerId: null,
             isActive: true,
@@ -211,14 +228,18 @@ function createRestartFixture() {
   } as unknown as Db;
   const queue = { add: async () => undefined } as unknown as Queue;
   const delegations = {
-    getActiveDelegatee: async () => DELEGATE_ID,
+    getActiveDelegatee: async (_organizationId: string, userId: string) =>
+      userId === APPROVER_ID ? DELEGATE_ID : null,
   } as unknown as ApprovalDelegationsService;
   const budgets = {
     recordRequisitionApproval: async () => entityUpdates.push({ budget: 'approved' }),
     releaseRequisition: async () => entityUpdates.push({ budget: 'released' }),
   } as unknown as BudgetsService;
   const notificationService = {
-    create: async (_organizationId: string, userId: string) => notifications.push(userId),
+    create: async (_organizationId: string, userId: string) => {
+      if (publicationFails) throw new Error('notification transport unavailable');
+      notifications.push(userId);
+    },
   } as unknown as NotificationsService;
   const webhooks = {
     emit: () => entityUpdates.push({ webhook: true }),
@@ -305,6 +326,34 @@ describe('WorkflowExecutionService restart', () => {
     );
     assert.deepEqual(writes, []);
   });
+
+  it('does not turn a committed restart into an API failure when publication fails', async () => {
+    const fixture = createRestartFixture(true);
+
+    const result = await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+
+    assert.equal(result.replacementRequestId, '00000000-0000-0000-0000-000000000302');
+    assert.ok(fixture.requestUpdates.some((update) => update.status === 'cancelled'));
+    assert.ok(fixture.requestUpdates.some((update) => update.currentNodeId === 'review'));
+  });
+
+  it('uses the separation-of-duties fallback when delegation resolves to an excluded actor', async () => {
+    const fixture = createRestartFixture(false, true);
+
+    await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+
+    assert.equal(fixture.assignments.length, 1);
+    assert.equal(fixture.assignments[0]?.resolvedApproverId, FALLBACK_ID);
+    assert.equal(fixture.assignments[0]?.assignedApproverId, FALLBACK_ID);
+  });
 });
 
 describe('WorkflowExecutionService escalation scheduling', () => {
@@ -377,7 +426,92 @@ describe('WorkflowExecutionService escalation scheduling', () => {
     assert.ok(jobs.every((job) => job.data.definitionVersionId === request.definitionVersionId));
   });
 
-  it('ignores a timer whose compiled parent does not match the waiting step', async () => {
+  for (const escalationAction of [
+    { type: 'auto_reject' as const },
+    { type: 'reassign' as const, resolvers: [{ type: 'user' as const, userId: APPROVER_ID }] },
+  ]) {
+    it(`does not ${escalationAction.type} after the request changed under its row lock`, async () => {
+      const executable = executableWithApproval();
+      executable.steps.push({
+        node: {
+          id: 'review-timer',
+          name: 'Review SLA',
+          type: 'escalation_timer',
+          disabled: false,
+          config: {
+            parentNodeId: 'review',
+            slaHours: 1,
+            warningPercent: 75,
+            action: escalationAction,
+          },
+        },
+        transitions: [],
+      });
+      const current = {
+        id: '00000000-0000-4000-8000-000000000301',
+        organizationId: '00000000-0000-4000-8000-000000000101',
+        approvableType: 'requisition',
+        approvableId: '00000000-0000-4000-8000-000000000401',
+        approvalRuleId: null,
+        definitionVersionId: '00000000-0000-4000-8000-000000000501',
+        initiatedBy: '00000000-0000-4000-8000-000000000601',
+        currentNodeId: 'review',
+        workflowContext: {},
+        attempt: 1,
+        currentStep: 1,
+        status: 'pending',
+        requiredApproverId: null,
+        requiredApprovalStep: null,
+        requiredApprovalReason: null,
+        requiredApprovalKey: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      const locked = { ...current, status: 'cancelled' };
+      const writes: string[] = [];
+      const transaction = {
+        select: () => ({
+          from: () => ({ where: () => ({ for: async () => [locked] }) }),
+        }),
+        update: () => writes.push('update'),
+        insert: () => writes.push('insert'),
+      };
+      const db = {
+        query: {
+          approvalRequests: { findFirst: async () => current },
+          workflowApprovalAssignments: { findMany: async () => [] },
+          workflowDefinitionVersions: {
+            findFirst: async () => ({ executableJson: executable }),
+          },
+        },
+        transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) =>
+          callback(transaction),
+      } as unknown as Db;
+      const service = new WorkflowExecutionService(
+        db,
+        {} as Queue,
+        {} as ApprovalDelegationsService,
+        {} as BudgetsService,
+        {} as NotificationsService,
+        {} as WebhookEventService,
+        {} as AuditService,
+      );
+
+      await service.handleEscalation({
+        organizationId: current.organizationId,
+        approvalRequestId: current.id,
+        definitionVersionId: current.definitionVersionId,
+        parentNodeId: current.currentNodeId,
+        timerNodeId: 'review-timer',
+        attempt: current.attempt,
+        kind: 'action',
+      });
+
+      assert.deepEqual(writes, []);
+    });
+  }
+
+  it('ignores a warning whose compiled timer does not belong to the waiting step', async () => {
     const executable = executableWithApproval();
     executable.steps.push({
       node: {
@@ -430,7 +564,7 @@ describe('WorkflowExecutionService escalation scheduling', () => {
       parentNodeId: request.currentNodeId,
       timerNodeId: 'foreign-timer',
       attempt: request.attempt,
-      kind: 'action',
+      kind: 'warning',
     });
 
     assert.deepEqual(writes, []);

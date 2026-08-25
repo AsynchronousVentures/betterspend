@@ -156,6 +156,7 @@ export class ApprovalEngineService {
     requiredApproval?: RequiredApproval,
     beforePersist?: (tx: DbTransaction) => Promise<void>,
     transaction?: DbTransaction,
+    workflowContext: Record<string, unknown> = {},
   ) {
     const executor = transaction ?? this.db;
     // Fetch entity for condition evaluation
@@ -197,8 +198,20 @@ export class ApprovalEngineService {
       requiredApproval,
       beforePersist,
       transaction,
+      workflowContext,
     );
-    if (workflowResult) return workflowResult;
+    if (workflowResult) {
+      if (!transaction) {
+        this.publishInitiation(
+          organizationId,
+          entityType,
+          entityId,
+          workflowResult,
+          requiredApproval,
+        );
+      }
+      return workflowResult;
+    }
 
     // A required budget-owner approval always wins over the fast lane.
     if (entityType === 'requisition' && !requiredApproval) {

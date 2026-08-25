@@ -14,12 +14,30 @@ function readContextValue(context: Record<string, unknown>, field: string): unkn
   }, context);
 }
 
+function exactDecimal(value: unknown): { units: bigint; scale: number } | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const text = String(value);
+  const match = /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(text);
+  if (!match) return null;
+  const fraction = match[3] ?? '';
+  const unsigned = BigInt(`${match[2]}${fraction}`);
+  return { units: match[1] === '-' ? -unsigned : unsigned, scale: fraction.length };
+}
+
+/** Compare plain decimal values without passing persisted money through IEEE-754. */
+export function compareWorkflowDecimals(left: unknown, right: unknown): number | null {
+  const leftDecimal = exactDecimal(left);
+  const rightDecimal = exactDecimal(right);
+  if (!leftDecimal || !rightDecimal) return null;
+  const scale = Math.max(leftDecimal.scale, rightDecimal.scale);
+  const leftUnits = leftDecimal.units * 10n ** BigInt(scale - leftDecimal.scale);
+  const rightUnits = rightDecimal.units * 10n ** BigInt(scale - rightDecimal.scale);
+  return leftUnits === rightUnits ? 0 : leftUnits < rightUnits ? -1 : 1;
+}
+
 function compareValues(left: unknown, right: unknown): number | null {
-  const leftNumber = typeof left === 'number' ? left : Number(left);
-  const rightNumber = typeof right === 'number' ? right : Number(right);
-  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
-    return leftNumber === rightNumber ? 0 : leftNumber < rightNumber ? -1 : 1;
-  }
+  const decimalComparison = compareWorkflowDecimals(left, right);
+  if (decimalComparison != null) return decimalComparison;
   if (left === right) return 0;
   if (left == null || right == null) return null;
   const leftText = String(left);

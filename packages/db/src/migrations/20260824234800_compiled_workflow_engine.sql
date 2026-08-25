@@ -9,6 +9,8 @@ ALTER TABLE "approval_actions" ADD COLUMN "node_id" varchar(100);
 --> statement-breakpoint
 ALTER TABLE "approval_actions" ADD COLUMN "metadata" jsonb DEFAULT '{}'::jsonb NOT NULL;
 --> statement-breakpoint
+ALTER TABLE "approval_actions" ALTER COLUMN "approver_id" DROP NOT NULL;
+--> statement-breakpoint
 ALTER TABLE "approval_requests" ADD COLUMN "organization_id" uuid;
 --> statement-breakpoint
 ALTER TABLE "approval_requests" ADD COLUMN "initiated_by" uuid;

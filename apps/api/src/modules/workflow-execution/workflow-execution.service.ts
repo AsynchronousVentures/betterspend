@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -36,14 +37,13 @@ import { BudgetsService } from '../budgets/budgets.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
 import {
+  compareWorkflowDecimals,
   evaluateWorkflowQuorum,
   selectWorkflowTransition,
   type WorkflowAssignmentStatus,
 } from './workflow-runtime';
 
 const REQUIRED_APPROVAL_NODE_ID = '__required_approval__';
-const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000002';
-
 type SupportedApprovableType = 'requisition' | 'purchase_order';
 
 export interface WorkflowExecutionResult {
@@ -100,6 +100,8 @@ function assignmentStatus(value: string): WorkflowAssignmentStatus {
 
 @Injectable()
 export class WorkflowExecutionService {
+  private readonly logger = new Logger(WorkflowExecutionService.name);
+
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     @InjectQueue('workflow-escalation') private readonly escalationQueue: Queue,
@@ -123,6 +125,7 @@ export class WorkflowExecutionService {
     },
     beforePersist?: (tx: DbTransaction) => Promise<void>,
     transaction?: DbTransaction,
+    additionalContext: Record<string, unknown> = {},
   ): Promise<WorkflowExecutionResult | null> {
     if (requiredApproval?.only) return null;
     const executor = transaction ?? this.db;
@@ -132,12 +135,13 @@ export class WorkflowExecutionService {
       entityType,
       entityId,
       initiatedBy,
+      additionalContext,
     );
     const version = await this.findPublishedVersion(
       executor,
       organizationId,
       workflowDomainFor(entityType),
-      typeof context.entityId === 'string' ? context.entityId : null,
+      typeof context.legalEntityId === 'string' ? context.legalEntityId : null,
     );
     if (!version) return null;
     const executable = executableDefinitionSchema.parse(version.executableJson);
@@ -332,7 +336,7 @@ export class WorkflowExecutionService {
       return this.advanceAutomaticSteps(tx, advanced, executable, actorId);
     });
 
-    await this.publishRuntimeOutcome(outcome);
+    await this.publishRuntimeOutcomeAfterCommit(outcome);
     return {
       status: outcome.status,
       ...(outcome.status === 'pending' && outcome.request.currentNodeId
@@ -462,7 +466,7 @@ export class WorkflowExecutionService {
         },
       };
     });
-    await this.publishRuntimeOutcome(result.outcome);
+    await this.publishRuntimeOutcomeAfterCommit(result.outcome);
     return result.response;
   }
 
@@ -472,7 +476,7 @@ export class WorkflowExecutionService {
         and(eq(record.id, result.requestId), eq(record.organizationId, result.organizationId)),
     });
     if (!request) return;
-    await this.publishRuntimeOutcome({
+    await this.publishRuntimeOutcomeAfterCommit({
       request,
       status: result.status,
       ...(result.status === 'approved' || result.status === 'rejected'
@@ -549,6 +553,15 @@ export class WorkflowExecutionService {
         ),
     });
     if (!current) return;
+    const executable = await this.loadExecutable(this.db, current);
+    const timer = executable.steps.find((step) => step.node.id === data.timerNodeId);
+    if (
+      !timer ||
+      timer.node.type !== 'escalation_timer' ||
+      timer.node.config.parentNodeId !== data.parentNodeId
+    ) {
+      return;
+    }
     const assignments = await this.db.query.workflowApprovalAssignments.findMany({
       where: (assignment, { and, eq }) =>
         and(
@@ -561,15 +574,6 @@ export class WorkflowExecutionService {
       await this.notifyAssignees(current, assignments, 'Workflow approval is nearing its SLA');
       return;
     }
-
-    const executable = await this.loadExecutable(this.db, current);
-    const timer = this.getStep(executable, data.timerNodeId);
-    if (
-      timer.node.type !== 'escalation_timer' ||
-      timer.node.config.parentNodeId !== data.parentNodeId
-    ) {
-      return;
-    }
     const action = timer.node.config.action;
     if (action.type === 'notify') {
       await this.notifyAssignees(current, assignments, 'Workflow approval exceeded its SLA');
@@ -578,9 +582,17 @@ export class WorkflowExecutionService {
     if (action.type === 'auto_reject') {
       const outcome = await this.db.transaction(async (tx) => {
         const locked = await this.lockVersionedRequest(tx, current.id, current.organizationId);
-        return this.finishRequest(tx, locked, 'rejected', SYSTEM_USER_ID, data.parentNodeId);
+        if (
+          locked.status !== 'pending' ||
+          locked.currentNodeId !== data.parentNodeId ||
+          locked.definitionVersionId !== data.definitionVersionId ||
+          locked.attempt !== data.attempt
+        ) {
+          return null;
+        }
+        return this.finishRequest(tx, locked, 'rejected', null, data.parentNodeId);
       });
-      await this.publishRuntimeOutcome(outcome);
+      if (outcome) await this.publishRuntimeOutcomeAfterCommit(outcome);
       return;
     }
     if (action.type === 'auto_approve') {
@@ -620,6 +632,7 @@ export class WorkflowExecutionService {
     entityType: SupportedApprovableType,
     entityId: string,
     initiatedBy: string,
+    additionalContext: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     let entity: Record<string, unknown>;
     let requesterId: string | null = null;
@@ -647,6 +660,11 @@ export class WorkflowExecutionService {
       approvableType: entityType,
       approvableId: entityId,
       initiatedBy,
+      ...additionalContext,
+      legalEntityId:
+        entityType === 'purchase_order' && typeof entity.entityId === 'string'
+          ? entity.entityId
+          : null,
       actors: {
         requester: requesterId,
         submitter: initiatedBy,
@@ -702,7 +720,7 @@ export class WorkflowExecutionService {
     tx: DbTransaction,
     initialRequest: RuntimeRequest,
     executable: ExecutableDefinition,
-    actorId: string,
+    actorId: string | null,
   ): Promise<RuntimeOutcome> {
     let request = initialRequest;
     for (let visited = 0; visited <= executable.steps.length; visited += 1) {
@@ -926,10 +944,11 @@ export class WorkflowExecutionService {
       }> = [];
       for (const resolver of resolvers) {
         if (resolver.spendLimitBaseAmount) {
-          const amount = Number(
-            request.workflowContext.baseTotalAmount ?? request.workflowContext.totalAmount ?? 0,
+          const comparison = compareWorkflowDecimals(
+            request.workflowContext.baseTotalAmount ?? request.workflowContext.totalAmount ?? '0',
+            resolver.spendLimitBaseAmount,
           );
-          if (amount > Number(resolver.spendLimitBaseAmount)) continue;
+          if (comparison == null || comparison > 0) continue;
         }
         let matches: typeof activeUsers;
         if (resolver.type === 'user') {
@@ -966,6 +985,7 @@ export class WorkflowExecutionService {
           const assignedApproverId =
             (await this.delegations.getActiveDelegatee(request.organizationId, user.id, tx)) ??
             user.id;
+          if (excluded.has(assignedApproverId)) continue;
           output.push({ resolver, resolvedApproverId: user.id, assignedApproverId });
         }
       }
@@ -996,7 +1016,7 @@ export class WorkflowExecutionService {
     tx: DbTransaction,
     request: RuntimeRequest,
     status: 'approved' | 'rejected',
-    actorId: string,
+    actorId: string | null,
     nodeId: string,
   ): Promise<RuntimeOutcome> {
     const now = new Date();
@@ -1014,6 +1034,16 @@ export class WorkflowExecutionService {
       comment: `Workflow reached ${nodeId}`,
       metadata: { definitionVersionId: request.definitionVersionId },
     });
+    await this.audit.log(
+      request.organizationId,
+      actorId,
+      'approval_request',
+      request.id,
+      status === 'approved' ? 'workflow_approved' : 'workflow_rejected',
+      { nodeId, definitionVersionId: request.definitionVersionId },
+      undefined,
+      tx,
+    );
     await this.updateEntityStatus(tx, finished, status, now);
     return { request: finished, status, entityStatus: status };
   }
@@ -1108,6 +1138,17 @@ export class WorkflowExecutionService {
     );
   }
 
+  private async publishRuntimeOutcomeAfterCommit(outcome: RuntimeOutcome): Promise<void> {
+    try {
+      await this.publishRuntimeOutcome(outcome);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Workflow ${outcome.request.id} committed but publication failed: ${message}`,
+      );
+    }
+  }
+
   private async notifyCurrentAssignments(request: RuntimeRequest): Promise<void> {
     if (!request.currentNodeId) return;
     const assignments = await this.db.query.workflowApprovalAssignments.findMany({
@@ -1148,8 +1189,12 @@ export class WorkflowExecutionService {
   ): Promise<void> {
     const outcome = await this.db.transaction(async (tx) => {
       const locked = await this.lockVersionedRequest(tx, request.id, request.organizationId);
-      if (locked.currentNodeId !== request.currentNodeId || locked.attempt !== request.attempt) {
-        return { request: locked, status: locked.status as 'pending' };
+      if (
+        locked.status !== 'pending' ||
+        locked.currentNodeId !== request.currentNodeId ||
+        locked.attempt !== request.attempt
+      ) {
+        return null;
       }
       const resolved = await this.resolveApprovers(tx, locked, resolvers, [], []);
       if (resolved.length === 0) throw new ConflictException('Escalation resolved no approvers');
@@ -1180,35 +1225,44 @@ export class WorkflowExecutionService {
       await tx.insert(approvalActions).values({
         approvalRequestId: locked.id,
         stepOrder: locked.currentStep,
-        approverId: SYSTEM_USER_ID,
+        approverId: null,
         action: 'reassigned',
         nodeId: locked.currentNodeId,
         comment: `Escalated by timer ${timer.node.id}`,
         metadata: { timerNodeId: timer.node.id, resolverCount: resolvers.length },
       });
+      await this.audit.log(
+        locked.organizationId,
+        null,
+        'approval_request',
+        locked.id,
+        'workflow_reassigned',
+        { nodeId: locked.currentNodeId, timerNodeId: timer.node.id },
+        undefined,
+        tx,
+      );
       return { request: locked, status: 'pending' as const };
     });
-    await this.publishRuntimeOutcome(outcome);
+    if (outcome) await this.publishRuntimeOutcomeAfterCommit(outcome);
   }
 
   private async autoApproveEscalatedStep(request: RuntimeRequest, nodeId: string): Promise<void> {
     const outcome = await this.db.transaction(async (tx) => {
       const locked = await this.lockVersionedRequest(tx, request.id, request.organizationId);
-      if (locked.status !== 'pending' || locked.currentNodeId !== nodeId) {
-        return {
-          request: locked,
-          status:
-            locked.status === 'approved' || locked.status === 'rejected'
-              ? locked.status
-              : 'pending',
-        } as RuntimeOutcome;
+      if (
+        locked.status !== 'pending' ||
+        locked.currentNodeId !== nodeId ||
+        locked.definitionVersionId !== request.definitionVersionId ||
+        locked.attempt !== request.attempt
+      ) {
+        return null;
       }
       const executable = await this.loadExecutable(tx, locked);
       const step = this.getStep(executable, nodeId);
       const now = new Date();
       await tx
         .update(workflowApprovalAssignments)
-        .set({ status: 'approved', actedBy: SYSTEM_USER_ID, actedAt: now, updatedAt: now })
+        .set({ status: 'approved', actedBy: null, actedAt: now, updatedAt: now })
         .where(
           and(
             eq(workflowApprovalAssignments.approvalRequestId, locked.id),
@@ -1219,7 +1273,7 @@ export class WorkflowExecutionService {
       await tx.insert(approvalActions).values({
         approvalRequestId: locked.id,
         stepOrder: locked.currentStep,
-        approverId: SYSTEM_USER_ID,
+        approverId: null,
         action: 'approved',
         nodeId,
         comment: 'Auto-approved after the workflow SLA elapsed',
@@ -1232,8 +1286,8 @@ export class WorkflowExecutionService {
         .set({ currentNodeId: transition.targetStepId, updatedAt: now })
         .where(eq(approvalRequests.id, locked.id))
         .returning();
-      return this.advanceAutomaticSteps(tx, advanced, executable, SYSTEM_USER_ID);
+      return this.advanceAutomaticSteps(tx, advanced, executable, null);
     });
-    await this.publishRuntimeOutcome(outcome);
+    if (outcome) await this.publishRuntimeOutcomeAfterCommit(outcome);
   }
 }

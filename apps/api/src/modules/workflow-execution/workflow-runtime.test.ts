@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { ExecutableStep } from '@betterspend/shared';
 import {
+  compareWorkflowDecimals,
   evaluateWorkflowCondition,
   evaluateWorkflowQuorum,
   requiredWorkflowApprovals,
@@ -9,6 +10,18 @@ import {
 } from './workflow-runtime';
 
 describe('workflow runtime', () => {
+  it('compares decimal money without losing precision', () => {
+    assert.equal(compareWorkflowDecimals('9007199254740992', '9007199254740993'), -1);
+    assert.equal(compareWorkflowDecimals('100.00', '100'), 0);
+    assert.equal(
+      evaluateWorkflowCondition(
+        { field: 'totalAmount', operator: '>', value: '9007199254740992' },
+        { totalAmount: '9007199254740993' },
+      ),
+      true,
+    );
+  });
+
   it('evaluates nested conditions against a dotted immutable context', () => {
     assert.equal(
       evaluateWorkflowCondition(

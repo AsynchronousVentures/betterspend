@@ -1679,7 +1679,7 @@
           "name": "approver_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "action": {
           "name": "action",

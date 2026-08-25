@@ -147,9 +147,7 @@ export const approvalActions = pgTable('approval_actions', {
     .notNull()
     .references(() => approvalRequests.id),
   stepOrder: integer('step_order').notNull(),
-  approverId: uuid('approver_id')
-    .notNull()
-    .references(() => users.id),
+  approverId: uuid('approver_id').references(() => users.id),
   action: varchar('action', { length: 20 }).notNull(), // approved|rejected|delegated|returned
   comment: text('comment'),
   nodeId: varchar('node_id', { length: 100 }),
