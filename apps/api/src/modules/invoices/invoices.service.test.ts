@@ -393,6 +393,8 @@ describe('InvoicesService material edits', () => {
     status: 'approved' | 'matched' | 'rejected' | 'cancelled' | 'partial_match' | 'exception' =
       'approved',
     rerunMatchStatus: 'full_match' | 'partial_match' | 'exception' = 'full_match',
+    duplicateInvoice = false,
+    poVendorId = 'vendor-1',
   ) => {
     const invoice = {
       id: 'invoice-1',
@@ -463,7 +465,7 @@ describe('InvoicesService material edits', () => {
         invoiceLines: { findMany: async () => [line] },
         taxCodes: { findMany: async () => [] },
         vendors: { findFirst: async () => ({ id: 'vendor-2' }) },
-        purchaseOrders: { findFirst: async () => ({ vendorId: 'vendor-1' }) },
+        purchaseOrders: { findFirst: async () => ({ id: 'po-1', vendorId: poVendorId }) },
         poLines: {
           findMany: async () => [],
         },
@@ -478,7 +480,10 @@ describe('InvoicesService material edits', () => {
                 },
         },
         invoices: {
-          findFirst: async () => ({ ...invoice, lines: [line], vendor: {}, entity: {} }),
+          findFirst: async () =>
+            duplicateInvoice
+              ? { id: 'invoice-2' }
+              : { ...invoice, lines: [line], vendor: {}, entity: {} },
         },
       },
       select() {
@@ -697,6 +702,16 @@ describe('InvoicesService material edits', () => {
       initiated: false,
       published: false,
     });
+  });
+
+  it('rejects a vendor edit that would duplicate its invoice number', async () => {
+    const vendorId = '00000000-0000-4000-8000-000000000202';
+    const fixture = createEditService('approved', 'full_match', true, vendorId);
+
+    await assert.rejects(
+      fixture.service.update('invoice-1', 'organization-1', 'editor-1', { vendorId }),
+      /Duplicate invoice: VENDOR-100 already exists for this vendor/,
+    );
   });
 
   it('rejects a PO line reference outside the linked purchase order', async () => {

@@ -329,6 +329,21 @@ export class InvoicesService {
             );
           }
         }
+        const duplicate = await tx.query.invoices.findFirst({
+          where: (record, { and, eq, ne }) =>
+            and(
+              eq(record.organizationId, organizationId),
+              eq(record.vendorId, input.vendorId!),
+              eq(record.invoiceNumber, lockedInvoice.invoiceNumber),
+              ne(record.id, id),
+            ),
+          columns: { id: true },
+        });
+        if (duplicate) {
+          throw new BadRequestException(
+            `Duplicate invoice: ${lockedInvoice.invoiceNumber} already exists for this vendor`,
+          );
+        }
       }
 
       const currency = (input.currency ?? lockedInvoice.currency).trim().toUpperCase();
