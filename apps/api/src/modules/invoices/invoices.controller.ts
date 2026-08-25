@@ -1,6 +1,17 @@
-import { Controller, Get, Post, Patch, Body, Param, Query, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Body,
+  Param,
+  Query,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { InvoicesService, CreateInvoiceInput, MarkPaidInput } from './invoices.service';
+import { updateInvoiceSchema } from '@betterspend/shared';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
@@ -44,14 +55,34 @@ export class InvoicesController {
   @Post()
   @Permissions('invoices:create')
   @ApiOperation({ summary: 'Create an invoice (auto-runs 3-way match if PO linked)' })
-  create(@Body() body: CreateInvoiceInput, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
+  create(
+    @Body() body: CreateInvoiceInput,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+  ) {
     return this.invoicesService.create(orgId, userId, body);
+  }
+
+  @Patch(':id')
+  @Permissions('invoices:create')
+  @ApiOperation({ summary: 'Edit an unpaid invoice and force reapproval for material changes' })
+  update(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+  ) {
+    return this.invoicesService.update(id, orgId, userId, updateInvoiceSchema.parse(body));
   }
 
   @Post(':id/match')
   @ApiOperation({ summary: 'Re-run 3-way match on an invoice' })
-  runMatch(@Param('id') id: string, @CurrentOrgId() orgId: string) {
-    return this.invoicesService.runMatch(id, orgId);
+  runMatch(
+    @Param('id') id: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+  ) {
+    return this.invoicesService.runMatch(id, orgId, userId);
   }
 
   @Patch(':id/approve')
@@ -75,13 +106,22 @@ export class InvoicesController {
   @Post('bulk-approve')
   @Permissions('invoices:approve')
   @ApiOperation({ summary: 'Bulk approve multiple matched invoices' })
-  bulkApprove(@Body() body: { ids: string[] }, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
+  bulkApprove(
+    @Body() body: { ids: string[] },
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+  ) {
     return this.invoicesService.bulkApprove(body.ids, orgId, userId);
   }
 
   @Patch(':id/mark-paid')
   @ApiOperation({ summary: 'Mark an approved invoice as paid' })
-  markPaid(@Param('id') id: string, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string, @Body() body: MarkPaidInput) {
+  markPaid(
+    @Param('id') id: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+    @Body() body: MarkPaidInput,
+  ) {
     return this.invoicesService.markPaid(id, orgId, userId, body);
   }
 }

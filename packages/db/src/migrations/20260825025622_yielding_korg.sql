@@ -1,0 +1,1 @@
+ALTER TABLE "workflow_runtime_publications" ADD COLUMN "outcome_status" varchar(20) NOT NULL;

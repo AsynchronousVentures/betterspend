@@ -9,8 +9,11 @@ import { DEFAULT_SETTINGS, type SettingKey } from '@betterspend/shared';
 export class SettingsService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  async getAll(organizationId: string): Promise<Record<string, string>> {
-    const rows = await this.db.query.systemSettings.findMany({
+  async getAll(
+    organizationId: string,
+    executor: Db | DbTransaction = this.db,
+  ): Promise<Record<string, string>> {
+    const rows = await executor.query.systemSettings.findMany({
       where: (s, { eq }) => eq(s.organizationId, organizationId),
     });
 

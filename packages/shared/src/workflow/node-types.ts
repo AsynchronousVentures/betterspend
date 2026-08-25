@@ -1,6 +1,23 @@
 import { z } from 'zod';
 
-export const workflowNodeIdSchema = z.string().trim().min(1).max(100);
+export const REQUIRED_APPROVAL_NODE_ID = '__required_approval__';
+
+export const WORKFLOW_ASSIGNMENT_STATUSES = [
+  'waiting',
+  'pending',
+  'approved',
+  'rejected',
+  'skipped',
+] as const;
+
+export type WorkflowAssignmentStatus = (typeof WORKFLOW_ASSIGNMENT_STATUSES)[number];
+
+export const workflowNodeIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .refine((value) => value !== REQUIRED_APPROVAL_NODE_ID, 'This workflow node ID is reserved');
 
 export type WorkflowCondition =
   | {

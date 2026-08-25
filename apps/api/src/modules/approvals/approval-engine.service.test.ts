@@ -7,6 +7,7 @@ import type { NotificationsService } from '../notifications/notifications.servic
 import type { ApprovalDelegationsService } from '../approval-delegations/approval-delegations.service';
 import type { SettingsService } from '../settings/settings.service';
 import type { BudgetsService } from '../budgets/budgets.service';
+import type { WorkflowExecutionService } from '../workflow-execution/workflow-execution.service';
 import { ApprovalEngineService } from './approval-engine.service';
 
 function createService(
@@ -20,6 +21,7 @@ function createService(
   requiredApproverIsActive = true,
   actorRoles: Array<{ role: string; scopeType: string; scopeId: string | null }> = [],
   delegatedApproverId?: string,
+  workflowExecution?: WorkflowExecutionService,
 ) {
   const approvalRequestValues: Array<Record<string, unknown>> = [];
   const approvalActionValues: Array<Record<string, unknown>> = [];
@@ -42,7 +44,10 @@ function createService(
         from() {
           return {
             where() {
-              return { for: async () => (lockedRequest ? [lockedRequest] : []) };
+              return {
+                for: async () =>
+                  lockedRequest ? [{ organizationId: 'organization-1', ...lockedRequest }] : [],
+              };
             },
           };
         },
@@ -128,12 +133,53 @@ function createService(
       delegations,
       settings,
       budgets,
+      workflowExecution,
     ),
     commitmentActions,
   };
 }
 
 describe('ApprovalEngineService required approvals', () => {
+  it('publishes a compiled workflow started outside an existing transaction', async () => {
+    const calls: Array<{ name: string; arguments: unknown[] }> = [];
+    const workflowResult = {
+      workflow: true as const,
+      organizationId: 'organization-1',
+      autoApproved: false,
+      rule: null,
+      requestId: 'approval-request-1',
+      definitionVersionId: 'definition-version-1',
+      status: 'pending' as const,
+    };
+    const workflowExecution = {
+      initiateIfConfigured: async (...args: unknown[]) => {
+        calls.push({ name: 'initiate', arguments: args });
+        return workflowResult;
+      },
+      publishInitiation: async (...args: unknown[]) => {
+        calls.push({ name: 'publish', arguments: args });
+      },
+    } as unknown as WorkflowExecutionService;
+    const { service } = createService([], undefined, true, [], undefined, workflowExecution);
+    const budgetContext = { budgetAvailable: false, budgetDecision: { reason: 'overrun' } };
+
+    const result = await service.initiateApproval(
+      'organization-1',
+      'purchase_order',
+      'purchase-order-1',
+      'requester-1',
+      undefined,
+      undefined,
+      undefined,
+      budgetContext,
+    );
+
+    assert.equal(result, workflowResult);
+    assert.deepEqual(calls[0]?.arguments.at(-1), budgetContext);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls[1], { name: 'publish', arguments: [workflowResult] });
+  });
+
   it('creates a budget-owner-only request instead of fast-lane auto-approving', async () => {
     const { approvalRequestValues, service } = createService();
 
@@ -151,9 +197,11 @@ describe('ApprovalEngineService required approvals', () => {
 
     assert.equal(result.autoApproved, false);
     assert.deepEqual(approvalRequestValues[0], {
+      organizationId: 'organization-1',
       approvableType: 'requisition',
       approvableId: 'requisition-1',
       approvalRuleId: null,
+      initiatedBy: 'requester-1',
       currentStep: 1,
       status: 'pending',
       requiredApproverId: 'owner-1',

@@ -98,12 +98,12 @@ export class GlController {
   @Post('export-jobs/trigger/:invoiceId')
   @ApiOperation({ summary: 'Manually trigger GL export for an approved invoice' })
   @ApiQuery({ name: 'targetSystem', required: true, enum: ['qbo', 'xero'] })
-  triggerExport(
+  async triggerExport(
     @Param('invoiceId') invoiceId: string,
     @CurrentOrgId() orgId: string,
     @Query('targetSystem') targetSystem: 'qbo' | 'xero' = 'qbo',
   ) {
-    this.glExportService.enqueue(orgId, invoiceId, targetSystem);
+    await this.glExportService.enqueue(orgId, invoiceId, targetSystem);
     return { queued: true, invoiceId, targetSystem };
   }
 

@@ -9,13 +9,26 @@ import {
 import { eq, and, ne, isNull, lte, gte, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
-import { auditLog, invoices, invoiceLines, purchaseOrders, requisitions } from '@betterspend/db';
+import { updateInvoiceSchema, type UpdateInvoiceInput } from '@betterspend/shared';
+import {
+  auditLog,
+  invoices,
+  invoiceLines,
+  purchaseOrders,
+  requisitions,
+  vendors,
+} from '@betterspend/db';
 import { SequenceService } from '../../common/services/sequence.service';
 import { MatchingService } from './matching.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { GlExportService } from '../gl/gl-export.service';
 import { BudgetsService } from '../budgets/budgets.service';
-import { addMoney, convertMoney } from '../budgets/budget-enforcement';
+import {
+  addMoney,
+  convertMoney,
+  normalizeMoney,
+  normalizeRate,
+} from '../budgets/budget-enforcement';
 import { invoiceCommitmentAmounts } from '../budgets/budget-commitments';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -24,6 +37,11 @@ import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { SpendGuardService } from '../spend-guard/spend-guard.service';
 import { SettingsService } from '../settings/settings.service';
 import { resolveIndependentInvoiceApprover } from './invoice-approval-policy';
+import { WorkflowExecutionService } from '../workflow-execution/workflow-execution.service';
+import { changedMaterialInvoiceFields, type MaterialInvoiceState } from './invoice-material-edit';
+import { calculateInvoiceLineAmounts } from './invoice-money';
+
+export type { UpdateInvoiceInput } from '@betterspend/shared';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 
@@ -92,6 +110,7 @@ export class InvoicesService {
     private readonly exchangeRatesService: ExchangeRatesService,
     private readonly spendGuard: SpendGuardService,
     private readonly settingsService: SettingsService,
+    private readonly workflowExecution: WorkflowExecutionService,
   ) {}
 
   private calculateLineTax(
@@ -119,9 +138,60 @@ export class InvoicesService {
     };
   }
 
-  private async getTaxCodeMap(organizationId: string, taxCodeIds: string[]) {
+  private parseDate(value: string, field: string): Date {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) throw new BadRequestException(`${field} is invalid`);
+    return parsed;
+  }
+
+  private dateKey(value: Date | string | null): string | null {
+    if (value == null) return null;
+    const parsed = value instanceof Date ? value : new Date(value);
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  private decimalKey(value: string | number | null): string | null {
+    if (value == null) return null;
+    const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(String(value));
+    if (!match) throw new BadRequestException(`Invalid decimal value "${value}"`);
+    const whole = match[2].replace(/^0+(?=\d)/, '');
+    const fraction = (match[3] ?? '').replace(/0+$/, '');
+    return `${match[1]}${whole}${fraction ? `.${fraction}` : ''}`;
+  }
+
+  private materialState(
+    invoice: typeof invoices.$inferSelect,
+    lines: Array<typeof invoiceLines.$inferSelect>,
+  ): MaterialInvoiceState {
+    return {
+      vendorId: invoice.vendorId,
+      invoiceDate: this.dateKey(invoice.invoiceDate)!,
+      dueDate: this.dateKey(invoice.dueDate),
+      paymentTerms: invoice.paymentTerms,
+      earlyPaymentDiscountPercent: this.decimalKey(invoice.earlyPaymentDiscountPercent),
+      earlyPaymentDiscountBy: this.dateKey(invoice.earlyPaymentDiscountBy),
+      currency: invoice.currency.toUpperCase(),
+      exchangeRate: this.decimalKey(invoice.exchangeRate)!,
+      lines: lines.map((line) => ({
+        id: line.id,
+        lineNumber: this.decimalKey(line.lineNumber)!,
+        poLineId: line.poLineId,
+        quantity: this.decimalKey(line.quantity)!,
+        unitPrice: this.decimalKey(line.unitPrice)!,
+        glAccount: line.glAccount,
+        taxCodeId: line.taxCodeId,
+        taxInclusive: line.taxInclusive,
+      })),
+    };
+  }
+
+  private async getTaxCodeMap(
+    organizationId: string,
+    taxCodeIds: string[],
+    executor: Db | DbTransaction = this.db,
+  ) {
     if (taxCodeIds.length === 0) return new Map<string, any>();
-    const records = await this.db.query.taxCodes.findMany({
+    const records = await executor.query.taxCodes.findMany({
       where: (record, { and, eq, inArray }) =>
         and(eq(record.orgId, organizationId), inArray(record.id, taxCodeIds)),
     });
@@ -160,6 +230,409 @@ export class InvoicesService {
 
   async findOne(id: string, organizationId: string) {
     return this.findOneWithExecutor(id, organizationId, this.db);
+  }
+
+  async update(id: string, organizationId: string, actorId: string, rawInput: UpdateInvoiceInput) {
+    const input = updateInvoiceSchema.parse(rawInput);
+    const result = await this.db.transaction(async (tx) => {
+      const [lockedInvoice] = await tx
+        .select()
+        .from(invoices)
+        .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)))
+        .for('update');
+      if (!lockedInvoice) throw new NotFoundException(`Invoice ${id} not found`);
+      if (lockedInvoice.status === 'paid') {
+        throw new BadRequestException('Paid invoices cannot be edited');
+      }
+      if (lockedInvoice.status === 'cancelled') {
+        throw new BadRequestException('Cancelled invoices cannot be edited');
+      }
+
+      const existingLines = await tx.query.invoiceLines.findMany({
+        where: (line, { eq }) => eq(line.invoiceId, id),
+        orderBy: (line, { asc }) => asc(line.lineNumber),
+      });
+      const patches = new Map((input.lines ?? []).map((line) => [line.id, line]));
+      if (patches.size !== (input.lines ?? []).length) {
+        throw new BadRequestException('Invoice line edits must contain unique IDs');
+      }
+      for (const lineId of patches.keys()) {
+        if (!existingLines.some((line) => line.id === lineId)) {
+          throw new BadRequestException(`Invoice line ${lineId} does not belong to invoice ${id}`);
+        }
+      }
+
+      const requestedPoLineIds = [
+        ...new Set(
+          (input.lines ?? [])
+            .filter((line) => line.poLineId !== undefined && line.poLineId !== null)
+            .map((line) => line.poLineId!),
+        ),
+      ];
+      if (requestedPoLineIds.length > 0) {
+        if (!lockedInvoice.purchaseOrderId) {
+          throw new BadRequestException('Invoice lines require a linked purchase order');
+        }
+        const purchaseOrder = await tx.query.purchaseOrders.findFirst({
+          where: (record, { and, eq }) =>
+            and(
+              eq(record.id, lockedInvoice.purchaseOrderId!),
+              eq(record.organizationId, organizationId),
+            ),
+          columns: { id: true },
+        });
+        if (!purchaseOrder) {
+          throw new BadRequestException(
+            `Purchase order ${lockedInvoice.purchaseOrderId} not found`,
+          );
+        }
+        const validPoLines = await tx.query.poLines.findMany({
+          where: (record, { and, eq, inArray }) =>
+            and(
+              eq(record.purchaseOrderId, purchaseOrder.id),
+              inArray(record.id, requestedPoLineIds),
+            ),
+          columns: { id: true },
+        });
+        if (validPoLines.length !== requestedPoLineIds.length) {
+          throw new BadRequestException(
+            'Invoice line references must belong to the linked purchase order',
+          );
+        }
+      }
+
+      if (input.vendorId !== undefined && input.vendorId !== lockedInvoice.vendorId) {
+        const vendor = await tx.query.vendors.findFirst({
+          where: (record, { and, eq }) =>
+            and(eq(record.id, input.vendorId!), eq(record.organizationId, organizationId)),
+          columns: { id: true },
+        });
+        if (!vendor) throw new BadRequestException(`Vendor ${input.vendorId} not found`);
+        if (lockedInvoice.purchaseOrderId) {
+          const purchaseOrder = await tx.query.purchaseOrders.findFirst({
+            where: (record, { and, eq }) =>
+              and(
+                eq(record.id, lockedInvoice.purchaseOrderId!),
+                eq(record.organizationId, organizationId),
+              ),
+            columns: { vendorId: true },
+          });
+          if (!purchaseOrder) {
+            throw new BadRequestException(
+              `Purchase order ${lockedInvoice.purchaseOrderId} not found`,
+            );
+          }
+          if (purchaseOrder.vendorId !== input.vendorId) {
+            throw new BadRequestException(
+              'A PO-backed invoice vendor must match its purchase order vendor',
+            );
+          }
+        }
+        const duplicate = await tx.query.invoices.findFirst({
+          where: (record, { and, eq, ne }) =>
+            and(
+              eq(record.organizationId, organizationId),
+              eq(record.vendorId, input.vendorId!),
+              eq(record.invoiceNumber, lockedInvoice.invoiceNumber),
+              ne(record.id, id),
+            ),
+          columns: { id: true },
+        });
+        if (duplicate) {
+          throw new BadRequestException(
+            `Duplicate invoice: ${lockedInvoice.invoiceNumber} already exists for this vendor`,
+          );
+        }
+      }
+
+      const currency = (input.currency ?? lockedInvoice.currency).trim().toUpperCase();
+      if (!/^[A-Z]{3}$/.test(currency)) {
+        throw new BadRequestException('Currency must be a 3-letter currency code');
+      }
+      const baseCurrency = await this.exchangeRatesService.getOrganizationBaseCurrency(
+        organizationId,
+        tx,
+      );
+      const exchangeRate = normalizeRate(
+        await this.exchangeRatesService.getRateDecimal(
+          organizationId,
+          currency,
+          baseCurrency,
+          input.exchangeRate !== undefined
+            ? input.exchangeRate.toFixed(8)
+            : currency === lockedInvoice.currency
+              ? lockedInvoice.exchangeRate
+              : undefined,
+          tx,
+        ),
+      );
+      const nextLines = existingLines.map((line) => {
+        const patch = patches.get(line.id);
+        return {
+          ...line,
+          lineNumber: patch?.lineNumber !== undefined ? String(patch.lineNumber) : line.lineNumber,
+          poLineId: patch?.poLineId !== undefined ? patch.poLineId : line.poLineId,
+          description: patch?.description ?? line.description,
+          quantity:
+            patch?.quantity !== undefined
+              ? normalizeMoney(String(patch.quantity))
+              : normalizeMoney(line.quantity),
+          unitPrice:
+            patch?.unitPrice !== undefined
+              ? normalizeMoney(String(patch.unitPrice))
+              : normalizeMoney(line.unitPrice),
+          glAccount: patch?.glAccount !== undefined ? patch.glAccount : line.glAccount,
+          taxCodeId: patch?.taxCodeId !== undefined ? patch.taxCodeId : line.taxCodeId,
+          taxInclusive: patch?.taxInclusive ?? line.taxInclusive,
+        };
+      });
+      const taxCodeMap = await this.getTaxCodeMap(
+        organizationId,
+        [...new Set(nextLines.map((line) => line.taxCodeId).filter((id): id is string => !!id))],
+        tx,
+      );
+      const lineAmounts = nextLines.map((line) => {
+        const taxCode = line.taxCodeId ? taxCodeMap.get(line.taxCodeId) : null;
+        return calculateInvoiceLineAmounts(
+          line.quantity,
+          line.unitPrice,
+          String(taxCode?.ratePercent ?? '0'),
+          line.taxInclusive,
+        );
+      });
+      const subtotal = addMoney(lineAmounts.map((line) => line.subtotal));
+      const taxAmount = addMoney(lineAmounts.map((line) => line.taxAmount));
+      const totalAmount = addMoney(lineAmounts.map((line) => line.totalAmount));
+      const editedAt = new Date();
+      const nextInvoice = {
+        ...lockedInvoice,
+        vendorId: input.vendorId ?? lockedInvoice.vendorId,
+        invoiceDate:
+          input.invoiceDate !== undefined
+            ? this.parseDate(input.invoiceDate, 'Invoice date')
+            : lockedInvoice.invoiceDate,
+        dueDate:
+          input.dueDate !== undefined
+            ? input.dueDate === null
+              ? null
+              : this.parseDate(input.dueDate, 'Due date')
+            : lockedInvoice.dueDate,
+        paymentTerms:
+          input.paymentTerms !== undefined ? input.paymentTerms : lockedInvoice.paymentTerms,
+        earlyPaymentDiscountPercent:
+          input.earlyPaymentDiscountPercent !== undefined
+            ? input.earlyPaymentDiscountPercent === null
+              ? null
+              : String(input.earlyPaymentDiscountPercent)
+            : lockedInvoice.earlyPaymentDiscountPercent,
+        earlyPaymentDiscountBy:
+          input.earlyPaymentDiscountBy !== undefined
+            ? input.earlyPaymentDiscountBy === null
+              ? null
+              : this.dateKey(
+                  this.parseDate(input.earlyPaymentDiscountBy, 'Early payment discount date'),
+                )
+            : lockedInvoice.earlyPaymentDiscountBy,
+        currency,
+        baseCurrency,
+        exchangeRate,
+        subtotal,
+        taxAmount,
+        totalAmount,
+        baseSubtotal: convertMoney(subtotal, exchangeRate),
+        baseTaxAmount: convertMoney(taxAmount, exchangeRate),
+        baseTotalAmount: convertMoney(totalAmount, exchangeRate),
+        updatedAt: editedAt,
+      };
+      const changedFields = changedMaterialInvoiceFields(
+        this.materialState(lockedInvoice, existingLines),
+        this.materialState(nextInvoice, nextLines),
+      );
+      const material = changedFields.length > 0;
+      const persistedInvoice = material
+        ? nextInvoice
+        : {
+            ...nextInvoice,
+            baseCurrency: lockedInvoice.baseCurrency,
+            exchangeRate: lockedInvoice.exchangeRate,
+            subtotal: lockedInvoice.subtotal,
+            taxAmount: lockedInvoice.taxAmount,
+            totalAmount: lockedInvoice.totalAmount,
+            baseSubtotal: lockedInvoice.baseSubtotal,
+            baseTaxAmount: lockedInvoice.baseTaxAmount,
+            baseTotalAmount: lockedInvoice.baseTotalAmount,
+          };
+
+      if (material && lockedInvoice.status === 'approved') {
+        await this.budgets.reopenInvoice(tx, organizationId, id, editedAt);
+      }
+      await tx
+        .update(invoices)
+        .set({
+          vendorId: persistedInvoice.vendorId,
+          invoiceDate: persistedInvoice.invoiceDate,
+          dueDate: persistedInvoice.dueDate,
+          paymentTerms: persistedInvoice.paymentTerms,
+          earlyPaymentDiscountPercent: persistedInvoice.earlyPaymentDiscountPercent,
+          earlyPaymentDiscountBy: persistedInvoice.earlyPaymentDiscountBy,
+          currency: persistedInvoice.currency,
+          baseCurrency: persistedInvoice.baseCurrency,
+          exchangeRate: persistedInvoice.exchangeRate,
+          subtotal: persistedInvoice.subtotal,
+          taxAmount: persistedInvoice.taxAmount,
+          totalAmount: persistedInvoice.totalAmount,
+          baseSubtotal: persistedInvoice.baseSubtotal,
+          baseTaxAmount: persistedInvoice.baseTaxAmount,
+          baseTotalAmount: persistedInvoice.baseTotalAmount,
+          ...(material
+            ? {
+                status: lockedInvoice.matchStatus === 'full_match' ? 'matched' : 'pending_match',
+                approvedBy: null,
+                approvedAt: null,
+              }
+            : {}),
+          updatedAt: editedAt,
+        })
+        .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+
+      for (const [index, line] of nextLines.entries()) {
+        const amounts = lineAmounts[index];
+        await tx
+          .update(invoiceLines)
+          .set({
+            lineNumber: line.lineNumber,
+            poLineId: line.poLineId,
+            description: line.description,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            glAccount: line.glAccount,
+            taxCodeId: line.taxCodeId,
+            taxInclusive: line.taxInclusive,
+            taxAmount: material ? amounts.taxAmount : line.taxAmount,
+            totalPrice: material ? amounts.totalAmount : line.totalPrice,
+            exchangeRate: material ? exchangeRate : line.exchangeRate,
+            baseUnitPrice: material
+              ? convertMoney(line.unitPrice, exchangeRate)
+              : line.baseUnitPrice,
+            baseTotalPrice: material
+              ? convertMoney(amounts.totalAmount, exchangeRate)
+              : line.baseTotalPrice,
+            updatedAt: editedAt,
+          })
+          .where(and(eq(invoiceLines.id, line.id), eq(invoiceLines.invoiceId, id)));
+      }
+
+      let approvalEligible =
+        lockedInvoice.purchaseOrderId !== null && lockedInvoice.matchStatus === 'full_match';
+      if (material && lockedInvoice.purchaseOrderId) {
+        const match = await this.matchingService.runMatch(id, tx);
+        approvalEligible = match.matchStatus === 'full_match';
+        const status =
+          match.matchStatus === 'full_match'
+            ? 'matched'
+            : match.matchStatus === 'exception'
+              ? 'exception'
+              : 'partial_match';
+        await tx
+          .update(invoices)
+          .set({ status, updatedAt: editedAt })
+          .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+      }
+
+      let publishRequestId: string | null = null;
+      let approvalRequestId: string | null = null;
+      if (material) {
+        const currentRequest = await tx.query.approvalRequests.findFirst({
+          where: (request, { and, eq, inArray, isNotNull }) =>
+            and(
+              eq(request.organizationId, organizationId),
+              eq(request.approvableType, 'invoice'),
+              eq(request.approvableId, id),
+              isNotNull(request.definitionVersionId),
+              inArray(request.status, ['pending', 'approved']),
+            ),
+          orderBy: (request, { desc }) => desc(request.createdAt),
+        });
+        if (currentRequest) {
+          if (approvalEligible) {
+            await tx
+              .update(invoices)
+              .set({ status: 'pending_approval', updatedAt: editedAt })
+              .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+            const restarted = await this.workflowExecution.restartOnLatestInTransaction(
+              currentRequest.id,
+              organizationId,
+              actorId,
+              tx,
+              { allowApproved: true },
+            );
+            publishRequestId = restarted.replacementRequestId;
+            approvalRequestId = restarted.replacementRequestId;
+            if (restarted.status === 'pending') {
+              await tx
+                .update(invoices)
+                .set({ status: 'pending_approval', updatedAt: editedAt })
+                .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+            }
+          } else {
+            await this.workflowExecution.cancelForEditInTransaction(
+              currentRequest.id,
+              organizationId,
+              actorId,
+              tx,
+              { allowApproved: true },
+            );
+          }
+        } else if (approvalEligible) {
+          await tx
+            .update(invoices)
+            .set({ status: 'pending_approval', updatedAt: editedAt })
+            .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+          const initiated = await this.workflowExecution.initiateIfConfigured(
+            organizationId,
+            'invoice',
+            id,
+            actorId,
+            undefined,
+            undefined,
+            tx,
+          );
+          if (!initiated) {
+            await tx
+              .update(invoices)
+              .set({ status: 'matched', updatedAt: editedAt })
+              .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+          } else {
+            publishRequestId = initiated.requestId;
+            approvalRequestId = initiated.requestId;
+          }
+        }
+      }
+
+      await this.audit.log(
+        organizationId,
+        actorId,
+        'invoice',
+        id,
+        material ? 'material_edit_reapproval' : 'updated',
+        {
+          material,
+          changedFields,
+          approvalRequestId,
+        },
+        undefined,
+        tx,
+      );
+      return {
+        invoice: await this.findOneWithExecutor(id, organizationId, tx),
+        publishRequestId,
+      };
+    });
+
+    if (result.publishRequestId) {
+      await this.workflowExecution.publishCommittedRequest(result.publishRequestId, organizationId);
+    }
+    return result.invoice;
   }
 
   async create(organizationId: string, createdBy: string, input: CreateInvoiceInput) {
@@ -337,9 +810,103 @@ export class InvoicesService {
     return created;
   }
 
-  async runMatch(id: string, organizationId: string) {
-    await this.findOne(id, organizationId); // validate exists
-    return this.matchingService.runMatch(id);
+  async runMatch(id: string, organizationId: string, actorId: string) {
+    const outcome = await this.db.transaction(async (tx) => {
+      const [lockedInvoice] = await tx
+        .select()
+        .from(invoices)
+        .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)))
+        .for('update');
+      if (!lockedInvoice) throw new NotFoundException(`Invoice ${id} not found`);
+      if (lockedInvoice.status === 'paid' || lockedInvoice.status === 'cancelled') {
+        throw new BadRequestException(`${lockedInvoice.status} invoices cannot be rematched`);
+      }
+
+      const currentRequest = await tx.query.approvalRequests.findFirst({
+        where: (request, { and, eq, inArray, isNotNull }) =>
+          and(
+            eq(request.organizationId, organizationId),
+            eq(request.approvableType, 'invoice'),
+            eq(request.approvableId, id),
+            isNotNull(request.definitionVersionId),
+            inArray(request.status, ['pending', 'approved']),
+          ),
+        orderBy: (request, { desc }) => desc(request.createdAt),
+      });
+
+      const match = await this.matchingService.runMatch(id, tx);
+      let publishRequestId: string | null = null;
+      if (
+        match.matchStatus === 'full_match' &&
+        lockedInvoice.status !== 'approved' &&
+        lockedInvoice.status !== 'pending_approval'
+      ) {
+        await tx
+          .update(invoices)
+          .set({ status: 'pending_approval', updatedAt: new Date() })
+          .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+        const initiated = await this.workflowExecution.initiateIfConfigured(
+          organizationId,
+          'invoice',
+          id,
+          actorId,
+          undefined,
+          undefined,
+          tx,
+        );
+        if (initiated) {
+          publishRequestId = initiated.requestId;
+        } else {
+          await tx
+            .update(invoices)
+            .set({ status: 'matched', updatedAt: new Date() })
+            .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+        }
+      } else if (match.matchStatus !== 'full_match') {
+        const rematchStatus = match.matchStatus === 'exception' ? 'exception' : 'partial_match';
+        if (lockedInvoice.status === 'approved') {
+          await this.budgets.reopenInvoice(tx, organizationId, id, new Date());
+        }
+        await tx
+          .update(invoices)
+          .set({
+            status: rematchStatus,
+            approvedBy: null,
+            approvedAt: null,
+            updatedAt: new Date(),
+          })
+          .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+        if (currentRequest) {
+          await this.workflowExecution.cancelForEditInTransaction(
+            currentRequest.id,
+            organizationId,
+            actorId,
+            tx,
+            { allowApproved: true, reason: 'invoice_match_invalidated' },
+          );
+        }
+      }
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: actorId,
+        entityType: 'invoice',
+        entityId: id,
+        action: 'rematched',
+        changes: {
+          previousStatus: lockedInvoice.status,
+          matchStatus: match.matchStatus,
+          workflowRequestId: publishRequestId,
+        },
+      });
+      return { match, publishRequestId };
+    });
+    if (outcome.publishRequestId) {
+      await this.workflowExecution.publishCommittedRequest(
+        outcome.publishRequestId,
+        organizationId,
+      );
+    }
+    return outcome.match;
   }
 
   async markPaid(id: string, organizationId: string, userId: string, input?: MarkPaidInput) {
@@ -622,13 +1189,14 @@ export class InvoicesService {
         };
       }
 
+      const approvedAt = new Date();
       const [transitioned] = await tx
         .update(invoices)
         .set({
           status: 'approved',
           approvedBy: approverId,
-          approvedAt: new Date(),
-          updatedAt: new Date(),
+          approvedAt,
+          updatedAt: approvedAt,
         })
         .where(
           and(
@@ -665,6 +1233,7 @@ export class InvoicesService {
           id,
           amounts.expense,
           amounts.commitmentRelease,
+          approvedAt,
         );
       }
 
@@ -675,9 +1244,7 @@ export class InvoicesService {
       const fallbackApprover = result.blocked.fallbackApprover;
       const unknownCreator = result.blocked.reason === 'unknown_creator';
       throw new ForbiddenException({
-        code: unknownCreator
-          ? 'INVOICE_CREATOR_UNKNOWN'
-          : 'INVOICE_SELF_APPROVAL_BLOCKED',
+        code: unknownCreator ? 'INVOICE_CREATOR_UNKNOWN' : 'INVOICE_SELF_APPROVAL_BLOCKED',
         message: unknownCreator
           ? 'This invoice has no authoritative creator record. Approval is blocked while maker-checker policy is enabled.'
           : fallbackApprover
@@ -708,7 +1275,7 @@ export class InvoicesService {
         )
         .catch(() => {});
     }
-    this.glExport.enqueue(organizationId, id, 'qbo');
+    void this.glExport.enqueue(organizationId, id, 'qbo').catch(() => {});
 
     return approved;
   }

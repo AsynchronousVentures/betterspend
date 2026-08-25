@@ -1,7 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { eq, and, isNull, sql, asc } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
-import type { Db } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
 import { notificationPreferences, notifications } from '@betterspend/db';
 
 const DEFAULT_NOTIFICATION_TYPES = [
@@ -31,9 +31,7 @@ function defaultPreferences(orgId: string, userId: string) {
 
 @Injectable()
 export class NotificationsService {
-  constructor(
-    @Inject(DB_TOKEN) private readonly db: Db,
-  ) {}
+  constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
   async create(
     orgId: string,
@@ -43,8 +41,9 @@ export class NotificationsService {
     body?: string,
     entityType?: string,
     entityId?: string,
+    transaction?: DbTransaction,
   ) {
-    const [notification] = await this.db
+    const [notification] = await (transaction ?? this.db)
       .insert(notifications)
       .values({
         organizationId: orgId,
@@ -73,10 +72,7 @@ export class NotificationsService {
   ) {
     const limit = options?.limit ?? 50;
     const offset = options?.offset ?? 0;
-    const filters = [
-      eq(notifications.organizationId, orgId),
-      eq(notifications.userId, userId),
-    ];
+    const filters = [eq(notifications.organizationId, orgId), eq(notifications.userId, userId)];
     if (options?.unreadOnly || options?.status === 'unread') {
       filters.push(isNull(notifications.readAt));
     }
@@ -115,10 +111,12 @@ export class NotificationsService {
     const [stored] = await this.db
       .select()
       .from(notificationPreferences)
-      .where(and(
-        eq(notificationPreferences.organizationId, orgId),
-        eq(notificationPreferences.userId, userId),
-      ))
+      .where(
+        and(
+          eq(notificationPreferences.organizationId, orgId),
+          eq(notificationPreferences.userId, userId),
+        ),
+      )
       .limit(1);
 
     if (!stored) {
@@ -130,7 +128,9 @@ export class NotificationsService {
       userId: stored.userId,
       emailEnabled: stored.emailEnabled,
       frequency: (stored.frequency as 'instant' | 'daily' | 'weekly') ?? 'instant',
-      enabledTypes: Array.isArray(stored.enabledTypes) ? stored.enabledTypes : DEFAULT_NOTIFICATION_TYPES,
+      enabledTypes: Array.isArray(stored.enabledTypes)
+        ? stored.enabledTypes
+        : DEFAULT_NOTIFICATION_TYPES,
     };
   }
 
@@ -165,7 +165,9 @@ export class NotificationsService {
       userId: updated.userId,
       emailEnabled: updated.emailEnabled,
       frequency: updated.frequency as 'instant' | 'daily' | 'weekly',
-      enabledTypes: Array.isArray(updated.enabledTypes) ? updated.enabledTypes : DEFAULT_NOTIFICATION_TYPES,
+      enabledTypes: Array.isArray(updated.enabledTypes)
+        ? updated.enabledTypes
+        : DEFAULT_NOTIFICATION_TYPES,
     };
   }
 
@@ -173,22 +175,23 @@ export class NotificationsService {
     const rows = await this.db
       .selectDistinct({ type: notifications.type })
       .from(notifications)
-      .where(and(
-        eq(notifications.organizationId, orgId),
-        eq(notifications.userId, userId),
-      ))
+      .where(and(eq(notifications.organizationId, orgId), eq(notifications.userId, userId)))
       .orderBy(asc(notifications.type));
 
-    return rows
-      .map((row) => row.type)
-      .filter((value): value is string => Boolean(value));
+    return rows.map((row) => row.type).filter((value): value is string => Boolean(value));
   }
 
   async markRead(id: string, userId: string) {
     const [updated] = await this.db
       .update(notifications)
       .set({ readAt: new Date() })
-      .where(and(eq(notifications.id, id), eq(notifications.userId, userId), isNull(notifications.readAt)))
+      .where(
+        and(
+          eq(notifications.id, id),
+          eq(notifications.userId, userId),
+          isNull(notifications.readAt),
+        ),
+      )
       .returning();
     return updated;
   }

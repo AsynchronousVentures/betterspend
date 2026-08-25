@@ -39,6 +39,25 @@ type LegalEntityIndexState = {
   indexIsValid: boolean;
 };
 
+type BudgetEventConstraintState = {
+  tableExists: boolean;
+  canonicalReady: boolean;
+  replacementExists: boolean;
+  replacementValidated: boolean;
+};
+
+const BUDGET_EVENT_TYPES = [
+  'requisition_reserved',
+  'requisition_released',
+  'purchase_order_committed',
+  'purchase_order_reduced',
+  'purchase_order_released',
+  'invoice_expended',
+  'invoice_reopened',
+  'legacy_commitment_backfill',
+  'legacy_reservation_backfill',
+] as const;
+
 type EmailIntakeIndexState = {
   emailIntakeItemsTableExists: boolean;
   indexExists: boolean;
@@ -91,6 +110,50 @@ async function prepareLegalEntityOrganizationIndex(client: postgres.Sql): Promis
     CREATE UNIQUE INDEX CONCURRENTLY "legal_entities_id_organization_id_unique"
     ON "legal_entities" ("id", "organization_id")
   `;
+}
+
+/** Validate the expanded event-type constraint without holding an exclusive lock during the scan. */
+async function prepareBudgetEventTypeConstraint(client: postgres.Sql): Promise<void> {
+  const [state] = await client<BudgetEventConstraintState[]>`
+    SELECT
+      to_regclass('public.budget_commitment_events') IS NOT NULL AS "tableExists",
+      EXISTS (
+        SELECT 1
+        FROM pg_constraint AS canonical
+        WHERE canonical.conrelid = to_regclass('public.budget_commitment_events')
+          AND canonical.conname = 'budget_commitment_events_event_type_check'
+          AND canonical.convalidated
+          AND pg_get_constraintdef(canonical.oid) LIKE '%invoice_reopened%'
+      ) AS "canonicalReady",
+      replacement.oid IS NOT NULL AS "replacementExists",
+      COALESCE(replacement.convalidated, false) AS "replacementValidated"
+    FROM (VALUES (1)) AS singleton(value)
+    LEFT JOIN pg_constraint AS replacement
+      ON replacement.conrelid = to_regclass('public.budget_commitment_events')
+      AND replacement.conname = 'budget_commitment_events_event_type_check_v2'
+  `;
+
+  if (!state?.tableExists || state.canonicalReady || state.replacementValidated) return;
+
+  await client`SET lock_timeout = '5s'`;
+  await client`SET statement_timeout = '5min'`;
+  try {
+    if (!state.replacementExists) {
+      await client.unsafe(`
+        ALTER TABLE "budget_commitment_events"
+        ADD CONSTRAINT "budget_commitment_events_event_type_check_v2"
+        CHECK ("event_type" in (${BUDGET_EVENT_TYPES.map((type) => `'${type}'`).join(', ')}))
+        NOT VALID
+      `);
+    }
+    await client`
+      ALTER TABLE "budget_commitment_events"
+      VALIDATE CONSTRAINT "budget_commitment_events_event_type_check_v2"
+    `;
+  } finally {
+    await client`RESET statement_timeout`;
+    await client`RESET lock_timeout`;
+  }
 }
 
 /** Build the email-intake parent key concurrently before its tenant-scoped FK is added. */
@@ -224,6 +287,7 @@ async function main(): Promise<void> {
     migrationLockAcquired = true;
     await prepareVendorOrganizationIndex(client);
     await prepareLegalEntityOrganizationIndex(client);
+    await prepareBudgetEventTypeConstraint(client);
     await prepareEmailIntakeItemOrganizationIndex(client);
     const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });

@@ -13,14 +13,14 @@ import { ApprovalEngineService } from './approval-engine.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { WorkflowDefinitionsService } from '../workflow-definitions/workflow-definitions.service';
+import { WorkflowExecutionService } from '../workflow-execution/workflow-execution.service';
 
 @ApiTags('approvals')
 @Controller('approvals')
 export class ApprovalsController {
   constructor(
     private readonly approvalEngineService: ApprovalEngineService,
-    private readonly workflowDefinitions: WorkflowDefinitionsService,
+    private readonly workflowExecution: WorkflowExecutionService,
   ) {}
 
   @Get()
@@ -74,6 +74,6 @@ export class ApprovalsController {
     @CurrentUserId() userId: string,
     @CurrentOrgId() orgId: string,
   ) {
-    return this.workflowDefinitions.restartInstanceOnLatest(id, orgId, userId);
+    return this.workflowExecution.restartOnLatest(id, orgId, userId);
   }
 }

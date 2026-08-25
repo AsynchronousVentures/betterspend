@@ -1,29 +1,13 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Inject,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, desc, eq } from 'drizzle-orm';
 import type {
   CreateWorkflowDefinitionInput,
-  ExecutableDefinition,
   WorkflowDomain,
   WorkflowDraft,
 } from '@betterspend/shared';
-import {
-  compileWorkflowGraph,
-  executableDefinitionSchema,
-  workflowDraftSchema,
-} from '@betterspend/shared';
+import { compileWorkflowGraph, workflowDraftSchema } from '@betterspend/shared';
 import type { Db } from '@betterspend/db';
-import {
-  approvalActions,
-  approvalRequests,
-  workflowDefinitions,
-  workflowDefinitionVersions,
-} from '@betterspend/db';
+import { workflowDefinitions, workflowDefinitionVersions } from '@betterspend/db';
 import { DB_TOKEN } from '../../database/database.module';
 import { AuditService } from '../audit/audit.service';
 import { EntitiesService } from '../entities/entities.service';
@@ -61,33 +45,6 @@ function newWorkflowDraft(domain: WorkflowDomain): WorkflowDraft {
     },
     positions: {},
   });
-}
-
-function resolveRestartTerminal(executable: ExecutableDefinition): {
-  nodeId: string;
-  status: 'approved' | 'rejected';
-} {
-  const steps = new Map(executable.steps.map((step) => [step.node.id, step]));
-  const visited = new Set<string>();
-  let step = steps.get(executable.entryStepId);
-
-  while (step && !visited.has(step.node.id)) {
-    visited.add(step.node.id);
-    if (step.node.type === 'approved' || step.node.type === 'auto_approve') {
-      return { nodeId: step.node.id, status: 'approved' };
-    }
-    if (step.node.type === 'reject') {
-      return { nodeId: step.node.id, status: 'rejected' };
-    }
-    if (step.node.type !== 'trigger' || step.transitions.length !== 1) break;
-    const [transition] = step.transitions;
-    if (transition.condition || transition.isDefault || transition.priority !== undefined) break;
-    step = steps.get(transition.targetStepId);
-  }
-
-  throw new ConflictException(
-    'Restart requires the compiled workflow execution engine for this definition',
-  );
 }
 
 @Injectable()
@@ -297,132 +254,6 @@ export class WorkflowDefinitionsService {
       return { definitionId: definition.id, restoredFromVersion: version.version, draft };
     });
     return restored;
-  }
-
-  async restartInstanceOnLatest(approvalRequestId: string, organizationId: string, userId: string) {
-    const restarted = await this.db.transaction(async (tx) => {
-      const [request] = await tx
-        .select()
-        .from(approvalRequests)
-        .where(eq(approvalRequests.id, approvalRequestId))
-        .for('update');
-      if (!request?.definitionVersionId) {
-        throw new NotFoundException(`Versioned approval request ${approvalRequestId} not found`);
-      }
-      if (request.status !== 'pending') {
-        throw new ConflictException('Only pending workflow instances can be restarted');
-      }
-
-      const [scope] = await tx
-        .select({
-          definitionId: workflowDefinitionVersions.definitionId,
-        })
-        .from(workflowDefinitionVersions)
-        .innerJoin(
-          workflowDefinitions,
-          eq(workflowDefinitions.id, workflowDefinitionVersions.definitionId),
-        )
-        .where(
-          and(
-            eq(workflowDefinitionVersions.id, request.definitionVersionId),
-            eq(workflowDefinitions.organizationId, organizationId),
-          ),
-        );
-      if (!scope) {
-        throw new NotFoundException(`Versioned approval request ${approvalRequestId} not found`);
-      }
-
-      const [definition] = await tx
-        .select({ publishedVersionId: workflowDefinitions.publishedVersionId })
-        .from(workflowDefinitions)
-        .where(
-          and(
-            eq(workflowDefinitions.id, scope.definitionId),
-            eq(workflowDefinitions.organizationId, organizationId),
-          ),
-        )
-        .for('update');
-      if (!definition?.publishedVersionId) {
-        throw new ConflictException('The workflow definition has no published version');
-      }
-
-      const latestVersion = await tx.query.workflowDefinitionVersions.findFirst({
-        where: (version, { and, eq }) =>
-          and(
-            eq(version.id, definition.publishedVersionId!),
-            eq(version.definitionId, scope.definitionId),
-          ),
-      });
-      if (!latestVersion) {
-        throw new ConflictException('The published workflow version is unavailable');
-      }
-      const executable = executableDefinitionSchema.parse(latestVersion.executableJson);
-      const terminal = resolveRestartTerminal(executable);
-
-      await tx
-        .update(approvalRequests)
-        .set({ status: 'cancelled', updatedAt: new Date() })
-        .where(eq(approvalRequests.id, request.id));
-
-      const [replacement] = await tx
-        .insert(approvalRequests)
-        .values({
-          approvableType: request.approvableType,
-          approvableId: request.approvableId,
-          approvalRuleId: null,
-          definitionVersionId: latestVersion.id,
-          currentNodeId: terminal.nodeId,
-          attempt: request.attempt + 1,
-          currentStep: 1,
-          status: terminal.status,
-          requiredApproverId: null,
-          requiredApprovalStep: null,
-          requiredApprovalReason: null,
-          requiredApprovalKey: null,
-        })
-        .returning();
-
-      await tx.insert(approvalActions).values({
-        approvalRequestId: request.id,
-        stepOrder: request.currentStep,
-        approverId: userId,
-        action: 'cancelled',
-        comment: `Restarted as ${replacement.id} on workflow version ${latestVersion.version}`,
-      });
-      await tx.insert(approvalActions).values({
-        approvalRequestId: replacement.id,
-        stepOrder: 1,
-        approverId: userId,
-        action: 'restarted',
-        comment: `Restarted from ${request.id} on workflow version ${latestVersion.version}`,
-      });
-      await tx.insert(approvalActions).values({
-        approvalRequestId: replacement.id,
-        stepOrder: 1,
-        approverId: userId,
-        action: terminal.status,
-        comment: `Workflow version ${latestVersion.version} reached terminal node ${terminal.nodeId}`,
-      });
-      const result = {
-        cancelledRequestId: request.id,
-        replacementRequestId: replacement.id,
-        definitionVersionId: latestVersion.id,
-        version: latestVersion.version,
-        attempt: replacement.attempt,
-      };
-      await this.audit.log(
-        organizationId,
-        userId,
-        'approval_request',
-        approvalRequestId,
-        'restarted_on_latest',
-        result,
-        undefined,
-        tx,
-      );
-      return result;
-    });
-    return restarted;
   }
 
   private assertDraftDomain(domain: WorkflowDomain, draft: WorkflowDraft): void {

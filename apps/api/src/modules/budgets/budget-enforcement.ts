@@ -94,6 +94,14 @@ export function addMoney(amounts: string[]): string {
   );
 }
 
+export function normalizeMoney(amount: string): string {
+  return formatScaledDecimal(parseScaledDecimal(amount, MONEY_DECIMALS));
+}
+
+export function normalizeRate(rate: string): string {
+  return formatScaledDecimal(parseScaledDecimal(rate, RATE_DECIMALS), RATE_DECIMALS);
+}
+
 export function isZeroMoney(amount: string): boolean {
   return parseScaledDecimal(amount, MONEY_DECIMALS) === 0n;
 }

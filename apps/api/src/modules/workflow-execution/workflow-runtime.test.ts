@@ -1,0 +1,114 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import type { ExecutableStep } from '@betterspend/shared';
+import {
+  compareWorkflowDecimals,
+  evaluateWorkflowCondition,
+  evaluateWorkflowQuorum,
+  requiredWorkflowApprovals,
+  selectWorkflowTransition,
+} from './workflow-runtime';
+
+describe('workflow runtime', () => {
+  it('compares decimal money without losing precision', () => {
+    assert.equal(compareWorkflowDecimals('9007199254740992', '9007199254740993'), -1);
+    assert.equal(compareWorkflowDecimals('100.00', '100'), 0);
+    assert.equal(
+      evaluateWorkflowCondition(
+        { field: 'totalAmount', operator: '>', value: '9007199254740992' },
+        { totalAmount: '9007199254740993' },
+      ),
+      true,
+    );
+  });
+
+  it('evaluates nested conditions against a dotted immutable context', () => {
+    assert.equal(
+      evaluateWorkflowCondition(
+        {
+          operator: 'AND',
+          conditions: [
+            { field: 'request.totalAmount', operator: '>=', value: 1_000 },
+            { field: 'request.priority', operator: 'eq', value: 'high' },
+          ],
+        },
+        { request: { totalAmount: '1250.00', priority: 'high' } },
+      ),
+      true,
+    );
+  });
+
+  it('uses transition priority and falls back only to an unconditional transition', () => {
+    const step = {
+      node: {
+        id: 'condition',
+        name: 'Route spend',
+        type: 'condition',
+        disabled: false,
+        config: { mode: 'first_true' },
+      },
+      transitions: [
+        {
+          edgeId: 'medium',
+          targetStepId: 'manager',
+          sourceHandle: 'branch',
+          condition: { field: 'amount', operator: '>=', value: 1_000 },
+          priority: 20,
+          isDefault: false,
+        },
+        {
+          edgeId: 'high',
+          targetStepId: 'director',
+          sourceHandle: 'branch',
+          condition: { field: 'amount', operator: '>=', value: 10_000 },
+          priority: 10,
+          isDefault: false,
+        },
+        {
+          edgeId: 'default',
+          targetStepId: 'manager',
+          sourceHandle: 'default',
+          isDefault: true,
+        },
+      ],
+    } satisfies ExecutableStep;
+
+    assert.equal(selectWorkflowTransition(step, { amount: '12000' })?.targetStepId, 'director');
+    assert.equal(selectWorkflowTransition(step, { amount: '500' })?.targetStepId, 'manager');
+
+    const conditionalOnly = { ...step, transitions: step.transitions.slice(0, 2) };
+    assert.equal(selectWorkflowTransition(conditionalOnly, { amount: '500' }), null);
+  });
+
+  it('calculates all, count, and majority quorum sizes', () => {
+    assert.equal(requiredWorkflowApprovals({ type: 'all' }, 4), 4);
+    assert.equal(requiredWorkflowApprovals({ type: 'count', count: 2 }, 4), 2);
+    assert.equal(requiredWorkflowApprovals({ type: 'majority' }, 4), 3);
+  });
+
+  it('advances serial assignments until quorum and rejects impossible quorum', () => {
+    assert.deepEqual(
+      evaluateWorkflowQuorum('serial', { type: 'count', count: 3 }, [
+        { sequence: 1, status: 'approved' },
+        { sequence: 2, status: 'pending' },
+        { sequence: 3, status: 'waiting' },
+      ]),
+      { state: 'pending', nextSequence: 3 },
+    );
+    assert.deepEqual(
+      evaluateWorkflowQuorum('parallel', { type: 'majority' }, [
+        { sequence: 1, status: 'approved' },
+        { sequence: 2, status: 'rejected' },
+        { sequence: 3, status: 'rejected' },
+      ]),
+      { state: 'rejected', nextSequence: null },
+    );
+    assert.deepEqual(
+      evaluateWorkflowQuorum('serial', { type: 'all' }, [
+        { sequence: 1, status: 'skipped' },
+        { sequence: 2, status: 'approved' },
+      ]),
+      { state: 'approved', nextSequence: null },
+    );
+  });
+});

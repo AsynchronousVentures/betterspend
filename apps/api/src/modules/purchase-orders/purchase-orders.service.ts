@@ -477,6 +477,11 @@ export class PurchaseOrdersService {
             changes: { budgetEnforcement: outcome.budgetEnforcement },
           });
         },
+        undefined,
+        {
+          budgetAvailable: outcome.budgetEnforcement.withinBudget,
+          budgetDecision: outcome.budgetEnforcement,
+        },
       );
       const pending = await this.findOne(id, organizationId);
       return { ...pending, budgetEnforcement: outcome.budgetEnforcement };

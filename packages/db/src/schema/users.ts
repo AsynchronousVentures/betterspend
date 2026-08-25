@@ -3,6 +3,7 @@ import {
   uuid,
   varchar,
   boolean,
+  foreignKey,
   text,
   timestamp,
   jsonb,
@@ -22,6 +23,7 @@ export const users = pgTable(
     emailVerified: boolean('email_verified').notNull().default(false),
     image: text('image'),
     departmentId: uuid('department_id').references(() => departments.id),
+    managerId: uuid('manager_id'),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -31,6 +33,11 @@ export const users = pgTable(
       table.id,
       table.organizationId,
     ),
+    managerOrganization: foreignKey({
+      columns: [table.managerId, table.organizationId],
+      foreignColumns: [table.id, table.organizationId],
+      name: 'users_manager_org_fk',
+    }),
   }),
 );
 

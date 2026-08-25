@@ -203,6 +203,7 @@ export class RequisitionsService {
               }
             },
             tx,
+            { budgetAvailable: decision.withinBudget, budgetDecision: decision },
           );
           return { budgetEnforcement: decision, approvalResult, requiredApproval };
         },

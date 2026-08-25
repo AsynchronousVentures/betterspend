@@ -69,6 +69,7 @@ export const BUDGET_COMMITMENT_EVENT_TYPE = {
   PURCHASE_ORDER_REDUCED: 'purchase_order_reduced',
   PURCHASE_ORDER_RELEASED: 'purchase_order_released',
   INVOICE_EXPENDED: 'invoice_expended',
+  INVOICE_REOPENED: 'invoice_reopened',
   LEGACY_COMMITMENT_BACKFILL: 'legacy_commitment_backfill',
   LEGACY_RESERVATION_BACKFILL: 'legacy_reservation_backfill',
 } as const;
@@ -94,5 +95,8 @@ export const budgetCommitmentEventKey = {
     reason: 'cancelled' | 'rejected',
     transitionedAt: Date,
   ) => `purchase_order:${purchaseOrderId}:${reason}:${transitionedAt.getTime()}`,
-  invoiceApproved: (invoiceId: string) => `invoice:${invoiceId}:approved`,
+  invoiceApproved: (invoiceId: string, approvedAt: Date) =>
+    `invoice:${invoiceId}:approved:${approvedAt.getTime()}`,
+  invoiceReopened: (invoiceId: string, editedAt: Date) =>
+    `invoice:${invoiceId}:reopened:${editedAt.getTime()}`,
 } as const;

@@ -23,6 +23,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { ApprovalDelegationsService } from '../approval-delegations/approval-delegations.service';
 import { SettingsService } from '../settings/settings.service';
 import { BudgetsService } from '../budgets/budgets.service';
+import {
+  WorkflowExecutionService,
+  type WorkflowExecutionResult,
+} from '../workflow-execution/workflow-execution.service';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 // System user ID used for auto-approval actions (must be a valid UUID in users table)
@@ -44,6 +48,7 @@ export class ApprovalEngineService {
     @Optional() private readonly delegations: ApprovalDelegationsService,
     @Optional() private readonly settingsService: SettingsService,
     private readonly budgets: BudgetsService,
+    @Optional() private readonly workflowExecution?: WorkflowExecutionService,
   ) {}
 
   // Evaluate a JSONB condition expression against an entity object
@@ -151,6 +156,7 @@ export class ApprovalEngineService {
     requiredApproval?: RequiredApproval,
     beforePersist?: (tx: DbTransaction) => Promise<void>,
     transaction?: DbTransaction,
+    workflowContext: Record<string, unknown> = {},
   ) {
     const executor = transaction ?? this.db;
     // Fetch entity for condition evaluation
@@ -182,6 +188,29 @@ export class ApprovalEngineService {
           'The required approver must be an active user in this organization',
         );
       }
+    }
+
+    const workflowResult = await this.workflowExecution?.initiateIfConfigured(
+      organizationId,
+      entityType,
+      entityId,
+      initiatedBy,
+      requiredApproval,
+      beforePersist,
+      transaction,
+      workflowContext,
+    );
+    if (workflowResult) {
+      if (!transaction) {
+        this.publishInitiation(
+          organizationId,
+          entityType,
+          entityId,
+          workflowResult,
+          requiredApproval,
+        );
+      }
+      return workflowResult;
     }
 
     // A required budget-owner approval always wins over the fast lane.
@@ -288,16 +317,16 @@ export class ApprovalEngineService {
       }
     }
 
-    // The schema for approvalRequests has no organizationId, initiatedBy, or dueAt —
-    // those fields are tracked via the actions log and the approvableType/approvableId pattern
     const requestId = await this.runInTransaction(transaction, async (tx) => {
       await beforePersist?.(tx);
       const [req] = await tx
         .insert(approvalRequests)
         .values({
+          organizationId,
           approvableType: entityType,
           approvableId: entityId,
           approvalRuleId: rule?.id ?? null,
+          initiatedBy,
           currentStep,
           status: 'pending',
           requiredApproverId: requiredApproval?.approverId ?? null,
@@ -333,15 +362,21 @@ export class ApprovalEngineService {
     organizationId: string,
     entityType: 'requisition' | 'purchase_order',
     entityId: string,
-    result: {
-      autoApproved: boolean;
-      fastLane?: boolean;
-      threshold?: number;
-      requestId?: string;
-      rule?: { name: string; steps?: Array<{ stepOrder: number }> } | null;
-    },
+    result:
+      | {
+          autoApproved: boolean;
+          fastLane?: boolean;
+          threshold?: number;
+          requestId?: string;
+          rule?: { name: string; steps?: Array<{ stepOrder: number }> } | null;
+        }
+      | WorkflowExecutionResult,
     requiredApproval?: RequiredApproval,
   ): void {
+    if ('workflow' in result && result.workflow) {
+      this.workflowExecution?.publishInitiation(result).catch(() => {});
+      return;
+    }
     if (result.autoApproved) {
       const event = entityType === 'requisition' ? 'requisition.approved' : 'po.approved';
       const payload =
@@ -531,9 +566,11 @@ export class ApprovalEngineService {
       const [req] = await tx
         .insert(approvalRequests)
         .values({
+          organizationId,
           approvableType: 'requisition',
           approvableId: entityId,
           approvalRuleId: null,
+          initiatedBy,
           currentStep: 1,
           status: 'approved',
         })
@@ -678,26 +715,11 @@ export class ApprovalEngineService {
     return enriched;
   }
 
-  // List all pending requests for an organization (filtered by approvable entity org)
+  // List all pending requests for an organization.
   async listPending(organizationId: string) {
     const rows = await this.db.query.approvalRequests.findMany({
       where: (record, { and, eq }) =>
-        and(
-          eq(record.status, 'pending'),
-          sql`(
-            (${record.approvableType} = 'requisition' AND EXISTS (
-              SELECT 1 FROM ${requisitions}
-              WHERE ${requisitions.id} = ${record.approvableId}
-                AND ${requisitions.organizationId} = ${organizationId}
-            ))
-            OR
-            (${record.approvableType} = 'purchase_order' AND EXISTS (
-              SELECT 1 FROM ${purchaseOrders}
-              WHERE ${purchaseOrders.id} = ${record.approvableId}
-                AND ${purchaseOrders.organizationId} = ${organizationId}
-            ))
-          )`,
-        ),
+        and(eq(record.organizationId, organizationId), eq(record.status, 'pending')),
       with: {
         rule: true,
         actions: { orderBy: (a, { desc }) => desc(a.actedAt) },
@@ -715,6 +737,18 @@ export class ApprovalEngineService {
     comment: string | undefined,
     organizationId: string,
   ) {
+    if (
+      this.workflowExecution &&
+      (await this.workflowExecution.isVersionedRequest(requestId, organizationId))
+    ) {
+      return this.workflowExecution.processAction(
+        requestId,
+        actorId,
+        action,
+        comment,
+        organizationId,
+      );
+    }
     const outcome = await this.db.transaction(async (tx) => {
       const [approvalReq] = await tx
         .select()
@@ -940,29 +974,13 @@ export class ApprovalEngineService {
   }
 
   private async assertApprovalRequestOrganization(
-    executor: Db | DbTransaction,
+    _executor: Db | DbTransaction,
     approvalReq: typeof approvalRequests.$inferSelect,
     organizationId: string,
   ): Promise<void> {
-    const entity =
-      approvalReq.approvableType === 'requisition'
-        ? await executor.query.requisitions.findFirst({
-            where: (record, { and, eq }) =>
-              and(
-                eq(record.id, approvalReq.approvableId),
-                eq(record.organizationId, organizationId),
-              ),
-          })
-        : approvalReq.approvableType === 'purchase_order'
-          ? await executor.query.purchaseOrders.findFirst({
-              where: (record, { and, eq }) =>
-                and(
-                  eq(record.id, approvalReq.approvableId),
-                  eq(record.organizationId, organizationId),
-                ),
-            })
-          : null;
-    if (!entity) throw new NotFoundException(`Approval request ${approvalReq.id} not found`);
+    if (approvalReq.organizationId !== organizationId) {
+      throw new NotFoundException(`Approval request ${approvalReq.id} not found`);
+    }
   }
 
   private emitEntityStatusEvents(

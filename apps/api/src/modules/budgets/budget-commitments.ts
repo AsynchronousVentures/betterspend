@@ -39,6 +39,18 @@ export function invoiceCommitmentAmounts(
   };
 }
 
+/** Reverse this invoice's net posting before a material edit starts fresh approval. */
+export function reopenedInvoiceBalance(
+  current: CommitmentBalance,
+  invoice: Pick<PurchaseOrderCommitmentBalance, 'expended' | 'invoiced'>,
+): CommitmentBalance {
+  return {
+    reserved: current.reserved,
+    committed: addMoney([current.committed, invoice.invoiced]),
+    expended: addMoney([current.expended, `-${invoice.expended}`]),
+  };
+}
+
 /** Add only this PO's outstanding amount to its requisition-wide staged balance. */
 export function committedPurchaseOrderBalance(
   current: CommitmentBalance,

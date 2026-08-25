@@ -54,16 +54,26 @@ export class GlExportService {
   ) {}
 
   /** Enqueues the one shared path used by first attempts, queue retries, and manual retries. */
-  enqueue(organizationId: string, invoiceId: string, targetSystem: GlTargetSystem): void {
-    this.glQueue
-      .add(
+  async enqueue(
+    organizationId: string,
+    invoiceId: string,
+    targetSystem: GlTargetSystem,
+    jobId?: string,
+  ): Promise<void> {
+    try {
+      await this.glQueue.add(
         'process-export',
         { organizationId, invoiceId, targetSystem },
-        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
-      )
-      .catch((error: unknown) =>
-        this.logger.error(`Failed to enqueue GL export for invoice ${invoiceId}: ${String(error)}`),
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+          ...(jobId ? { jobId } : {}),
+        },
       );
+    } catch (error) {
+      this.logger.error(`Failed to enqueue GL export for invoice ${invoiceId}: ${String(error)}`);
+      throw error;
+    }
   }
 
   async processExport(
