@@ -317,3 +317,33 @@ test('keeps RFQ award state consistent with cancellation and responses', () => {
     }
   }
 });
+
+test('converts payable invoices to base-currency payment amounts and omits empty runs', () => {
+  const dataset = generateRandomSeedDataset({ count: 500, seed: 'payment-currency-test' });
+  const invoicesById = new Map(dataset.invoices.map((invoice) => [invoice.id, invoice]));
+  const cents = (value: string | number | null | undefined): number =>
+    Math.round(Number(value ?? 0) * 100);
+  let checkedEurInvoice = false;
+  for (const payment of dataset.paymentRunInvoices) {
+    const invoice = invoicesById.get(payment.invoiceId);
+    assert.ok(invoice);
+    if (invoice.currency === 'EUR') {
+      checkedEurInvoice = true;
+      assert.equal(cents(payment.amount), Math.round(cents(invoice.totalAmount) * 1.09));
+    }
+  }
+  assert.equal(checkedEurInvoice, true);
+  for (const run of dataset.paymentRuns) {
+    const payments = dataset.paymentRunInvoices.filter(
+      (payment) => payment.paymentRunId === run.id,
+    );
+    assert.equal(
+      cents(run.totalAmount),
+      payments.reduce((sum, payment) => sum + cents(payment.amount), 0),
+    );
+  }
+
+  const noPayables = generateRandomSeedDataset({ count: 1, seed: 'payment-empty-test' });
+  assert.equal(noPayables.paymentRuns.length, 0);
+  assert.equal(noPayables.paymentRunInvoices.length, 0);
+});

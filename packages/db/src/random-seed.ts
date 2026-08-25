@@ -392,6 +392,10 @@ function fx(currency: string): number {
   return currency === 'GBP' ? 1.27 : currency === 'EUR' ? 1.09 : 1;
 }
 
+function convertToBaseCents(amountCents: number, currency: string): number {
+  return Math.round(amountCents * fx(currency));
+}
+
 function emptyRows(): Rows {
   return {
     legalEntities: [],
@@ -531,6 +535,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
     id: string;
     status: string;
     totalCents: number;
+    currency: string;
     vendorId: string;
     index: number;
     createdAt: Date;
@@ -1861,6 +1866,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
       id,
       status,
       totalCents: invoiceSubtotalCents + tax,
+      currency: po.currency,
       vendorId: po.vendorId,
       index,
       createdAt: invoiceDate,
@@ -2092,11 +2098,14 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
   const payable = invoiceContext.filter(
     (invoice) => invoice.status === 'approved' || invoice.status === 'paid',
   );
-  const runCount = Math.max(1, Math.ceil(payable.length / 20));
+  const runCount = Math.ceil(payable.length / 20);
   for (let index = 0; index < runCount; index += 1) {
     const runInvoices = payable.slice(index * 20, (index + 1) * 20);
     const runId = stableUuid(seed, 'payment-run', index);
-    const total = runInvoices.reduce((sum, invoice) => sum + invoice.totalCents, 0);
+    const total = runInvoices.reduce(
+      (sum, invoice) => sum + convertToBaseCents(invoice.totalCents, invoice.currency),
+      0,
+    );
     const runBaseDate = runInvoices.reduce(
       (latest, invoice) => {
         const milestone = invoice.paidAt ?? invoice.approvedAt ?? invoice.createdAt;
@@ -2134,7 +2143,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
         paymentRunId: runId,
         invoiceId: invoice.id,
         paymentMethod: offset % 3 === 0 ? 'ach' : offset % 3 === 1 ? 'wire' : 'manual',
-        amount: money(invoice.totalCents),
+        amount: money(convertToBaseCents(invoice.totalCents, invoice.currency)),
         currency: 'USD',
         status: invoice.status === 'paid' ? 'paid' : 'scheduled',
         paymentReference:
