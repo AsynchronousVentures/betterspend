@@ -1,12 +1,72 @@
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { goodsReceipts, goodsReceiptLines, purchaseOrders, poLines } from '@betterspend/db';
+import {
+  goodsReceipts,
+  goodsReceiptLines,
+  purchaseOrders,
+  poLines,
+  requisitions,
+} from '@betterspend/db';
 import { SequenceService } from '../../common/services/sequence.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { AuditService } from '../audit/audit.service';
 import { InventoryService } from '../inventory/inventory.service';
+import type { AccessPolicy } from '../auth/access-policy';
+import { permissionScopePredicate, requirePermission } from '../auth/access-scope';
+
+function receiptScopePredicates(organizationId: string) {
+  const poScope = (condition: ReturnType<typeof sql>) =>
+    sql`${goodsReceipts.purchaseOrderId} IN (
+      SELECT ${purchaseOrders.id}
+      FROM ${purchaseOrders}
+      LEFT JOIN requisitions ON ${requisitions.id} = ${purchaseOrders.requisitionId}
+      WHERE ${purchaseOrders.organizationId} = ${organizationId}
+        AND ${condition}
+    )`;
+  return {
+    own: (userId: string) =>
+      poScope(sql`(
+      ${purchaseOrders.issuedBy} = ${userId}
+      OR ${requisitions.requesterId} = ${userId}
+    )`),
+    department: (departmentId: string) =>
+      poScope(sql`${requisitions.departmentId} = ${departmentId}`),
+    project: (projectId: string) => poScope(sql`${requisitions.projectId} = ${projectId}`),
+    entity: (entityId: string) => poScope(sql`${purchaseOrders.entityId} = ${entityId}`),
+  };
+}
+
+function purchaseOrderReceiptScopePredicates(organizationId: string) {
+  return {
+    own: (userId: string) =>
+      sql`(
+        ${purchaseOrders.issuedBy} = ${userId}
+        OR ${purchaseOrders.requisitionId} IN (
+          SELECT ${requisitions.id}
+          FROM ${requisitions}
+          WHERE ${requisitions.requesterId} = ${userId}
+            AND ${requisitions.organizationId} = ${organizationId}
+        )
+      )`,
+    department: (departmentId: string) =>
+      sql`${purchaseOrders.requisitionId} IN (
+        SELECT ${requisitions.id}
+        FROM ${requisitions}
+        WHERE ${requisitions.departmentId} = ${departmentId}
+          AND ${requisitions.organizationId} = ${organizationId}
+      )`,
+    project: (projectId: string) =>
+      sql`${purchaseOrders.requisitionId} IN (
+        SELECT ${requisitions.id}
+        FROM ${requisitions}
+        WHERE ${requisitions.projectId} = ${projectId}
+          AND ${requisitions.organizationId} = ${organizationId}
+      )`,
+    entity: (entityId: string) => eq(purchaseOrders.entityId, entityId),
+  };
+}
 
 export interface CreateGrnInput {
   purchaseOrderId: string;
@@ -36,8 +96,8 @@ export type ReceivingListItem = typeof goodsReceipts.$inferSelect & {
 export type ReceivingDetail = typeof goodsReceipts.$inferSelect & {
   purchaseOrder: ReceivingPurchaseOrderSummary | null;
   lines: Array<
-    (typeof goodsReceiptLines.$inferSelect) & {
-      poLine: (typeof poLines.$inferSelect) | null;
+    typeof goodsReceiptLines.$inferSelect & {
+      poLine: typeof poLines.$inferSelect | null;
     }
   >;
 };
@@ -59,9 +119,18 @@ export class ReceivingService {
     private readonly inventoryService: InventoryService,
   ) {}
 
-  async findAll(organizationId: string): Promise<ReceivingListItem[]> {
+  async findAll(organizationId: string, access?: AccessPolicy): Promise<ReceivingListItem[]> {
     const rows = await this.db.query.goodsReceipts.findMany({
-      where: (g, { eq }) => eq(g.organizationId, organizationId),
+      where: (g, { eq }) =>
+        and(
+          eq(g.organizationId, organizationId),
+          permissionScopePredicate(
+            access,
+            'receiving',
+            ['receiving:view', 'receiving:manage'],
+            receiptScopePredicates(organizationId),
+          ),
+        ),
       with: {
         lines: true,
         purchaseOrder: {
@@ -78,9 +147,23 @@ export class ReceivingService {
     }));
   }
 
-  async findOne(id: string, organizationId: string): Promise<ReceivingDetail> {
+  async findOne(
+    id: string,
+    organizationId: string,
+    access?: AccessPolicy,
+  ): Promise<ReceivingDetail> {
     const grn = await this.db.query.goodsReceipts.findFirst({
-      where: (g, { and, eq }) => and(eq(g.id, id), eq(g.organizationId, organizationId)),
+      where: (g, { eq }) =>
+        and(
+          eq(g.id, id),
+          eq(g.organizationId, organizationId),
+          permissionScopePredicate(
+            access,
+            'receiving',
+            ['receiving:view', 'receiving:manage'],
+            receiptScopePredicates(organizationId),
+          ),
+        ),
       with: {
         lines: { with: { poLine: true } },
         purchaseOrder: {
@@ -105,34 +188,51 @@ export class ReceivingService {
     return {
       id: purchaseOrder.id,
       number: purchaseOrder.number,
-      vendor: purchaseOrder.vendor?.organizationId === organizationId
-        ? { id: purchaseOrder.vendor.id, name: purchaseOrder.vendor.name }
-        : null,
+      vendor:
+        purchaseOrder.vendor?.organizationId === organizationId
+          ? { id: purchaseOrder.vendor.id, name: purchaseOrder.vendor.name }
+          : null,
     };
   }
 
-  async create(organizationId: string, input: CreateGrnInput) {
+  async create(organizationId: string, input: CreateGrnInput, access?: AccessPolicy) {
+    requirePermission(access, 'receiving:create');
     // Validate PO exists and is issued
     const po = await this.db.query.purchaseOrders.findFirst({
-      where: (p, { and, eq }) => and(eq(p.id, input.purchaseOrderId), eq(p.organizationId, organizationId)),
+      where: (p, { eq }) =>
+        and(
+          eq(p.id, input.purchaseOrderId),
+          eq(p.organizationId, organizationId),
+          permissionScopePredicate(
+            access,
+            'receiving',
+            ['receiving:create', 'receiving:manage'],
+            purchaseOrderReceiptScopePredicates(organizationId),
+          ),
+        ),
       with: { lines: true },
     });
     if (!po) throw new NotFoundException(`PO ${input.purchaseOrderId} not found`);
     if (!['approved', 'issued', 'partially_received'].includes(po.status)) {
-      throw new BadRequestException(`PO must be in approved/issued/partially_received status to receive against`);
+      throw new BadRequestException(
+        `PO must be in approved/issued/partially_received status to receive against`,
+      );
     }
 
     const grnId = await this.db.transaction(async (tx) => {
       const number = await this.sequenceService.next(organizationId, 'goods_receipt', tx);
-      const [grn] = await tx.insert(goodsReceipts).values({
-        organizationId,
-        purchaseOrderId: input.purchaseOrderId,
-        number,
-        receivedBy: input.receivedBy,
-        receivedDate: new Date(input.receivedDate),
-        status: 'confirmed',
-        notes: input.notes ?? null,
-      }).returning();
+      const [grn] = await tx
+        .insert(goodsReceipts)
+        .values({
+          organizationId,
+          purchaseOrderId: input.purchaseOrderId,
+          number,
+          receivedBy: input.receivedBy,
+          receivedDate: new Date(input.receivedDate),
+          status: 'confirmed',
+          notes: input.notes ?? null,
+        })
+        .returning();
 
       if (input.lines && input.lines.length > 0) {
         await tx.insert(goodsReceiptLines).values(
@@ -153,9 +253,13 @@ export class ReceivingService {
     // Update PO status based on receipt completeness
     await this.updatePoReceiptStatus(input.purchaseOrderId, organizationId);
 
-    const grn = await this.findOne(grnId, organizationId);
+    const grn = await this.findOne(grnId, organizationId, access);
     this.webhookEvents.emit(organizationId, 'grn.created', { goodsReceipt: grn });
-    this.audit.log(organizationId, input.receivedBy, 'goods_receipt', grnId, 'created', { purchaseOrderId: input.purchaseOrderId }).catch(() => {});
+    this.audit
+      .log(organizationId, input.receivedBy, 'goods_receipt', grnId, 'created', {
+        purchaseOrderId: input.purchaseOrderId,
+      })
+      .catch(() => {});
 
     // Update inventory stock levels for confirmed receipt lines
     if (input.lines && input.lines.length > 0) {
@@ -177,19 +281,27 @@ export class ReceivingService {
     return grn;
   }
 
-  async confirm(id: string, organizationId: string) {
-    const grn = await this.findOne(id, organizationId);
+  async confirm(id: string, organizationId: string, access?: AccessPolicy) {
+    requirePermission(access, 'receiving:manage');
+    const grn = await this.findOne(id, organizationId, access);
     if (grn.status === 'confirmed') return grn;
     if (grn.status === 'cancelled') throw new BadRequestException('Cannot confirm a cancelled GRN');
-    await this.db.update(goodsReceipts).set({ status: 'confirmed', updatedAt: new Date() }).where(eq(goodsReceipts.id, id));
-    return this.findOne(id, organizationId);
+    await this.db
+      .update(goodsReceipts)
+      .set({ status: 'confirmed', updatedAt: new Date() })
+      .where(eq(goodsReceipts.id, id));
+    return this.findOne(id, organizationId, access);
   }
 
-  async cancelGrn(id: string, organizationId: string) {
-    const grn = await this.findOne(id, organizationId);
+  async cancelGrn(id: string, organizationId: string, access?: AccessPolicy) {
+    requirePermission(access, 'receiving:manage');
+    const grn = await this.findOne(id, organizationId, access);
     if (grn.status === 'cancelled') return grn;
-    await this.db.update(goodsReceipts).set({ status: 'cancelled', updatedAt: new Date() }).where(eq(goodsReceipts.id, id));
-    return this.findOne(id, organizationId);
+    await this.db
+      .update(goodsReceipts)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(eq(goodsReceipts.id, id));
+    return this.findOne(id, organizationId, access);
   }
 
   private async updatePoReceiptStatus(poId: string, organizationId: string) {
@@ -210,9 +322,14 @@ export class ReceivingService {
     });
 
     const anyReceived = allGrnLines.length > 0;
-    const newStatus = allFullyReceived ? 'received' : anyReceived ? 'partially_received' : po.status;
+    const newStatus = allFullyReceived
+      ? 'received'
+      : anyReceived
+        ? 'partially_received'
+        : po.status;
 
-    await this.db.update(purchaseOrders)
+    await this.db
+      .update(purchaseOrders)
       .set({ status: newStatus, updatedAt: new Date() })
       .where(eq(purchaseOrders.id, poId));
   }

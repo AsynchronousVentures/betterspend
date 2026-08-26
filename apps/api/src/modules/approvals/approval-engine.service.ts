@@ -27,6 +27,31 @@ import {
   WorkflowExecutionService,
   type WorkflowExecutionResult,
 } from '../workflow-execution/workflow-execution.service';
+import type { AccessPolicy } from '../auth/access-policy';
+import { requireAnyPermission, requirePermission } from '../auth/access-scope';
+
+type ApprovalScope = {
+  departmentId: string | null;
+  projectId: string | null;
+  entityId: string | null;
+};
+
+function scopeAllowsApproval(access: AccessPolicy | undefined, scope: ApprovalScope): boolean {
+  if (!access) return true;
+  for (const permission of ['approvals:view', 'approvals:act'] as const) {
+    if (!access.can(permission)) continue;
+    const grant = access.scopeFor('approval', permission);
+    if (
+      grant.unrestricted ||
+      grant.departmentIds.includes(scope.departmentId ?? '') ||
+      grant.projectIds.includes(scope.projectId ?? '') ||
+      grant.entityIds.includes(scope.entityId ?? '')
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 // System user ID used for auto-approval actions (must be a valid UUID in users table)
@@ -430,7 +455,7 @@ export class ApprovalEngineService {
   private async getApprovalScope(
     tx: DbTransaction,
     approvalReq: typeof approvalRequests.$inferSelect,
-  ): Promise<{ departmentId: string | null; projectId: string | null; entityId: string | null }> {
+  ): Promise<ApprovalScope> {
     if (approvalReq.approvableType === 'requisition') {
       const requisition = await tx.query.requisitions.findFirst({
         where: (record, { eq }) => eq(record.id, approvalReq.approvableId),
@@ -442,9 +467,32 @@ export class ApprovalEngineService {
       };
     }
 
-    const purchaseOrder = await tx.query.purchaseOrders.findFirst({
-      where: (record, { eq }) => eq(record.id, approvalReq.approvableId),
-    });
+    const purchaseOrder =
+      approvalReq.approvableType === 'purchase_order'
+        ? await tx.query.purchaseOrders.findFirst({
+            where: (record, { eq }) => eq(record.id, approvalReq.approvableId),
+          })
+        : null;
+    if (approvalReq.approvableType === 'invoice') {
+      const invoice = await tx.query.invoices.findFirst({
+        where: (record, { eq }) => eq(record.id, approvalReq.approvableId),
+      });
+      const invoicePo = invoice?.purchaseOrderId
+        ? await tx.query.purchaseOrders.findFirst({
+            where: (record, { eq }) => eq(record.id, invoice.purchaseOrderId!),
+          })
+        : null;
+      const invoiceReq = invoicePo?.requisitionId
+        ? await tx.query.requisitions.findFirst({
+            where: (record, { eq }) => eq(record.id, invoicePo.requisitionId!),
+          })
+        : null;
+      return {
+        departmentId: invoiceReq?.departmentId ?? null,
+        projectId: invoiceReq?.projectId ?? null,
+        entityId: invoice?.entityId ?? invoicePo?.entityId ?? null,
+      };
+    }
     const requisition = purchaseOrder?.requisitionId
       ? await tx.query.requisitions.findFirst({
           where: (record, { eq }) => eq(record.id, purchaseOrder.requisitionId!),
@@ -628,7 +676,9 @@ export class ApprovalEngineService {
   // Get auto-approved summary for the current calendar month
   async getAutoApprovedSummary(
     organizationId: string,
+    access?: AccessPolicy,
   ): Promise<{ count: number; totalAmount: number }> {
+    requirePermission(access, 'approvals:view');
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
@@ -669,13 +719,23 @@ export class ApprovalEngineService {
     const poIds = rows
       .filter((r) => r.approvableType === 'purchase_order')
       .map((r) => r.approvableId);
+    const invoiceIds = rows
+      .filter((r) => r.approvableType === 'invoice')
+      .map((r) => r.approvableId);
 
-    const [reqMap, poMap]: [Record<string, any>, Record<string, any>] = await Promise.all([
+    const [reqMap, poMap, invoiceMap]: [
+      Record<string, any>,
+      Record<string, any>,
+      Record<string, any>,
+    ] = await Promise.all([
       reqIds.length
         ? this.db
             .execute(
               sql`
-        SELECT id, number, title, total_amount AS amount, status FROM requisitions WHERE id = ANY(${sql.raw(`ARRAY[${reqIds.map((i) => `'${i}'`).join(',')}]::uuid[]`)})
+        SELECT id, number, title, total_amount AS amount, status,
+          department_id AS "departmentId", project_id AS "projectId", NULL::uuid AS "entityId"
+        FROM requisitions
+        WHERE id = ANY(${sql.raw(`ARRAY[${reqIds.map((i) => `'${i}'`).join(',')}]::uuid[]`)})
       `,
             )
             .then((rows) => Object.fromEntries((rows as any[]).map((r) => [r.id, r])))
@@ -684,9 +744,29 @@ export class ApprovalEngineService {
         ? this.db
             .execute(
               sql`
-        SELECT po.id, po.internal_number AS number, v.name AS "vendorName", po.total_amount AS amount, po.status
-        FROM purchase_orders po LEFT JOIN vendors v ON v.id = po.vendor_id
+        SELECT po.id, po.number, v.name AS "vendorName", po.total_amount AS amount, po.status,
+          r.department_id AS "departmentId", r.project_id AS "projectId", po.entity_id AS "entityId"
+        FROM purchase_orders po
+        LEFT JOIN requisitions r ON r.id = po.requisition_id
+        LEFT JOIN vendors v ON v.id = po.vendor_id
         WHERE po.id = ANY(${sql.raw(`ARRAY[${poIds.map((i) => `'${i}'`).join(',')}]::uuid[]`)})
+      `,
+            )
+            .then((rows) => Object.fromEntries((rows as any[]).map((r) => [r.id, r])))
+        : {},
+      invoiceIds.length
+        ? this.db
+            .execute(
+              sql`
+        SELECT i.id, i.internal_number AS "internalNumber", i.invoice_number AS "invoiceNumber",
+          v.name AS "vendorName", i.total_amount AS amount, i.currency, i.match_status AS "matchStatus",
+          i.due_date AS "dueDate", i.status, i.entity_id AS "entityId",
+          r.department_id AS "departmentId", r.project_id AS "projectId"
+        FROM invoices i
+        LEFT JOIN vendors v ON v.id = i.vendor_id
+        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+        LEFT JOIN requisitions r ON r.id = po.requisition_id
+        WHERE i.id = ANY(${sql.raw(`ARRAY[${invoiceIds.map((i) => `'${i}'`).join(',')}]::uuid[]`)})
       `,
             )
             .then((rows) => Object.fromEntries((rows as any[]).map((r) => [r.id, r])))
@@ -695,28 +775,36 @@ export class ApprovalEngineService {
 
     return rows.map((r) => {
       const entity =
-        r.approvableType === 'requisition' ? reqMap[r.approvableId] : poMap[r.approvableId];
+        r.approvableType === 'requisition'
+          ? reqMap[r.approvableId]
+          : r.approvableType === 'purchase_order'
+            ? poMap[r.approvableId]
+            : invoiceMap[r.approvableId];
       return { ...r, entitySummary: entity ?? null };
     });
   }
 
   // Get approval request with actions and rule steps
-  async getRequest(id: string, organizationId: string) {
+  async getRequest(id: string, organizationId: string, _actorId?: string, access?: AccessPolicy) {
+    requireAnyPermission(access, ['approvals:view', 'approvals:act']);
     const req = await this.db.query.approvalRequests.findFirst({
-      where: (r, { eq }) => eq(r.id, id),
+      where: (r, { and, eq }) => and(eq(r.id, id), eq(r.organizationId, organizationId)),
       with: {
         actions: { orderBy: (a, { asc }) => asc(a.actedAt) },
         rule: { with: { steps: true } },
       },
     });
     if (!req) throw new NotFoundException(`Approval request ${id} not found`);
-    await this.assertApprovalRequestOrganization(this.db, req, organizationId);
     const [enriched] = await this.enrichWithEntityInfo([req]);
+    if (!scopeAllowsApproval(access, enriched.entitySummary ?? {})) {
+      throw new NotFoundException(`Approval request ${id} not found`);
+    }
     return enriched;
   }
 
   // List all pending requests for an organization.
-  async listPending(organizationId: string) {
+  async listPending(organizationId: string, actorId?: string, access?: AccessPolicy) {
+    requirePermission(access, 'approvals:view');
     const rows = await this.db.query.approvalRequests.findMany({
       where: (record, { and, eq }) =>
         and(eq(record.organizationId, organizationId), eq(record.status, 'pending')),
@@ -726,7 +814,28 @@ export class ApprovalEngineService {
       },
       orderBy: (r, { asc }) => asc(r.createdAt),
     });
-    return this.enrichWithEntityInfo(rows);
+    const actor = actorId
+      ? await this.db.query.users.findFirst({
+          where: (user, { and, eq }) =>
+            and(eq(user.id, actorId), eq(user.organizationId, organizationId)),
+          with: { userRoles: true },
+        })
+      : null;
+    const enriched = await this.enrichWithEntityInfo(rows);
+    return enriched.filter((row) => {
+      const currentStep = row.rule?.steps?.find(
+        (step: { stepOrder: number }) => step.stepOrder === row.currentStep,
+      );
+      const roleAssigned = currentStep?.approverRole
+        ? actor?.userRoles.some((assignment) => assignment.role === currentStep.approverRole)
+        : false;
+      const actorAssigned =
+        !actorId ||
+        row.requiredApproverId === actorId ||
+        currentStep?.approverId === actorId ||
+        roleAssigned;
+      return actorAssigned && scopeAllowsApproval(access, row.entitySummary ?? {});
+    });
   }
 
   // Process an approve or reject action
@@ -736,11 +845,14 @@ export class ApprovalEngineService {
     action: 'approve' | 'reject',
     comment: string | undefined,
     organizationId: string,
+    access?: AccessPolicy,
   ) {
+    requirePermission(access, 'approvals:act');
     if (
       this.workflowExecution &&
       (await this.workflowExecution.isVersionedRequest(requestId, organizationId))
     ) {
+      await this.getRequest(requestId, organizationId, actorId, access);
       return this.workflowExecution.processAction(
         requestId,
         actorId,
@@ -757,6 +869,10 @@ export class ApprovalEngineService {
         .for('update');
       if (!approvalReq) throw new NotFoundException(`Approval request ${requestId} not found`);
       await this.assertApprovalRequestOrganization(tx, approvalReq, organizationId);
+      const approvalScope = await this.getApprovalScope(tx, approvalReq);
+      if (!scopeAllowsApproval(access, approvalScope)) {
+        throw new ForbiddenException('This approval request is outside your assigned scope');
+      }
       if (approvalReq.status !== 'pending') {
         throw new BadRequestException(`Request is already ${approvalReq.status}`);
       }

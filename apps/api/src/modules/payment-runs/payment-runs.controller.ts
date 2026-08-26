@@ -8,6 +8,8 @@ import {
   PaymentRunsService,
   SubmitPaymentRunInput,
 } from './payment-runs.service';
+import { CurrentAccess } from '../auth/current-access.decorator';
+import type { AccessPolicy } from '../auth/access-policy';
 
 @ApiTags('payment-runs')
 @ApiBearerAuth()
@@ -17,27 +19,35 @@ export class PaymentRunsController {
 
   @Get('summary')
   @ApiOperation({ summary: 'Payment run summary' })
-  summary(@CurrentOrgId() orgId: string) {
-    return this.paymentRunsService.summary(orgId);
+  summary(@CurrentOrgId() orgId: string, @CurrentAccess() access?: AccessPolicy) {
+    return this.paymentRunsService.summary(orgId, access);
   }
 
   @Get('eligible-invoices')
   @ApiOperation({ summary: 'Approved unpaid invoices eligible for payment runs' })
-  eligibleInvoices(@CurrentOrgId() orgId: string) {
-    return this.paymentRunsService.eligibleInvoices(orgId);
+  eligibleInvoices(@CurrentOrgId() orgId: string, @CurrentAccess() access?: AccessPolicy) {
+    return this.paymentRunsService.eligibleInvoices(orgId, access);
   }
 
   @Get('vendor-accounts')
   @ApiOperation({ summary: 'List vendor payment accounts' })
   @ApiQuery({ name: 'vendorId', required: false })
-  vendorAccounts(@CurrentOrgId() orgId: string, @Query('vendorId') vendorId?: string) {
-    return this.paymentRunsService.vendorAccounts(orgId, vendorId);
+  vendorAccounts(
+    @CurrentOrgId() orgId: string,
+    @Query('vendorId') vendorId?: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.paymentRunsService.vendorAccounts(orgId, vendorId, access);
   }
 
   @Post('vendor-accounts')
   @ApiOperation({ summary: 'Create a tokenized/masked vendor payment account' })
-  createVendorAccount(@CurrentOrgId() orgId: string, @Body() body: CreateVendorPaymentAccountInput) {
-    return this.paymentRunsService.createVendorAccount(orgId, body);
+  createVendorAccount(
+    @CurrentOrgId() orgId: string,
+    @Body() body: CreateVendorPaymentAccountInput,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.paymentRunsService.createVendorAccount(orgId, body, access);
   }
 
   @Patch('vendor-accounts/:id/verify')
@@ -46,21 +56,30 @@ export class PaymentRunsController {
     @Param('id') id: string,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.paymentRunsService.verifyVendorAccount(id, orgId, userId);
+    return this.paymentRunsService.verifyVendorAccount(id, orgId, userId, access);
   }
 
   @Get()
   @ApiOperation({ summary: 'List payment runs' })
   @ApiQuery({ name: 'status', required: false })
-  findAll(@CurrentOrgId() orgId: string, @Query('status') status?: string) {
-    return this.paymentRunsService.findAll(orgId, status);
+  findAll(
+    @CurrentOrgId() orgId: string,
+    @Query('status') status?: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.paymentRunsService.findAll(orgId, status, access);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get payment run by ID' })
-  findOne(@Param('id') id: string, @CurrentOrgId() orgId: string) {
-    return this.paymentRunsService.findOne(id, orgId);
+  findOne(
+    @Param('id') id: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.paymentRunsService.findOne(id, orgId, access);
   }
 
   @Post()
@@ -69,14 +88,20 @@ export class PaymentRunsController {
     @Body() body: CreatePaymentRunInput,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.paymentRunsService.create(orgId, userId, body);
+    return this.paymentRunsService.create(orgId, userId, body, access);
   }
 
   @Patch(':id/approve')
   @ApiOperation({ summary: 'Approve a payment run for submission' })
-  approve(@Param('id') id: string, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
-    return this.paymentRunsService.approve(id, orgId, userId);
+  approve(
+    @Param('id') id: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.paymentRunsService.approve(id, orgId, userId, access);
   }
 
   @Patch(':id/submit')
@@ -86,8 +111,9 @@ export class PaymentRunsController {
     @Body() body: SubmitPaymentRunInput,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.paymentRunsService.submit(id, orgId, userId, body);
+    return this.paymentRunsService.submit(id, orgId, userId, body, access);
   }
 
   @Patch(':id/cancel')
@@ -97,7 +123,8 @@ export class PaymentRunsController {
     @Body() body: { reason?: string },
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.paymentRunsService.cancel(id, orgId, userId, body?.reason);
+    return this.paymentRunsService.cancel(id, orgId, userId, body?.reason, access);
   }
 }

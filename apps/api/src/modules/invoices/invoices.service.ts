@@ -40,6 +40,70 @@ import { resolveIndependentInvoiceApprover } from './invoice-approval-policy';
 import { WorkflowExecutionService } from '../workflow-execution/workflow-execution.service';
 import { changedMaterialInvoiceFields, type MaterialInvoiceState } from './invoice-material-edit';
 import { calculateInvoiceLineAmounts } from './invoice-money';
+import type { AccessPolicy } from '../auth/access-policy';
+import {
+  permissionScopePredicate,
+  requireAnyPermission,
+  requirePermission,
+} from '../auth/access-scope';
+
+function invoiceScopePredicates(organizationId: string) {
+  const poScope = (condition: ReturnType<typeof sql>) =>
+    sql`${invoices.purchaseOrderId} IN (
+      SELECT ${purchaseOrders.id}
+      FROM ${purchaseOrders}
+      LEFT JOIN requisitions ON ${requisitions.id} = ${purchaseOrders.requisitionId}
+      WHERE ${purchaseOrders.organizationId} = ${organizationId}
+        AND ${condition}
+    )`;
+  return {
+    own: (userId: string) => sql`(
+      ${invoices.createdBy} = ${userId}
+      OR ${poScope(sql`${requisitions.requesterId} = ${userId}`)}
+    )`,
+    department: (departmentId: string) =>
+      poScope(sql`${requisitions.departmentId} = ${departmentId}`),
+    project: (projectId: string) => poScope(sql`${requisitions.projectId} = ${projectId}`),
+    entity: (entityId: string) => eq(invoices.entityId, entityId),
+  };
+}
+
+function assertInvoiceScope(
+  access: AccessPolicy | undefined,
+  permission: 'invoices:manage' | 'invoices:approve' | 'payments:manage',
+  invoice: {
+    entityId: string | null;
+    createdBy: string | null;
+    purchaseOrder?: unknown;
+  },
+  actorId: string,
+) {
+  requirePermission(access, permission);
+  if (!access) return;
+  const resource = permission === 'payments:manage' ? 'payment' : 'invoice';
+  const scope = access.scopeFor(resource, permission);
+  const purchaseOrder = invoice.purchaseOrder as
+    | {
+        requisition?: {
+          requesterId: string;
+          departmentId: string | null;
+          projectId: string | null;
+        } | null;
+      }
+    | null
+    | undefined;
+  if (
+    scope.unrestricted ||
+    scope.entityIds.includes(invoice.entityId ?? '') ||
+    scope.departmentIds.includes(purchaseOrder?.requisition?.departmentId ?? '') ||
+    scope.projectIds.includes(purchaseOrder?.requisition?.projectId ?? '') ||
+    (scope.ownOnly &&
+      (invoice.createdBy === actorId || purchaseOrder?.requisition?.requesterId === actorId))
+  ) {
+    return;
+  }
+  throw new ForbiddenException('You do not have permission to access this invoice');
+}
 
 export type { UpdateInvoiceInput } from '@betterspend/shared';
 
@@ -201,10 +265,19 @@ export class InvoicesService {
     return new Map(records.map((record) => [record.id, record]));
   }
 
-  async findAll(organizationId: string, entityId?: string) {
+  async findAll(organizationId: string, entityId?: string, access?: AccessPolicy) {
     return this.db.query.invoices.findMany({
       where: (i, { and, eq }) =>
-        and(eq(i.organizationId, organizationId), entityId ? eq(i.entityId, entityId) : undefined),
+        and(
+          eq(i.organizationId, organizationId),
+          entityId ? eq(i.entityId, entityId) : undefined,
+          permissionScopePredicate(
+            access,
+            'invoice',
+            ['invoices:view_all', 'invoices:manage', 'invoices:approve'],
+            invoiceScopePredicates(organizationId),
+          ),
+        ),
       with: { vendor: true, purchaseOrder: true, entity: true },
       orderBy: (i, { desc }) => desc(i.createdAt),
     });
@@ -228,12 +301,43 @@ export class InvoicesService {
     return invoice;
   }
 
-  async findOne(id: string, organizationId: string) {
-    return this.findOneWithExecutor(id, organizationId, this.db);
+  async findOne(id: string, organizationId: string, access?: AccessPolicy) {
+    if (!access) return this.findOneWithExecutor(id, organizationId, this.db);
+    const invoice = await this.db.query.invoices.findFirst({
+      where: (i, { and, eq }) =>
+        and(
+          eq(i.id, id),
+          eq(i.organizationId, organizationId),
+          permissionScopePredicate(
+            access,
+            'invoice',
+            ['invoices:view_all', 'invoices:manage', 'invoices:approve'],
+            invoiceScopePredicates(organizationId),
+          ),
+        ),
+      with: {
+        vendor: true,
+        entity: true,
+        purchaseOrder: { with: { lines: true, requisition: true } },
+        lines: { with: { matchResults: true, taxCode: true } },
+      },
+    });
+    if (!invoice) throw new NotFoundException(`Invoice ${id} not found`);
+    return invoice;
   }
 
-  async update(id: string, organizationId: string, actorId: string, rawInput: UpdateInvoiceInput) {
+  async update(
+    id: string,
+    organizationId: string,
+    actorId: string,
+    rawInput: UpdateInvoiceInput,
+    access?: AccessPolicy,
+  ) {
     const input = updateInvoiceSchema.parse(rawInput);
+    if (access) {
+      const visibleInvoice = await this.findOne(id, organizationId, access);
+      assertInvoiceScope(access, 'invoices:manage', visibleInvoice, actorId);
+    }
     const result = await this.db.transaction(async (tx) => {
       const [lockedInvoice] = await tx
         .select()
@@ -635,7 +739,13 @@ export class InvoicesService {
     return result.invoice;
   }
 
-  async create(organizationId: string, createdBy: string, input: CreateInvoiceInput) {
+  async create(
+    organizationId: string,
+    createdBy: string,
+    input: CreateInvoiceInput,
+    access?: AccessPolicy,
+  ) {
+    requirePermission(access, 'invoices:create');
     let resolvedEntityId = input.entityId ?? null;
     let resolvedCurrency = input.currency ?? 'USD';
     let resolvedExchangeRate = input.exchangeRate ?? null;
@@ -810,7 +920,11 @@ export class InvoicesService {
     return created;
   }
 
-  async runMatch(id: string, organizationId: string, actorId: string) {
+  async runMatch(id: string, organizationId: string, actorId: string, access?: AccessPolicy) {
+    if (access) {
+      const visibleInvoice = await this.findOne(id, organizationId, access);
+      assertInvoiceScope(access, 'invoices:manage', visibleInvoice, actorId);
+    }
     const outcome = await this.db.transaction(async (tx) => {
       const [lockedInvoice] = await tx
         .select()
@@ -909,8 +1023,15 @@ export class InvoicesService {
     return outcome.match;
   }
 
-  async markPaid(id: string, organizationId: string, userId: string, input?: MarkPaidInput) {
-    const invoice = await this.findOne(id, organizationId);
+  async markPaid(
+    id: string,
+    organizationId: string,
+    userId: string,
+    input?: MarkPaidInput,
+    access?: AccessPolicy,
+  ) {
+    const invoice = await this.findOne(id, organizationId, access);
+    assertInvoiceScope(access, 'payments:manage', invoice, userId);
     if ((invoice as any).status !== 'approved') {
       throw new BadRequestException('Only approved invoices can be marked as paid');
     }
@@ -934,7 +1055,8 @@ export class InvoicesService {
     return updated;
   }
 
-  async getAgingReport(organizationId: string): Promise<AgingReport> {
+  async getAgingReport(organizationId: string, access?: AccessPolicy): Promise<AgingReport> {
+    requireAnyPermission(access, ['invoices:view_all', 'payments:view']);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -989,7 +1111,11 @@ export class InvoicesService {
     return result;
   }
 
-  async getCashFlowForecast(organizationId: string): Promise<CashFlowWeek[]> {
+  async getCashFlowForecast(
+    organizationId: string,
+    access?: AccessPolicy,
+  ): Promise<CashFlowWeek[]> {
+    requireAnyPermission(access, ['invoices:view_all', 'payments:view']);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -1025,7 +1151,8 @@ export class InvoicesService {
     return weeks;
   }
 
-  async getEarlyPaymentOpportunities(organizationId: string) {
+  async getEarlyPaymentOpportunities(organizationId: string, access?: AccessPolicy) {
+    requireAnyPermission(access, ['invoices:view_all', 'payments:view']);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const cutoff = new Date(today);
@@ -1046,11 +1173,17 @@ export class InvoicesService {
     });
   }
 
-  async bulkApprove(ids: string[], organizationId: string, approverId: string) {
+  async bulkApprove(
+    ids: string[],
+    organizationId: string,
+    approverId: string,
+    access?: AccessPolicy,
+  ) {
+    requirePermission(access, 'invoices:approve');
     const results: Array<{ id: string; success: boolean; error?: string }> = [];
     for (const id of ids) {
       try {
-        await this.approve(id, organizationId, approverId);
+        await this.approve(id, organizationId, approverId, access);
         results.push({ id, success: true });
       } catch (err: any) {
         results.push({ id, success: false, error: err.message });
@@ -1064,8 +1197,10 @@ export class InvoicesService {
     organizationId: string,
     reviewerId: string,
     input?: ResolveExceptionInput,
+    access?: AccessPolicy,
   ) {
-    const invoice = await this.findOne(id, organizationId);
+    const invoice = await this.findOne(id, organizationId, access);
+    assertInvoiceScope(access, 'invoices:manage', invoice, reviewerId);
     if (invoice.matchStatus !== 'exception') {
       throw new BadRequestException('Invoice does not have an active exception');
     }
@@ -1104,7 +1239,11 @@ export class InvoicesService {
     return resolved;
   }
 
-  async approve(id: string, organizationId: string, approverId: string) {
+  async approve(id: string, organizationId: string, approverId: string, access?: AccessPolicy) {
+    if (access) {
+      const visibleInvoice = await this.findOne(id, organizationId, access);
+      assertInvoiceScope(access, 'invoices:approve', visibleInvoice, approverId);
+    }
     const result = await this.db.transaction(async (tx) => {
       const [lockedInvoice] = await tx
         .select()
