@@ -54,9 +54,9 @@ export function scopePredicate(
     )})`;
   }
 
-  if (scope.unrestricted) return sql`true`;
-
   if (scope.ownOnly && !columns.owner) return sql`false`;
+
+  if (scope.unrestricted) return sql`true`;
 
   const dimensionClauses: SQL[] = [
     ...scope.departmentIds.map((id) =>
@@ -82,7 +82,9 @@ export function scopePredicate(
 
 export function globalOnlyPredicate(scope: ScopeConstraint | undefined): SQL {
   if (scope && isScopeIntersection(scope)) {
-    return scope.scopes.every((member) => member.unrestricted) ? sql`true` : sql`false`;
+    return scope.scopes.every((member) => member.unrestricted && !member.ownOnly)
+      ? sql`true`
+      : sql`false`;
   }
-  return !scope || scope.unrestricted ? sql`true` : sql`false`;
+  return !scope || (scope.unrestricted && !scope.ownOnly) ? sql`true` : sql`false`;
 }

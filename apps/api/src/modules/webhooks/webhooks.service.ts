@@ -1,11 +1,19 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable, Inject, NotFoundException, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Inject,
+  NotFoundException,
+  Logger,
+  OnModuleInit,
+} from '@nestjs/common';
 import type { Queue } from 'bullmq';
 import { eq, and, desc } from 'drizzle-orm';
 import { createHmac, randomBytes } from 'crypto';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { webhookEndpoints, webhookDeliveries } from '@betterspend/db';
+import * as webhookUrlPolicy from './webhook-url-policy';
 
 const MAX_ATTEMPTS = 5;
 const RETRY_DELAYS_MS = [0, 30_000, 120_000, 600_000, 3_600_000]; // 0s, 30s, 2m, 10m, 1h
@@ -67,18 +75,28 @@ export class WebhooksService implements OnModuleInit {
 
   async create(organizationId: string, input: CreateWebhookEndpointInput) {
     const secret = input.secret ?? randomBytes(32).toString('hex');
+    const url = await this.validateConfiguredUrl(input.url);
     const [endpoint] = await this.db
       .insert(webhookEndpoints)
-      .values({ organizationId, url: input.url, events: input.events, secret })
+      .values({ organizationId, url, events: input.events, secret })
       .returning();
     return endpoint;
   }
 
   async update(id: string, organizationId: string, input: UpdateWebhookEndpointInput) {
     await this.findOne(id, organizationId);
+    const changes: {
+      url?: string;
+      events?: string[];
+      isActive?: boolean;
+      updatedAt: Date;
+    } = { updatedAt: new Date() };
+    if (input.url !== undefined) changes.url = await this.validateConfiguredUrl(input.url);
+    if (input.events !== undefined) changes.events = input.events;
+    if (input.isActive !== undefined) changes.isActive = input.isActive;
     const [updated] = await this.db
       .update(webhookEndpoints)
-      .set({ ...input, updatedAt: new Date() })
+      .set(changes)
       .where(and(eq(webhookEndpoints.id, id), eq(webhookEndpoints.organizationId, organizationId)))
       .returning();
     return updated;
@@ -178,7 +196,8 @@ export class WebhooksService implements OnModuleInit {
     const attempt = (delivery.attempts ?? 0) + 1;
 
     try {
-      const response = await fetch(endpoint.url, {
+      const target = await webhookUrlPolicy.resolveSafeWebhookTarget(endpoint.url);
+      const response = await webhookUrlPolicy.requestPinnedWebhook(target, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -187,10 +206,7 @@ export class WebhooksService implements OnModuleInit {
           'X-BetterSpend-Delivery': deliveryId,
         },
         body,
-        signal: AbortSignal.timeout(10_000),
       });
-
-      const responseBody = await response.text().catch(() => '');
 
       if (response.ok) {
         await this.db
@@ -199,7 +215,7 @@ export class WebhooksService implements OnModuleInit {
             status: 'delivered',
             attempts: attempt,
             responseStatus: response.status,
-            responseBody,
+            responseBody: response.body,
             deliveredAt: new Date(),
             nextRetryAt: null,
             updatedAt: new Date(),
@@ -209,7 +225,7 @@ export class WebhooksService implements OnModuleInit {
       }
 
       // Non-2xx: schedule retry
-      await this.scheduleRetryOrFail(deliveryId, attempt, response.status, responseBody);
+      await this.scheduleRetryOrFail(deliveryId, attempt, response.status, response.body);
     } catch (err: unknown) {
       this.logger.warn(`Webhook delivery ${deliveryId} attempt ${attempt} failed: ${String(err)}`);
       await this.scheduleRetryOrFail(deliveryId, attempt, null, String(err));
@@ -271,5 +287,17 @@ export class WebhooksService implements OnModuleInit {
         removeOnFail: true,
       },
     );
+  }
+
+  private async validateConfiguredUrl(rawUrl: string): Promise<string> {
+    try {
+      const target = await webhookUrlPolicy.resolveSafeWebhookTarget(rawUrl);
+      return `${target.protocol}//${target.hostHeader}${target.path}`;
+    } catch (error: unknown) {
+      if (error instanceof webhookUrlPolicy.WebhookUrlPolicyError) {
+        throw new BadRequestException(error.message);
+      }
+      throw error;
+    }
   }
 }

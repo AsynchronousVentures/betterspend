@@ -4,6 +4,7 @@ import {
   WebhookDeliveryProcessor,
   type WebhookRetryJobData,
 } from './webhook-delivery.processor';
+import * as webhookUrlPolicy from './webhook-url-policy';
 import { WebhooksService } from './webhooks.service';
 
 interface DeliveryRecord {
@@ -89,8 +90,19 @@ function createDurableHarness() {
 }
 
 describe('durable webhook retries', () => {
+  const safeTarget: webhookUrlPolicy.SafeWebhookTarget = {
+    protocol: 'https:',
+    hostname: 'vendor.example',
+    hostHeader: 'vendor.example',
+    address: '93.184.216.34',
+    family: 4,
+    port: 443,
+    path: '/webhooks',
+  };
+
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-24T20:00:00Z'));
+    jest.spyOn(webhookUrlPolicy, 'resolveSafeWebhookTarget').mockResolvedValue(safeTarget);
   });
 
   afterEach(() => {
@@ -100,10 +112,10 @@ describe('durable webhook retries', () => {
 
   it('resumes one delayed delivery after the worker restarts', async () => {
     const harness = createDurableHarness();
-    const fetchMock = jest
-      .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(new Response('unavailable', { status: 503 }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const requestMock = jest
+      .spyOn(webhookUrlPolicy, 'requestPinnedWebhook')
+      .mockResolvedValueOnce({ status: 503, body: 'unavailable', ok: false })
+      .mockResolvedValueOnce({ status: 204, body: '', ok: true });
     const firstProcess = new WebhooksService(harness.db, harness.queue);
 
     await firstProcess.dispatchEvent(
@@ -123,7 +135,7 @@ describe('durable webhook retries', () => {
     const processor = new WebhookDeliveryProcessor(restartedProcess);
     await processor.process({ name: retryJob.name, data: retryJob.data } as never);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(requestMock).toHaveBeenCalledTimes(2);
     expect(harness.deliveries).toHaveLength(1);
     expect(harness.deliveries[0]).toMatchObject({
       status: 'delivered',
@@ -138,7 +150,9 @@ describe('durable webhook retries', () => {
 
   it('records each backoff and stops after the fifth failed attempt', async () => {
     const harness = createDurableHarness();
-    jest.spyOn(global, 'fetch').mockResolvedValue(new Response('unavailable', { status: 503 }));
+    jest
+      .spyOn(webhookUrlPolicy, 'requestPinnedWebhook')
+      .mockResolvedValue({ status: 503, body: 'unavailable', ok: false });
     const service = new WebhooksService(harness.db, harness.queue);
     const processor = new WebhookDeliveryProcessor(service);
 
@@ -178,9 +192,9 @@ describe('durable webhook retries', () => {
   it('enqueues a past-due retrying delivery when the module starts', async () => {
     const harness = createDurableHarness();
     jest
-      .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(new Response('unavailable', { status: 503 }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      .spyOn(webhookUrlPolicy, 'requestPinnedWebhook')
+      .mockResolvedValueOnce({ status: 503, body: 'unavailable', ok: false })
+      .mockResolvedValueOnce({ status: 204, body: '', ok: true });
     const firstProcess = new WebhooksService(harness.db, harness.queue);
 
     await firstProcess.dispatchEvent(
@@ -203,7 +217,9 @@ describe('durable webhook retries', () => {
 
   it('lets startup replace a retry job that failed before advancing the delivery', async () => {
     const harness = createDurableHarness();
-    jest.spyOn(global, 'fetch').mockResolvedValue(new Response('unavailable', { status: 503 }));
+    jest
+      .spyOn(webhookUrlPolicy, 'requestPinnedWebhook')
+      .mockResolvedValue({ status: 503, body: 'unavailable', ok: false });
     const firstProcess = new WebhooksService(harness.db, harness.queue);
 
     await firstProcess.dispatchEvent(

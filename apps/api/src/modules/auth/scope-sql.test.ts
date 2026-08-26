@@ -40,6 +40,16 @@ test('scope predicates keep own-only grants tied to the owner column', () => {
   assert.ok(query.params.includes('department-1'));
 });
 
+test('scope predicates fail closed when an unrestricted own-only grant has no owner column', () => {
+  const query = new PgDialect().sqlToQuery(
+    scopePredicate({ ...scoped, unrestricted: true, ownOnly: true }, {
+      department: sql`r.department_id`,
+    }),
+  );
+
+  assert.match(query.sql, /false/);
+});
+
 test('global-only predicates distinguish global and scoped grants', () => {
   const scopedQuery = new PgDialect().sqlToQuery(globalOnlyPredicate(scoped));
   const globalQuery = new PgDialect().sqlToQuery(
