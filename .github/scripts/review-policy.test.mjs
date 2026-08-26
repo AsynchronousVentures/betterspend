@@ -22,6 +22,11 @@ test('uses native approvals instead of a polling review gate', () => {
   assert.match(reviewPolicy, /approval from Macroscope Approvability or a human reviewer/);
 });
 
+test('leaves ready-for-review promotion to the watching agent', () => {
+  assert.doesNotMatch(workflow, /gh pr ready|pull-requests: write/);
+  assert.match(reviewPolicy, /run `gh pr ready <PR URL>`/);
+});
+
 test('keeps CodeRabbit manual', () => {
   assert.match(
     codeRabbitConfig,

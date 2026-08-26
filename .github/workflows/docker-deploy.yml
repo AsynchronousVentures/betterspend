@@ -1,7 +1,7 @@
 name: Docker CI/CD
 
 # Flow:
-#   draft PR          -> fast CI -> ready for review -> Macroscope or human approval
+#   draft PR          -> fast CI -> agent marks ready -> Macroscope or human approval
 #   merge group       -> full CI -> validate result
 #   push to main      -> reuse exact-SHA CI proof (or full CI) -> publish immutable images
 #   push v* tag       -> reuse exact-SHA CI proof (or full CI) -> promote -> deploy
@@ -29,7 +29,7 @@ on:
 permissions:
   checks: read
   contents: read
-  pull-requests: write
+  pull-requests: read
 
 concurrency:
   group: betterspend-${{ github.ref }}
@@ -64,13 +64,6 @@ jobs:
 
       - name: Run local CI preflight
         run: pnpm ci:preflight
-
-      - name: Mark PR Ready for Review
-        if: github.event.pull_request.draft == true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr ready "$PR_URL"
 
   full-ci-proof:
     name: Full CI Proof

@@ -2,7 +2,7 @@
 
 Run `pnpm ci:preflight` locally before the first push. Use `pnpm ci:preflight:docker` to check production images explicitly. The shared pre-push hook automatically selects the Docker tier when Dockerfiles, workspace package manifests, the lockfile, Compose files, or deployment packaging changed.
 
-Open agent-authored pull requests as drafts. Fast CI runs before external review and marks a passing draft ready for review. Macroscope then reviews the verified candidate.
+Open agent-authored pull requests as drafts. Fast CI runs before external review. After Fast CI passes on the latest head, the watching agent must run `gh pr ready <PR URL>`. Leave a failing PR as a draft and fix it before promotion. Macroscope then reviews the verified candidate.
 
 Macroscope is the primary reviewer. Its correctness, security, migration-history, and approvability checks run automatically after promotion. Approvability supplies the required approval for routine changes. If Macroscope withholds approval, a human reviewer decides whether to approve. Triage every Macroscope finding.
 

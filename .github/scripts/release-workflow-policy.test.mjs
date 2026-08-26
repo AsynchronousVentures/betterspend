@@ -179,16 +179,13 @@ test('deploys the validated release tag and runs the shared preflight in fast CI
 });
 
 test('avoids duplicate Blacksmith work for promoted PRs and validated commits', () => {
-  assert.match(workflow, /permissions:\n  checks: read\n  contents: read\n  pull-requests: write/);
+  assert.match(workflow, /permissions:\n  checks: read\n  contents: read\n  pull-requests: read/);
   assert.match(
     workflow,
     /pull_request:\n    types:\n      - opened\n      - reopened\n      - synchronize/,
   );
-  assert.match(
-    workflow,
-    /name: Mark PR Ready for Review[\s\S]*?if: github\.event\.pull_request\.draft == true[\s\S]*?GH_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}[\s\S]*?PR_URL: \$\{\{ github\.event\.pull_request\.html_url \}\}[\s\S]*?gh pr ready "\$PR_URL"/,
-  );
   assert.match(workflow, /name: Fast CI[\s\S]*?timeout-minutes: 15/);
+  assert.doesNotMatch(workflow, /Mark PR Ready for Review|gh pr ready/);
   assert.doesNotMatch(workflow, /review-gate|Review Gate|REVIEW_GATE_RESULT/);
   assert.match(workflow, /name: Full CI Proof/);
   assert.match(workflow, /check-runs\?filter=all&per_page=100/);

@@ -170,7 +170,7 @@ Single-context: one root `CONTEXT.md` plus `docs/adr/`. See `docs/agents/domain.
 
 ## PR review etiquette
 
-- Follow `docs/agents/pr-review-policy.md`. Open agent-authored pull requests as drafts; Fast CI promotes passing drafts and starts Macroscope. Approvability handles routine approvals, while a human reviews changes Macroscope will not approve.
+- Follow `docs/agents/pr-review-policy.md`. Open agent-authored pull requests as drafts. After Fast CI passes on the latest head, run `gh pr ready <PR URL>` to start Macroscope. Approvability handles routine approvals, while a human reviews changes Macroscope will not approve.
 - Run `pnpm ci:preflight` before the first push. Use `pnpm ci:preflight:docker` to check production images explicitly. The pre-push hook automatically selects the Docker tier when packaging inputs changed.
 - CodeRabbit is manual and advisory. Request it only for security, migration, approval, or organization-boundary changes after Macroscope findings are triaged. Request a follow-up only when one of its valid findings caused a material code change.
 - After verifying each Macroscope finding, react with 👍 when it was useful or 👎 when it was not. Teach CodeRabbit lasting preferences through a direct `@coderabbitai` reply that explains why; do not turn one-off exceptions into learnings.
