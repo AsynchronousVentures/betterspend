@@ -1158,7 +1158,9 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
   for (const [index, req] of requisitionContext.entries()) {
     if (req.status !== 'approved' && req.status !== 'converted') continue;
     const id = stableUuid(seed, 'purchase-order', index);
-    const status = poStatuses[index % poStatuses.length] as string;
+    const status = (
+      index === 40 ? 'pending_approval' : poStatuses[index % poStatuses.length]
+    ) as string;
     const rate = index % 5 === 0 ? 0.2 : index % 3 === 0 ? 0.0825 : 0;
     const tax = Math.round(req.totalCents * rate);
     const poCreatedAt = dateAfter(
@@ -1261,6 +1263,39 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
       createdAt: poCreatedAt,
       updatedAt: poUpdatedAt,
     });
+    if (status === 'pending_approval') {
+      const approvalId = stableUuid(seed, 'purchase-order-approval-request', index);
+      rows.approvalRequests.push({
+        id: approvalId,
+        organizationId: DEMO_ORG_ID,
+        approvableType: 'purchase_order',
+        approvableId: id,
+        approvalRuleId: ruleIds[index % ruleIds.length],
+        initiatedBy: req.requesterId,
+        workflowContext: { generatedIndex: index, seededFixture: 'purchase-order-approval' },
+        attempt: 1,
+        currentStep: 1,
+        status: 'pending',
+        requiredApproverId: DEMO_APPROVER_ID,
+        requiredApprovalStep: 1,
+        requiredApprovalReason: 'Synthetic purchase order approval pending.',
+        requiredApprovalKey: `demo:purchase-order:${approvalId}:1`,
+        createdAt: poCreatedAt,
+        updatedAt: poUpdatedAt,
+      });
+      rows.approvalActions.push({
+        id: stableUuid(seed, 'purchase-order-approval-action', index),
+        approvalRequestId: approvalId,
+        stepOrder: 1,
+        approverId: undefined,
+        action: 'requested',
+        comment: 'Awaiting synthetic purchase order approval.',
+        nodeId: 'approval-step-1',
+        metadata: { demo: true, seededFixture: 'purchase-order-approval' },
+        actedAt: poCreatedAt,
+        createdAt: poCreatedAt,
+      });
+    }
     rows.poVersions.push({
       id: stableUuid(seed, 'po-version', index),
       purchaseOrderId: id,
@@ -1711,13 +1746,15 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
     if (!['partially_invoiced', 'invoiced', 'closed'].includes(po.status)) continue;
     const id = stableUuid(seed, 'invoice', index);
     const status =
-      index % 11 === 0
-        ? 'rejected'
-        : index % 7 === 6
-          ? 'paid'
-          : index % 5 === 0
-            ? 'approved'
-            : 'pending_match';
+      index === 5
+        ? 'pending_approval'
+        : index % 11 === 0
+          ? 'rejected'
+          : index % 7 === 6
+            ? 'paid'
+            : index % 5 === 0
+              ? 'approved'
+              : 'pending_match';
     const invoiceDate = dateAfter(
       po.receivedAt ?? po.issuedAt ?? po.createdAt,
       seed,
@@ -1762,7 +1799,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
     const match =
       index % 11 === 0
         ? 'exception'
-        : index % 5 === 0 || status === 'paid'
+        : index % 5 === 0 || status === 'paid' || status === 'pending_approval'
           ? 'full_match'
           : 'partial_match';
     const docId = stableUuid(seed, 'invoice-document', index);
@@ -1817,6 +1854,39 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
       createdAt: invoiceDate,
       updatedAt: invoiceUpdatedAt,
     });
+    if (status === 'pending_approval') {
+      const approvalId = stableUuid(seed, 'invoice-approval-request', index);
+      rows.approvalRequests.push({
+        id: approvalId,
+        organizationId: DEMO_ORG_ID,
+        approvableType: 'invoice',
+        approvableId: id,
+        approvalRuleId: ruleIds[index % ruleIds.length],
+        initiatedBy: DEMO_REQUESTER_ID,
+        workflowContext: { generatedIndex: index, seededFixture: 'invoice-approval' },
+        attempt: 1,
+        currentStep: 1,
+        status: 'pending',
+        requiredApproverId: DEMO_APPROVER_ID,
+        requiredApprovalStep: 1,
+        requiredApprovalReason: 'Synthetic invoice approval pending.',
+        requiredApprovalKey: `demo:invoice:${approvalId}:1`,
+        createdAt: invoiceDate,
+        updatedAt: invoiceUpdatedAt,
+      });
+      rows.approvalActions.push({
+        id: stableUuid(seed, 'invoice-approval-action', index),
+        approvalRequestId: approvalId,
+        stepOrder: 1,
+        approverId: undefined,
+        action: 'requested',
+        comment: 'Awaiting synthetic invoice approval.',
+        nodeId: 'approval-step-1',
+        metadata: { demo: true, seededFixture: 'invoice-approval' },
+        actedAt: invoiceDate,
+        createdAt: invoiceDate,
+      });
+    }
     let allocatedTaxCents = 0;
     for (const [taxableIndex, item] of invoiceLineData.entries()) {
       const { line, poLineId, source, quantity, lineTotal } = item;
@@ -2437,22 +2507,26 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
     rows.notifications.push({
       id: stableUuid(seed, 'invoice-notification', index),
       organizationId: DEMO_ORG_ID,
-      userId: DEMO_ADMIN_ID,
+      userId: invoice.status === 'pending_approval' ? DEMO_APPROVER_ID : DEMO_ADMIN_ID,
       type:
-        invoice.status === 'pending_match' || invoice.status === 'rejected'
-          ? 'invoice_exception'
-          : 'invoice_approved',
+        invoice.status === 'pending_approval'
+          ? 'approval_request'
+          : invoice.status === 'pending_match' || invoice.status === 'rejected'
+            ? 'invoice_exception'
+            : 'invoice_approved',
       title:
-        invoice.status === 'pending_match'
-          ? 'Invoice match requires review'
-          : invoice.status === 'rejected'
-            ? 'Invoice rejected'
-            : 'Invoice approved',
+        invoice.status === 'pending_approval'
+          ? 'Approval needed for invoice'
+          : invoice.status === 'pending_match'
+            ? 'Invoice match requires review'
+            : invoice.status === 'rejected'
+              ? 'Invoice rejected'
+              : 'Invoice approved',
       body: 'Synthetic invoice notification.',
       entityType: 'invoice',
       entityId: invoice.id,
       readAt:
-        invoice.status === 'pending_match'
+        invoice.status === 'pending_match' || invoice.status === 'pending_approval'
           ? undefined
           : dateAfter(notificationCreatedAt, seed, 'invoice-notification-read', index, 1, 20),
       createdAt: notificationCreatedAt,

@@ -4,6 +4,7 @@ import {
   Optional,
   NotFoundException,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
 import { eq, and, ne, isNull, lte, gte, or, sql } from 'drizzle-orm';
@@ -1321,6 +1322,20 @@ export class InvoicesService {
         .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)))
         .for('update');
       if (!lockedInvoice) throw new NotFoundException(`Invoice ${id} not found`);
+      const activeApprovalRequest = await tx.query.approvalRequests.findFirst({
+        where: (request, { and, eq }) =>
+          and(
+            eq(request.organizationId, organizationId),
+            eq(request.approvableType, 'invoice'),
+            eq(request.approvableId, id),
+            eq(request.status, 'pending'),
+          ),
+      });
+      if (activeApprovalRequest) {
+        throw new ConflictException(
+          'This invoice has an active approval request. Complete it from the Approvals queue.',
+        );
+      }
       if (lockedInvoice.matchStatus !== 'full_match') {
         throw new BadRequestException('Invoice requires a full three-way match before approval');
       }

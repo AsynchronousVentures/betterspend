@@ -9,6 +9,14 @@ import { StatusBadge } from '../../components/status-badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
+import {
+  approvalEntityHref,
+  approvalEntityLabel,
+  formatApprovalAmount,
+  formatApprovalDate,
+  formatApprovalStatus,
+  type ApprovalEntitySummary,
+} from '../../lib/approval-records';
 
 interface ApprovalRequest {
   id: string;
@@ -18,15 +26,7 @@ interface ApprovalRequest {
   status: string;
   createdAt: string;
   rule?: { name: string };
-}
-
-function formatAmount(value: number | null | undefined) {
-  if (value == null) return '—';
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 0,
-  }).format(value);
+  entitySummary?: ApprovalEntitySummary | null;
 }
 
 export default function ApprovalsPage() {
@@ -81,11 +81,10 @@ export default function ApprovalsPage() {
               </TableHeader>
               <TableBody>
                 {approvals.map((approval) => {
-                  const entity = (approval as any).entitySummary;
-                  const entityHref =
-                    approval.approvableType === 'requisition'
-                      ? `/requisitions/${approval.approvableId}`
-                      : `/purchase-orders/${approval.approvableId}`;
+                  const entity = approval.entitySummary;
+                  const entityHref = approvalEntityHref(approval.approvableType, approval.approvableId);
+                  const entityLabel = approvalEntityLabel(approval.approvableType, entity);
+                  const isInvoice = approval.approvableType === 'invoice';
 
                   return (
                     <TableRow key={approval.id}>
@@ -95,16 +94,32 @@ export default function ApprovalsPage() {
                             {approval.approvableType.replace(/_/g, ' ')}
                           </div>
                           {entity ? (
-                            <Link href={entityHref} className="font-medium text-primary hover:underline">
-                              {entity.number}
-                              {entity.title ? ` — ${entity.title}` : entity.vendorName ? ` — ${entity.vendorName}` : ''}
-                            </Link>
+                            entityHref ? (
+                              <Link href={entityHref} className="font-medium text-primary hover:underline">
+                                {entityLabel}
+                              </Link>
+                            ) : (
+                              <span className="font-medium text-foreground">{entityLabel}</span>
+                            )
                           ) : (
                             <div className="font-mono text-xs text-muted-foreground">…{approval.approvableId.slice(-8)}</div>
                           )}
+                          {isInvoice && entity ? (
+                            <div className="text-xs text-muted-foreground">
+                              {entity.vendorName ?? 'Supplier not available'} · Match:{' '}
+                              {formatApprovalStatus(entity.matchStatus)} · Due:{' '}
+                              {formatApprovalDate(entity.dueDate)}
+                            </div>
+                          ) : entity?.title || entity?.vendorName ? (
+                            <div className="text-xs text-muted-foreground">
+                              {entity.title ?? entity.vendorName}
+                            </div>
+                          ) : null}
                         </div>
                       </TableCell>
-                      <TableCell className="font-medium text-foreground">{formatAmount(entity?.amount)}</TableCell>
+                      <TableCell className="font-medium text-foreground">
+                        {formatApprovalAmount(entity?.amount, entity?.currency)}
+                      </TableCell>
                       <TableCell className="text-muted-foreground">{approval.rule?.name ?? '—'}</TableCell>
                       <TableCell className="text-muted-foreground">Step {approval.currentStep}</TableCell>
                       <TableCell>

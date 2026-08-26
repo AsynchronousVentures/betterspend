@@ -98,6 +98,29 @@ test('generates identical graphs for the same seed and count', () => {
   assert.equal(first.requisitionLines.length > first.requisitions.length, true);
 });
 
+test('seeds representative requisition, purchase order, and invoice approvals', () => {
+  const dataset = generateRandomSeedDataset({ count: 500, seed: 'approval-fixtures' });
+  const pendingTypes = new Set(
+    dataset.approvalRequests
+      .filter((request) => request.status === 'pending')
+      .map((request) => request.approvableType),
+  );
+
+  assert.deepEqual([...pendingTypes].sort(), ['invoice', 'purchase_order', 'requisition']);
+  for (const type of pendingTypes) {
+    const request = dataset.approvalRequests.find(
+      (candidate) => candidate.status === 'pending' && candidate.approvableType === type,
+    );
+    assert.ok(request);
+    assert.equal(
+      dataset.approvalActions.some(
+        (action) => action.approvalRequestId === request.id && action.action === 'requested',
+      ),
+      true,
+    );
+  }
+});
+
 test('changes generated values for a different seed', () => {
   const first = generateRandomSeedDataset({ count: 8, seed: 'alpha' });
   const second = generateRandomSeedDataset({ count: 8, seed: 'beta' });
@@ -472,7 +495,11 @@ test('keeps generated money references and vendor fixture reconciliation keys co
   for (const notification of invoiceNotifications) {
     const invoice = invoicesById.get(notification.entityId ?? '');
     assert.ok(invoice);
-    if (invoice.status === 'pending_match') {
+    if (invoice.status === 'pending_approval') {
+      assert.equal(notification.type, 'approval_request');
+      assert.equal(notification.title, 'Approval needed for invoice');
+      assert.equal(notification.userId, DEMO_APPROVER_ID);
+    } else if (invoice.status === 'pending_match') {
       assert.equal(notification.type, 'invoice_exception');
       assert.equal(notification.title, 'Invoice match requires review');
     } else if (invoice.status === 'rejected') {

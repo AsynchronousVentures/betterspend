@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { isRecordKind, recordHref } from '@betterspend/shared';
 import {
   Bell,
   ChevronRight,
@@ -362,12 +363,6 @@ function EntitySwitcher() {
   );
 }
 
-const ENTITY_ROUTES: Record<string, string> = {
-  requisition: '/requisitions',
-  purchase_order: '/purchase-orders',
-  invoice: '/invoices',
-};
-
 function NotificationBell() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -447,9 +442,12 @@ function NotificationBell() {
     }
 
     setOpen(false);
-    if (notification.entityType && notification.entityId) {
-      const base = ENTITY_ROUTES[notification.entityType];
-      if (base) router.push(`${base}/${notification.entityId}`);
+    if (
+      notification.entityType &&
+      notification.entityId &&
+      isRecordKind(notification.entityType)
+    ) {
+      router.push(recordHref({ kind: notification.entityType, id: notification.entityId }));
     }
   }
 

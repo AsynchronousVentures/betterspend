@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { isRecordKind, recordHref } from '@betterspend/shared';
 import { api } from '../../lib/api';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -108,6 +110,10 @@ export default function AuditPage() {
                 {entries.map((entry) => {
                   const isExpanded = expanded === entry.id;
                   const hasChanges = entry.changes && Object.keys(entry.changes).length > 0;
+                  const detailHref =
+                    entry.entityId && isRecordKind(entry.entityType)
+                      ? recordHref({ kind: entry.entityType, id: entry.entityId })
+                      : null;
                   return (
                     <>
                       <TableRow
@@ -118,7 +124,15 @@ export default function AuditPage() {
                         <TableCell className="text-sm text-muted-foreground">{new Date(entry.createdAt).toLocaleString()}</TableCell>
                         <TableCell className="capitalize text-muted-foreground">{entry.entityType.replace('_', ' ')}</TableCell>
                         <TableCell className="capitalize text-foreground">{entry.action}</TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">{entry.entityId.slice(0, 8)}...</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {detailHref ? (
+                            <Link href={detailHref} className="text-primary hover:underline" onClick={(event) => event.stopPropagation()}>
+                              {entry.entityId.slice(0, 8)}...
+                            </Link>
+                          ) : (
+                            `${entry.entityId.slice(0, 8)}...`
+                          )}
+                        </TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">{entry.userId ? `${entry.userId.slice(0, 8)}...` : '—'}</TableCell>
                         <TableCell className="text-muted-foreground">{hasChanges ? (isExpanded ? '▲' : '▼') : ''}</TableCell>
                       </TableRow>
