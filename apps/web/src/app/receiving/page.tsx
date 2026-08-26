@@ -4,23 +4,15 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { PackageCheck, Plus } from 'lucide-react';
 import { api } from '../../lib/api';
+import { relatedRecordLink, type ReceivingListItem, type RelatedRecordLink } from '../../lib/receiving';
 import { PageHeader } from '../../components/page-header';
 import { StatusBadge } from '../../components/status-badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 
-interface GRN {
-  id: string;
-  number: string;
-  status: string;
-  receivedDate: string;
-  purchaseOrder: { number: string; vendor: { name: string } | null } | null;
-  lines: Array<{ quantityReceived: string }>;
-}
-
 export default function ReceivingPage() {
-  const [grns, setGrns] = useState<GRN[]>([]);
+  const [grns, setGrns] = useState<ReceivingListItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -77,15 +69,33 @@ export default function ReceivingPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {grns.map((grn) => (
+                {grns.map((grn) => {
+                  const purchaseOrderLink = relatedRecordLink(
+                    grn.purchaseOrder
+                      ? { id: grn.purchaseOrder.id, label: grn.purchaseOrder.number }
+                      : null,
+                    'purchase-orders',
+                  );
+                  const vendorLink = relatedRecordLink(
+                    grn.purchaseOrder?.vendor
+                      ? { id: grn.purchaseOrder.vendor.id, label: grn.purchaseOrder.vendor.name }
+                      : null,
+                    'vendors',
+                  );
+
+                  return (
                   <TableRow key={grn.id}>
                     <TableCell className="font-semibold">
                       <Link href={`/receiving/${grn.id}`} className="text-primary hover:underline">
                         {grn.number}
                       </Link>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{grn.purchaseOrder?.number ?? '—'}</TableCell>
-                    <TableCell className="text-muted-foreground">{grn.purchaseOrder?.vendor?.name ?? '—'}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      <RelatedLink link={purchaseOrderLink} />
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      <RelatedLink link={vendorLink} />
+                    </TableCell>
                     <TableCell className="text-muted-foreground">
                       {new Date(grn.receivedDate).toLocaleDateString()}
                     </TableCell>
@@ -96,12 +106,22 @@ export default function ReceivingPage() {
                       <StatusBadge value={grn.status} />
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           )}
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function RelatedLink({ link }: { link: RelatedRecordLink }) {
+  if (!link.href) return <span>{link.label}</span>;
+  return (
+    <Link href={link.href} className="text-primary hover:underline">
+      {link.label}
+    </Link>
   );
 }

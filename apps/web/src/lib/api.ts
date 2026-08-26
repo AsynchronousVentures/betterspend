@@ -7,6 +7,7 @@ import {
   vendorScreeningStatusSchema,
 } from '@betterspend/shared';
 import { apiUrl } from './api-url';
+import type { ReceivingDetail, ReceivingListItem } from './receiving';
 
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 
@@ -661,12 +662,12 @@ export const api = {
       apiFetch<{ count: number; totalAmount: number }>('/approvals/auto-approved-summary'),
   },
   receiving: {
-    list: () => apiFetch<any[]>('/receiving'),
-    get: (id: string) => apiFetch<any>(`/receiving/${id}`),
+    list: () => apiFetch<ReceivingListItem[]>('/receiving'),
+    get: (id: string) => apiFetch<ReceivingDetail>(`/receiving/${id}`),
     create: (data: unknown) =>
-      apiFetch<any>('/receiving', { method: 'POST', body: JSON.stringify(data) }),
-    confirm: (id: string) => apiFetch<any>(`/receiving/${id}/confirm`, { method: 'PATCH' }),
-    cancel: (id: string) => apiFetch<any>(`/receiving/${id}/cancel`, { method: 'PATCH' }),
+      apiFetch<ReceivingDetail>('/receiving', { method: 'POST', body: JSON.stringify(data) }),
+    confirm: (id: string) => apiFetch<ReceivingDetail>(`/receiving/${id}/confirm`, { method: 'PATCH' }),
+    cancel: (id: string) => apiFetch<ReceivingDetail>(`/receiving/${id}/cancel`, { method: 'PATCH' }),
   },
   budgets: {
     list: () => apiFetch<any[]>(appendEntityId('/budgets')),
