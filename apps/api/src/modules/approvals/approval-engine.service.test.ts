@@ -502,4 +502,12 @@ describe('ApprovalEngineService required approvals', () => {
     assert.ok(updateValues.some((values) => values.status === 'approved'));
     assert.ok(!updateValues.some((values) => values.currentStep === 6));
   });
+
+  it('does not list pending approvals without an actor identity', async () => {
+    const { service } = createService();
+
+    await assert.doesNotReject(async () => {
+      assert.deepEqual(await service.listPending('organization-1'), []);
+    });
+  });
 });

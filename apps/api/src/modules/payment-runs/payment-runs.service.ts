@@ -4,15 +4,34 @@ import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import {
   invoices,
+  auditLog,
   paymentRunEvents,
   paymentRunInvoices,
   paymentRuns,
   vendorPaymentAccounts,
   vendorVirtualCards,
+  vendors,
 } from '@betterspend/db';
 import { AuditService } from '../audit/audit.service';
+import type { AccessPolicy } from '../auth/access-policy';
+import {
+  permissionScopePredicate,
+  requireAnyPermission,
+  requirePermission,
+} from '../auth/access-scope';
 
 type PaymentMethod = 'ach' | 'wire' | 'check' | 'virtual_card' | 'manual';
+
+function vendorPaymentAccountScopePredicates(orgId: string) {
+  return {
+    entity: (entityId: string) => sql`${vendorPaymentAccounts.vendorId} IN (
+      SELECT ${vendors.id}
+      FROM ${vendors}
+      WHERE ${vendors.organizationId} = ${orgId}
+        AND ${vendors.entityId} = ${entityId}
+    )`,
+  };
+}
 
 export interface CreatePaymentRunInput {
   runDate?: string;
@@ -47,10 +66,18 @@ export class PaymentRunsService {
     private readonly audit: AuditService,
   ) {}
 
-  async eligibleInvoices(orgId: string) {
+  async eligibleInvoices(orgId: string, access?: AccessPolicy) {
+    requirePermission(access, 'payments:view');
     return this.db.query.invoices.findMany({
       where: (invoice, { and, eq, isNull }) =>
-        and(eq(invoice.organizationId, orgId), eq(invoice.status, 'approved'), isNull(invoice.paidAt)),
+        and(
+          eq(invoice.organizationId, orgId),
+          eq(invoice.status, 'approved'),
+          isNull(invoice.paidAt),
+          permissionScopePredicate(access, 'payment', ['payments:view', 'payments:manage'], {
+            entity: (entityId) => eq(invoice.entityId, entityId),
+          }),
+        ),
       with: {
         vendor: true,
         entity: true,
@@ -60,9 +87,17 @@ export class PaymentRunsService {
     });
   }
 
-  async findAll(orgId: string, status?: string) {
+  async findAll(orgId: string, status?: string, access?: AccessPolicy) {
+    requirePermission(access, 'payments:view');
     return this.db.query.paymentRuns.findMany({
-      where: (run, { and, eq }) => and(eq(run.orgId, orgId), status ? eq(run.status, status) : undefined),
+      where: (run, { and, eq }) =>
+        and(
+          eq(run.orgId, orgId),
+          status ? eq(run.status, status) : undefined,
+          permissionScopePredicate(access, 'payment', ['payments:view'], {
+            entity: (entityId) => eq(run.entityId, entityId),
+          }),
+        ),
       with: {
         entity: true,
         createdByUser: true,
@@ -82,9 +117,25 @@ export class PaymentRunsService {
     });
   }
 
-  async findOne(id: string, orgId: string) {
+  async findOne(
+    id: string,
+    orgId: string,
+    access?: AccessPolicy,
+    permissions: readonly ('payments:view' | 'payments:manage')[] = [
+      'payments:view',
+      'payments:manage',
+    ],
+  ) {
+    requireAnyPermission(access, permissions);
     const run = await this.db.query.paymentRuns.findFirst({
-      where: (paymentRun, { and, eq }) => and(eq(paymentRun.id, id), eq(paymentRun.orgId, orgId)),
+      where: (paymentRun, { and, eq }) =>
+        and(
+          eq(paymentRun.id, id),
+          eq(paymentRun.orgId, orgId),
+          permissionScopePredicate(access, 'payment', permissions, {
+            entity: (entityId) => eq(paymentRun.entityId, entityId),
+          }),
+        ),
       with: {
         entity: true,
         createdByUser: true,
@@ -109,7 +160,8 @@ export class PaymentRunsService {
     return run;
   }
 
-  async create(orgId: string, userId: string, input: CreatePaymentRunInput) {
+  async create(orgId: string, userId: string, input: CreatePaymentRunInput, access?: AccessPolicy) {
+    requirePermission(access, 'payments:manage');
     const invoiceIds = [...new Set(input.invoiceIds ?? [])];
     if (invoiceIds.length === 0) throw new BadRequestException('At least one invoice is required');
 
@@ -120,12 +172,17 @@ export class PaymentRunsService {
           inArray(invoice.id, invoiceIds),
           eq(invoice.status, 'approved'),
           isNull(invoice.paidAt),
+          permissionScopePredicate(access, 'payment', ['payments:manage'], {
+            entity: (entityId) => eq(invoice.entityId, entityId),
+          }),
         ),
       with: { vendor: true },
     });
 
     if (selectedInvoices.length !== invoiceIds.length) {
-      throw new BadRequestException('One or more invoices are not approved, unpaid, or in this organization');
+      throw new BadRequestException(
+        'One or more invoices are not approved, unpaid, or in this organization',
+      );
     }
 
     const currencies = new Set(selectedInvoices.map((invoice) => invoice.currency));
@@ -134,7 +191,10 @@ export class PaymentRunsService {
     }
 
     const entities = new Set(selectedInvoices.map((invoice) => invoice.entityId));
-    if (input.entityId && !selectedInvoices.every((invoice) => invoice.entityId === input.entityId)) {
+    if (
+      input.entityId &&
+      !selectedInvoices.every((invoice) => invoice.entityId === input.entityId)
+    ) {
       throw new BadRequestException('Selected invoices do not all belong to the requested entity');
     }
     if (!input.entityId && entities.size > 1) {
@@ -154,7 +214,8 @@ export class PaymentRunsService {
         .insert(paymentRuns)
         .values({
           orgId,
-          entityId: input.entityId ?? (entities.values().next().value as string | undefined) ?? null,
+          entityId:
+            input.entityId ?? (entities.values().next().value as string | undefined) ?? null,
           status: 'draft',
           runDate,
           scheduledDate: input.scheduledDate ?? runDate,
@@ -196,11 +257,12 @@ export class PaymentRunsService {
       })
       .catch(() => {});
 
-    return this.findOne(runId, orgId);
+    return this.findOne(runId, orgId, access);
   }
 
-  async approve(id: string, orgId: string, userId: string) {
-    const run = await this.findOne(id, orgId);
+  async approve(id: string, orgId: string, userId: string, access?: AccessPolicy) {
+    requirePermission(access, 'payments:manage');
+    const run = await this.findOne(id, orgId, access, ['payments:manage']);
     if (!['draft', 'pending_approval'].includes(run.status)) {
       throw new BadRequestException(`Cannot approve a payment run in status ${run.status}`);
     }
@@ -208,7 +270,12 @@ export class PaymentRunsService {
     await this.db.transaction(async (tx) => {
       await tx
         .update(paymentRuns)
-        .set({ status: 'approved', approvedBy: userId, approvedAt: new Date(), updatedAt: new Date() })
+        .set({
+          status: 'approved',
+          approvedBy: userId,
+          approvedAt: new Date(),
+          updatedAt: new Date(),
+        })
         .where(and(eq(paymentRuns.id, id), eq(paymentRuns.orgId, orgId)));
 
       await tx.insert(paymentRunEvents).values({
@@ -220,17 +287,25 @@ export class PaymentRunsService {
     });
 
     await this.audit.log(orgId, userId, 'payment_run', id, 'approved').catch(() => {});
-    return this.findOne(id, orgId);
+    return this.findOne(id, orgId, access, ['payments:manage']);
   }
 
-  async submit(id: string, orgId: string, userId: string, input: SubmitPaymentRunInput = {}) {
-    const run = await this.findOne(id, orgId);
+  async submit(
+    id: string,
+    orgId: string,
+    userId: string,
+    input: SubmitPaymentRunInput = {},
+    access?: AccessPolicy,
+  ) {
+    requirePermission(access, 'payments:manage');
+    const run = await this.findOne(id, orgId, access, ['payments:manage']);
     if (run.status !== 'approved') {
       throw new BadRequestException('Only approved payment runs can be submitted');
     }
 
     const paymentReference =
-      input.paymentReference?.trim() || `RUN-${new Date().toISOString().slice(0, 10)}-${id.slice(0, 8)}`;
+      input.paymentReference?.trim() ||
+      `RUN-${new Date().toISOString().slice(0, 10)}-${id.slice(0, 8)}`;
     const providerBatchId = input.providerBatchId?.trim() || null;
     const now = new Date();
 
@@ -266,7 +341,12 @@ export class PaymentRunsService {
         await tx
           .update(invoices)
           .set({ status: 'paid', paidAt: now, paymentReference, updatedAt: now })
-          .where(inArray(invoices.id, invoiceLinks.map((link) => link.invoiceId)));
+          .where(
+            inArray(
+              invoices.id,
+              invoiceLinks.map((link) => link.invoiceId),
+            ),
+          );
       }
 
       const cardRows = invoiceLinks.filter((link) => link.paymentMethod === 'virtual_card');
@@ -305,11 +385,12 @@ export class PaymentRunsService {
       .log(orgId, userId, 'payment_run', id, 'submitted', { paymentReference, providerBatchId })
       .catch(() => {});
 
-    return this.findOne(id, orgId);
+    return this.findOne(id, orgId, access, ['payments:manage']);
   }
 
-  async cancel(id: string, orgId: string, userId: string, reason?: string) {
-    const run = await this.findOne(id, orgId);
+  async cancel(id: string, orgId: string, userId: string, reason?: string, access?: AccessPolicy) {
+    requirePermission(access, 'payments:manage');
+    const run = await this.findOne(id, orgId, access, ['payments:manage']);
     if (['paid', 'cancelled'].includes(run.status)) {
       throw new BadRequestException(`Cannot cancel a payment run in status ${run.status}`);
     }
@@ -334,39 +415,92 @@ export class PaymentRunsService {
     });
 
     await this.audit.log(orgId, userId, 'payment_run', id, 'cancelled', { reason }).catch(() => {});
-    return this.findOne(id, orgId);
+    return this.findOne(id, orgId, access, ['payments:manage']);
   }
 
-  async vendorAccounts(orgId: string, vendorId?: string) {
+  async vendorAccounts(orgId: string, vendorId?: string, access?: AccessPolicy) {
+    requirePermission(access, 'payments:view');
     return this.db.query.vendorPaymentAccounts.findMany({
       where: (account, { and, eq }) =>
-        and(eq(account.orgId, orgId), vendorId ? eq(account.vendorId, vendorId) : undefined),
+        and(
+          eq(account.orgId, orgId),
+          vendorId ? eq(account.vendorId, vendorId) : undefined,
+          permissionScopePredicate(
+            access,
+            'payment',
+            ['payments:view'],
+            vendorPaymentAccountScopePredicates(orgId),
+          ),
+        ),
       with: { vendor: true },
       orderBy: (account, { desc }) => desc(account.createdAt),
     });
   }
 
-  async createVendorAccount(orgId: string, input: CreateVendorPaymentAccountInput) {
-    const [account] = await this.db
-      .insert(vendorPaymentAccounts)
-      .values({
-        orgId,
-        vendorId: input.vendorId,
-        accountName: input.accountName,
-        paymentMethod: input.paymentMethod ?? 'ach',
-        country: input.country ?? null,
-        currency: input.currency ?? 'USD',
-        maskedAccount: input.maskedAccount,
-        provider: input.provider ?? null,
-        providerAccountId: input.providerAccountId ?? null,
-        verificationStatus: 'pending',
-      })
-      .returning();
+  async createVendorAccount(
+    orgId: string,
+    input: CreateVendorPaymentAccountInput,
+    userId: string,
+    access?: AccessPolicy,
+  ) {
+    requirePermission(access, 'payments:manage');
+    const vendor = await this.db.query.vendors.findFirst({
+      where: (record, { and, eq }) =>
+        and(
+          eq(record.id, input.vendorId),
+          eq(record.organizationId, orgId),
+          permissionScopePredicate(access, 'payment', ['payments:manage'], {
+            entity: (entityId) => eq(record.entityId, entityId),
+          }),
+        ),
+    });
+    if (!vendor) throw new NotFoundException(`Vendor ${input.vendorId} not found`);
+    const account = await this.db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(vendorPaymentAccounts)
+        .values({
+          orgId,
+          vendorId: input.vendorId,
+          accountName: input.accountName,
+          paymentMethod: input.paymentMethod ?? 'ach',
+          country: input.country ?? null,
+          currency: input.currency ?? 'USD',
+          maskedAccount: input.maskedAccount,
+          provider: input.provider ?? null,
+          providerAccountId: input.providerAccountId ?? null,
+          verificationStatus: 'pending',
+        })
+        .returning();
+      await tx.insert(auditLog).values({
+        organizationId: orgId,
+        userId,
+        entityType: 'vendor_payment_account',
+        entityId: created.id,
+        action: 'created',
+        changes: { vendorId: input.vendorId, paymentMethod: input.paymentMethod ?? 'ach' },
+      });
+      return created;
+    });
 
     return account;
   }
 
-  async verifyVendorAccount(id: string, orgId: string, userId: string) {
+  async verifyVendorAccount(id: string, orgId: string, userId: string, access?: AccessPolicy) {
+    requirePermission(access, 'payments:manage');
+    const existingAccount = await this.db.query.vendorPaymentAccounts.findFirst({
+      where: (record, { and, eq }) =>
+        and(
+          eq(record.id, id),
+          eq(record.orgId, orgId),
+          permissionScopePredicate(
+            access,
+            'payment',
+            ['payments:manage'],
+            vendorPaymentAccountScopePredicates(orgId),
+          ),
+        ),
+    });
+    if (!existingAccount) throw new NotFoundException(`Vendor payment account ${id} not found`);
     const [account] = await this.db
       .update(vendorPaymentAccounts)
       .set({ verificationStatus: 'verified', verifiedAt: new Date(), updatedAt: new Date() })
@@ -380,7 +514,11 @@ export class PaymentRunsService {
     return account;
   }
 
-  async summary(orgId: string) {
+  async summary(orgId: string, access?: AccessPolicy) {
+    requirePermission(access, 'payments:view');
+    const scopePredicate = permissionScopePredicate(access, 'payment', ['payments:view'], {
+      entity: (entityId) => eq(paymentRuns.entityId, entityId),
+    });
     const rows = await this.db.execute(sql`
       SELECT
         COUNT(*) FILTER (WHERE status = 'draft')::int AS "draftCount",
@@ -388,7 +526,8 @@ export class PaymentRunsService {
         COUNT(*) FILTER (WHERE status = 'paid')::int AS "paidCount",
         COALESCE(SUM(total_amount::numeric) FILTER (WHERE status IN ('draft', 'approved')), 0)::numeric AS "openAmount"
       FROM payment_runs
-      WHERE org_id = ${orgId}
+        WHERE org_id = ${orgId}
+        AND ${scopePredicate}
     `);
     return (rows as any[])[0] ?? { draftCount: 0, approvedCount: 0, paidCount: 0, openAmount: 0 };
   }

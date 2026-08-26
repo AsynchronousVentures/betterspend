@@ -67,7 +67,10 @@ function scopeKey(scope: AccessScopeDescriptor): string {
 const PERMISSION_RESOURCES: Record<string, AccessResource> = {
   requisitions: 'requisition',
   purchase_orders: 'purchase_order',
+  receiving: 'receiving',
+  approvals: 'approval',
   invoices: 'invoice',
+  payments: 'payment',
   vendors: 'vendor',
   budgets: 'budget',
   reports: 'report',

@@ -1,4 +1,10 @@
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { and, eq, ne } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import { SequenceService } from '../../common/services/sequence.service';
@@ -10,6 +16,8 @@ import { SpendGuardService } from '../spend-guard/spend-guard.service';
 import type { Db } from '@betterspend/db';
 import { requisitions, requisitionLines } from '@betterspend/db';
 import type { CreateRequisitionInput } from '@betterspend/shared';
+import type { AccessPolicy } from '../auth/access-policy';
+import { permissionScopePredicate, requirePermission } from '../auth/access-scope';
 
 @Injectable()
 export class RequisitionsService {
@@ -23,10 +31,26 @@ export class RequisitionsService {
     private readonly spendGuard: SpendGuardService,
   ) {}
 
-  async findAll(organizationId: string, filters?: { status?: string; departmentId?: string }) {
+  async findAll(
+    organizationId: string,
+    filters?: { status?: string; departmentId?: string },
+    access?: AccessPolicy,
+  ) {
     return this.db.query.requisitions.findMany({
       where: (r, { and, eq }) => {
-        const conditions = [eq(r.organizationId, organizationId)];
+        const conditions = [
+          eq(r.organizationId, organizationId),
+          permissionScopePredicate(
+            access,
+            'requisition',
+            ['requisitions:view_all', 'requisitions:view_own', 'requisitions:manage'],
+            {
+              own: (userId) => eq(r.requesterId, userId),
+              department: (departmentId) => eq(r.departmentId, departmentId),
+              project: (projectId) => eq(r.projectId, projectId),
+            },
+          ),
+        ];
         if (filters?.status) conditions.push(eq(r.status, filters.status));
         if (filters?.departmentId) conditions.push(eq(r.departmentId, filters.departmentId));
         return and(...conditions);
@@ -36,16 +60,66 @@ export class RequisitionsService {
     });
   }
 
-  async findOne(id: string, organizationId: string) {
+  async findOne(id: string, organizationId: string, access?: AccessPolicy) {
     const req = await this.db.query.requisitions.findFirst({
-      where: (r, { and, eq }) => and(eq(r.id, id), eq(r.organizationId, organizationId)),
+      where: (r, { and, eq }) =>
+        and(
+          eq(r.id, id),
+          eq(r.organizationId, organizationId),
+          permissionScopePredicate(
+            access,
+            'requisition',
+            ['requisitions:view_all', 'requisitions:view_own', 'requisitions:manage'],
+            {
+              own: (userId) => eq(r.requesterId, userId),
+              department: (departmentId) => eq(r.departmentId, departmentId),
+              project: (projectId) => eq(r.projectId, projectId),
+            },
+          ),
+        ),
       with: { lines: true },
     });
     if (!req) throw new NotFoundException(`Requisition ${id} not found`);
     return req;
   }
 
-  async create(organizationId: string, requesterId: string, input: CreateRequisitionInput) {
+  private async findOneForMutation(
+    id: string,
+    organizationId: string,
+    actorId: string,
+    access?: AccessPolicy,
+  ) {
+    if (access?.can('requisitions:create')) {
+      const ownDraft = await this.db.query.requisitions.findFirst({
+        where: (r, { and, eq }) =>
+          and(
+            eq(r.id, id),
+            eq(r.organizationId, organizationId),
+            eq(r.requesterId, actorId),
+            eq(r.status, 'draft'),
+            permissionScopePredicate(access, 'requisition', ['requisitions:create'], {
+              department: (departmentId) => eq(r.departmentId, departmentId),
+              project: (projectId) => eq(r.projectId, projectId),
+            }),
+          ),
+        with: { lines: true },
+      });
+      if (ownDraft) return ownDraft;
+    }
+    return this.findOne(id, organizationId, access);
+  }
+
+  async create(
+    organizationId: string,
+    requesterId: string,
+    input: CreateRequisitionInput,
+    access?: AccessPolicy,
+  ) {
+    requirePermission(access, 'requisitions:create');
+    this.assertRequisitionScope(access, 'requisitions:create', {
+      departmentId: input.departmentId ?? null,
+      projectId: input.projectId ?? null,
+    });
     const createdId = await this.db.transaction(async (tx) => {
       const number = await this.sequenceService.next(organizationId, 'requisition', tx);
       const totalAmount = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
@@ -98,8 +172,19 @@ export class RequisitionsService {
     return created;
   }
 
-  async update(id: string, organizationId: string, input: Partial<CreateRequisitionInput>) {
-    const req = await this.findOne(id, organizationId);
+  async update(
+    id: string,
+    organizationId: string,
+    actorId: string,
+    input: Partial<CreateRequisitionInput>,
+    access?: AccessPolicy,
+  ) {
+    const req = await this.findOneForMutation(id, organizationId, actorId, access);
+    const nextScope = {
+      departmentId: input.departmentId ?? req.departmentId,
+      projectId: input.projectId ?? req.projectId,
+    };
+    this.assertCanMutate(req, actorId, access, nextScope);
     if (req.status !== 'draft') {
       throw new BadRequestException('Only draft requisitions can be edited');
     }
@@ -140,12 +225,13 @@ export class RequisitionsService {
         })
         .where(eq(requisitions.id, id));
 
-      return this.findOne(id, organizationId);
+      return this.findOne(id, organizationId, access);
     });
   }
 
-  async submit(id: string, organizationId: string, requesterId?: string) {
-    const req = await this.findOne(id, organizationId);
+  async submit(id: string, organizationId: string, requesterId?: string, access?: AccessPolicy) {
+    const req = await this.findOneForMutation(id, organizationId, requesterId ?? '', access);
+    this.assertCanMutate(req, requesterId ?? req.requesterId, access);
     if (req.status !== 'draft') {
       throw new BadRequestException('Only draft requisitions can be submitted');
     }
@@ -227,8 +313,9 @@ export class RequisitionsService {
     return { ...submitted, budgetEnforcement };
   }
 
-  async cancel(id: string, organizationId: string) {
-    const req = await this.findOne(id, organizationId);
+  async cancel(id: string, organizationId: string, actorId?: string, access?: AccessPolicy) {
+    const req = await this.findOneForMutation(id, organizationId, actorId ?? '', access);
+    this.assertCanMutate(req, actorId ?? req.requesterId, access);
     if (['cancelled', 'converted'].includes(req.status)) {
       throw new BadRequestException(`Cannot cancel a ${req.status} requisition`);
     }
@@ -254,5 +341,55 @@ export class RequisitionsService {
     });
     this.audit.log(organizationId, null, 'requisition', id, 'cancelled').catch(() => {});
     return updated;
+  }
+
+  private assertCanMutate(
+    req: {
+      requesterId: string;
+      departmentId: string | null;
+      projectId: string | null;
+      status: string;
+    },
+    actorId: string,
+    access?: AccessPolicy,
+    nextScope?: { departmentId: string | null; projectId: string | null },
+  ) {
+    if (!access) return;
+    if (access.can('requisitions:manage')) {
+      const scope = access.scopeFor('requisition', 'requisitions:manage');
+      if (
+        scope.unrestricted ||
+        scope.departmentIds.includes(nextScope?.departmentId ?? req.departmentId ?? '') ||
+        scope.projectIds.includes(nextScope?.projectId ?? req.projectId ?? '')
+      ) {
+        return;
+      }
+    }
+    if (
+      access.can('requisitions:create') &&
+      req.requesterId === actorId &&
+      req.status === 'draft'
+    ) {
+      this.assertRequisitionScope(access, 'requisitions:create', nextScope ?? req);
+      return;
+    }
+    throw new ForbiddenException('You do not have permission to manage this requisition');
+  }
+
+  private assertRequisitionScope(
+    access: AccessPolicy | undefined,
+    permission: 'requisitions:create' | 'requisitions:manage',
+    requisition: { departmentId: string | null; projectId: string | null },
+  ) {
+    if (!access) return;
+    const scope = access.scopeFor('requisition', permission);
+    if (
+      scope.unrestricted ||
+      scope.departmentIds.includes(requisition.departmentId ?? '') ||
+      scope.projectIds.includes(requisition.projectId ?? '')
+    ) {
+      return;
+    }
+    throw new ForbiddenException('The requisition is outside your assigned scope');
   }
 }

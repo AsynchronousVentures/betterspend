@@ -4,6 +4,7 @@ import {
   Optional,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
@@ -17,6 +18,8 @@ import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { RiskScreeningService } from '../risk-screening/risk-screening.service';
 import { BudgetsService } from '../budgets/budgets.service';
 import { ApprovalEngineService } from '../approvals/approval-engine.service';
+import type { AccessPolicy } from '../auth/access-policy';
+import { permissionScopePredicate, requirePermission } from '../auth/access-scope';
 import type { Db } from '@betterspend/db';
 import {
   auditLog,
@@ -31,37 +34,47 @@ import {
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 import { z } from 'zod';
 
-const createPoSchema = z.object({
-  entityId: z.string().uuid().optional(),
-  vendorId: z.string().uuid(),
-  requisitionId: z.string().uuid().optional(),
-  paymentTerms: z.string().optional(),
-  currency: z.string().length(3).default('USD'),
-  exchangeRate: z.number().positive().optional(),
-  notes: z.string().optional(),
-  poType: z.enum(['standard', 'blanket']).default('standard'),
-  shippingAddress: z.record(z.string(), z.unknown()).optional(),
-  billingAddress: z.record(z.string(), z.unknown()).optional(),
-  // Blanket PO fields
-  blanketStartDate: z.string().datetime().optional(),
-  blanketEndDate: z.string().datetime().optional(),
-  blanketTotalLimit: z.number().optional(),
-  lines: z
-    .array(
-      z.object({
-        description: z.string().min(1),
-        quantity: z.number().positive(),
-        unitOfMeasure: z.string().default('each'),
-        unitPrice: z.number().nonnegative(),
-        glAccount: z.string().optional(),
-        taxCodeId: z.string().uuid().optional(),
-        taxInclusive: z.boolean().optional(),
-        catalogItemId: z.string().uuid().optional(),
-        requisitionLineId: z.string().uuid().optional(),
-      }),
-    )
-    .min(1),
-});
+const createPoSchema = z
+  .object({
+    entityId: z.string().uuid().optional(),
+    vendorId: z.string().uuid(),
+    requisitionId: z.string().uuid().optional(),
+    paymentTerms: z.string().optional(),
+    currency: z.string().length(3).default('USD'),
+    exchangeRate: z.number().positive().optional(),
+    notes: z.string().optional(),
+    poType: z.enum(['standard', 'blanket']).default('standard'),
+    shippingAddress: z.record(z.string(), z.unknown()).optional(),
+    billingAddress: z.record(z.string(), z.unknown()).optional(),
+    // Blanket PO fields
+    blanketStartDate: z.string().datetime().optional(),
+    blanketEndDate: z.string().datetime().optional(),
+    blanketTotalLimit: z.number().optional(),
+    lines: z
+      .array(
+        z.object({
+          description: z.string().min(1),
+          quantity: z.number().positive(),
+          unitOfMeasure: z.string().default('each'),
+          unitPrice: z.number().nonnegative(),
+          glAccount: z.string().optional(),
+          taxCodeId: z.string().uuid().optional(),
+          taxInclusive: z.boolean().optional(),
+          catalogItemId: z.string().uuid().optional(),
+          requisitionLineId: z.string().uuid().optional(),
+        }),
+      )
+      .min(1),
+  })
+  .superRefine((input, context) => {
+    if (!input.requisitionId && !input.entityId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['entityId'],
+        message: 'entityId is required for standalone purchase orders',
+      });
+    }
+  });
 
 const changeOrderSchema = z.object({
   changeReason: z.string().min(1),
@@ -86,6 +99,80 @@ const changeOrderSchema = z.object({
 export type CreatePoInput = z.infer<typeof createPoSchema>;
 export type ChangeOrderInput = z.infer<typeof changeOrderSchema>;
 export { createPoSchema, changeOrderSchema };
+
+export function purchaseOrderScopeEntityId(
+  input: Pick<CreatePoInput, 'entityId' | 'requisitionId'>,
+  linkedRequisition: unknown,
+) {
+  if (
+    linkedRequisition &&
+    typeof linkedRequisition === 'object' &&
+    'entityId' in linkedRequisition
+  ) {
+    const entityId = linkedRequisition.entityId;
+    return typeof entityId === 'string' ? entityId : null;
+  }
+  return linkedRequisition ? null : (input.entityId ?? null);
+}
+
+function purchaseOrderScopePredicates(organizationId: string) {
+  return {
+    own: (userId: string) =>
+      sql`(
+        ${purchaseOrders.issuedBy} = ${userId}
+        OR ${purchaseOrders.requisitionId} IN (
+          SELECT ${requisitions.id}
+          FROM ${requisitions}
+          WHERE ${requisitions.requesterId} = ${userId}
+            AND ${requisitions.organizationId} = ${organizationId}
+        )
+      )`,
+    department: (departmentId: string) =>
+      sql`${purchaseOrders.requisitionId} IN (
+        SELECT ${requisitions.id}
+        FROM ${requisitions}
+        WHERE ${requisitions.departmentId} = ${departmentId}
+          AND ${requisitions.organizationId} = ${organizationId}
+      )`,
+    project: (projectId: string) =>
+      sql`${purchaseOrders.requisitionId} IN (
+        SELECT ${requisitions.id}
+        FROM ${requisitions}
+        WHERE ${requisitions.projectId} = ${projectId}
+          AND ${requisitions.organizationId} = ${organizationId}
+      )`,
+    entity: (entityId: string) => eq(purchaseOrders.entityId, entityId),
+  };
+}
+
+function assertPurchaseOrderScope(
+  access: AccessPolicy | undefined,
+  permission: 'purchase_orders:create' | 'purchase_orders:issue' | 'purchase_orders:manage',
+  po: {
+    entityId: string | null;
+    issuedBy: string | null;
+    requisition?: {
+      requesterId: string;
+      departmentId: string | null;
+      projectId: string | null;
+    } | null;
+  },
+  actorId: string,
+) {
+  requirePermission(access, permission);
+  if (!access) return;
+  const scope = access.scopeFor('purchase_order', permission);
+  if (
+    scope.unrestricted ||
+    scope.entityIds.includes(po.entityId ?? '') ||
+    scope.departmentIds.includes(po.requisition?.departmentId ?? '') ||
+    scope.projectIds.includes(po.requisition?.projectId ?? '') ||
+    (scope.ownOnly && (po.issuedBy === actorId || po.requisition?.requesterId === actorId))
+  ) {
+    return;
+  }
+  throw new ForbiddenException('You do not have permission to access this purchase order');
+}
 
 interface LineTaxSnapshot {
   taxCodeId?: string;
@@ -151,10 +238,24 @@ export class PurchaseOrdersService {
   async findAll(
     organizationId: string,
     filters?: { status?: string; vendorId?: string; entityId?: string },
+    access?: AccessPolicy,
   ) {
     return this.db.query.purchaseOrders.findMany({
       where: (po, { and, eq }) => {
-        const conditions = [eq(po.organizationId, organizationId)];
+        const conditions = [
+          eq(po.organizationId, organizationId),
+          permissionScopePredicate(
+            access,
+            'purchase_order',
+            [
+              'purchase_orders:view_all',
+              'purchase_orders:view_own',
+              'purchase_orders:manage',
+              'purchase_orders:issue',
+            ],
+            purchaseOrderScopePredicates(organizationId),
+          ),
+        ];
         if (filters?.status) conditions.push(eq(po.status, filters.status));
         if (filters?.vendorId) conditions.push(eq(po.vendorId, filters.vendorId));
         if (filters?.entityId) conditions.push(eq(po.entityId, filters.entityId));
@@ -165,16 +266,46 @@ export class PurchaseOrdersService {
     });
   }
 
-  async findOne(id: string, organizationId: string) {
+  async findOne(id: string, organizationId: string, access?: AccessPolicy) {
     const po = await this.db.query.purchaseOrders.findFirst({
-      where: (po, { and, eq }) => and(eq(po.id, id), eq(po.organizationId, organizationId)),
-      with: { vendor: true, lines: { with: { taxCode: true } }, versions: true, entity: true },
+      where: (po, { and, eq }) =>
+        and(
+          eq(po.id, id),
+          eq(po.organizationId, organizationId),
+          permissionScopePredicate(
+            access,
+            'purchase_order',
+            [
+              'purchase_orders:view_all',
+              'purchase_orders:view_own',
+              'purchase_orders:manage',
+              'purchase_orders:issue',
+            ],
+            purchaseOrderScopePredicates(organizationId),
+          ),
+        ),
+      with: {
+        vendor: true,
+        lines: { with: { taxCode: true } },
+        versions: true,
+        entity: true,
+        requisition: true,
+      },
     });
     if (!po) throw new NotFoundException(`Purchase Order ${id} not found`);
     return po;
   }
 
-  async create(organizationId: string, issuedBy: string, input: CreatePoInput) {
+  async create(
+    organizationId: string,
+    issuedBy: string,
+    input: CreatePoInput,
+    access?: AccessPolicy,
+  ) {
+    requirePermission(access, 'purchase_orders:create');
+    if (!input.requisitionId && !input.entityId) {
+      throw new BadRequestException('entityId is required for standalone purchase orders');
+    }
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
     const vendor = await this.db.query.vendors.findFirst({
       where: (record, { and, eq }) =>
@@ -190,6 +321,25 @@ export class PurchaseOrdersService {
         `Vendor onboarding is ${vendor.onboardingStatus.replace(/_/g, ' ')} and must be approved before a PO can be created`,
       );
     }
+    const linkedRequisition = input.requisitionId
+      ? await this.db.query.requisitions.findFirst({
+          where: (record, { and, eq }) =>
+            and(eq(record.id, input.requisitionId!), eq(record.organizationId, organizationId)),
+        })
+      : null;
+    if (input.requisitionId && !linkedRequisition) {
+      throw new BadRequestException('The linked requisition was not found in this organization');
+    }
+    assertPurchaseOrderScope(
+      access,
+      'purchase_orders:create',
+      {
+        entityId: purchaseOrderScopeEntityId(input, linkedRequisition),
+        issuedBy,
+        requisition: linkedRequisition,
+      },
+      issuedBy,
+    );
     const sanctionsWarning = await this.riskScreening.checkVendorForPo(organizationId, vendor);
     const currency = input.currency ?? 'USD';
     const taxCodeMap = await this.getTaxCodeMap(
@@ -246,6 +396,7 @@ export class PurchaseOrdersService {
           version: 1,
           poType: input.poType ?? 'standard',
           status: 'draft',
+          issuedBy,
           paymentTerms: input.paymentTerms,
           currency,
           baseCurrency,
@@ -304,10 +455,22 @@ export class PurchaseOrdersService {
 
       // If created from a requisition, mark it as converted
       if (input.requisitionId) {
-        await tx
+        const [converted] = await tx
           .update(requisitions)
           .set({ status: 'converted', updatedAt: new Date() })
-          .where(eq(requisitions.id, input.requisitionId));
+          .where(
+            and(
+              eq(requisitions.id, input.requisitionId),
+              eq(requisitions.organizationId, organizationId),
+              eq(requisitions.status, 'approved'),
+            ),
+          )
+          .returning({ id: requisitions.id });
+        if (!converted) {
+          throw new BadRequestException(
+            'Only an approved requisition in this organization can be converted to a purchase order',
+          );
+        }
       }
 
       if (sanctionsWarning) {
@@ -336,8 +499,9 @@ export class PurchaseOrdersService {
     return sanctionsWarning ? { ...created, sanctionsWarning } : created;
   }
 
-  async issue(id: string, organizationId: string, issuedBy: string) {
-    const po = await this.findOne(id, organizationId);
+  async issue(id: string, organizationId: string, issuedBy: string, access?: AccessPolicy) {
+    const po = await this.findOne(id, organizationId, access);
+    assertPurchaseOrderScope(access, 'purchase_orders:issue', po, issuedBy);
     if (!['draft', 'approved'].includes(po.status)) {
       throw new BadRequestException(`Cannot issue a PO with status "${po.status}"`);
     }
@@ -511,8 +675,10 @@ export class PurchaseOrdersService {
     organizationId: string,
     changedBy: string,
     input: ChangeOrderInput,
+    access?: AccessPolicy,
   ) {
-    const po = await this.findOne(id, organizationId);
+    const po = await this.findOne(id, organizationId, access);
+    assertPurchaseOrderScope(access, 'purchase_orders:manage', po, changedBy);
 
     if (['closed', 'cancelled'].includes(po.status)) {
       throw new BadRequestException(`Cannot create change order for ${po.status} PO`);
@@ -644,8 +810,9 @@ export class PurchaseOrdersService {
     return this.findOne(id, organizationId);
   }
 
-  async cancel(id: string, organizationId: string) {
-    const po = await this.findOne(id, organizationId);
+  async cancel(id: string, organizationId: string, actorId: string, access?: AccessPolicy) {
+    const po = await this.findOne(id, organizationId, access);
+    assertPurchaseOrderScope(access, 'purchase_orders:manage', po, actorId);
     if (['closed', 'cancelled', 'received', 'invoiced'].includes(po.status)) {
       throw new BadRequestException(`Cannot cancel a ${po.status} PO`);
     }
@@ -663,16 +830,16 @@ export class PurchaseOrdersService {
     return updated;
   }
 
-  async getVersionHistory(id: string, organizationId: string) {
-    await this.findOne(id, organizationId); // verify exists + org access
+  async getVersionHistory(id: string, organizationId: string, access?: AccessPolicy) {
+    await this.findOne(id, organizationId, access); // verify exists + org access
     return this.db.query.poVersions.findMany({
       where: eq(poVersions.purchaseOrderId, id),
       orderBy: (v, { asc }) => asc(v.version),
     });
   }
 
-  async listReleases(blanketPoId: string, organizationId: string) {
-    await this.findOne(blanketPoId, organizationId); // verify access
+  async listReleases(blanketPoId: string, organizationId: string, access?: AccessPolicy) {
+    await this.findOne(blanketPoId, organizationId, access); // verify access
     return this.db.query.blanketReleases.findMany({
       where: eq(blanketReleases.blanketPoId, blanketPoId),
       orderBy: (r, { asc }) => asc(r.releaseNumber),
@@ -684,8 +851,10 @@ export class PurchaseOrdersService {
     organizationId: string,
     releasedBy: string,
     input: { amount: number; description?: string },
+    access?: AccessPolicy,
   ) {
-    const po = await this.findOne(blanketPoId, organizationId);
+    const po = await this.findOne(blanketPoId, organizationId, access);
+    assertPurchaseOrderScope(access, 'purchase_orders:manage', po, releasedBy);
     if (po.poType !== 'blanket')
       throw new BadRequestException('Releases can only be created against blanket POs');
     if (!['issued', 'approved', 'partially_received'].includes(po.status)) {
@@ -730,8 +899,15 @@ export class PurchaseOrdersService {
     return release;
   }
 
-  async cancelRelease(blanketPoId: string, releaseId: string, organizationId: string) {
-    await this.findOne(blanketPoId, organizationId); // verify access
+  async cancelRelease(
+    blanketPoId: string,
+    releaseId: string,
+    organizationId: string,
+    actorId: string,
+    access?: AccessPolicy,
+  ) {
+    const blanketPo = await this.findOne(blanketPoId, organizationId, access);
+    assertPurchaseOrderScope(access, 'purchase_orders:manage', blanketPo, actorId);
     const release = await this.db.query.blanketReleases.findFirst({
       where: (r, { and, eq }) => and(eq(r.id, releaseId), eq(r.blanketPoId, blanketPoId)),
     });
@@ -763,8 +939,8 @@ export class PurchaseOrdersService {
     return updated;
   }
 
-  async getComplianceReport(id: string, organizationId: string) {
-    const po = await this.findOne(id, organizationId);
+  async getComplianceReport(id: string, organizationId: string, access?: AccessPolicy) {
+    const po = await this.findOne(id, organizationId, access);
     const lines = po.lines ?? [];
     const totalLines = lines.length;
     const compliantLines = lines.filter(
@@ -805,7 +981,9 @@ export class PurchaseOrdersService {
     unitPrice: number,
     catalogItemId?: string,
     description?: string,
+    access?: AccessPolicy,
   ) {
+    requirePermission(access, 'purchase_orders:create');
     if (!this.contractCompliance) {
       return {
         status: 'no_contract',
@@ -823,8 +1001,8 @@ export class PurchaseOrdersService {
     );
   }
 
-  async getReceivingSummary(id: string, organizationId: string) {
-    await this.findOne(id, organizationId); // validate access
+  async getReceivingSummary(id: string, organizationId: string, access?: AccessPolicy) {
+    await this.findOne(id, organizationId, access); // validate access
     const rows = await this.db.execute(sql`
       SELECT
         pl.id                                                            AS "poLineId",

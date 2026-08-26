@@ -15,6 +15,8 @@ import { updateInvoiceSchema } from '@betterspend/shared';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
+import { CurrentAccess } from '../auth/current-access.decorator';
+import type { AccessPolicy } from '../auth/access-policy';
 
 @ApiTags('invoices')
 @ApiBearerAuth()
@@ -24,32 +26,43 @@ export class InvoicesController {
 
   @Get()
   @ApiOperation({ summary: 'List all invoices' })
-  findAll(@CurrentOrgId() orgId: string, @Query('entityId') entityId?: string) {
-    return this.invoicesService.findAll(orgId, entityId);
+  findAll(
+    @CurrentOrgId() orgId: string,
+    @Query('entityId') entityId?: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.invoicesService.findAll(orgId, entityId, access);
   }
 
   @Get('aging')
   @ApiOperation({ summary: 'AP aging report bucketed by days overdue' })
-  getAgingReport(@CurrentOrgId() orgId: string) {
-    return this.invoicesService.getAgingReport(orgId);
+  getAgingReport(@CurrentOrgId() orgId: string, @CurrentAccess() access?: AccessPolicy) {
+    return this.invoicesService.getAgingReport(orgId, access);
   }
 
   @Get('cash-flow-forecast')
   @ApiOperation({ summary: 'Cash flow forecast for next 12 weeks based on due dates' })
-  getCashFlowForecast(@CurrentOrgId() orgId: string) {
-    return this.invoicesService.getCashFlowForecast(orgId);
+  getCashFlowForecast(@CurrentOrgId() orgId: string, @CurrentAccess() access?: AccessPolicy) {
+    return this.invoicesService.getCashFlowForecast(orgId, access);
   }
 
   @Get('early-payment-opportunities')
   @ApiOperation({ summary: 'Invoices with early payment discounts expiring within 14 days' })
-  getEarlyPaymentOpportunities(@CurrentOrgId() orgId: string) {
-    return this.invoicesService.getEarlyPaymentOpportunities(orgId);
+  getEarlyPaymentOpportunities(
+    @CurrentOrgId() orgId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.invoicesService.getEarlyPaymentOpportunities(orgId, access);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get invoice by ID' })
-  findOne(@Param('id') id: string, @CurrentOrgId() orgId: string) {
-    return this.invoicesService.findOne(id, orgId);
+  findOne(
+    @Param('id') id: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.invoicesService.findOne(id, orgId, access);
   }
 
   @Post()
@@ -59,20 +72,22 @@ export class InvoicesController {
     @Body() body: CreateInvoiceInput,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.invoicesService.create(orgId, userId, body);
+    return this.invoicesService.create(orgId, userId, body, access);
   }
 
   @Patch(':id')
-  @Permissions('invoices:create')
+  @Permissions('invoices:manage')
   @ApiOperation({ summary: 'Edit an unpaid invoice and force reapproval for material changes' })
   update(
     @Param('id') id: string,
     @Body() body: unknown,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.invoicesService.update(id, orgId, userId, updateInvoiceSchema.parse(body));
+    return this.invoicesService.update(id, orgId, userId, updateInvoiceSchema.parse(body), access);
   }
 
   @Post(':id/match')
@@ -81,15 +96,21 @@ export class InvoicesController {
     @Param('id') id: string,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.invoicesService.runMatch(id, orgId, userId);
+    return this.invoicesService.runMatch(id, orgId, userId, access);
   }
 
   @Patch(':id/approve')
   @Permissions('invoices:approve')
   @ApiOperation({ summary: 'Approve a matched invoice for payment' })
-  approve(@Param('id') id: string, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
-    return this.invoicesService.approve(id, orgId, userId);
+  approve(
+    @Param('id') id: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.invoicesService.approve(id, orgId, userId, access);
   }
 
   @Patch(':id/resolve-exception')
@@ -99,8 +120,9 @@ export class InvoicesController {
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
     @Body() body: { reason?: string },
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.invoicesService.resolveException(id, orgId, userId, body);
+    return this.invoicesService.resolveException(id, orgId, userId, body, access);
   }
 
   @Post('bulk-approve')
@@ -110,8 +132,9 @@ export class InvoicesController {
     @Body() body: { ids: string[] },
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.invoicesService.bulkApprove(body.ids, orgId, userId);
+    return this.invoicesService.bulkApprove(body.ids, orgId, userId, access);
   }
 
   @Patch(':id/mark-paid')
@@ -121,7 +144,8 @@ export class InvoicesController {
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
     @Body() body: MarkPaidInput,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.invoicesService.markPaid(id, orgId, userId, body);
+    return this.invoicesService.markPaid(id, orgId, userId, body, access);
   }
 }
