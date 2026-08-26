@@ -276,14 +276,14 @@ describe('IntakeConciergeService workflow links', () => {
     await service.convertSession('session-1', 'organization-1', 'requester-1', {
       acceptedValues: {
         departmentId: '00000000-0000-4000-8000-000000000001',
-        estimatedPrice: 125,
+        estimatedPrice: 0.1 + 0.2,
       },
     });
 
     expect(requisitionsService.create).toHaveBeenCalledWith(
       'organization-1',
       'requester-1',
-      expect.objectContaining({ lines: [expect.objectContaining({ unitPrice: 125 })] }),
+      expect.objectContaining({ lines: [expect.objectContaining({ unitPrice: 0.3 })] }),
     );
   });
 });

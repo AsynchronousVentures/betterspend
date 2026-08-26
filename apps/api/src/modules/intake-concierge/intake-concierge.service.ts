@@ -954,6 +954,10 @@ export class IntakeConciergeService {
     draft: AiParsedRequisition & Record<string, unknown>,
     fallbackUnitPrice?: number,
   ) {
+    const roundedFallbackUnitPrice =
+      fallbackUnitPrice === undefined
+        ? undefined
+        : Math.round((fallbackUnitPrice + Number.EPSILON) * 100) / 100;
     const sourceLines = Array.isArray(draft.lines) && draft.lines.length
       ? draft.lines
       : [{ description: String(draft.title || 'Requested item'), quantity: 1, unitOfMeasure: 'each', unitPrice: 0 }];
@@ -967,7 +971,7 @@ export class IntakeConciergeService {
         unitPrice:
           Number.isFinite(parsedUnitPrice) && parsedUnitPrice > 0
             ? parsedUnitPrice
-            : (fallbackUnitPrice ?? 0),
+            : (roundedFallbackUnitPrice ?? 0),
         vendorId: typeof (line as any).vendorId === 'string' ? (line as any).vendorId : undefined,
         catalogItemId: typeof (line as any).catalogItemId === 'string' ? (line as any).catalogItemId : undefined,
         glAccount: typeof line.glAccount === 'string' ? line.glAccount.slice(0, 50) : undefined,
