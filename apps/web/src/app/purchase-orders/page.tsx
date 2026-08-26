@@ -1,16 +1,25 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Download, FileSpreadsheet, Plus } from 'lucide-react';
-import { api } from '../../lib/api';
+import { api, loadFailureState } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
 import { RelatedRecordLink } from '../../components/related-records';
+import { useAccess } from '../../components/access-provider';
+import { ListState } from '../../components/resource-state';
 import { StatusBadge } from '../../components/status-badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
 import { Select } from '../../components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../components/ui/table';
 
 interface PurchaseOrder {
   id: string;
@@ -58,16 +67,28 @@ async function downloadCsv(type: string) {
 export default function PurchaseOrdersPage() {
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [statusFilter, setStatusFilter] = useState('');
   const [exporting, setExporting] = useState(false);
+  const { access } = useAccess();
+  const canCreateStandalone = access?.permissions.includes('purchase_orders:create') ?? false;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const data = await api.purchaseOrders.list();
+      setOrders(Array.isArray(data) ? data : ((data as any).data ?? []));
+    } catch (error) {
+      setLoadError(error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    api.purchaseOrders
-      .list()
-      .then((data) => setOrders(Array.isArray(data) ? data : (data as any).data ?? []))
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+    void load();
+  }, [load]);
 
   const filtered = statusFilter ? orders.filter((order) => order.status === statusFilter) : orders;
 
@@ -84,10 +105,20 @@ export default function PurchaseOrdersPage() {
     <div className="space-y-6 p-4 lg:p-8">
       <PageHeader
         title="Purchase Orders"
-        description="Track issuance, receipt, invoicing, and closeout across every PO."
+        description="Track issuance, receipt, invoicing, and closeout across every PO. Use a source request or RFQ whenever one exists."
         actions={
           <>
-            <Select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="min-w-[180px]">
+            <Button asChild>
+              <Link href="/start">
+                <Plus className="h-4 w-4" />
+                Start Request
+              </Link>
+            </Button>
+            <Select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="min-w-[180px]"
+            >
               <option value="">All Statuses</option>
               {Object.entries(STATUS_LABELS).map(([value, label]) => (
                 <option key={value} value={value}>
@@ -96,39 +127,41 @@ export default function PurchaseOrdersPage() {
               ))}
             </Select>
             <Button variant="outline" onClick={handleExportCsv} disabled={exporting}>
-              {exporting ? <Download className="h-4 w-4 animate-pulse" /> : <FileSpreadsheet className="h-4 w-4" />}
+              {exporting ? (
+                <Download className="h-4 w-4 animate-pulse" />
+              ) : (
+                <FileSpreadsheet className="h-4 w-4" />
+              )}
               {exporting ? 'Exporting...' : 'Export CSV'}
             </Button>
-            <Button asChild>
-              <Link href="/purchase-orders/new">
-                <Plus className="h-4 w-4" />
-                New PO
-              </Link>
-            </Button>
+            {canCreateStandalone ? (
+              <Button asChild variant="outline">
+                <Link href="/purchase-orders/new">Standalone PO</Link>
+              </Button>
+            ) : null}
           </>
         }
       />
 
       <Card className="overflow-hidden">
         <CardContent className="p-0">
-          {loading ? (
-            <div className="flex min-h-[260px] items-center justify-center text-sm text-muted-foreground">
-              Loading purchase orders...
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="flex min-h-[300px] flex-col items-center justify-center gap-3 px-6 text-center">
-              <div className="rounded-full bg-muted p-4">
-                <FileSpreadsheet className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="text-base font-semibold text-foreground">
-                  {statusFilter ? `No ${STATUS_LABELS[statusFilter] ?? statusFilter} purchase orders` : 'No purchase orders yet'}
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {statusFilter ? 'Try a different filter to expand the queue.' : 'Create your first PO to start supplier fulfillment.'}
-                </p>
-              </div>
-            </div>
+          {loading || loadError || filtered.length === 0 ? (
+            <ListState
+              state={loading ? 'loading' : loadError ? loadFailureState(loadError) : 'empty'}
+              loadingLabel="Loading purchase orders..."
+              emptyTitle={
+                statusFilter
+                  ? `No ${STATUS_LABELS[statusFilter] ?? statusFilter} purchase orders`
+                  : 'No purchase orders yet'
+              }
+              emptyDescription={
+                statusFilter
+                  ? 'Try a different filter to expand the queue.'
+                  : 'Start a request. Approved requisitions and awarded RFQs create traceable purchase orders.'
+              }
+              icon={FileSpreadsheet}
+              onRetry={() => void load()}
+            />
           ) : (
             <Table>
               <TableHeader>
@@ -146,7 +179,10 @@ export default function PurchaseOrdersPage() {
                   <TableRow key={purchaseOrder.id}>
                     <TableCell className="font-semibold">
                       <div className="flex items-center gap-2">
-                        <Link href={`/purchase-orders/${purchaseOrder.id}`} className="text-primary hover:underline">
+                        <Link
+                          href={`/purchase-orders/${purchaseOrder.id}`}
+                          className="text-primary hover:underline"
+                        >
                           {purchaseOrder.number}
                         </Link>
                         {purchaseOrder.poType === 'blanket' ? (
@@ -157,17 +193,29 @@ export default function PurchaseOrdersPage() {
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      <RelatedRecordLink record={{ kind: 'vendor', id: purchaseOrder.vendor?.id, label: purchaseOrder.vendor?.name, relation: 'Supplier' }} />
+                      <RelatedRecordLink
+                        record={{
+                          kind: 'vendor',
+                          id: purchaseOrder.vendor?.id,
+                          label: purchaseOrder.vendor?.name,
+                          relation: 'Supplier',
+                        }}
+                      />
                     </TableCell>
                     <TableCell className="text-muted-foreground">V{purchaseOrder.version ?? 1}</TableCell>
                     <TableCell>
-                      <StatusBadge value={purchaseOrder.status} label={STATUS_LABELS[purchaseOrder.status]} />
+                      <StatusBadge
+                        value={purchaseOrder.status}
+                        label={STATUS_LABELS[purchaseOrder.status]}
+                      />
                     </TableCell>
                     <TableCell className="font-medium text-foreground">
                       {formatCurrency(purchaseOrder.totalAmount, purchaseOrder.currency)}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {purchaseOrder.issuedAt ? new Date(purchaseOrder.issuedAt).toLocaleDateString() : '—'}
+                      {purchaseOrder.issuedAt
+                        ? new Date(purchaseOrder.issuedAt).toLocaleDateString()
+                        : '—'}
                     </TableCell>
                   </TableRow>
                 ))}

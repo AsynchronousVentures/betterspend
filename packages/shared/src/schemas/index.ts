@@ -8,3 +8,4 @@ export * from './risk-screening';
 export * from './invoices';
 export * from './recurring-po';
 export * from './bootstrap';
+export * from './intake-concierge';

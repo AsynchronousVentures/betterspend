@@ -1,6 +1,12 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
-import { recordHref, createRequisitionSchema, type CreateRequisitionInput } from '@betterspend/shared';
+import {
+  createRequisitionSchema,
+  intakeConciergeConversionSchema,
+  recordHref,
+  type CreateRequisitionInput,
+  type IntakeConciergeAcceptedValues,
+} from '@betterspend/shared';
 import {
   intakeConciergeSessions,
   procurementPolicies,
@@ -308,16 +314,29 @@ export class IntakeConciergeService {
     id: string,
     organizationId: string,
     requesterId: string,
-    input: { workflow?: WorkflowRoute; acceptedValues?: Record<string, unknown> },
+    input: unknown,
   ) {
     const session = await this.findSession(id, organizationId);
     if (session.status !== 'draft') {
       throw new BadRequestException('This concierge session has already been converted or routed');
     }
 
-    const acceptedValues = input.acceptedValues ?? {};
+    const parsedInput = intakeConciergeConversionSchema.safeParse(input);
+    if (!parsedInput.success) {
+      throw new BadRequestException('Routing answers are invalid.');
+    }
+
+    const acceptedValues = parsedInput.data.acceptedValues;
     const plan = session.plan as unknown as ConciergePlan;
-    const workflow = input.workflow ?? plan.route.workflow;
+    const workflow = parsedInput.data.workflow ?? plan.route.workflow;
+    const unansweredQuestions = this.requiredConversionFields(
+      session.draft as unknown as AiParsedRequisition,
+      plan,
+      workflow,
+    ).filter((field) => !this.hasAcceptedValue(field, acceptedValues));
+    if (unansweredQuestions.length > 0) {
+      throw new BadRequestException('Answer the routing questions before creating a guided draft.');
+    }
 
     if (workflow === 'requisition') {
       const requisitionInput = this.toRequisitionInput(
@@ -821,6 +840,36 @@ export class IntakeConciergeService {
     return Array.from(new Set(fields));
   }
 
+  private requiredConversionFields(
+    draft: AiParsedRequisition,
+    plan: ConciergePlan,
+    workflow: WorkflowRoute,
+  ) {
+    const routeSpecificFields = new Set(['supplierShortlist', 'licenseOwner', 'supplierContact']);
+    const plannedGenericFields = [
+      ...(plan.missingFields ?? []),
+      ...(plan.questions?.map((question) => question.field) ?? []),
+    ].filter((field) => !routeSpecificFields.has(field));
+
+    return Array.from(
+      new Set([
+        ...plannedGenericFields,
+        ...this.missingFields(draft, workflow, plan.estimatedAmount),
+      ]),
+    );
+  }
+
+  private hasAcceptedValue(field: string, acceptedValues: IntakeConciergeAcceptedValues) {
+    if (field === 'departmentOrProject') {
+      return Boolean(acceptedValues.departmentId || acceptedValues.projectId);
+    }
+
+    const value = acceptedValues[field as keyof IntakeConciergeAcceptedValues];
+    if (typeof value === 'string') return Boolean(value.trim());
+    if (typeof value === 'number') return Number.isFinite(value) && value > 0;
+    return Array.isArray(value) && value.length > 0;
+  }
+
   private promptForField(field: string) {
     const prompts: Record<string, string> = {
       neededBy: 'When do you need this by?',
@@ -855,10 +904,10 @@ export class IntakeConciergeService {
 
   private toRequisitionInput(
     draft: AiParsedRequisition,
-    acceptedValues: Record<string, unknown>,
+    acceptedValues: IntakeConciergeAcceptedValues,
   ): CreateRequisitionInput {
     const merged = { ...draft, ...acceptedValues } as AiParsedRequisition & Record<string, unknown>;
-    const lines = this.normalizedLines(merged);
+    const lines = this.normalizedLines(merged, acceptedValues.estimatedPrice);
     const neededBy = this.isoDate(merged.neededBy as string | undefined);
 
     return createRequisitionSchema.parse({
@@ -877,7 +926,7 @@ export class IntakeConciergeService {
 
   private toRfqInput(
     draft: AiParsedRequisition,
-    acceptedValues: Record<string, unknown>,
+    acceptedValues: IntakeConciergeAcceptedValues,
     plan: ConciergePlan,
   ) {
     const merged = { ...draft, ...acceptedValues } as AiParsedRequisition & Record<string, unknown>;
@@ -886,33 +935,48 @@ export class IntakeConciergeService {
       description: typeof merged.description === 'string' ? merged.description : undefined,
       currency: typeof merged.currency === 'string' && merged.currency.length === 3 ? merged.currency : 'USD',
       notes: `Created from AI concierge. ${plan.route.reason}`,
-      lines: this.normalizedLines(merged).map((line) => ({
+      lines: this.normalizedLines(merged, acceptedValues.estimatedPrice).map((line) => ({
         description: line.description,
         quantity: line.quantity,
         unitOfMeasure: line.unitOfMeasure,
         targetPrice: line.unitPrice ?? undefined,
       })),
-      vendorIds: plan.preferredVendors
-        .filter((vendor) => Number(vendor.score ?? 0) > 0)
-        .map((vendor) => String(vendor.id))
-        .filter((id) => id.length > 0),
+      vendorIds:
+        acceptedValues.supplierShortlist ??
+        plan.preferredVendors
+          .filter((vendor) => Number(vendor.score ?? 0) > 0)
+          .map((vendor) => String(vendor.id))
+          .filter((id) => id.length > 0),
     };
   }
 
-  private normalizedLines(draft: AiParsedRequisition & Record<string, unknown>) {
+  private normalizedLines(
+    draft: AiParsedRequisition & Record<string, unknown>,
+    fallbackUnitPrice?: number,
+  ) {
+    const roundedFallbackUnitPrice =
+      fallbackUnitPrice === undefined
+        ? undefined
+        : Math.round((fallbackUnitPrice + Number.EPSILON) * 100) / 100;
     const sourceLines = Array.isArray(draft.lines) && draft.lines.length
       ? draft.lines
       : [{ description: String(draft.title || 'Requested item'), quantity: 1, unitOfMeasure: 'each', unitPrice: 0 }];
 
-    return sourceLines.map((line) => ({
-      description: String(line.description || draft.title || 'Requested item').slice(0, 500),
-      quantity: Math.max(0.01, Number(line.quantity) || 1),
-      unitOfMeasure: String(line.unitOfMeasure || 'each').slice(0, 50),
-      unitPrice: Math.max(0, Number(line.unitPrice) || 0),
-      vendorId: typeof (line as any).vendorId === 'string' ? (line as any).vendorId : undefined,
-      catalogItemId: typeof (line as any).catalogItemId === 'string' ? (line as any).catalogItemId : undefined,
-      glAccount: typeof line.glAccount === 'string' ? line.glAccount.slice(0, 50) : undefined,
-    }));
+    return sourceLines.map((line) => {
+      const parsedUnitPrice = Number(line.unitPrice);
+      return {
+        description: String(line.description || draft.title || 'Requested item').slice(0, 500),
+        quantity: Math.max(0.01, Number(line.quantity) || 1),
+        unitOfMeasure: String(line.unitOfMeasure || 'each').slice(0, 50),
+        unitPrice:
+          Number.isFinite(parsedUnitPrice) && parsedUnitPrice > 0
+            ? parsedUnitPrice
+            : (roundedFallbackUnitPrice ?? 0),
+        vendorId: typeof (line as any).vendorId === 'string' ? (line as any).vendorId : undefined,
+        catalogItemId: typeof (line as any).catalogItemId === 'string' ? (line as any).catalogItemId : undefined,
+        glAccount: typeof line.glAccount === 'string' ? line.glAccount.slice(0, 50) : undefined,
+      };
+    });
   }
 
   private async markConverted(

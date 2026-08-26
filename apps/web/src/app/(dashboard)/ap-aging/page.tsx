@@ -1,8 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { AlertTriangle, CalendarClock, CircleDollarSign, Percent, Wallet } from 'lucide-react';
 import { api } from '../../../lib/api';
+import { localDateInputValue } from '../../../lib/date-input';
 import { PageHeader } from '../../../components/page-header';
 import { StatusBadge } from '../../../components/status-badge';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
@@ -15,6 +17,7 @@ import {
   CardTitle,
 } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
+import { Select } from '../../../components/ui/select';
 import {
   Table,
   TableBody,
@@ -73,7 +76,7 @@ function agingTone(days: number) {
   return '#dc2626';
 }
 
-function MarkPaidModal({
+function RecordExternalPaymentModal({
   invoice,
   onClose,
   onSuccess,
@@ -83,6 +86,8 @@ function MarkPaidModal({
   onSuccess: () => void;
 }) {
   const [paymentReference, setPaymentReference] = useState('');
+  const [paymentDate, setPaymentDate] = useState(localDateInputValue);
+  const [paymentMethod, setPaymentMethod] = useState('ach');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -92,7 +97,9 @@ function MarkPaidModal({
     setError('');
     try {
       await api.invoices.markPaid(invoice.id, {
-        paymentReference: paymentReference || undefined,
+        paymentReference,
+        paymentDate,
+        paymentMethod,
       });
       onSuccess();
     } catch (err: any) {
@@ -108,12 +115,24 @@ function MarkPaidModal({
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="external-payment-title"
         className="w-full max-w-md rounded-lg border border-border/70 bg-card p-6 shadow-[0_30px_90px_-48px_rgba(15,23,42,0.55)]"
         onClick={(event) => event.stopPropagation()}
       >
-        <h3 className="text-xl font-semibold tracking-[-0.03em] text-foreground">Mark Invoice as Paid</h3>
+        <h3
+          id="external-payment-title"
+          className="text-xl font-semibold tracking-[-0.03em] text-foreground"
+        >
+          Record external payment
+        </h3>
         <p className="mt-1 text-sm text-muted-foreground">
           {invoice.internalNumber} · {invoice.vendor?.name} · {fmt(invoice.totalAmount)}
+        </p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Use this only when the payment happened outside BetterSpend. Payment Runs are the normal
+          path.
         </p>
 
         {error ? (
@@ -124,14 +143,54 @@ function MarkPaidModal({
 
         <form onSubmit={handleSubmit} className="mt-5 space-y-5">
           <div>
-            <label className="mb-2 block text-sm font-medium text-foreground">
+            <label
+              htmlFor="external-payment-date"
+              className="mb-2 block text-sm font-medium text-foreground"
+            >
+              Payment date
+            </label>
+            <Input
+              id="external-payment-date"
+              type="date"
+              value={paymentDate}
+              onChange={(event) => setPaymentDate(event.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="external-payment-method"
+              className="mb-2 block text-sm font-medium text-foreground"
+            >
+              Payment method
+            </label>
+            <Select
+              id="external-payment-method"
+              value={paymentMethod}
+              onChange={(event) => setPaymentMethod(event.target.value)}
+              required
+            >
+              <option value="ach">ACH</option>
+              <option value="wire">Wire</option>
+              <option value="check">Check</option>
+              <option value="card">Card</option>
+              <option value="other">Other</option>
+            </Select>
+          </div>
+          <div>
+            <label
+              htmlFor="external-payment-reference"
+              className="mb-2 block text-sm font-medium text-foreground"
+            >
               Payment Reference
             </label>
             <Input
+              id="external-payment-reference"
               type="text"
               value={paymentReference}
               onChange={(event) => setPaymentReference(event.target.value)}
               placeholder="CHK-12345 or wire reference"
+              required
             />
           </div>
           <div className="flex justify-end gap-3">
@@ -139,7 +198,7 @@ function MarkPaidModal({
               Cancel
             </Button>
             <Button type="submit" disabled={loading}>
-              {loading ? 'Saving...' : 'Mark Paid'}
+              {loading ? 'Saving...' : 'Record payment'}
             </Button>
           </div>
         </form>
@@ -167,7 +226,9 @@ export default function ApAgingPage() {
       ]);
       setAging(agingData);
       setInvoices(
-        (allInvoices as Invoice[]).filter((invoice) => !invoice.paidAt && invoice.status !== 'paid'),
+        (allInvoices as Invoice[]).filter(
+          (invoice) => !invoice.paidAt && invoice.status !== 'paid',
+        ),
       );
       setEarlyPayCount((earlyPay as any[]).length);
     } catch (err: any) {
@@ -267,7 +328,9 @@ export default function ApAgingPage() {
         <StatCard
           icon={CalendarClock}
           label="Due in 7 Days"
-          value={fmt(dueIn7Days.reduce((sum, invoice) => sum + parseFloat(invoice.totalAmount || '0'), 0))}
+          value={fmt(
+            dueIn7Days.reduce((sum, invoice) => sum + parseFloat(invoice.totalAmount || '0'), 0),
+          )}
           sub={`${dueIn7Days.length} invoice${dueIn7Days.length !== 1 ? 's' : ''}`}
           tone="text-amber-700"
         />
@@ -283,10 +346,7 @@ export default function ApAgingPage() {
       {aging ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           {bucketCards.map((bucket) => (
-            <div
-              key={bucket.label}
-              className={`rounded-lg border px-5 py-5 ${bucket.className}`}
-            >
+            <div key={bucket.label} className={`rounded-lg border px-5 py-5 ${bucket.className}`}>
               <div className="text-[11px] font-semibold uppercase tracking-[0.18em] opacity-80">
                 {bucket.label}
               </div>
@@ -302,7 +362,9 @@ export default function ApAgingPage() {
       <Card className="rounded-lg">
         <CardHeader>
           <CardTitle className="text-xl">Unpaid Invoices</CardTitle>
-          <CardDescription>Track due dates, overdue exposure, discount windows, and mark approved invoices as paid.</CardDescription>
+          <CardDescription>
+            Track due dates, overdue exposure, discount windows, and mark approved invoices as paid.
+          </CardDescription>
         </CardHeader>
         <CardContent className="pt-0">
           {invoices.length === 0 ? (
@@ -342,7 +404,9 @@ export default function ApAgingPage() {
                         <div className="text-xs text-muted-foreground">{invoice.invoiceNumber}</div>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {invoice.invoiceDate ? new Date(invoice.invoiceDate).toLocaleDateString() : '—'}
+                        {invoice.invoiceDate
+                          ? new Date(invoice.invoiceDate).toLocaleDateString()
+                          : '—'}
                       </TableCell>
                       <TableCell>
                         {invoice.dueDate ? (
@@ -390,9 +454,21 @@ export default function ApAgingPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         {invoice.status === 'approved' ? (
-                          <Button type="button" size="sm" onClick={() => setMarkPaidInvoice(invoice)}>
-                            Mark Paid
-                          </Button>
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <Button asChild size="sm">
+                              <Link href={`/payment-runs?invoiceId=${invoice.id}`}>
+                                Open Payment Runs
+                              </Link>
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setMarkPaidInvoice(invoice)}
+                            >
+                              Record external payment
+                            </Button>
+                          </div>
                         ) : null}
                       </TableCell>
                     </TableRow>
@@ -405,7 +481,7 @@ export default function ApAgingPage() {
       </Card>
 
       {markPaidInvoice ? (
-        <MarkPaidModal
+        <RecordExternalPaymentModal
           invoice={markPaidInvoice}
           onClose={() => setMarkPaidInvoice(null)}
           onSuccess={() => {

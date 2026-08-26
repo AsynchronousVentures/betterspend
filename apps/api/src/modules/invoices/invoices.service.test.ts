@@ -777,3 +777,111 @@ describe('InvoicesService material edits', () => {
     );
   });
 });
+
+describe('InvoicesService external payments', () => {
+  function createPaymentService() {
+    const updates: Array<Record<string, unknown>> = [];
+    const auditEntries: Array<Record<string, unknown>> = [];
+    const emittedEvents: Array<{ event: string; payload: unknown }> = [];
+    const invoice = {
+      id: 'invoice-1',
+      status: 'approved',
+      totalAmount: '125.00',
+    };
+    const db = {
+      update: () => ({
+        set: (values: Record<string, unknown>) => {
+          updates.push(values);
+          return { where: async () => [{}] };
+        },
+      }),
+    } as unknown as Db;
+    const audit = {
+      log: async (
+        _organizationId: string,
+        _userId: string | null,
+        _entityType: string,
+        _entityId: string,
+        _action: string,
+        details: Record<string, unknown>,
+      ) => {
+        auditEntries.push(details);
+      },
+    } as unknown as AuditService;
+    const webhookEvents = {
+      emit: (_organizationId: string, event: string, payload: unknown) => {
+        emittedEvents.push({ event, payload });
+      },
+    } as unknown as WebhookEventService;
+    const service = new InvoicesService(
+      db,
+      {} as SequenceService,
+      {} as MatchingService,
+      webhookEvents,
+      {} as GlExportService,
+      {} as BudgetsService,
+      audit,
+      {} as NotificationsService,
+      {} as EntitiesService,
+      {} as ExchangeRatesService,
+      {} as SpendGuardService,
+      {} as SettingsService,
+      {} as WorkflowExecutionService,
+    );
+    (service as unknown as { findOne: () => Promise<typeof invoice> }).findOne = async () =>
+      invoice;
+    return { service, updates, auditEntries, emittedEvents };
+  }
+
+  it('requires an auditable external payment date, method, and reference', async () => {
+    const { service } = createPaymentService();
+
+    await assert.rejects(
+      service.markPaid('invoice-1', 'organization-1', 'user-1', {
+        paymentDate: '',
+        paymentMethod: 'ach',
+        paymentReference: '',
+      }),
+      /Payment date, method, and external reference are required/,
+    );
+
+    await assert.rejects(
+      service.markPaid('invoice-1', 'organization-1', 'user-1', {
+        paymentDate: '2026-02-30',
+        paymentMethod: 'ach',
+        paymentReference: 'ACH-123',
+      }),
+      /Payment date is invalid/,
+    );
+
+    await assert.rejects(
+      service.markPaid('invoice-1', 'organization-1', 'user-1', {
+        paymentDate: '2026-08-24',
+        paymentMethod: 'ach',
+        paymentReference: 123,
+      } as unknown as { paymentDate: string; paymentMethod: string; paymentReference: string }),
+      /Payment date, method, and external reference are required/,
+    );
+  });
+
+  it('records external payment details in the invoice and audit trail', async () => {
+    const { service, updates, auditEntries, emittedEvents } = createPaymentService();
+
+    await service.markPaid('invoice-1', 'organization-1', 'user-1', {
+      paymentDate: '2026-08-24',
+      paymentMethod: 'wire',
+      paymentReference: 'WIRE-123',
+    });
+
+    assert.equal(updates[0].status, 'paid');
+    assert.equal((updates[0].paidAt as Date).toISOString(), '2026-08-24T12:00:00.000Z');
+    assert.equal(updates[0].paymentReference, 'WIRE-123');
+    assert.deepEqual(auditEntries[0], {
+      totalAmount: '125.00',
+      paymentDate: '2026-08-24',
+      paymentMethod: 'wire',
+      paymentReference: 'WIRE-123',
+    });
+    assert.equal(emittedEvents[0].event, 'invoice.paid');
+  });
+});

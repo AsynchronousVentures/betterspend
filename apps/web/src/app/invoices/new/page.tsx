@@ -34,7 +34,13 @@ interface PO {
   vendor: { id: string; name: string } | null;
   currency?: string | null;
   exchangeRate?: string | number | null;
-  lines: Array<{ id: string; lineNumber: string; description: string; quantity: string; unitPrice: string }>;
+  lines: Array<{
+    id: string;
+    lineNumber: string;
+    description: string;
+    quantity: string;
+    unitPrice: string;
+  }>;
 }
 
 interface InvoiceLine {
@@ -95,7 +101,7 @@ export default function NewInvoicePage() {
       .then(([poResult, currencyResult]) => {
         if (poResult.status === 'fulfilled') {
           const data = poResult.value;
-          const arr = Array.isArray(data) ? data : (data as any).data ?? [];
+          const arr = Array.isArray(data) ? data : ((data as any).data ?? []);
           setPOs(arr);
         }
 
@@ -146,7 +152,9 @@ export default function NewInvoicePage() {
   }
 
   function updateLine(index: number, patch: Partial<InvoiceLine>) {
-    setLines((prev) => prev.map((line, lineIndex) => (lineIndex === index ? { ...line, ...patch } : line)));
+    setLines((prev) =>
+      prev.map((line, lineIndex) => (lineIndex === index ? { ...line, ...patch } : line)),
+    );
   }
 
   function addLine() {
@@ -284,8 +292,8 @@ export default function NewInvoicePage() {
   return (
     <div className="space-y-6 p-4 lg:p-8">
       <PageHeader
-        title="Create Invoice"
-        description="Capture a standalone invoice or preload from a purchase order, with OCR-assisted extraction for PDFs and images."
+        title="Add invoice"
+        description="Choose manual entry or upload. Use the email inbox and vendor portal for invoices submitted through those sources."
         actions={
           <Button asChild variant="outline">
             <Link href="/invoices">Cancel</Link>
@@ -340,12 +348,17 @@ export default function NewInvoicePage() {
           <CardHeader>
             <CardTitle className="text-xl">Invoice Details</CardTitle>
             <CardDescription>
-              Link the invoice to a purchase order when applicable. PO-linked invoices inherit currency defaults.
+              Link the invoice to a purchase order when applicable. PO-linked invoices inherit
+              currency defaults.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 md:grid-cols-2">
             <Field label="Link to Purchase Order">
-              <Select onChange={(event) => void handlePOChange(event.target.value)} value={selectedPO?.id ?? ''} className="w-full">
+              <Select
+                onChange={(event) => void handlePOChange(event.target.value)}
+                value={selectedPO?.id ?? ''}
+                className="w-full"
+              >
                 <option value="">No PO (standalone invoice)</option>
                 {pos.map((po) => (
                   <option key={po.id} value={po.id}>
@@ -400,7 +413,8 @@ export default function NewInvoicePage() {
             </Field>
 
             <div className="md:col-span-2 rounded-lg border border-border/70 bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
-              Organization base currency is {baseCurrency}. Linked purchase orders default invoice currency and exchange rate.
+              Organization base currency is {baseCurrency}. Linked purchase orders default invoice
+              currency and exchange rate.
             </div>
           </CardContent>
         </Card>
@@ -433,7 +447,10 @@ export default function NewInvoicePage() {
               <TableBody>
                 {lines.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
+                    <TableCell
+                      colSpan={6}
+                      className="py-10 text-center text-sm text-muted-foreground"
+                    >
                       No lines yet. Add a line or select a PO above.
                     </TableCell>
                   </TableRow>
@@ -444,13 +461,17 @@ export default function NewInvoicePage() {
                       <TableCell className="space-y-3">
                         <Input
                           value={line.description}
-                          onChange={(event) => updateLine(index, { description: event.target.value })}
+                          onChange={(event) =>
+                            updateLine(index, { description: event.target.value })
+                          }
                           required
                         />
                         <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
                           <Select
                             value={line.taxCodeId}
-                            onChange={(event) => updateLine(index, { taxCodeId: event.target.value })}
+                            onChange={(event) =>
+                              updateLine(index, { taxCodeId: event.target.value })
+                            }
                             className="w-full"
                           >
                             <option value="">No tax code</option>
@@ -464,7 +485,9 @@ export default function NewInvoicePage() {
                             <input
                               type="checkbox"
                               checked={line.taxInclusive}
-                              onChange={(event) => updateLine(index, { taxInclusive: event.target.checked })}
+                              onChange={(event) =>
+                                updateLine(index, { taxInclusive: event.target.checked })
+                              }
                               className="h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
                             />
                             Tax inclusive
@@ -532,13 +555,7 @@ export default function NewInvoicePage() {
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="space-y-2">
       <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">

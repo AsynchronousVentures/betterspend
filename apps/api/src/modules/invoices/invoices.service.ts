@@ -172,7 +172,9 @@ export interface CashFlowWeek {
 }
 
 export interface MarkPaidInput {
-  paymentReference?: string;
+  paymentReference: string;
+  paymentDate: string;
+  paymentMethod: string;
 }
 
 export interface ResolveExceptionInput {
@@ -1086,6 +1088,21 @@ export class InvoicesService {
     input?: MarkPaidInput,
     access?: AccessPolicy,
   ) {
+    const paymentReference =
+      typeof input?.paymentReference === 'string' ? input.paymentReference.trim() : '';
+    const paymentMethod =
+      typeof input?.paymentMethod === 'string' ? input.paymentMethod.trim() : '';
+    const paymentDate = typeof input?.paymentDate === 'string' ? input.paymentDate.trim() : '';
+    if (!paymentReference || !paymentMethod || !paymentDate) {
+      throw new BadRequestException('Payment date, method, and external reference are required');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) {
+      throw new BadRequestException('Payment date must use YYYY-MM-DD');
+    }
+    const paidAt = new Date(`${paymentDate}T12:00:00.000Z`);
+    if (Number.isNaN(paidAt.getTime()) || paidAt.toISOString().slice(0, 10) !== paymentDate) {
+      throw new BadRequestException('Payment date is invalid');
+    }
     const invoice = await this.findOne(id, organizationId, access, ['payments:manage'], 'payment');
     assertInvoiceScope(access, 'payments:manage', invoice, userId);
     if ((invoice as any).status !== 'approved') {
@@ -1095,8 +1112,8 @@ export class InvoicesService {
       .update(invoices)
       .set({
         status: 'paid',
-        paidAt: new Date(),
-        paymentReference: input?.paymentReference ?? null,
+        paidAt,
+        paymentReference,
         updatedAt: new Date(),
       } as any)
       .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
@@ -1104,7 +1121,9 @@ export class InvoicesService {
     this.audit
       .log(organizationId, userId, 'invoice', id, 'paid', {
         totalAmount: (updated as any).totalAmount,
-        paymentReference: input?.paymentReference,
+        paymentDate,
+        paymentMethod,
+        paymentReference,
       })
       .catch(() => {});
     this.webhookEvents.emit(organizationId, 'invoice.paid', { invoice: updated });

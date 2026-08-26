@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { Inbox } from 'lucide-react';
-import { api } from '../../lib/api';
+import { api, loadFailureState } from '../../lib/api';
+import { ListState } from '../../components/resource-state';
 import { StatusBadge } from '../../components/status-badge';
+import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
@@ -12,7 +14,9 @@ import { Textarea } from '../../components/ui/textarea';
 export default function IntakePage() {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const [form, setForm] = useState({
     sourceEmail: '',
     subject: '',
@@ -21,7 +25,15 @@ export default function IntakePage() {
 
   async function load() {
     setLoading(true);
-    api.emailIntake.list().then(setItems).catch(() => setItems([])).finally(() => setLoading(false));
+    setLoadError(null);
+    try {
+      const data = await api.emailIntake.list();
+      setItems(Array.isArray(data) ? data : []);
+    } catch (loadFailure) {
+      setLoadError(loadFailure);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -31,18 +43,30 @@ export default function IntakePage() {
   async function handleCreate(event: React.FormEvent) {
     event.preventDefault();
     setSaving(true);
+    setError('');
     try {
       await api.emailIntake.create(form);
       setForm({ sourceEmail: '', subject: '', body: '' });
       await load();
+    } catch (createError) {
+      setError(
+        createError instanceof Error ? createError.message : 'Could not add the intake item.',
+      );
     } finally {
       setSaving(false);
     }
   }
 
   async function handleDiscard(id: string) {
-    await api.emailIntake.discard(id).catch(() => {});
-    await load();
+    setError('');
+    try {
+      await api.emailIntake.discard(id);
+      await load();
+    } catch (discardError) {
+      setError(
+        discardError instanceof Error ? discardError.message : 'Could not discard the intake item.',
+      );
+    }
   }
 
   return (
@@ -50,9 +74,16 @@ export default function IntakePage() {
       <div>
         <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">Intake Queue</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          First-pass email intake review for forwarded quotes, invoice emails, and purchase requests.
+          First-pass email intake review for forwarded quotes, invoice emails, and purchase
+          requests.
         </p>
       </div>
+
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -64,13 +95,17 @@ export default function IntakePage() {
               required
               type="email"
               value={form.sourceEmail}
-              onChange={(event) => setForm((current) => ({ ...current, sourceEmail: event.target.value }))}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, sourceEmail: event.target.value }))
+              }
               placeholder="sender@vendor.com"
             />
             <Input
               required
               value={form.subject}
-              onChange={(event) => setForm((current) => ({ ...current, subject: event.target.value }))}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, subject: event.target.value }))
+              }
               placeholder="Subject"
             />
             <Textarea
@@ -94,16 +129,15 @@ export default function IntakePage() {
           <CardTitle className="text-base">Pending Review</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {loading ? (
-            <div className="p-8 text-sm text-muted-foreground">Loading intake items...</div>
-          ) : items.length === 0 ? (
-            <div className="flex min-h-[260px] flex-col items-center justify-center gap-3 text-center">
-              <div className="rounded-full bg-muted p-4"><Inbox className="h-6 w-6 text-muted-foreground" /></div>
-              <div>
-                <p className="text-base font-semibold text-foreground">No intake items yet</p>
-                <p className="mt-1 text-sm text-muted-foreground">Add a forwarded item above to start triage.</p>
-              </div>
-            </div>
+          {loading || loadError || items.length === 0 ? (
+            <ListState
+              state={loading ? 'loading' : loadError ? loadFailureState(loadError) : 'empty'}
+              loadingLabel="Loading intake items..."
+              emptyTitle="No intake items yet"
+              emptyDescription="Forward an email or add one above to start triage."
+              icon={Inbox}
+              onRetry={() => void load()}
+            />
           ) : (
             <div className="divide-y divide-border/70">
               {items.map((item) => (
@@ -113,7 +147,17 @@ export default function IntakePage() {
                       <div className="font-semibold text-foreground">{item.subject}</div>
                       <div className="mt-1 text-sm text-muted-foreground">{item.sourceEmail}</div>
                     </div>
-                    <StatusBadge value={item.detectedType === 'invoice' ? 'partial_match' : item.detectedType === 'requisition' ? 'approved' : 'pending'} label={item.detectedType} className="capitalize" />
+                    <StatusBadge
+                      value={
+                        item.detectedType === 'invoice'
+                          ? 'partial_match'
+                          : item.detectedType === 'requisition'
+                            ? 'approved'
+                            : 'pending'
+                      }
+                      label={item.detectedType}
+                      className="capitalize"
+                    />
                   </div>
                   <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
                     {item.body.slice(0, 280)}
@@ -122,11 +166,20 @@ export default function IntakePage() {
                   <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
                     <span>Status: {item.status.replace(/_/g, ' ')}</span>
                     <span>Vendor: {item.extractedVendorName ?? '—'}</span>
-                    <span>Total: {item.extractedTotal ? `${item.extractedCurrency ?? 'USD'} ${item.extractedTotal}` : '—'}</span>
+                    <span>
+                      Total:{' '}
+                      {item.extractedTotal
+                        ? `${item.extractedCurrency ?? 'USD'} ${item.extractedTotal}`
+                        : '—'}
+                    </span>
                   </div>
                   {item.status === 'pending_review' ? (
                     <div className="mt-4">
-                      <Button type="button" variant="outline" onClick={() => handleDiscard(item.id)}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => handleDiscard(item.id)}
+                      >
                         Discard
                       </Button>
                     </div>
