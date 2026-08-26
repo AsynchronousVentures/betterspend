@@ -5,6 +5,7 @@ import { ReportsService } from './reports.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentAccess } from '../auth/current-access.decorator';
 import type { AccessPolicy } from '../auth/access-policy';
+import { intersectScopes, type ScopeConstraint } from '../auth/scope-sql';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('reports')
@@ -12,6 +13,13 @@ import { Permissions } from '../../common/decorators/permissions.decorator';
 @Controller('reports')
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
+
+  private reportExportScope(access?: AccessPolicy): ScopeConstraint | undefined {
+    return intersectScopes(
+      access?.scopeFor('report', 'reports:view'),
+      access?.scopeFor('report', 'reports:export'),
+    );
+  }
 
   // ─── Custom Report Builder ──────────────────────────────────────────────
 
@@ -92,7 +100,7 @@ export class ReportsController {
     const csv = await this.reportsService.exportPOs(
       orgId,
       status,
-      access?.scopeFor('report', 'reports:view'),
+      this.reportExportScope(access),
     );
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="purchase-orders.csv"');
@@ -112,7 +120,7 @@ export class ReportsController {
     const csv = await this.reportsService.exportInvoices(
       orgId,
       status,
-      access?.scopeFor('report', 'reports:view'),
+      this.reportExportScope(access),
     );
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="invoices.csv"');
@@ -129,7 +137,7 @@ export class ReportsController {
   ) {
     const csv = await this.reportsService.exportRequisitions(
       orgId,
-      access?.scopeFor('report', 'reports:view'),
+      this.reportExportScope(access),
     );
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="requisitions.csv"');
@@ -146,7 +154,7 @@ export class ReportsController {
   ) {
     const csv = await this.reportsService.exportSpendSummary(
       orgId,
-      access?.scopeFor('report', 'reports:view'),
+      this.reportExportScope(access),
     );
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="spend-summary.csv"');
@@ -163,7 +171,7 @@ export class ReportsController {
   ) {
     const csv = await this.reportsService.exportBudgets(
       orgId,
-      access?.scopeFor('report', 'reports:view'),
+      this.reportExportScope(access),
     );
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="budgets.csv"');
@@ -180,7 +188,7 @@ export class ReportsController {
   ) {
     const csv = await this.reportsService.exportDepartmentSpend(
       orgId,
-      access?.scopeFor('report', 'reports:view'),
+      this.reportExportScope(access),
     );
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="department-spend.csv"');
@@ -197,7 +205,7 @@ export class ReportsController {
   ) {
     const csv = await this.reportsService.exportApAging(
       orgId,
-      access?.scopeFor('report', 'reports:view'),
+      this.reportExportScope(access),
     );
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="ap-aging.csv"');
@@ -214,7 +222,7 @@ export class ReportsController {
   ) {
     const csv = await this.reportsService.exportGrnSummary(
       orgId,
-      access?.scopeFor('report', 'reports:view'),
+      this.reportExportScope(access),
     );
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="goods-receipts.csv"');

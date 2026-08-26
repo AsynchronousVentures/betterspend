@@ -1,10 +1,9 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
-import type { ResourceScope } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type * as schema from '@betterspend/db';
-import { globalOnlyPredicate, scopePredicate } from '../auth/scope-sql';
+import { globalOnlyPredicate, scopePredicate, type ScopeConstraint } from '../auth/scope-sql';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -46,7 +45,7 @@ export class ExportService {
   async getPurchaseOrders(
     organizationId: string,
     query: ExportQuery,
-    scope?: ResourceScope,
+    scope?: ScopeConstraint,
   ) {
     const { from, to } = query;
     const rowScope = scopePredicate(scope, {
@@ -81,7 +80,7 @@ export class ExportService {
     return rows as Record<string, unknown>[];
   }
 
-  async getInvoices(organizationId: string, query: ExportQuery, scope?: ResourceScope) {
+  async getInvoices(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
     const rowScope = scopePredicate(scope, {
       department: sql`r.department_id`,
@@ -118,7 +117,7 @@ export class ExportService {
     return rows as Record<string, unknown>[];
   }
 
-  async getBudgets(organizationId: string, query: ExportQuery, scope?: ResourceScope) {
+  async getBudgets(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
     const rowScope = scopePredicate(scope, {
       department: sql`CASE WHEN b.budget_type = 'department' THEN b.scope_id END`,
@@ -155,7 +154,7 @@ export class ExportService {
     return rows as Record<string, unknown>[];
   }
 
-  async getAuditLog(organizationId: string, query: ExportQuery, scope?: ResourceScope) {
+  async getAuditLog(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
     const rowScope = globalOnlyPredicate(scope);
     const rows = await this.db.execute(sql`
@@ -176,7 +175,7 @@ export class ExportService {
     return rows as Record<string, unknown>[];
   }
 
-  async getSpendByVendor(organizationId: string, query: ExportQuery, scope?: ResourceScope) {
+  async getSpendByVendor(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
     const rowScope = scopePredicate(scope, {
       department: sql`r.department_id`,
@@ -207,7 +206,7 @@ export class ExportService {
     return rows as Record<string, unknown>[];
   }
 
-  async getSpendByCategory(organizationId: string, query: ExportQuery, scope?: ResourceScope) {
+  async getSpendByCategory(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
     const rowScope = scopePredicate(scope, {
       department: sql`r.department_id`,

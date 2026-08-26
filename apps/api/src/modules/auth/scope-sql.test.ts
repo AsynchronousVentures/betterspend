@@ -3,7 +3,7 @@ import test from 'node:test';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import type { ResourceScope } from '@betterspend/shared';
-import { globalOnlyPredicate, scopePredicate } from './scope-sql';
+import { globalOnlyPredicate, intersectScopes, scopePredicate } from './scope-sql';
 
 const scoped: ResourceScope = {
   organizationId: 'org-1',
@@ -48,4 +48,22 @@ test('global-only predicates distinguish global and scoped grants', () => {
 
   assert.equal(scopedQuery.sql, 'false');
   assert.equal(globalQuery.sql, 'true');
+});
+
+test('intersected scopes require both permission grants to match', () => {
+  const combined = intersectScopes(scoped, {
+    ...scoped,
+    departmentIds: [],
+    projectIds: ['project-2'],
+  });
+  const query = new PgDialect().sqlToQuery(
+    scopePredicate(combined, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+    }),
+  );
+
+  assert.match(query.sql, /and/i);
+  assert.ok(query.params.includes('department-1'));
+  assert.ok(query.params.includes('project-2'));
 });

@@ -1,9 +1,8 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { and, asc, eq, sql } from 'drizzle-orm';
-import type { ResourceScope } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
 import { savedReports, type Db } from '@betterspend/db';
-import { scopePredicate } from '../auth/scope-sql';
+import { scopePredicate, type ScopeConstraint } from '../auth/scope-sql';
 
 function toCsv(rows: Record<string, unknown>[]): string {
   if (!rows.length) return '';
@@ -99,7 +98,7 @@ export class ReportsService {
   async runCustomReport(
     orgId: string,
     params: CustomReportParams,
-    scope?: ResourceScope,
+    scope?: ScopeConstraint,
   ): Promise<Record<string, unknown>[]> {
     switch (params.reportType) {
       case 'spend_by_vendor':
@@ -122,7 +121,7 @@ export class ReportsService {
   private async customSpendByVendor(
     orgId: string,
     params: CustomReportParams,
-    scope?: ResourceScope,
+    scope?: ScopeConstraint,
   ): Promise<Record<string, unknown>[]> {
     const startDate = params.startDate ?? null;
     const endDate = params.endDate ?? null;
@@ -157,7 +156,7 @@ export class ReportsService {
   private async customSpendByDepartment(
     orgId: string,
     params: CustomReportParams,
-    scope?: ResourceScope,
+    scope?: ScopeConstraint,
   ): Promise<Record<string, unknown>[]> {
     const startDate = params.startDate ?? null;
     const endDate = params.endDate ?? null;
@@ -188,7 +187,7 @@ export class ReportsService {
   private async customSpendByCategory(
     orgId: string,
     params: CustomReportParams,
-    scope?: ResourceScope,
+    scope?: ScopeConstraint,
   ): Promise<Record<string, unknown>[]> {
     const startDate = params.startDate ?? null;
     const endDate = params.endDate ?? null;
@@ -222,7 +221,7 @@ export class ReportsService {
   private async customPoStatusSummary(
     orgId: string,
     params: CustomReportParams,
-    scope?: ResourceScope,
+    scope?: ScopeConstraint,
   ): Promise<Record<string, unknown>[]> {
     const startDate = params.startDate ?? null;
     const endDate = params.endDate ?? null;
@@ -251,7 +250,7 @@ export class ReportsService {
   private async customInvoiceAging(
     orgId: string,
     _params: CustomReportParams,
-    scope?: ResourceScope,
+    scope?: ScopeConstraint,
   ): Promise<Record<string, unknown>[]> {
     const rowScope = scopePredicate(scope, {
       department: sql`r.department_id`,
@@ -284,7 +283,7 @@ export class ReportsService {
   private async customApprovalCycleTime(
     orgId: string,
     params: CustomReportParams,
-    scope?: ResourceScope,
+    scope?: ScopeConstraint,
   ): Promise<Record<string, unknown>[]> {
     const startDate = params.startDate ?? null;
     const endDate = params.endDate ?? null;
@@ -325,7 +324,7 @@ export class ReportsService {
   async exportPOs(
     organizationId: string,
     status?: string,
-    scope?: ResourceScope,
+    scope?: ScopeConstraint,
   ): Promise<string> {
     const rowScope = scopePredicate(scope, {
       department: sql`r.department_id`,
@@ -355,7 +354,7 @@ export class ReportsService {
   async exportInvoices(
     organizationId: string,
     status?: string,
-    scope?: ResourceScope,
+    scope?: ScopeConstraint,
   ): Promise<string> {
     const rowScope = scopePredicate(scope, {
       department: sql`r.department_id`,
@@ -388,7 +387,7 @@ export class ReportsService {
     return toCsv(rows as Record<string, unknown>[]);
   }
 
-  async exportRequisitions(organizationId: string, scope?: ResourceScope): Promise<string> {
+  async exportRequisitions(organizationId: string, scope?: ScopeConstraint): Promise<string> {
     const rowScope = scopePredicate(scope, {
       department: sql`r.department_id`,
       project: sql`r.project_id`,
@@ -412,7 +411,7 @@ export class ReportsService {
     return toCsv(rows as Record<string, unknown>[]);
   }
 
-  async exportSpendSummary(organizationId: string, scope?: ResourceScope): Promise<string> {
+  async exportSpendSummary(organizationId: string, scope?: ScopeConstraint): Promise<string> {
     const rowScope = scopePredicate(scope, {
       department: sql`r.department_id`,
       project: sql`r.project_id`,
@@ -439,7 +438,7 @@ export class ReportsService {
     return toCsv(rows as Record<string, unknown>[]);
   }
 
-  async exportBudgets(organizationId: string, scope?: ResourceScope): Promise<string> {
+  async exportBudgets(organizationId: string, scope?: ScopeConstraint): Promise<string> {
     const rowScope = scopePredicate(scope, {
       department: sql`CASE WHEN b.budget_type = 'department' THEN b.scope_id END`,
       project: sql`CASE WHEN b.budget_type = 'project' THEN b.scope_id END`,
@@ -474,7 +473,7 @@ export class ReportsService {
     return toCsv(rows as Record<string, unknown>[]);
   }
 
-  async exportDepartmentSpend(organizationId: string, scope?: ResourceScope): Promise<string> {
+  async exportDepartmentSpend(organizationId: string, scope?: ScopeConstraint): Promise<string> {
     const rowScope = scopePredicate(scope, {
       department: sql`COALESCE(d.id, r.department_id)`,
       project: sql`r.project_id`,
@@ -499,7 +498,7 @@ export class ReportsService {
     return toCsv(rows as Record<string, unknown>[]);
   }
 
-  async exportApAging(organizationId: string, scope?: ResourceScope): Promise<string> {
+  async exportApAging(organizationId: string, scope?: ScopeConstraint): Promise<string> {
     const rowScope = scopePredicate(scope, {
       department: sql`r.department_id`,
       project: sql`r.project_id`,
@@ -534,7 +533,7 @@ export class ReportsService {
     return toCsv(rows as Record<string, unknown>[]);
   }
 
-  async exportGrnSummary(organizationId: string, scope?: ResourceScope): Promise<string> {
+  async exportGrnSummary(organizationId: string, scope?: ScopeConstraint): Promise<string> {
     const rowScope = scopePredicate(scope, {
       department: sql`r.department_id`,
       project: sql`r.project_id`,

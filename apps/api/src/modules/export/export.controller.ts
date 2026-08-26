@@ -5,6 +5,7 @@ import { ExportService } from './export.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentAccess } from '../auth/current-access.decorator';
 import type { AccessPolicy } from '../auth/access-policy';
+import { intersectScopes, type ScopeConstraint } from '../auth/scope-sql';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('export')
@@ -13,6 +14,13 @@ import { Permissions } from '../../common/decorators/permissions.decorator';
 @Controller('export')
 export class ExportController {
   constructor(private readonly exportService: ExportService) {}
+
+  private reportExportScope(access?: AccessPolicy): ScopeConstraint | undefined {
+    return intersectScopes(
+      access?.scopeFor('report', 'reports:view'),
+      access?.scopeFor('report', 'reports:export'),
+    );
+  }
 
   private async handleExport(
     res: Response,
@@ -50,7 +58,7 @@ export class ExportController {
     const rows = await this.exportService.getPurchaseOrders(
       orgId,
       { from, to },
-      access?.scopeFor('report', 'reports:view'),
+      this.reportExportScope(access),
     );
     if (format === 'csv') {
       return this.handleExport(res!, 'purchase-orders', rows, format);
@@ -80,7 +88,7 @@ export class ExportController {
     const rows = await this.exportService.getInvoices(
       orgId,
       { from, to },
-      access?.scopeFor('report', 'reports:view'),
+      this.reportExportScope(access),
     );
     if (format === 'csv') {
       return this.handleExport(res!, 'invoices', rows, format);
@@ -110,7 +118,7 @@ export class ExportController {
     const rows = await this.exportService.getBudgets(
       orgId,
       { from, to },
-      access?.scopeFor('report', 'reports:view'),
+      this.reportExportScope(access),
     );
     if (format === 'csv') {
       return this.handleExport(res!, 'budgets', rows, format);
@@ -140,7 +148,7 @@ export class ExportController {
     const rows = await this.exportService.getAuditLog(
       orgId,
       { from, to },
-      access?.scopeFor('report', 'reports:view'),
+      this.reportExportScope(access),
     );
     if (format === 'csv') {
       return this.handleExport(res!, 'audit-log', rows, format);
@@ -170,7 +178,7 @@ export class ExportController {
     const rows = await this.exportService.getSpendByVendor(
       orgId,
       { from, to },
-      access?.scopeFor('report', 'reports:view'),
+      this.reportExportScope(access),
     );
     if (format === 'csv') {
       return this.handleExport(res!, 'spend-by-vendor', rows, format);
@@ -200,7 +208,7 @@ export class ExportController {
     const rows = await this.exportService.getSpendByCategory(
       orgId,
       { from, to },
-      access?.scopeFor('report', 'reports:view'),
+      this.reportExportScope(access),
     );
     if (format === 'csv') {
       return this.handleExport(res!, 'spend-by-category', rows, format);

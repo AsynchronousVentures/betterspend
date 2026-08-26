@@ -61,14 +61,23 @@ function alertScopePredicate(scope: ResourceScope | undefined): SQL | undefined 
   }
   for (const id of scope.entityIds) {
     clauses.push(sql`(
-      a.record_type = 'invoice' AND EXISTS (
+      (a.record_type = 'invoice' AND EXISTS (
         SELECT 1
         FROM invoices i
         LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
         WHERE i.id = a.record_id
           AND i.organization_id = a.org_id
           AND COALESCE(i.entity_id, po.entity_id) = ${id}
-      )
+      ))
+      OR (a.record_type = 'requisition' AND EXISTS (
+        SELECT 1
+        FROM requisitions r
+        JOIN purchase_orders po ON po.requisition_id = r.id
+        WHERE r.id = a.record_id
+          AND r.organization_id = a.org_id
+          AND po.organization_id = a.org_id
+          AND po.entity_id = ${id}
+      ))
     )`);
   }
 
@@ -114,10 +123,15 @@ export class SpendGuardService {
     note?: string,
     scope?: ResourceScope,
   ) {
-    const permittedAlertIds = await this.permittedAlertIds(orgId, scope);
-    if (permittedAlertIds && !permittedAlertIds.includes(id)) {
-      throw new NotFoundException(`Spend guard alert ${id} not found`);
-    }
+    const rowScope = alertScopePredicate(scope);
+    const scopedAlertId = rowScope
+      ? sql`${spendGuardAlerts.id} IN (
+          SELECT a.id
+          FROM spend_guard_alerts a
+          WHERE a.org_id = ${orgId}
+            AND ${rowScope}
+        )`
+      : undefined;
 
     const [updated] = await this.db
       .update(spendGuardAlerts)
@@ -128,9 +142,10 @@ export class SpendGuardService {
         resolvedBy: userId,
         updatedAt: new Date(),
       })
-      .where(and(eq(spendGuardAlerts.id, id), eq(spendGuardAlerts.orgId, orgId)))
+      .where(and(eq(spendGuardAlerts.id, id), eq(spendGuardAlerts.orgId, orgId), scopedAlertId))
       .returning();
 
+    if (!updated) throw new NotFoundException(`Spend guard alert ${id} not found`);
     return updated;
   }
 
