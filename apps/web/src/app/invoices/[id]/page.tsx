@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { RefreshCw } from 'lucide-react';
 import { api, loadFailureState } from '../../../lib/api';
+import { localDateInputValue } from '../../../lib/date-input';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { DocumentUploader } from '../../../components/document-uploader';
 import { MessageThread } from '../../../components/message-thread';
@@ -104,7 +105,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const [glJobsLoading, setGlJobsLoading] = useState(false);
   const [glJobsError, setGlJobsError] = useState<unknown>(null);
   const [showExternalPayment, setShowExternalPayment] = useState(false);
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [paymentDate, setPaymentDate] = useState(localDateInputValue);
   const [paymentMethod, setPaymentMethod] = useState('ach');
   const [paymentReference, setPaymentReference] = useState('');
 
@@ -541,7 +542,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                     ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {latestGlJob.status === 'failed' ? (
+                    {['failed', 'skipped'].includes(latestGlJob.status) ? (
                       <Button
                         type="button"
                         variant="outline"
@@ -549,7 +550,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                         disabled={actionLoading !== null}
                       >
                         <RefreshCw className="h-4 w-4" />
-                        {actionLoading === `retry:${latestGlJob.id}` ? 'Retrying...' : 'Retry'}
+                        {actionLoading === `retry:${latestGlJob.id}` ? 'Retrying...' : 'Retry export'}
                       </Button>
                     ) : null}
                     <Button asChild type="button" variant="outline">

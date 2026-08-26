@@ -853,6 +853,15 @@ describe('InvoicesService external payments', () => {
       }),
       /Payment date is invalid/,
     );
+
+    await assert.rejects(
+      service.markPaid('invoice-1', 'organization-1', 'user-1', {
+        paymentDate: '2026-08-24',
+        paymentMethod: 'ach',
+        paymentReference: 123,
+      } as unknown as { paymentDate: string; paymentMethod: string; paymentReference: string }),
+      /Payment date, method, and external reference are required/,
+    );
   });
 
   it('records external payment details in the invoice and audit trail', async () => {

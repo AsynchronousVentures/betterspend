@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, CalendarClock, CircleDollarSign, Percent, Wallet } from 'lucide-react';
 import { api } from '../../../lib/api';
+import { localDateInputValue } from '../../../lib/date-input';
 import { PageHeader } from '../../../components/page-header';
 import { StatusBadge } from '../../../components/status-badge';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
@@ -85,7 +86,7 @@ function RecordExternalPaymentModal({
   onSuccess: () => void;
 }) {
   const [paymentReference, setPaymentReference] = useState('');
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [paymentDate, setPaymentDate] = useState(localDateInputValue);
   const [paymentMethod, setPaymentMethod] = useState('ach');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');

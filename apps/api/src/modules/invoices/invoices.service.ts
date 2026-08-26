@@ -1085,12 +1085,14 @@ export class InvoicesService {
     id: string,
     organizationId: string,
     userId: string,
-    input: MarkPaidInput,
+    input?: MarkPaidInput,
     access?: AccessPolicy,
   ) {
-    const paymentReference = input.paymentReference?.trim();
-    const paymentMethod = input.paymentMethod?.trim();
-    const paymentDate = input.paymentDate?.trim();
+    const paymentReference =
+      typeof input?.paymentReference === 'string' ? input.paymentReference.trim() : '';
+    const paymentMethod =
+      typeof input?.paymentMethod === 'string' ? input.paymentMethod.trim() : '';
+    const paymentDate = typeof input?.paymentDate === 'string' ? input.paymentDate.trim() : '';
     if (!paymentReference || !paymentMethod || !paymentDate) {
       throw new BadRequestException('Payment date, method, and external reference are required');
     }

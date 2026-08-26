@@ -317,8 +317,19 @@ export class IntakeConciergeService {
 
     const acceptedValues = input.acceptedValues ?? {};
     const plan = session.plan as unknown as ConciergePlan;
-    const unansweredQuestions = Math.max(plan.missingFields?.length ?? 0, plan.questions?.length ?? 0);
-    if (unansweredQuestions > 0) {
+    const unansweredQuestions = Array.from(
+      new Set([
+        ...(plan.missingFields ?? []),
+        ...(plan.questions?.map((question) => question.field) ?? []),
+      ]),
+    ).filter((field) => {
+      const value =
+        field === 'departmentOrProject'
+          ? acceptedValues.departmentId ?? acceptedValues.projectId ?? acceptedValues[field]
+          : acceptedValues[field];
+      return value === undefined || value === null || (typeof value === 'string' && !value.trim());
+    });
+    if (unansweredQuestions.length > 0) {
       throw new BadRequestException('Answer the routing questions before creating a guided draft.');
     }
     const workflow = input.workflow ?? plan.route.workflow;

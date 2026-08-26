@@ -88,4 +88,57 @@ describe('IntakeConciergeService workflow links', () => {
       }),
     ).rejects.toThrow('Answer the routing questions before creating a guided draft.');
   });
+
+  it('converts when the caller supplies each required routing value', async () => {
+    const update = jest.fn(() => ({
+      set: jest.fn(() => ({ where: jest.fn(async () => undefined) })),
+    }));
+    const db = {
+      query: {
+        intakeConciergeSessions: {
+          findFirst: jest.fn(async () => ({
+            id: 'session-1',
+            status: 'draft',
+            draft: {
+              title: 'Office chairs',
+              lines: [{ description: 'Office chair', quantity: 2, unitPrice: 100 }],
+            },
+            plan: {
+              route: { workflow: 'requisition', label: 'Requisition', reason: 'Default route.' },
+              missingFields: ['departmentOrProject'],
+              questions: [
+                {
+                  field: 'departmentOrProject',
+                  prompt: 'Which department or project should own the spend?',
+                  reason: 'Required to finalize routing.',
+                },
+              ],
+            },
+          })),
+        },
+      },
+      update,
+    };
+    const requisitionsService = { create: jest.fn(async () => ({ id: 'req-1' })) };
+    const audit = { log: jest.fn(async () => undefined) };
+    const service = new IntakeConciergeService(
+      db as never,
+      {} as never,
+      requisitionsService as never,
+      {} as never,
+      audit as never,
+    );
+
+    await expect(
+      service.convertSession('session-1', 'organization-1', 'requester-1', {
+        workflow: 'requisition',
+        acceptedValues: { departmentId: '00000000-0000-4000-8000-000000000001' },
+      }),
+    ).resolves.toMatchObject({ draftId: 'req-1', workflow: 'requisition' });
+    expect(requisitionsService.create).toHaveBeenCalledWith(
+      'organization-1',
+      'requester-1',
+      expect.objectContaining({ departmentId: '00000000-0000-4000-8000-000000000001' }),
+    );
+  });
 });
