@@ -14,7 +14,7 @@ CodeRabbit learns from direct natural-language replies, not a documented reactio
 
 Batch review fixes into a coherent push. Request one follow-up CodeRabbit review only when a valid finding caused a material code change. Avoid follow-up reviews for unchanged code, comments, formatting, or other non-material fixes.
 
-Before pushing material fixes to a ready pull request, convert it back to draft. Let the current Fast CI run finish unless the next push fixes a known failure; superseding an active run discards Blacksmith work.
+Before pushing material fixes to a ready pull request, convert it back to draft. Let the current Fast CI run finish unless the next push fixes a known failure; superseding an active run discards CI work.
 
 ## Branch protection
 

@@ -96,7 +96,7 @@ jobs:
       !cancelled()
       && github.event_name == 'pull_request'
       && needs.change-scope.result == 'success'
-    runs-on: ${{ needs.change-scope.outputs.runtime == 'true' && 'blacksmith-2vcpu-ubuntu-2404' || 'ubuntu-slim' }}
+    runs-on: ${{ needs.change-scope.outputs.runtime == 'true' && 'ubuntu-24.04' || 'ubuntu-slim' }}
     timeout-minutes: 15
     steps:
       - name: Accept non-runtime changes
@@ -194,7 +194,7 @@ jobs:
       && needs.change-scope.outputs.runtime == 'true'
       && github.event_name != 'pull_request'
       && needs.full-ci-proof.outputs.available != 'true'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
@@ -271,14 +271,11 @@ jobs:
           PRODUCTION_ENV_FILE=.env.production.example IMAGE_TAG=sha-ci \
             docker compose --profile migrate --env-file .env.production.example -f compose.yaml -f compose.prod.yaml config >/dev/null
 
-      - name: Setup Blacksmith Builder
-        uses: useblacksmith/setup-docker-builder@v2
-        with:
-          cache-key: betterspend/application-images
-          nofallback: true
+      - name: Set up Docker builder
+        uses: docker/setup-buildx-action@v3
 
       - name: Build API image
-        uses: useblacksmith/build-push-action@v2
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/api.Dockerfile
@@ -286,7 +283,7 @@ jobs:
           push: false
 
       - name: Build web image
-        uses: useblacksmith/build-push-action@v2
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/web.Dockerfile
@@ -294,7 +291,7 @@ jobs:
           push: false
 
       - name: Build migrator image
-        uses: useblacksmith/build-push-action@v2
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/migrator.Dockerfile
@@ -350,7 +347,7 @@ jobs:
     needs: [change-scope, validate]
     outputs:
       release_tag: ${{ steps.release_ref.outputs.release_tag }}
-    runs-on: ${{ startsWith(github.ref, 'refs/tags/v') && 'ubuntu-latest' || 'blacksmith-2vcpu-ubuntu-2404' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     concurrency:
       group: publish-${{ github.sha }}
@@ -404,15 +401,7 @@ jobs:
             fi
           } >> "$GITHUB_OUTPUT"
 
-      - name: Setup Blacksmith Builder
-        if: github.ref == 'refs/heads/main'
-        uses: useblacksmith/setup-docker-builder@v2
-        with:
-          cache-key: betterspend/application-images
-          nofallback: true
-
-      - name: Set up release Docker builder
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Set up Docker builder
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -463,8 +452,8 @@ jobs:
           done
 
       - name: Build and push API image
-        if: github.ref == 'refs/heads/main' && steps.existing_images.outputs.api_exists != 'true'
-        uses: useblacksmith/build-push-action@v2
+        if: steps.existing_images.outputs.api_exists != 'true'
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/api.Dockerfile
@@ -473,8 +462,8 @@ jobs:
           tags: ${{ steps.image_settings.outputs.api_tag }}
 
       - name: Build and push web image
-        if: github.ref == 'refs/heads/main' && steps.existing_images.outputs.web_exists != 'true'
-        uses: useblacksmith/build-push-action@v2
+        if: steps.existing_images.outputs.web_exists != 'true'
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/web.Dockerfile
@@ -483,37 +472,7 @@ jobs:
           tags: ${{ steps.image_settings.outputs.web_tag }}
 
       - name: Build and push migrator image
-        if: github.ref == 'refs/heads/main' && steps.existing_images.outputs.migrator_exists != 'true'
-        uses: useblacksmith/build-push-action@v2
-        with:
-          context: .
-          file: docker/migrator.Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.image_settings.outputs.migrator_tag }}
-
-      - name: Build and push missing API source for release
-        if: startsWith(github.ref, 'refs/tags/v') && steps.existing_images.outputs.api_exists != 'true'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/api.Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.image_settings.outputs.api_tag }}
-
-      - name: Build and push missing web source for release
-        if: startsWith(github.ref, 'refs/tags/v') && steps.existing_images.outputs.web_exists != 'true'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/web.Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.image_settings.outputs.web_tag }}
-
-      - name: Build and push missing migrator source for release
-        if: startsWith(github.ref, 'refs/tags/v') && steps.existing_images.outputs.migrator_exists != 'true'
+        if: steps.existing_images.outputs.migrator_exists != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -645,7 +604,7 @@ jobs:
       && startsWith(github.ref, 'refs/tags/')
       && needs.deploy-preflight.outputs.ready == 'true'
     needs: [publish, deploy-preflight]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Protect this environment in repo settings (required reviewers, or none
     # for fully automatic deploys). Only tag pushes reach production here.
