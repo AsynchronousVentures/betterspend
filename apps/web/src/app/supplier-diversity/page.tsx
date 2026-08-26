@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Leaf, ShieldCheck, Sprout, Users2 } from 'lucide-react';
 import { api, type VendorDiversitySummary, type VendorEsgUpdateInput } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
+import { SupplierHubNav } from '../../components/supplier-hub-nav';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -144,6 +145,8 @@ export default function SupplierDiversityPage() {
           </div>
         }
       />
+
+      <SupplierHubNav />
 
       {message ? (
         <Alert>

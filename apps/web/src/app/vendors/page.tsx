@@ -6,6 +6,7 @@ import { Building2, Plus, Search } from 'lucide-react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
 import { StatusBadge } from '../../components/status-badge';
+import { SupplierHubNav } from '../../components/supplier-hub-nav';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
@@ -30,7 +31,7 @@ export default function VendorsPage() {
   return (
     <div className="space-y-6 p-4 lg:p-8">
       <PageHeader
-        title="Vendors"
+        title="Suppliers"
         description="Supplier master records, payment terms, and onboarding status in one place."
         actions={
           <>
@@ -39,25 +40,27 @@ export default function VendorsPage() {
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search vendors or codes"
+                placeholder="Search suppliers or codes"
                 className="pl-9"
               />
             </div>
             <Button asChild>
               <Link href="/vendors/new">
                 <Plus className="h-4 w-4" />
-                New Vendor
+                New Supplier
               </Link>
             </Button>
           </>
         }
       />
 
+      <SupplierHubNav />
+
       <Card className="overflow-hidden">
         <CardContent className="p-0">
           {loading ? (
             <div className="flex min-h-[260px] items-center justify-center text-sm text-muted-foreground">
-              Loading vendors...
+              Loading suppliers...
             </div>
           ) : filtered.length === 0 ? (
             <div className="flex min-h-[300px] flex-col items-center justify-center gap-3 px-6 text-center">
@@ -65,14 +68,14 @@ export default function VendorsPage() {
                 <Building2 className="h-6 w-6 text-muted-foreground" />
               </div>
               <div>
-                <p className="text-base font-semibold text-foreground">No vendors found</p>
+                <p className="text-base font-semibold text-foreground">No suppliers found</p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {search ? 'Try a broader search term.' : 'Create your first supplier record to start purchasing.'}
                 </p>
               </div>
               {!search ? (
                 <Button asChild variant="outline">
-                  <Link href="/vendors/new">Create vendor</Link>
+                  <Link href="/vendors/new">Create supplier</Link>
                 </Button>
               ) : null}
             </div>

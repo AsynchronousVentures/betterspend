@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ClipboardCheck, FileStack, ShieldAlert } from 'lucide-react';
 import { api } from '../../../lib/api';
 import { PageHeader } from '../../../components/page-header';
+import { SupplierHubNav } from '../../../components/supplier-hub-nav';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -142,6 +143,8 @@ export default function VendorOnboardingPage() {
           </div>
         }
       />
+
+      <SupplierHubNav />
 
       {error ? (
         <Alert variant="destructive">

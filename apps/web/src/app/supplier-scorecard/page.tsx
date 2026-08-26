@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronUp, Medal, Truck } from 'lucide-react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
+import { SupplierHubNav } from '../../components/supplier-hub-nav';
 import { Badge } from '../../components/ui/badge';
 import {
   Card,
@@ -173,6 +174,8 @@ export default function SupplierScorecardPage() {
           </div>
         }
       />
+
+      <SupplierHubNav />
 
       <div className="flex flex-wrap gap-3">
         <LegendBadge label="Excellent (80+)" className="border-emerald-200 bg-emerald-100 text-emerald-800" />

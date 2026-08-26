@@ -27,11 +27,8 @@ import {
   BarChart2,
   FileBarChart2,
   Building2,
-  Star,
-  Leaf,
-  UserPlus,
-  ScrollText,
   KeyRound,
+  ScrollText,
   Users,
   FolderTree,
   Briefcase,
@@ -62,6 +59,12 @@ function isGroup(entry: NavEntry): entry is NavGroup {
   return 'children' in entry;
 }
 
+function isNavPathActive(pathname: string, href: string) {
+  if (href === '/') return pathname === '/';
+  if (pathname === href) return true;
+  return pathname.startsWith(`${href}/`) && !pathname.endsWith('/new');
+}
+
 const NAV_ICONS: Record<string, LucideIcon> = {
   Dashboard: LayoutDashboard,
   'Start Request': Sparkles,
@@ -80,7 +83,6 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   Delegations: ArrowLeftRight,
   Budgets: PiggyBank,
   'Spend Guard': ShieldAlert,
-  'Risk Screening': ShieldCheck,
   'Tax Codes': Percent,
   'AP Aging': Clock,
   'Payment Runs': CreditCard,
@@ -88,10 +90,7 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   'Add-ons': Puzzle,
   Analytics: BarChart2,
   Reports: FileBarChart2,
-  Vendors: Building2,
-  'Supplier Scorecard': Star,
-  'Supplier Diversity & ESG': Leaf,
-  'Vendor Onboarding': UserPlus,
+  Suppliers: Building2,
   Contracts: ScrollText,
   'Software Licenses': KeyRound,
   Users: Users,
@@ -112,7 +111,8 @@ const GROUP_ICONS: Record<string, LucideIcon> = {
   Approvals: CheckSquare,
   Finance: PiggyBank,
   'Analytics & Reports': BarChart2,
-  Organization: Building2,
+  'Supplier operations': Building2,
+  Organization: Building,
   System: Settings,
 };
 
@@ -169,15 +169,16 @@ const NAV_CONFIG: NavEntry[] = [
     ],
   },
   {
-    label: 'Organization',
+    label: 'Supplier operations',
     children: [
-      { label: 'Vendors', href: '/vendors' },
-      { label: 'Supplier Scorecard', href: '/supplier-scorecard' },
-      { label: 'Supplier Diversity & ESG', href: '/supplier-diversity' },
-      { label: 'Vendor Onboarding', href: '/vendors/onboarding' },
-      { label: 'Risk Screening', href: '/risk-screening' },
+      { label: 'Suppliers', href: '/vendors' },
       { label: 'Contracts', href: '/contracts' },
       { label: 'Software Licenses', href: '/software-licenses' },
+    ],
+  },
+  {
+    label: 'Organization',
+    children: [
       { label: 'Users', href: '/users' },
       { label: 'Departments', href: '/departments' },
       { label: 'Projects', href: '/projects' },
@@ -218,7 +219,7 @@ export default function SidebarNav({
       if (!isGroup(entry)) continue;
       if (entry.defaultOpen) initial.add(entry.label);
       for (const child of entry.children) {
-        if (child.href === '/' ? pathname === '/' : pathname.startsWith(child.href)) {
+        if (isNavPathActive(pathname, child.href)) {
           initial.add(entry.label);
         }
       }
@@ -233,7 +234,7 @@ export default function SidebarNav({
     for (const entry of NAV_CONFIG) {
       if (!isGroup(entry)) continue;
       for (const child of entry.children) {
-        if (child.href === '/' ? pathname === '/' : pathname.startsWith(child.href)) {
+        if (isNavPathActive(pathname, child.href)) {
           activeGroups.add(entry.label);
         }
       }
@@ -268,8 +269,7 @@ export default function SidebarNav({
   }
 
   function isActive(href: string) {
-    if (href === '/') return pathname === '/';
-    return pathname.startsWith(href);
+    return isNavPathActive(pathname, href);
   }
 
   function handleLinkClick() {

@@ -8,6 +8,7 @@ import { api } from '../../../lib/api';
 import { useToast } from '../../../components/toast';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { StatusBadge } from '../../../components/status-badge';
+import { SupplierHubNav } from '../../../components/supplier-hub-nav';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
@@ -208,14 +209,16 @@ export default function VendorDetailPage() {
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
-      <Breadcrumbs items={[{ label: 'Vendors', href: '/vendors' }, { label: vendor.name }]} />
+      <Breadcrumbs items={[{ label: 'Suppliers', href: '/vendors' }, { label: vendor.name }]} />
       <Link
         href="/vendors"
         className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         <ArrowLeft className="h-4 w-4" />
-        Vendors
+        Suppliers
       </Link>
+
+      <SupplierHubNav />
 
       {error ? (
         <Alert variant="destructive">
@@ -355,6 +358,26 @@ export default function VendorDetailPage() {
                   <Link href="/risk-screening">Open Risk Screening</Link>
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Supplier workspaces</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-x-5 gap-y-3 text-sm">
+              <Link href="/supplier-scorecard" className="text-primary hover:underline">
+                Performance
+              </Link>
+              <Link href="/supplier-diversity" className="text-primary hover:underline">
+                Diversity and ESG
+              </Link>
+              <Link href="/contracts" className="text-primary hover:underline">
+                Contracts
+              </Link>
+              <Link href="/software-licenses" className="text-primary hover:underline">
+                Software licenses
+              </Link>
             </CardContent>
           </Card>
 
