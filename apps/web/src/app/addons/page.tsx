@@ -252,7 +252,7 @@ function AddonsContent() {
             onConnect={() => handleConnect('qbo')}
             onDisconnect={() => handleDisconnect('qbo')}
             manageHref="/gl-mappings?targetSystem=qbo"
-            activityHref="/gl-export-jobs"
+            activityHref="/gl-mappings?view=export-history"
           />
           <IntegrationCard
             title="Xero"
@@ -264,7 +264,7 @@ function AddonsContent() {
             onConnect={() => handleConnect('xero')}
             onDisconnect={() => handleDisconnect('xero')}
             manageHref="/gl-mappings?targetSystem=xero"
-            activityHref="/gl-export-jobs"
+            activityHref="/gl-mappings?view=export-history"
           />
           <Alert variant="warning">
             <CircleAlert className="h-4 w-4" />

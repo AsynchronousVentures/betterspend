@@ -23,7 +23,6 @@ import {
   Percent,
   Clock,
   Link2,
-  Upload,
   CreditCard,
   BarChart2,
   FileBarChart2,
@@ -87,7 +86,6 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   'Payment Runs': CreditCard,
   'GL Integration': Link2,
   'Add-ons': Puzzle,
-  'GL Export Jobs': Upload,
   Analytics: BarChart2,
   Reports: FileBarChart2,
   Vendors: Building2,
@@ -161,7 +159,6 @@ const NAV_CONFIG: NavEntry[] = [
       { label: 'AP Aging', href: '/ap-aging' },
       { label: 'Payment Runs', href: '/payment-runs' },
       { label: 'GL Integration', href: '/gl-mappings' },
-      { label: 'GL Export Jobs', href: '/gl-export-jobs' },
     ],
   },
   {

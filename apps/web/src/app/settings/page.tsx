@@ -3,6 +3,11 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { BellRing, Monitor, Moon, Sun } from 'lucide-react';
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  notificationTypeLabel,
+  type NotificationPreferences,
+} from '@betterspend/shared';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
 import { Alert, AlertDescription } from '../../components/ui/alert';
@@ -10,26 +15,7 @@ import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Select } from '../../components/ui/select';
 
-type NotificationPrefs = {
-  emailEnabled: boolean;
-  frequency: 'instant' | 'daily' | 'weekly';
-  enabledTypes: string[];
-};
-
 type AppearancePreference = 'light' | 'dark' | 'system';
-
-const DEFAULT_PREFS: NotificationPrefs = {
-  emailEnabled: true,
-  frequency: 'instant',
-  enabledTypes: [
-    'approval_request',
-    'po_issued',
-    'invoice_exception',
-    'invoice_approved',
-    'spend_guard',
-    'software_license',
-  ],
-};
 
 const APPEARANCE_STORAGE_KEY = 'betterspend:appearance-preference';
 
@@ -52,7 +38,7 @@ function applyAppearancePreference(preference: AppearancePreference) {
 }
 
 export default function SettingsPage() {
-  const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_PREFS);
+  const [prefs, setPrefs] = useState<NotificationPreferences>(DEFAULT_NOTIFICATION_PREFERENCES);
   const [availableTypes, setAvailableTypes] = useState<string[]>([]);
   const [appearance, setAppearance] = useState<AppearancePreference>('system');
   const [loadingPrefs, setLoadingPrefs] = useState(true);
@@ -63,11 +49,11 @@ export default function SettingsPage() {
 
   useEffect(() => {
     Promise.all([
-      api.notifications.getPreferences().catch(() => DEFAULT_PREFS),
+      api.notifications.getPreferences().catch(() => DEFAULT_NOTIFICATION_PREFERENCES),
       api.notifications.types().catch(() => []),
     ])
       .then(([storedPrefs, types]) => {
-        setPrefs({ ...DEFAULT_PREFS, ...storedPrefs });
+        setPrefs({ ...DEFAULT_NOTIFICATION_PREFERENCES, ...storedPrefs });
         setAvailableTypes(types);
       })
       .finally(() => setLoadingPrefs(false));
@@ -84,14 +70,14 @@ export default function SettingsPage() {
     applyAppearancePreference(nextPreference);
   }, []);
 
-  async function persistPreferences(nextPrefs: NotificationPrefs) {
+  async function persistPreferences(nextPrefs: NotificationPreferences) {
     setPrefs(nextPrefs);
     setSavingPrefs(true);
     setPrefsError('');
     setPrefsMessage('');
     try {
       const saved = await api.notifications.updatePreferences(nextPrefs);
-      setPrefs({ ...DEFAULT_PREFS, ...saved });
+      setPrefs({ ...DEFAULT_NOTIFICATION_PREFERENCES, ...saved });
       setPrefsMessage('Notification settings updated.');
     } catch (err: any) {
       setPrefsError(err.message ?? 'Failed to save notification settings.');
@@ -109,7 +95,7 @@ export default function SettingsPage() {
     applyAppearancePreference(nextPreference);
   }
 
-  const notificationTypes = availableTypes.length > 0 ? availableTypes : DEFAULT_PREFS.enabledTypes;
+  const notificationTypes = availableTypes.length > 0 ? availableTypes : DEFAULT_NOTIFICATION_PREFERENCES.enabledTypes;
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -119,7 +105,7 @@ export default function SettingsPage() {
       />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
-        <Card className="rounded-lg">
+        <Card id="notifications" className="rounded-lg">
           <CardHeader>
             <div className="flex items-center gap-3">
               <div className="rounded-full bg-primary/10 p-2 text-primary">
@@ -162,7 +148,7 @@ export default function SettingsPage() {
                 value={prefs.frequency}
                 disabled={loadingPrefs || savingPrefs}
                 onChange={(event) =>
-                  persistPreferences({ ...prefs, frequency: event.target.value as NotificationPrefs['frequency'] })
+                  persistPreferences({ ...prefs, frequency: event.target.value as NotificationPreferences['frequency'] })
                 }
                 className="w-full"
               >
@@ -188,7 +174,7 @@ export default function SettingsPage() {
                         void persistPreferences({ ...prefs, enabledTypes });
                       }}
                     />
-                    <span className="capitalize">{type.replace(/_/g, ' ')}</span>
+                    <span>{notificationTypeLabel(type)}</span>
                   </label>
                 ))}
               </div>

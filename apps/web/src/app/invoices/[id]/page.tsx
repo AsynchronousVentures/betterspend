@@ -140,7 +140,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       setSuccessMsg(
         `GL export job queued for ${
           glSystem === 'qbo' ? 'QuickBooks Online' : 'Xero'
-        }. Check GL Integration -> Export Jobs for status.`,
+        }. Check GL Integration -> Export History for status.`,
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'GL export failed');

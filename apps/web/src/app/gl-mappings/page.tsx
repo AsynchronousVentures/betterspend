@@ -1,8 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { BookMarked, Cable, ExternalLink, Filter, Plus, Trash2 } from 'lucide-react';
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Cable, ExternalLink, Filter, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
+import { GlExportHistory } from '../../components/gl-export-history';
 import { PageHeader } from '../../components/page-header';
 import { StatusBadge } from '../../components/status-badge';
 import { Alert, AlertDescription } from '../../components/ui/alert';
@@ -26,19 +28,6 @@ interface GlMapping {
   createdAt: string;
 }
 
-interface GlExportJob {
-  id: string;
-  invoiceId: string;
-  targetSystem: string;
-  status: string;
-  attempts: number;
-  exportedAt: string | null;
-  errorMessage: string | null;
-  externalId: string | null;
-  createdAt: string;
-  invoice?: { internalNumber: string; invoiceNumber: string };
-}
-
 const SYSTEM_LABELS: Record<string, string> = {
   qbo: 'QuickBooks Online',
   xero: 'Xero',
@@ -52,12 +41,16 @@ const EMPTY_FORM = {
   externalAccountName: '',
 };
 
-export default function GlMappingsPage() {
-  const [activeTab, setActiveTab] = useState<'mappings' | 'jobs'>('mappings');
+function GlMappingsContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const activeTab = searchParams.get('view') === 'export-history' ? 'jobs' : 'mappings';
   const [mappings, setMappings] = useState<GlMapping[]>([]);
-  const [jobs, setJobs] = useState<GlExportJob[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filterSystem, setFilterSystem] = useState<TargetSystem | ''>('');
+  const [filterSystem, setFilterSystem] = useState<TargetSystem | ''>(() => {
+    const targetSystem = searchParams.get('targetSystem');
+    return targetSystem === 'qbo' || targetSystem === 'xero' ? targetSystem : '';
+  });
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
@@ -68,15 +61,26 @@ export default function GlMappingsPage() {
     setMappings(data as GlMapping[]);
   }
 
-  async function loadJobs() {
-    const data = await api.glExportJobs.list().catch(() => []);
-    setJobs(data as GlExportJob[]);
-  }
-
   useEffect(() => {
     setLoading(true);
-    Promise.all([loadMappings(), loadJobs()]).finally(() => setLoading(false));
+    loadMappings().finally(() => setLoading(false));
   }, [filterSystem]);
+
+  function selectView(view: 'mappings' | 'jobs') {
+    const params = new URLSearchParams(searchParams.toString());
+    if (view === 'jobs') {
+      params.set('view', 'export-history');
+    } else {
+      params.delete('view');
+    }
+    if (filterSystem) {
+      params.set('targetSystem', filterSystem);
+    } else {
+      params.delete('targetSystem');
+    }
+    const query = params.toString();
+    router.replace(`/gl-mappings${query ? `?${query}` : ''}`);
+  }
 
   function setField(key: keyof typeof EMPTY_FORM, value: string) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -114,14 +118,14 @@ export default function GlMappingsPage() {
     <div className="space-y-6 p-4 lg:p-8">
       <PageHeader
         title="GL Integration"
-        description="Map internal GL accounts to QuickBooks Online and Xero, then monitor how approved invoices move into export jobs."
+        description="Map internal GL accounts to QuickBooks Online and Xero, then monitor how approved invoices move through export history."
         actions={
           <div className="flex gap-2 rounded-full border border-border/70 bg-background/80 p-1">
-            <Button type="button" size="sm" variant={activeTab === 'mappings' ? 'default' : 'ghost'} onClick={() => setActiveTab('mappings')}>
+            <Button type="button" size="sm" variant={activeTab === 'mappings' ? 'default' : 'ghost'} onClick={() => selectView('mappings')}>
               Account Mappings
             </Button>
-            <Button type="button" size="sm" variant={activeTab === 'jobs' ? 'default' : 'ghost'} onClick={() => setActiveTab('jobs')}>
-              Export Jobs
+            <Button type="button" size="sm" variant={activeTab === 'jobs' ? 'default' : 'ghost'} onClick={() => selectView('jobs')}>
+              Export History
             </Button>
           </div>
         }
@@ -268,58 +272,15 @@ export default function GlMappingsPage() {
             </Card>
           </div>
         </>
-      ) : (
-        <Card className="rounded-lg">
-          <CardHeader>
-            <CardTitle className="text-xl">Embedded export job feed</CardTitle>
-            <CardDescription>This mirrors the live GL job history so finance can review mapping coverage and export outcomes without leaving the integration area.</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-0">
-            {loading ? (
-              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center text-sm text-muted-foreground">
-                Loading export jobs...
-              </div>
-            ) : jobs.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
-                <BookMarked className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
-                <div className="text-sm font-medium text-foreground">No export jobs yet</div>
-                <p className="mt-2 text-sm text-muted-foreground">Approved invoices will start appearing here automatically once they are exported.</p>
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Invoice</TableHead>
-                    <TableHead>System</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>External ID</TableHead>
-                    <TableHead>Exported At</TableHead>
-                    <TableHead>Error</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {jobs.map((job) => (
-                    <TableRow key={job.id}>
-                      <TableCell className="font-medium text-foreground">
-                        {job.invoice?.internalNumber ?? job.invoiceId.slice(0, 8)}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">{SYSTEM_LABELS[job.targetSystem] ?? job.targetSystem}</TableCell>
-                      <TableCell>
-                        <StatusBadge value={job.status} />
-                      </TableCell>
-                      <TableCell className="font-mono text-sm text-muted-foreground">{job.externalId ?? '—'}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {job.exportedAt ? new Date(job.exportedAt).toLocaleDateString() : '—'}
-                      </TableCell>
-                      <TableCell className="max-w-[20rem] truncate text-sm text-rose-700">{job.errorMessage ?? '—'}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-      )}
+      ) : <GlExportHistory />}
     </div>
+  );
+}
+
+export default function GlMappingsPage() {
+  return (
+    <Suspense fallback={<div className="p-4 text-sm text-muted-foreground lg:p-8">Loading GL Integration...</div>}>
+      <GlMappingsContent />
+    </Suspense>
   );
 }

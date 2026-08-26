@@ -1,26 +1,15 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowLeft, BellRing } from 'lucide-react';
+import { notificationTypeLabel } from '@betterspend/shared';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
 import { StatusBadge } from '../../components/status-badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Select } from '../../components/ui/select';
-
-type NotificationPrefs = {
-  emailEnabled: boolean;
-  frequency: 'instant' | 'daily' | 'weekly';
-  enabledTypes: string[];
-};
-
-const DEFAULT_PREFS: NotificationPrefs = {
-  emailEnabled: true,
-  frequency: 'instant',
-  enabledTypes: ['approval_request', 'po_issued', 'invoice_exception', 'invoice_approved', 'spend_guard', 'software_license'],
-};
 
 const PAGE_SIZE = 20;
 
@@ -47,22 +36,14 @@ export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [availableTypes, setAvailableTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [savingPrefs, setSavingPrefs] = useState(false);
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
   const [typeFilter, setTypeFilter] = useState('all');
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
-  const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_PREFS);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
 
   useEffect(() => {
-    Promise.all([
-      api.notifications.getPreferences().catch(() => DEFAULT_PREFS),
-      api.notifications.types().catch(() => []),
-    ]).then(([storedPrefs, types]) => {
-      setPrefs({ ...DEFAULT_PREFS, ...storedPrefs });
-      setAvailableTypes(types);
-    });
+    api.notifications.types().then(setAvailableTypes).catch(() => setAvailableTypes([]));
   }, []);
 
   useEffect(() => {
@@ -91,22 +72,6 @@ export default function NotificationsPage() {
   }, [showUnreadOnly, sortOrder, typeFilter]);
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const filteredNotifications = useMemo(
-    () => notifications.filter((item) => prefs.enabledTypes.includes(item.type)),
-    [notifications, prefs.enabledTypes],
-  );
-
-  async function persistPreferences(nextPrefs: NotificationPrefs) {
-    setPrefs(nextPrefs);
-    setSavingPrefs(true);
-    try {
-      const saved = await api.notifications.updatePreferences(nextPrefs);
-      setPrefs({ ...DEFAULT_PREFS, ...saved });
-    } finally {
-      setSavingPrefs(false);
-    }
-  }
-
   async function handleMarkRead(id: string) {
     await api.notifications.markRead(id).catch(() => {});
     setNotifications((prev) => prev.map((item) => (item.id === id ? { ...item, readAt: new Date().toISOString() } : item)));
@@ -126,73 +91,20 @@ export default function NotificationsPage() {
 
       <PageHeader
         title="Notifications"
-        description="Full notification history with saved delivery preferences and paginated filters."
+        description="Full notification history with filtering and read-state controls."
         actions={
-          <Button variant="outline" onClick={handleMarkAllRead}>
-            Mark all read
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline">
+              <Link href="/settings#notifications">Manage notification preferences</Link>
+            </Button>
+            <Button variant="outline" onClick={handleMarkAllRead}>
+              Mark all read
+            </Button>
+          </div>
         }
       />
 
-      <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <Card className="self-start">
-          <CardHeader>
-            <CardTitle className="text-base">Preferences</CardTitle>
-            <CardDescription>Stored server-side for your account.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <label className="flex gap-3">
-              <input
-                type="checkbox"
-                checked={prefs.emailEnabled}
-                onChange={(event) => persistPreferences({ ...prefs, emailEnabled: event.target.checked })}
-              />
-              <div>
-                <div className="text-sm font-medium text-foreground">Email notifications</div>
-                <div className="text-xs text-muted-foreground">Deliver messages outside the app.</div>
-              </div>
-            </label>
-
-            <div className="space-y-2">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Digest Frequency</div>
-              <Select
-                value={prefs.frequency}
-                onChange={(event) =>
-                  persistPreferences({ ...prefs, frequency: event.target.value as NotificationPrefs['frequency'] })
-                }
-                className="w-full"
-              >
-                <option value="instant">Instant</option>
-                <option value="daily">Daily digest</option>
-                <option value="weekly">Weekly digest</option>
-              </Select>
-            </div>
-
-            <div className="space-y-3">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Enabled Types</div>
-              <div className="grid gap-2">
-                {availableTypes.map((type) => (
-                  <label key={type} className="flex items-center gap-3 text-sm text-foreground">
-                    <input
-                      type="checkbox"
-                      checked={prefs.enabledTypes.includes(type)}
-                      onChange={(event) => {
-                        const enabledTypes = event.target.checked
-                          ? [...prefs.enabledTypes, type]
-                          : prefs.enabledTypes.filter((item) => item !== type);
-                        persistPreferences({ ...prefs, enabledTypes });
-                      }}
-                    />
-                    <span className="capitalize">{type.replace(/_/g, ' ')}</span>
-                  </label>
-                ))}
-              </div>
-              {savingPrefs ? <div className="text-xs text-muted-foreground">Saving preferences...</div> : null}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="overflow-hidden">
+      <Card className="overflow-hidden">
           <CardHeader className="gap-4 border-b border-border/70 bg-muted/20 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <CardTitle className="text-base">Inbox</CardTitle>
@@ -209,7 +121,7 @@ export default function NotificationsPage() {
                 <option value="all">All types</option>
                 {availableTypes.map((type) => (
                   <option key={type} value={type}>
-                    {type.replace(/_/g, ' ')}
+                    {notificationTypeLabel(type)}
                   </option>
                 ))}
               </Select>
@@ -228,7 +140,7 @@ export default function NotificationsPage() {
               <div className="flex min-h-[280px] items-center justify-center text-sm text-muted-foreground">
                 Loading notifications...
               </div>
-            ) : filteredNotifications.length === 0 ? (
+            ) : notifications.length === 0 ? (
               <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 px-6 text-center">
                 <div className="rounded-full bg-muted p-4">
                   <BellRing className="h-6 w-6 text-muted-foreground" />
@@ -236,14 +148,14 @@ export default function NotificationsPage() {
                 <div>
                   <p className="text-base font-semibold text-foreground">No notifications match</p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Current filters or enabled types are excluding everything from the feed.
+                    Try changing the current filters or check back after new activity arrives.
                   </p>
                 </div>
               </div>
             ) : (
               <>
                 <div className="divide-y divide-border/70">
-                  {filteredNotifications.map((notification) => {
+                  {notifications.map((notification) => {
                     const unread = !notification.readAt;
                     const href = entityHref(notification);
 
@@ -264,7 +176,7 @@ export default function NotificationsPage() {
                               <div className="text-xs text-muted-foreground">{timeAgo(notification.createdAt)}</div>
                             </div>
                             <div className="mt-3 flex flex-wrap items-center gap-2">
-                              <StatusBadge value={unread ? 'pending' : 'approved'} label={notification.type.replace(/_/g, ' ')} className="capitalize" />
+                              <StatusBadge value={unread ? 'pending' : 'approved'} label={notificationTypeLabel(notification.type)} />
                               {href ? (
                                 <Link href={href} className="text-sm font-semibold text-primary hover:underline">
                                   Open record
@@ -296,8 +208,7 @@ export default function NotificationsPage() {
               </>
             )}
           </CardContent>
-        </Card>
-      </div>
+      </Card>
     </div>
   );
 }

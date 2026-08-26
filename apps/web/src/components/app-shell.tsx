@@ -70,12 +70,6 @@ const TYPE_TONE: Record<string, string> = {
   catalog_item: 'bg-sky-100 text-sky-800',
 };
 
-type NotificationPreferences = {
-  emailEnabled: boolean;
-  frequency: 'instant' | 'daily' | 'weekly';
-  enabledTypes: string[];
-};
-
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
@@ -380,25 +374,8 @@ function NotificationBell() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [hasNewSinceLastView, setHasNewSinceLastView] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [preferences, setPreferences] = useState<NotificationPreferences>({
-    emailEnabled: true,
-    frequency: 'instant',
-    enabledTypes: ['approval_request', 'po_issued', 'invoice_exception', 'invoice_approved', 'spend_guard', 'software_license'],
-  });
-
-  useEffect(() => {
-    api.notifications.getPreferences().then((stored) => setPreferences((prev) => ({ ...prev, ...stored }))).catch(() => {});
-  }, []);
-
-  async function updatePreferences(nextValue: Partial<NotificationPreferences>) {
-    const merged: NotificationPreferences = { ...preferences, ...nextValue };
-    setPreferences(merged);
-    const saved = await api.notifications.updatePreferences(merged).catch(() => merged);
-    setPreferences((prev) => ({ ...prev, ...saved }));
-  }
 
   const fetchCount = useCallback(() => {
     Promise.all([api.notifications.unreadCount(), api.notifications.list({ limit: 1 })])
@@ -424,7 +401,6 @@ function NotificationBell() {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setOpen(false);
-        setPreferencesOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -434,7 +410,6 @@ function NotificationBell() {
   useEffect(() => {
     function handleShortcutEscape() {
       setOpen(false);
-      setPreferencesOpen(false);
     }
     window.addEventListener('betterspend:escape', handleShortcutEscape as EventListener);
     return () => window.removeEventListener('betterspend:escape', handleShortcutEscape as EventListener);
@@ -449,7 +424,7 @@ function NotificationBell() {
       setHasNewSinceLastView(false);
       api.notifications
         .list({ limit: 10 })
-        .then((data) => setNotifications(data.items.filter((item) => preferences.enabledTypes.includes(item.type))))
+        .then((data) => setNotifications(data.items))
         .catch(() => {})
         .finally(() => setLoading(false));
     }
@@ -496,79 +471,18 @@ function NotificationBell() {
         ) : null}
       </button>
 
-      {preferencesOpen ? (
-        <Card className="absolute right-0 top-[calc(100%+0.75rem)] z-[101] w-80 overflow-hidden">
-          <CardHeader className="border-b border-border/70 pb-4">
-            <CardTitle className="text-sm font-semibold">Notification Preferences</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-5 pt-5">
-            <label className="flex gap-3 text-sm">
-              <input
-                type="checkbox"
-                checked={preferences.emailEnabled}
-                onChange={(event) => {
-                  void updatePreferences({ emailEnabled: event.target.checked });
-                }}
-                className="mt-1"
-              />
-              <div>
-                <div className="font-medium text-foreground">Enable email notifications</div>
-                <div className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Saved locally for now. Server-side delivery preferences are still pending.
-                </div>
-              </div>
-            </label>
-            <div className="space-y-2">
-              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Frequency</div>
-              <select
-                value={preferences.frequency}
-                onChange={(event) => {
-                  void updatePreferences({ frequency: event.target.value as NotificationPreferences['frequency'] });
-                }}
-                className="h-10 w-full rounded-md border border-border/70 bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-              >
-                <option value="instant">Instant</option>
-                <option value="daily">Daily digest</option>
-                <option value="weekly">Weekly digest</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Visible Types</div>
-              <div className="grid gap-2">
-                {['approval_request', 'po_issued', 'invoice_exception', 'invoice_approved', 'spend_guard', 'software_license'].map((type) => (
-                  <label key={type} className="flex items-center gap-2 text-sm text-foreground">
-                    <input
-                      type="checkbox"
-                      checked={preferences.enabledTypes.includes(type)}
-                      onChange={(event) => {
-                        void updatePreferences({
-                          enabledTypes: event.target.checked
-                            ? [...preferences.enabledTypes, type]
-                            : preferences.enabledTypes.filter((item) => item !== type),
-                        });
-                      }}
-                    />
-                    {type.replace(/_/g, ' ')}
-                  </label>
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
-
       {open ? (
         <Card className="absolute right-0 top-[calc(100%+0.75rem)] z-[100] w-[22rem] overflow-hidden">
           <CardHeader className="flex flex-row items-center justify-between border-b border-border/70 pb-4">
             <CardTitle className="text-sm font-semibold">Notifications</CardTitle>
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setPreferencesOpen((value) => !value)}
+              <Link
+                href="/settings#notifications"
+                onClick={() => setOpen(false)}
                 className="text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
               >
-                Preferences
-              </button>
+                Manage preferences
+              </Link>
               {unreadCount > 0 ? (
                 <button
                   type="button"
