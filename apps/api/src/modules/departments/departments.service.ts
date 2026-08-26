@@ -3,6 +3,8 @@ import { eq, and } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { departments } from '@betterspend/db';
+import type { ResourceScope } from '@betterspend/shared';
+import { scopePredicate } from '../auth/scope-sql';
 
 export interface CreateDepartmentInput {
   name: string;
@@ -22,16 +24,19 @@ export interface UpdateDepartmentInput {
 export class DepartmentsService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  async findAll(organizationId: string) {
+  async findAll(organizationId: string, scope?: ResourceScope) {
+    const scopeCondition = scopePredicate(scope, { department: departments.id });
     return this.db.query.departments.findMany({
-      where: (d, { eq }) => eq(d.organizationId, organizationId),
+      where: (d, { and, eq }) => and(eq(d.organizationId, organizationId), scopeCondition),
       orderBy: (d, { asc }) => asc(d.name),
     });
   }
 
-  async findOne(id: string, organizationId: string) {
+  async findOne(id: string, organizationId: string, scope?: ResourceScope) {
+    const scopeCondition = scopePredicate(scope, { department: departments.id });
     const dept = await this.db.query.departments.findFirst({
-      where: (d, { and, eq }) => and(eq(d.id, id), eq(d.organizationId, organizationId)),
+      where: (d, { and, eq }) =>
+        and(eq(d.id, id), eq(d.organizationId, organizationId), scopeCondition),
     });
     if (!dept) throw new NotFoundException(`Department ${id} not found`);
     return dept;

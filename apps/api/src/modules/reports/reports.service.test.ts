@@ -15,24 +15,57 @@ const scopedAccess: ResourceScope = {
   entityIds: [],
 };
 
-test('saved report configurations are tenant-scoped', () => {
-  const service = new ReportsService({} as never);
+test('saved report persistence scopes every operation to the organization', async () => {
+  const selectConditions: unknown[] = [];
+  const insertValues: unknown[] = [];
+  const deleteConditions: unknown[] = [];
+  const row = {
+    id: 'saved-report-1',
+    organizationId: 'org-acme',
+    name: 'Acme spend',
+    reportType: 'spend_by_vendor',
+    filters: {},
+    groupBy: null,
+    createdAt: new Date('2026-08-26T00:00:00.000Z'),
+  };
+  const service = new ReportsService({
+    select: () => ({
+      from: () => ({
+        where: (condition: unknown) => ({
+          orderBy: async () => {
+            selectConditions.push(condition);
+            return [row];
+          },
+        }),
+      }),
+    }),
+    insert: () => ({
+      values: (values: unknown) => {
+        insertValues.push(values);
+        return { returning: async () => [row] };
+      },
+    }),
+    delete: () => ({
+      where: (condition: unknown) => {
+        deleteConditions.push(condition);
+        return { returning: async () => [{ id: row.id }] };
+      },
+    }),
+  } as never);
 
-  const acme = service.saveReport('org-acme', {
+  const saved = await service.saveReport('org-acme', {
     name: 'Acme spend',
     reportType: 'spend_by_vendor',
     filters: {},
   });
-  service.saveReport('org-other', {
-    name: 'Other spend',
-    reportType: 'spend_by_vendor',
-    filters: {},
-  });
+  const listed = await service.listSavedReports('org-acme');
+  const deleted = await service.deleteSavedReport('org-acme', saved.id);
 
-  assert.deepEqual(service.listSavedReports('org-acme'), [acme]);
-  assert.equal(service.listSavedReports('org-other').length, 1);
-  assert.equal(service.deleteSavedReport('org-other', acme.id), false);
-  assert.equal(service.deleteSavedReport('org-acme', acme.id), true);
+  assert.deepEqual(listed, [saved]);
+  assert.equal(deleted, true);
+  assert.equal((insertValues[0] as { organizationId: string }).organizationId, 'org-acme');
+  assert.ok(new PgDialect().sqlToQuery(selectConditions[0] as never).params.includes('org-acme'));
+  assert.ok(new PgDialect().sqlToQuery(deleteConditions[0] as never).params.includes('org-acme'));
 });
 
 test('custom reports apply row scope inside the aggregate query', async () => {
@@ -66,9 +99,11 @@ test('scoped audit exports fail closed while global exports remain available', a
 
   await service.getAuditLog('org-acme', {}, scopedAccess);
   const scopedQuery = new PgDialect().sqlToQuery(queries[0] as never);
-  assert.match(scopedQuery.sql, /false/);
+  assert.match(scopedQuery.sql, /and\s+false/i);
+  assert.doesNotMatch(scopedQuery.sql, /and\s+true/i);
 
   await service.getAuditLog('org-acme', {}, { ...scopedAccess, unrestricted: true });
   const globalQuery = new PgDialect().sqlToQuery(queries[1] as never);
-  assert.match(globalQuery.sql, /true/);
+  assert.match(globalQuery.sql, /and\s+true/i);
+  assert.doesNotMatch(globalQuery.sql, /and\s+false/i);
 });

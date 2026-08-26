@@ -184,6 +184,29 @@ describe('GlExportService', () => {
     expect(record).not.toHaveProperty('payload');
   });
 
+  it('rejects scoped export triggers for invoices outside the granted scope', async () => {
+    const queue = { add: jest.fn() };
+    const db = {
+      execute: jest.fn(async () => []),
+    } as unknown as Db;
+    const service = new GlExportService(db, {} as never, {} as never, {} as never, queue as never);
+    const scope = {
+      organizationId: 'organization-1',
+      userId: 'user-1',
+      unrestricted: false,
+      ownOnly: false,
+      departmentIds: ['department-1'],
+      projectIds: [],
+      entityIds: [],
+    };
+
+    await expect(
+      service.enqueue('organization-1', 'invoice-outside-scope', 'qbo', undefined, scope),
+    ).rejects.toThrow('outside your access scope');
+    expect(queue.add).not.toHaveBeenCalled();
+    expect(db.execute).toHaveBeenCalledTimes(1);
+  });
+
   it('lets only the active attempt record a successful delivery', async () => {
     let predicate: unknown;
     const db = {

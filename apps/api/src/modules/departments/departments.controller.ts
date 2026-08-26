@@ -5,6 +5,8 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { DepartmentsService, CreateDepartmentInput, UpdateDepartmentInput } from './departments.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
+import { CurrentAccess } from '../auth/current-access.decorator';
+import type { AccessPolicy } from '../auth/access-policy';
 
 @ApiTags('departments')
 @Controller('departments')
@@ -12,17 +14,25 @@ export class DepartmentsController {
   constructor(private readonly departmentsService: DepartmentsService) {}
 
   @Get()
-  @Permissions('settings:manage')
+  @Permissions('reports:view')
   @ApiOperation({ summary: 'List all departments' })
-  findAll(@CurrentOrgId() orgId: string) {
-    return this.departmentsService.findAll(orgId);
+  findAll(@CurrentOrgId() orgId: string, @CurrentAccess() access?: AccessPolicy) {
+    return this.departmentsService.findAll(orgId, access?.scopeFor('report', 'reports:view'));
   }
 
   @Get(':id')
-  @Permissions('settings:manage')
+  @Permissions('reports:view')
   @ApiOperation({ summary: 'Get a department' })
-  findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
-    return this.departmentsService.findOne(id, orgId);
+  findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.departmentsService.findOne(
+      id,
+      orgId,
+      access?.scopeFor('report', 'reports:view'),
+    );
   }
 
   @Post()

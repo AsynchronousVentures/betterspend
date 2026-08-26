@@ -1,8 +1,9 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
-import { and, desc, eq, gte, ne, sql } from 'drizzle-orm';
+import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { and, desc, eq, gte, inArray, ne, sql, type SQL } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { spendGuardAlerts } from '@betterspend/db';
+import type { ResourceScope } from '@betterspend/shared';
 import { NotificationsService } from '../notifications/notifications.service';
 
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
@@ -14,6 +15,66 @@ const SPLIT_REQ_THRESHOLD = 1_000;
 type AlertSeverity = 'low' | 'medium' | 'high';
 type AlertStatus = 'open' | 'dismissed' | 'escalated';
 
+function alertScopePredicate(scope: ResourceScope | undefined): SQL | undefined {
+  if (!scope || scope.unrestricted) return undefined;
+
+  const clauses: SQL[] = [];
+  for (const id of scope.departmentIds) {
+    clauses.push(sql`(
+      (a.record_type = 'invoice' AND EXISTS (
+        SELECT 1
+        FROM invoices i
+        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+        LEFT JOIN requisitions r ON r.id = po.requisition_id
+        WHERE i.id = a.record_id
+          AND i.organization_id = a.org_id
+          AND r.department_id = ${id}
+      ))
+      OR (a.record_type = 'requisition' AND EXISTS (
+        SELECT 1
+        FROM requisitions r
+        WHERE r.id = a.record_id
+          AND r.organization_id = a.org_id
+          AND r.department_id = ${id}
+      ))
+    )`);
+  }
+  for (const id of scope.projectIds) {
+    clauses.push(sql`(
+      (a.record_type = 'invoice' AND EXISTS (
+        SELECT 1
+        FROM invoices i
+        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+        LEFT JOIN requisitions r ON r.id = po.requisition_id
+        WHERE i.id = a.record_id
+          AND i.organization_id = a.org_id
+          AND r.project_id = ${id}
+      ))
+      OR (a.record_type = 'requisition' AND EXISTS (
+        SELECT 1
+        FROM requisitions r
+        WHERE r.id = a.record_id
+          AND r.organization_id = a.org_id
+          AND r.project_id = ${id}
+      ))
+    )`);
+  }
+  for (const id of scope.entityIds) {
+    clauses.push(sql`(
+      a.record_type = 'invoice' AND EXISTS (
+        SELECT 1
+        FROM invoices i
+        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+        WHERE i.id = a.record_id
+          AND i.organization_id = a.org_id
+          AND COALESCE(i.entity_id, po.entity_id) = ${id}
+      )
+    )`);
+  }
+
+  return clauses.length > 0 ? sql`(${sql.join(clauses, sql` OR `)})` : sql`false`;
+}
+
 @Injectable()
 export class SpendGuardService {
   constructor(
@@ -21,12 +82,26 @@ export class SpendGuardService {
     @Optional() private readonly notifications?: NotificationsService,
   ) {}
 
-  async list(orgId: string, status: AlertStatus | 'all' = 'open') {
+  async list(
+    orgId: string,
+    status: AlertStatus | 'all' = 'open',
+    scope?: ResourceScope,
+  ) {
+    const permittedAlertIds = await this.permittedAlertIds(orgId, scope);
+    if (permittedAlertIds && permittedAlertIds.length === 0) return [];
+
     return this.db.query.spendGuardAlerts.findMany({
       where: (alert, operators) =>
         status === 'all'
-          ? operators.eq(alert.orgId, orgId)
-          : operators.and(operators.eq(alert.orgId, orgId), operators.eq(alert.status, status)),
+          ? operators.and(
+              operators.eq(alert.orgId, orgId),
+              permittedAlertIds ? inArray(alert.id, permittedAlertIds) : undefined,
+            )
+          : operators.and(
+              operators.eq(alert.orgId, orgId),
+              operators.eq(alert.status, status),
+              permittedAlertIds ? inArray(alert.id, permittedAlertIds) : undefined,
+            ),
       orderBy: (alert) => [desc(alert.createdAt)],
     });
   }
@@ -37,7 +112,13 @@ export class SpendGuardService {
     userId: string,
     status: Exclude<AlertStatus, 'open'>,
     note?: string,
+    scope?: ResourceScope,
   ) {
+    const permittedAlertIds = await this.permittedAlertIds(orgId, scope);
+    if (permittedAlertIds && !permittedAlertIds.includes(id)) {
+      throw new NotFoundException(`Spend guard alert ${id} not found`);
+    }
+
     const [updated] = await this.db
       .update(spendGuardAlerts)
       .set({
@@ -51,6 +132,22 @@ export class SpendGuardService {
       .returning();
 
     return updated;
+  }
+
+  private async permittedAlertIds(
+    orgId: string,
+    scope: ResourceScope | undefined,
+  ): Promise<string[] | undefined> {
+    const scopePredicate = alertScopePredicate(scope);
+    if (!scopePredicate) return undefined;
+
+    const rows = await this.db.execute(sql`
+      SELECT a.id
+      FROM spend_guard_alerts a
+      WHERE a.org_id = ${orgId}
+        AND ${scopePredicate}
+    `);
+    return (rows as unknown as Array<{ id: string }>).map((row) => row.id);
   }
 
   async countOpen(orgId: string) {

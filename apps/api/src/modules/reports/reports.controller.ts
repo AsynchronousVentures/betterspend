@@ -54,14 +54,14 @@ export class ReportsController {
   @Get('saved')
   @Permissions('reports:view')
   @ApiOperation({ summary: 'List saved report configurations' })
-  listSavedReports(@CurrentOrgId() orgId: string) {
+  async listSavedReports(@CurrentOrgId() orgId: string) {
     return this.reportsService.listSavedReports(orgId);
   }
 
   @Post('saved')
   @Permissions('reports:view')
   @ApiOperation({ summary: 'Save a report configuration' })
-  saveReport(
+  async saveReport(
     @Body() body: { name: string; reportType: string; filters: Record<string, unknown>; groupBy?: string },
     @CurrentOrgId() orgId: string,
   ) {
@@ -71,8 +71,8 @@ export class ReportsController {
   @Delete('saved/:id')
   @Permissions('reports:view')
   @ApiOperation({ summary: 'Delete a saved report configuration' })
-  deleteSavedReport(@Param('id') id: string, @CurrentOrgId() orgId: string) {
-    const deleted = this.reportsService.deleteSavedReport(orgId, id);
+  async deleteSavedReport(@Param('id') id: string, @CurrentOrgId() orgId: string) {
+    const deleted = await this.reportsService.deleteSavedReport(orgId, id);
     if (!deleted) throw new NotFoundException('Saved report not found');
     return { success: true };
   }

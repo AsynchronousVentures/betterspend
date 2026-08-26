@@ -3,6 +3,8 @@ import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CreateLegalEntityInput, EntitiesService, UpdateLegalEntityInput } from './entities.service';
+import { CurrentAccess } from '../auth/current-access.decorator';
+import type { AccessPolicy } from '../auth/access-policy';
 
 @ApiTags('entities')
 @Controller('entities')
@@ -10,21 +12,34 @@ export class EntitiesController {
   constructor(private readonly entitiesService: EntitiesService) {}
 
   @Get()
-  @Permissions('settings:manage')
+  @Permissions('reports:view')
   @ApiOperation({ summary: 'List legal entities for the organization' })
   @ApiQuery({ name: 'includeInactive', required: false, type: Boolean })
   findAll(
     @CurrentOrgId() organizationId: string,
     @Query('includeInactive', new ParseBoolPipe({ optional: true })) includeInactive?: boolean,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.entitiesService.findAll(organizationId, includeInactive ?? false);
+    return this.entitiesService.findAll(
+      organizationId,
+      includeInactive ?? false,
+      access?.scopeFor('report', 'reports:view'),
+    );
   }
 
   @Get(':id')
-  @Permissions('settings:manage')
+  @Permissions('reports:view')
   @ApiOperation({ summary: 'Get a legal entity by ID' })
-  findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() organizationId: string) {
-    return this.entitiesService.findOne(id, organizationId);
+  findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentOrgId() organizationId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.entitiesService.findOne(
+      id,
+      organizationId,
+      access?.scopeFor('report', 'reports:view'),
+    );
   }
 
   @Post()

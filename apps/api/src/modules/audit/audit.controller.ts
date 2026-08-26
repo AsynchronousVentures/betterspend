@@ -1,8 +1,10 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { AuditService } from './audit.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
+import { CurrentAccess } from '../auth/current-access.decorator';
+import type { AccessPolicy } from '../auth/access-policy';
 
 @ApiTags('audit')
 @Permissions('reports:view')
@@ -20,7 +22,13 @@ export class AuditController {
     @Query('entityType') entityType?: string,
     @Query('entityId') entityId?: string,
     @Query('limit') limit?: string,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
+    const reportScope = access?.scopeFor('report', 'reports:view');
+    if (!reportScope?.unrestricted) {
+      throw new ForbiddenException('Audit log access requires a global grant');
+    }
+
     return this.auditService.findAll(orgId, {
       entityType,
       entityId,

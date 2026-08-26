@@ -1,5 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { desc, eq, and } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
 import { auditLog } from '@betterspend/db';
@@ -13,17 +13,18 @@ export class AuditService {
     filters?: { entityType?: string; entityId?: string; limit?: number },
   ) {
     const limit = filters?.limit ?? 200;
-
-    return this.db.query.auditLog.findMany({
-      where: (a, { and, eq }) => {
-        const conditions = [eq(a.organizationId, organizationId)];
-        if (filters?.entityType) conditions.push(eq(a.entityType, filters.entityType));
-        if (filters?.entityId) conditions.push(eq(a.entityId, filters.entityId));
-        return and(...conditions);
-      },
-      orderBy: (a, { desc }) => desc(a.createdAt),
-      limit,
-    });
+    return this.db
+      .select()
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.organizationId, organizationId),
+          filters?.entityType ? eq(auditLog.entityType, filters.entityType) : undefined,
+          filters?.entityId ? eq(auditLog.entityId, filters.entityId) : undefined,
+        ),
+      )
+      .orderBy(desc(auditLog.createdAt))
+      .limit(limit);
   }
 
   async log(

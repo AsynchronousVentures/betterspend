@@ -3,6 +3,8 @@ import { eq, and } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { projects } from '@betterspend/db';
+import type { ResourceScope } from '@betterspend/shared';
+import { scopePredicate } from '../auth/scope-sql';
 
 export interface CreateProjectInput {
   name: string;
@@ -26,16 +28,25 @@ export interface UpdateProjectInput {
 export class ProjectsService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  async findAll(organizationId: string) {
+  async findAll(organizationId: string, scope?: ResourceScope) {
+    const scopeCondition = scopePredicate(scope, {
+      department: projects.departmentId,
+      project: projects.id,
+    });
     return this.db.query.projects.findMany({
-      where: (p, { eq }) => eq(p.organizationId, organizationId),
+      where: (p, { and, eq }) => and(eq(p.organizationId, organizationId), scopeCondition),
       orderBy: (p, { asc }) => asc(p.name),
     });
   }
 
-  async findOne(id: string, organizationId: string) {
+  async findOne(id: string, organizationId: string, scope?: ResourceScope) {
+    const scopeCondition = scopePredicate(scope, {
+      department: projects.departmentId,
+      project: projects.id,
+    });
     const project = await this.db.query.projects.findFirst({
-      where: (p, { and, eq }) => and(eq(p.id, id), eq(p.organizationId, organizationId)),
+      where: (p, { and, eq }) =>
+        and(eq(p.id, id), eq(p.organizationId, organizationId), scopeCondition),
     });
     if (!project) throw new NotFoundException(`Project ${id} not found`);
     return project;

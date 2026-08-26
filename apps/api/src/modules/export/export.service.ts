@@ -1,32 +1,12 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { sql, type SQL } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import type { ResourceScope } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type * as schema from '@betterspend/db';
+import { globalOnlyPredicate, scopePredicate } from '../auth/scope-sql';
 
 type Db = NodePgDatabase<typeof schema>;
-
-interface ScopeColumns {
-  department?: SQL;
-  project?: SQL;
-  entity?: SQL;
-}
-
-/** Scope exports in the query so JSON and CSV contain the same permitted rows. */
-function scopePredicate(scope: ResourceScope | undefined, columns: ScopeColumns): SQL {
-  if (!scope || scope.unrestricted) return sql`true`;
-  const clauses: SQL[] = [
-    ...scope.departmentIds.map((id) => (columns.department ? sql`${columns.department} = ${id}` : null)),
-    ...scope.projectIds.map((id) => (columns.project ? sql`${columns.project} = ${id}` : null)),
-    ...scope.entityIds.map((id) => (columns.entity ? sql`${columns.entity} = ${id}` : null)),
-  ].filter((clause): clause is SQL => clause !== null);
-  return clauses.length > 0 ? sql`(${sql.join(clauses, sql` OR `)})` : sql`false`;
-}
-
-function globalOnlyPredicate(scope: ResourceScope | undefined): SQL {
-  return !scope || scope.unrestricted ? sql`true` : sql`false`;
-}
 
 export interface ExportQuery {
   from?: string;
@@ -185,7 +165,6 @@ export class ExportService {
         al.entity_id          AS "entityId",
         al.action,
         al.user_id            AS "userId",
-        al.ip_address         AS "ipAddress",
         al.created_at         AS "createdAt"
       FROM audit_log al
       WHERE al.organization_id = ${organizationId}
@@ -243,7 +222,7 @@ export class ExportService {
       FROM invoice_lines il
       JOIN invoices i ON i.id = il.invoice_id
       LEFT JOIN po_lines pl ON pl.id = il.po_line_id
-      LEFT JOIN purchase_orders po ON po.id = pl.purchase_order_id
+      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
       LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${organizationId}
         AND i.status IN ('approved', 'paid')
@@ -261,7 +240,7 @@ export class ExportService {
       'purchase-orders': ['id', 'number', 'status', 'poType', 'currency', 'totalAmount', 'version', 'issuedAt', 'createdAt', 'vendorName', 'vendorEmail', 'departmentName'],
       'invoices': ['id', 'internalNumber', 'invoiceNumber', 'status', 'matchStatus', 'currency', 'subtotal', 'taxAmount', 'totalAmount', 'invoiceDate', 'dueDate', 'approvedAt', 'createdAt', 'vendorName', 'poNumber'],
       'budgets': ['id', 'name', 'budgetType', 'fiscalYear', 'totalAmount', 'spentAmount', 'currency', 'createdAt', 'departmentName', 'projectName'],
-      'audit-log': ['id', 'entityType', 'entityId', 'action', 'userId', 'ipAddress', 'createdAt'],
+      'audit-log': ['id', 'entityType', 'entityId', 'action', 'userId', 'createdAt'],
       'spend-by-vendor': ['vendorId', 'vendorName', 'vendorEmail', 'invoiceCount', 'totalSpend', 'firstInvoiceDate', 'lastInvoiceDate'],
       'spend-by-category': ['glAccount', 'invoiceCount', 'totalSpend'],
     };

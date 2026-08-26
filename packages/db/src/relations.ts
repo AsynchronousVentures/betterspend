@@ -58,6 +58,7 @@ import {
 import { documents } from './schema/documents';
 import { intakeConciergeSessions, procurementPolicies } from './schema/procurement-concierge';
 import { aiProviderConnections, aiProviderOauthStates } from './schema/ai-providers';
+import { savedReports } from './schema/reports';
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   legalEntities: many(legalEntities),
@@ -84,8 +85,16 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   aiProviderOauthStates: many(aiProviderOauthStates),
   integrationConnections: many(integrationConnections),
   syncRecords: many(syncRecords),
+  savedReports: many(savedReports),
   workflowDefinitions: many(workflowDefinitions),
   workflowDefinitionVersions: many(workflowDefinitionVersions),
+}));
+
+export const savedReportsRelations = relations(savedReports, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [savedReports.organizationId],
+    references: [organizations.id],
+  }),
 }));
 
 export const aiProviderConnectionsRelations = relations(aiProviderConnections, ({ one }) => ({

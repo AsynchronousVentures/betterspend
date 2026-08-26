@@ -2,9 +2,10 @@ import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common'
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { createHash, randomUUID } from 'crypto';
-import { and, eq, ne, sql } from 'drizzle-orm';
+import { and, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
 import axios from 'axios';
 import { syncRecords, type Db } from '@betterspend/db';
+import type { ResourceScope } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
 import { GlMappingsService } from './gl-mappings.service';
 import { OAuthService } from './oauth.service';
@@ -41,6 +42,19 @@ type SendOutcome =
   | { kind: 'pending'; reason: string }
   | { kind: 'synced'; externalId: string; connectionId: string };
 
+function invoiceScopePredicate(scope: ResourceScope | undefined): SQL | undefined {
+  if (!scope || scope.unrestricted) return undefined;
+
+  const clauses: SQL[] = [
+    ...scope.departmentIds.map(
+      (id) => sql`r.department_id = ${id}`,
+    ),
+    ...scope.projectIds.map((id) => sql`r.project_id = ${id}`),
+    ...scope.entityIds.map((id) => sql`COALESCE(i.entity_id, po.entity_id) = ${id}`),
+  ];
+  return clauses.length > 0 ? sql`(${sql.join(clauses, sql` OR `)})` : sql`false`;
+}
+
 @Injectable()
 export class GlExportService {
   private readonly logger = new Logger(GlExportService.name);
@@ -59,7 +73,9 @@ export class GlExportService {
     invoiceId: string,
     targetSystem: GlTargetSystem,
     jobId?: string,
+    scope?: ResourceScope,
   ): Promise<void> {
+    await this.assertInvoiceInScope(organizationId, invoiceId, scope);
     try {
       await this.glQueue.add(
         'process-export',
@@ -184,7 +200,12 @@ export class GlExportService {
     }
   }
 
-  async findJobsForInvoice(invoiceId: string, organizationId: string) {
+  async findJobsForInvoice(
+    invoiceId: string,
+    organizationId: string,
+    scope?: ResourceScope,
+  ) {
+    if (!(await this.assertInvoiceInScope(organizationId, invoiceId, scope, false))) return [];
     const records = await this.db.query.syncRecords.findMany({
       where: (record, { and: andFn, eq: eqFn, or: orFn }) =>
         andFn(
@@ -199,7 +220,7 @@ export class GlExportService {
     return records.map((record) => this.toLegacyApiShape(record));
   }
 
-  async retryJob(recordId: string, organizationId: string): Promise<void> {
+  async retryJob(recordId: string, organizationId: string, scope?: ResourceScope): Promise<void> {
     const record = await this.db.query.syncRecords.findFirst({
       where: (row, { and: andFn, eq: eqFn, or: orFn }) =>
         andFn(
@@ -211,6 +232,7 @@ export class GlExportService {
         ),
     });
     if (!record) throw new BadRequestException(`GL sync record ${recordId} not found`);
+    await this.assertInvoiceInScope(organizationId, record.localId, scope);
     if (record.status === 'synced')
       throw new BadRequestException('A synced record cannot be retried');
 
@@ -242,13 +264,17 @@ export class GlExportService {
     }
   }
 
-  async findAll(organizationId: string) {
+  async findAll(organizationId: string, scope?: ResourceScope) {
+    const permittedInvoiceIds = await this.permittedInvoiceIds(organizationId, scope);
+    if (permittedInvoiceIds && permittedInvoiceIds.length === 0) return [];
+
     const records = await this.db.query.syncRecords.findMany({
       where: (record, { and: andFn, eq: eqFn, or: orFn }) =>
         andFn(
           eqFn(record.organizationId, organizationId),
           eqFn(record.direction, 'outbound'),
           eqFn(record.localEntity, 'invoice'),
+          permittedInvoiceIds ? inArray(record.localId, permittedInvoiceIds) : undefined,
           orFn(eqFn(record.provider, 'qbo'), eqFn(record.provider, 'xero')),
         ),
       orderBy: (record, { desc }) => desc(record.createdAt),
@@ -271,6 +297,40 @@ export class GlExportService {
     return records.map((record) =>
       this.toLegacyApiShape({ ...record, invoice: invoicesById.get(record.localId) ?? null }),
     );
+  }
+
+  private async permittedInvoiceIds(
+    organizationId: string,
+    scope: ResourceScope | undefined,
+  ): Promise<string[] | undefined> {
+    const scopePredicate = invoiceScopePredicate(scope);
+    if (!scopePredicate) return undefined;
+
+    const rows = await this.db.execute(sql`
+      SELECT i.id
+      FROM invoices i
+      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
+      WHERE i.organization_id = ${organizationId}
+        AND ${scopePredicate}
+    `);
+    return (rows as unknown as Array<{ id: string }>).map((row) => row.id);
+  }
+
+  private async assertInvoiceInScope(
+    organizationId: string,
+    invoiceId: string,
+    scope: ResourceScope | undefined,
+    throwOnFailure = true,
+  ): Promise<boolean> {
+    const permittedInvoiceIds = await this.permittedInvoiceIds(organizationId, scope);
+    if (permittedInvoiceIds && !permittedInvoiceIds.includes(invoiceId)) {
+      if (throwOnFailure) {
+        throw new BadRequestException(`Invoice ${invoiceId} is outside your access scope`);
+      }
+      return false;
+    }
+    return true;
   }
 
   private async buildPayload(

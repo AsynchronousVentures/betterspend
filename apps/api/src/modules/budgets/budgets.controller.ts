@@ -158,12 +158,14 @@ export class BudgetsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: { periodStart: string; periodEnd: string; allocatedAmount: number },
     @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
     @CurrentAccess() access?: AccessPolicy,
   ) {
     return this.budgetsService.addPeriod(
       id,
       orgId,
       body,
+      userId,
       access?.scopeFor('budget', 'budgets:manage'),
     );
   }
@@ -176,12 +178,14 @@ export class BudgetsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Param('periodId', ParseUUIDPipe) periodId: string,
     @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
     @CurrentAccess() access?: AccessPolicy,
   ) {
     return this.budgetsService.removePeriod(
       id,
       periodId,
       orgId,
+      userId,
       access?.scopeFor('budget', 'budgets:manage'),
     );
   }

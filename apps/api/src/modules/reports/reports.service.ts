@@ -1,9 +1,9 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import type { ResourceScope } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
-import type { Db } from '@betterspend/db';
-import { randomUUID } from 'crypto';
+import { savedReports, type Db } from '@betterspend/db';
+import { scopePredicate } from '../auth/scope-sql';
 
 function toCsv(rows: Record<string, unknown>[]): string {
   if (!rows.length) return '';
@@ -18,27 +18,6 @@ function toCsv(rows: Record<string, unknown>[]): string {
     ...rows.map((row) => headers.map((h) => escape(row[h])).join(',')),
   ];
   return lines.join('\n');
-}
-
-interface ScopeColumns {
-  department?: SQL;
-  project?: SQL;
-  entity?: SQL;
-}
-
-/** Build an OR-of-dimensions predicate before a report aggregates its rows. */
-function scopePredicate(scope: ResourceScope | undefined, columns: ScopeColumns): SQL {
-  if (!scope || scope.unrestricted) return sql`true`;
-  const clauses: SQL[] = [
-    ...scope.departmentIds.map((id) => (columns.department ? sql`${columns.department} = ${id}` : null)),
-    ...scope.projectIds.map((id) => (columns.project ? sql`${columns.project} = ${id}` : null)),
-    ...scope.entityIds.map((id) => (columns.entity ? sql`${columns.entity} = ${id}` : null)),
-  ].filter((clause): clause is SQL => clause !== null);
-  return clauses.length > 0 ? sql`(${sql.join(clauses, sql` OR `)})` : sql`false`;
-}
-
-function globalOnlyPredicate(scope: ResourceScope | undefined): SQL {
-  return !scope || scope.unrestricted ? sql`true` : sql`false`;
 }
 
 export interface SavedReport {
@@ -58,43 +37,61 @@ export interface CustomReportParams {
   groupBy?: string;
 }
 
+function reportFilters(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function toSavedReport(row: typeof savedReports.$inferSelect): SavedReport {
+  return {
+    id: row.id,
+    organizationId: row.organizationId,
+    name: row.name,
+    reportType: row.reportType,
+    filters: reportFilters(row.filters),
+    groupBy: row.groupBy ?? undefined,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
 @Injectable()
 export class ReportsService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  // In-memory saved reports store
-  private savedReports: SavedReport[] = [];
-
   // ─── Saved Reports CRUD ───────────────────────────────────────────────────
 
-  listSavedReports(organizationId: string): SavedReport[] {
-    return this.savedReports.filter((report) => report.organizationId === organizationId);
+  async listSavedReports(organizationId: string): Promise<SavedReport[]> {
+    const rows = await this.db
+      .select()
+      .from(savedReports)
+      .where(eq(savedReports.organizationId, organizationId))
+      .orderBy(asc(savedReports.createdAt));
+    return rows.map(toSavedReport);
   }
 
-  saveReport(
+  async saveReport(
     organizationId: string,
     data: { name: string; reportType: string; filters: Record<string, unknown>; groupBy?: string },
-  ): SavedReport {
-    const report: SavedReport = {
-      id: randomUUID(),
-      organizationId,
-      name: data.name,
-      reportType: data.reportType,
-      filters: data.filters ?? {},
-      groupBy: data.groupBy,
-      createdAt: new Date().toISOString(),
-    };
-    this.savedReports.push(report);
-    return report;
+  ): Promise<SavedReport> {
+    const [report] = await this.db
+      .insert(savedReports)
+      .values({
+        organizationId,
+        name: data.name,
+        reportType: data.reportType,
+        filters: data.filters ?? {},
+        groupBy: data.groupBy ?? null,
+      })
+      .returning();
+    return toSavedReport(report);
   }
 
-  deleteSavedReport(organizationId: string, id: string): boolean {
-    const idx = this.savedReports.findIndex(
-      (report) => report.organizationId === organizationId && report.id === id,
-    );
-    if (idx === -1) return false;
-    this.savedReports.splice(idx, 1);
-    return true;
+  async deleteSavedReport(organizationId: string, id: string): Promise<boolean> {
+    const deleted = await this.db
+      .delete(savedReports)
+      .where(and(eq(savedReports.id, id), eq(savedReports.organizationId, organizationId)))
+      .returning({ id: savedReports.id });
+    return deleted.length > 0;
   }
 
   // ─── Custom Report Runner ─────────────────────────────────────────────────
@@ -204,12 +201,12 @@ export class ReportsService {
       SELECT
         COALESCE(ci.category, 'Uncategorized')       AS "category",
         COUNT(DISTINCT il.id)::int                   AS "lineCount",
-        SUM(il.line_total)::numeric                  AS "totalSpend"
+        SUM(il.total_price)::numeric                 AS "totalSpend"
       FROM invoice_lines il
       JOIN invoices i ON i.id = il.invoice_id
       LEFT JOIN catalog_items ci ON ci.id = il.catalog_item_id
       LEFT JOIN po_lines pl ON pl.id = il.po_line_id
-      LEFT JOIN purchase_orders po ON po.id = pl.purchase_order_id
+      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
       LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${orgId}
         AND i.status NOT IN ('cancelled')
@@ -479,7 +476,7 @@ export class ReportsService {
 
   async exportDepartmentSpend(organizationId: string, scope?: ResourceScope): Promise<string> {
     const rowScope = scopePredicate(scope, {
-      department: sql`r.department_id`,
+      department: sql`COALESCE(d.id, r.department_id)`,
       project: sql`r.project_id`,
       entity: sql`po.entity_id`,
     });

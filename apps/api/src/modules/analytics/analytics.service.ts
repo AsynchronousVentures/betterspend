@@ -1,28 +1,12 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { sql, type SQL } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import type { ResourceScope } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type * as schema from '@betterspend/db';
+import { globalOnlyPredicate, scopePredicate } from '../auth/scope-sql';
 
 type Db = NodePgDatabase<typeof schema>;
-
-interface ScopeColumns {
-  department?: SQL;
-  project?: SQL;
-  entity?: SQL;
-}
-
-/** Keep aggregate authorization in SQL so totals never include hidden rows. */
-function scopePredicate(scope: ResourceScope | undefined, columns: ScopeColumns): SQL {
-  if (!scope || scope.unrestricted) return sql`true`;
-  const clauses: SQL[] = [
-    ...scope.departmentIds.map((id) => (columns.department ? sql`${columns.department} = ${id}` : null)),
-    ...scope.projectIds.map((id) => (columns.project ? sql`${columns.project} = ${id}` : null)),
-    ...scope.entityIds.map((id) => (columns.entity ? sql`${columns.entity} = ${id}` : null)),
-  ].filter((clause): clause is SQL => clause !== null);
-  return clauses.length > 0 ? sql`(${sql.join(clauses, sql` OR `)})` : sql`false`;
-}
 
 @Injectable()
 export class AnalyticsService {
@@ -247,7 +231,7 @@ export class AnalyticsService {
       project: sql`r.project_id`,
       entity: sql`COALESCE(i.entity_id, po.entity_id)`,
     });
-    const globalOnly = !scope || scope.unrestricted ? sql`true` : sql`false`;
+    const globalOnly = globalOnlyPredicate(scope);
     const [approvalRow, invoiceRow, reqRow, grnRow, overdueRow, spendGuardRow, renewalRow] = await Promise.all([
       this.db.execute(sql`
         SELECT COUNT(ar.id)::int AS count
@@ -433,7 +417,7 @@ export class AnalyticsService {
       JOIN invoices i ON i.id = il.invoice_id
       LEFT JOIN po_lines pl ON pl.id = il.po_line_id
       LEFT JOIN catalog_items ci ON ci.id = pl.catalog_item_id
-      LEFT JOIN purchase_orders po ON po.id = pl.purchase_order_id
+      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
       LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${organizationId}
         AND i.status IN ('approved', 'paid')
@@ -516,7 +500,7 @@ export class AnalyticsService {
         JOIN invoices i ON i.id = il.invoice_id
         LEFT JOIN po_lines pl ON pl.id = il.po_line_id
         LEFT JOIN catalog_items ci ON ci.id = pl.catalog_item_id
-        LEFT JOIN purchase_orders po ON po.id = pl.purchase_order_id
+        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
         LEFT JOIN requisitions r ON r.id = po.requisition_id
         WHERE i.organization_id = ${organizationId}
           AND i.status IN ('approved', 'paid')
@@ -538,7 +522,7 @@ export class AnalyticsService {
 
   /** Recent activity from audit log */
   async recentActivity(organizationId: string, limit = 20, scope?: ResourceScope) {
-    const globalOnly = !scope || scope.unrestricted ? sql`true` : sql`false`;
+    const globalOnly = globalOnlyPredicate(scope);
     return this.db.execute(sql`
       SELECT
         al.id,

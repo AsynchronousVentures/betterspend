@@ -26,6 +26,8 @@ import { CurrentUserId } from '../../common/decorators/current-user-id.decorator
 import { CurrentSessionId } from '../../common/decorators/current-session-id.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
+import { CurrentAccess } from '../auth/current-access.decorator';
+import type { AccessPolicy } from '../auth/access-policy';
 
 @ApiTags('gl')
 @Controller('gl')
@@ -84,22 +86,41 @@ export class GlController {
   @Get('export-jobs')
   @Permissions('reports:view')
   @ApiOperation({ summary: 'List GL export jobs' })
-  findAllJobs(@CurrentOrgId() orgId: string) {
-    return this.glExportService.findAll(orgId);
+  findAllJobs(@CurrentOrgId() orgId: string, @CurrentAccess() access?: AccessPolicy) {
+    return this.glExportService.findAll(
+      orgId,
+      access?.scopeFor('report', 'reports:view'),
+    );
   }
 
   @Get('export-jobs/invoice/:invoiceId')
   @Permissions('reports:view')
   @ApiOperation({ summary: 'List GL export jobs for a specific invoice' })
-  findJobsForInvoice(@Param('invoiceId') invoiceId: string, @CurrentOrgId() orgId: string) {
-    return this.glExportService.findJobsForInvoice(invoiceId, orgId);
+  findJobsForInvoice(
+    @Param('invoiceId') invoiceId: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.glExportService.findJobsForInvoice(
+      invoiceId,
+      orgId,
+      access?.scopeFor('report', 'reports:view'),
+    );
   }
 
   @Post('export-jobs/:id/retry')
   @Permissions('reports:export')
   @ApiOperation({ summary: 'Retry a failed GL export job' })
-  async retryJob(@Param('id') id: string, @CurrentOrgId() orgId: string) {
-    await this.glExportService.retryJob(id, orgId);
+  async retryJob(
+    @Param('id') id: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    await this.glExportService.retryJob(
+      id,
+      orgId,
+      access?.scopeFor('report', 'reports:export'),
+    );
     return { queued: true };
   }
 
@@ -111,8 +132,15 @@ export class GlController {
     @Param('invoiceId') invoiceId: string,
     @CurrentOrgId() orgId: string,
     @Query('targetSystem') targetSystem: 'qbo' | 'xero' = 'qbo',
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    await this.glExportService.enqueue(orgId, invoiceId, targetSystem);
+    await this.glExportService.enqueue(
+      orgId,
+      invoiceId,
+      targetSystem,
+      undefined,
+      access?.scopeFor('report', 'reports:export'),
+    );
     return { queued: true, invoiceId, targetSystem };
   }
 

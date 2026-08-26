@@ -5,6 +5,8 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ProjectsService, CreateProjectInput, UpdateProjectInput } from './projects.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
+import { CurrentAccess } from '../auth/current-access.decorator';
+import type { AccessPolicy } from '../auth/access-policy';
 
 @ApiTags('projects')
 @Controller('projects')
@@ -12,17 +14,21 @@ export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
   @Get()
-  @Permissions('settings:manage')
+  @Permissions('reports:view')
   @ApiOperation({ summary: 'List all projects' })
-  findAll(@CurrentOrgId() orgId: string) {
-    return this.projectsService.findAll(orgId);
+  findAll(@CurrentOrgId() orgId: string, @CurrentAccess() access?: AccessPolicy) {
+    return this.projectsService.findAll(orgId, access?.scopeFor('report', 'reports:view'));
   }
 
   @Get(':id')
-  @Permissions('settings:manage')
+  @Permissions('reports:view')
   @ApiOperation({ summary: 'Get a project' })
-  findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
-    return this.projectsService.findOne(id, orgId);
+  findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.projectsService.findOne(id, orgId, access?.scopeFor('report', 'reports:view'));
   }
 
   @Post()
