@@ -174,22 +174,31 @@ export class ContractsService {
     data: Partial<typeof contracts.$inferInsert>,
     access?: AccessPolicy,
   ) {
-    await this.findOne(id, organizationId, access, 'contracts:manage');
-    if (data.vendorId !== undefined) {
-      await this.assertVendorScope(organizationId, access, 'contracts:manage', data.vendorId);
-    }
+    const updated = await this.db.transaction(async (tx) => {
+      await this.lockManagedContract(tx, id, organizationId, access);
+      if (data.vendorId !== undefined) {
+        await this.assertVendorScopeInTransaction(
+          tx,
+          organizationId,
+          access,
+          'contracts:manage',
+          data.vendorId,
+        );
+      }
 
-    const [updated] = await this.db
-      .update(contracts)
-      .set({ ...data, updatedAt: new Date() })
-      .where(
-        and(
-          eq(contracts.id, id),
-          eq(contracts.organizationId, organizationId),
-          this.managedContractScope(organizationId, access),
-        ),
-      )
-      .returning();
+      const [changed] = await tx
+        .update(contracts)
+        .set({ ...data, updatedAt: new Date() })
+        .where(
+          and(
+            eq(contracts.id, id),
+            eq(contracts.organizationId, organizationId),
+            this.managedContractScope(organizationId, access),
+          ),
+        )
+        .returning();
+      return changed;
+    });
 
     if (!updated) throw new NotFoundException(`Contract ${id} not found`);
 
@@ -573,27 +582,30 @@ export class ContractsService {
     },
     access?: AccessPolicy,
   ) {
-    await this.findOne(contractId, organizationId, access, 'contracts:manage');
-    const [updated] = await this.db
-      .update(contractClauses)
-      .set({
-        status: input.status,
-        riskLevel: input.riskLevel,
-        riskReason: input.riskReason,
-        normalizedSummary: input.normalizedSummary,
-        extractedText: input.extractedText,
-        reviewedBy: userId,
-        reviewedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(contractClauses.id, clauseId),
-          eq(contractClauses.contractId, contractId),
-          eq(contractClauses.organizationId, organizationId),
-        ),
-      )
-      .returning();
+    const updated = await this.db.transaction(async (tx) => {
+      await this.lockManagedContract(tx, contractId, organizationId, access);
+      const [changed] = await tx
+        .update(contractClauses)
+        .set({
+          status: input.status,
+          riskLevel: input.riskLevel,
+          riskReason: input.riskReason,
+          normalizedSummary: input.normalizedSummary,
+          extractedText: input.extractedText,
+          reviewedBy: userId,
+          reviewedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(contractClauses.id, clauseId),
+            eq(contractClauses.contractId, contractId),
+            eq(contractClauses.organizationId, organizationId),
+          ),
+        )
+        .returning();
+      return changed;
+    });
 
     if (!updated) throw new NotFoundException(`Contract clause ${clauseId} not found`);
     await this.auditService
@@ -621,30 +633,33 @@ export class ContractsService {
     },
     access?: AccessPolicy,
   ) {
-    await this.findOne(contractId, organizationId, access, 'contracts:manage');
-    const [updated] = await this.db
-      .update(contractObligations)
-      .set({
-        status: input.status,
-        ownerId: input.ownerId === null ? null : input.ownerId,
-        dueDate: input.dueDate
-          ? new Date(input.dueDate)
-          : input.dueDate === null
-            ? null
-            : undefined,
-        title: input.title,
-        description: input.description,
-        notificationLeadDays: input.notificationLeadDays,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(contractObligations.id, obligationId),
-          eq(contractObligations.contractId, contractId),
-          eq(contractObligations.organizationId, organizationId),
-        ),
-      )
-      .returning();
+    const updated = await this.db.transaction(async (tx) => {
+      await this.lockManagedContract(tx, contractId, organizationId, access);
+      const [changed] = await tx
+        .update(contractObligations)
+        .set({
+          status: input.status,
+          ownerId: input.ownerId === null ? null : input.ownerId,
+          dueDate: input.dueDate
+            ? new Date(input.dueDate)
+            : input.dueDate === null
+              ? null
+              : undefined,
+          title: input.title,
+          description: input.description,
+          notificationLeadDays: input.notificationLeadDays,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(contractObligations.id, obligationId),
+            eq(contractObligations.contractId, contractId),
+            eq(contractObligations.organizationId, organizationId),
+          ),
+        )
+        .returning();
+      return changed;
+    });
 
     if (!updated) throw new NotFoundException(`Contract obligation ${obligationId} not found`);
     await this.auditService

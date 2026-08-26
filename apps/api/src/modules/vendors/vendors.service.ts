@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { eq, and, inArray, sql } from 'drizzle-orm';
+import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { onboardingQuestionnaires, vendorOnboardingSubmissions, vendors } from '@betterspend/db';
@@ -13,6 +13,8 @@ import { EntitiesService } from '../entities/entities.service';
 import type { AccessPolicy } from '../auth/access-policy';
 import { scopedEntityPredicate, scopedVendorPredicate } from '../auth/operational-access';
 import type { PermissionKey } from '@betterspend/shared';
+
+type VendorTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 @Injectable()
 export class VendorsService {
@@ -359,36 +361,64 @@ export class VendorsService {
     data: { decision: 'approved' | 'changes_requested'; reviewNote?: string },
     access?: AccessPolicy,
   ) {
-    await this.findOne(vendorId, organizationId, access, 'vendors:edit');
-    const latest = await this.db.query.vendorOnboardingSubmissions.findFirst({
-      where: (record, { and, eq }) =>
-        and(eq(record.organizationId, organizationId), eq(record.vendorId, vendorId)),
-      orderBy: (record, { desc }) => desc(record.createdAt),
+    return this.db.transaction(async (tx) => {
+      await this.lockVendorForMutation(tx, vendorId, organizationId, access, 'vendors:edit');
+      const [latest] = await tx
+        .select()
+        .from(vendorOnboardingSubmissions)
+        .where(
+          and(
+            eq(vendorOnboardingSubmissions.organizationId, organizationId),
+            eq(vendorOnboardingSubmissions.vendorId, vendorId),
+          ),
+        )
+        .orderBy(desc(vendorOnboardingSubmissions.createdAt))
+        .limit(1);
+      if (!latest)
+        throw new NotFoundException(`No onboarding submission found for vendor ${vendorId}`);
+
+      const nextStatus = data.decision === 'approved' ? 'approved' : 'changes_requested';
+      await tx
+        .update(vendorOnboardingSubmissions)
+        .set({
+          status: nextStatus,
+          reviewNote: data.reviewNote?.trim() || null,
+          reviewedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(vendorOnboardingSubmissions.id, latest.id),
+            eq(vendorOnboardingSubmissions.organizationId, organizationId),
+            scopedVendorPredicate(
+              this.db,
+              organizationId,
+              access,
+              'vendor',
+              'vendors:edit',
+              vendorOnboardingSubmissions.vendorId,
+            ),
+          ),
+        );
+
+      const [vendor] = await tx
+        .update(vendors)
+        .set({
+          onboardingStatus: data.decision === 'approved' ? 'approved' : 'changes_requested',
+          onboardingApprovedAt: data.decision === 'approved' ? new Date() : null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(vendors.id, vendorId),
+            eq(vendors.organizationId, organizationId),
+            scopedEntityPredicate(access, 'vendor', 'vendors:edit', vendors.entityId),
+          ),
+        )
+        .returning();
+      if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
+      return vendor;
     });
-    if (!latest)
-      throw new NotFoundException(`No onboarding submission found for vendor ${vendorId}`);
-
-    const nextStatus = data.decision === 'approved' ? 'approved' : 'changes_requested';
-    await this.db
-      .update(vendorOnboardingSubmissions)
-      .set({
-        status: nextStatus,
-        reviewNote: data.reviewNote?.trim() || null,
-        reviewedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(vendorOnboardingSubmissions.id, latest.id));
-
-    const [vendor] = await this.db
-      .update(vendors)
-      .set({
-        onboardingStatus: data.decision === 'approved' ? 'approved' : 'changes_requested',
-        onboardingApprovedAt: data.decision === 'approved' ? new Date() : null,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
-      .returning();
-    return vendor;
   }
 
   async updateEsg(
@@ -424,8 +454,15 @@ export class VendorsService {
         }),
         updatedAt: new Date(),
       })
-      .where(and(eq(vendors.id, id), eq(vendors.organizationId, organizationId)))
+      .where(
+        and(
+          eq(vendors.id, id),
+          eq(vendors.organizationId, organizationId),
+          scopedEntityPredicate(access, 'vendor', 'vendors:edit', vendors.entityId),
+        ),
+      )
       .returning();
+    if (!vendor) throw new NotFoundException(`Vendor ${id} not found`);
     return vendor;
   }
 
@@ -537,5 +574,22 @@ export class VendorsService {
     if (!access.scopeFor('vendor', permission).unrestricted) {
       throw new ForbiddenException('This supplier operation requires a global grant');
     }
+  }
+
+  private async lockVendorForMutation(
+    tx: VendorTransaction,
+    id: string,
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: PermissionKey,
+  ) {
+    const [vendor] = await tx
+      .select()
+      .from(vendors)
+      .where(and(eq(vendors.id, id), eq(vendors.organizationId, organizationId)))
+      .for('update');
+    if (!vendor) throw new NotFoundException(`Vendor ${id} not found`);
+    this.assertEntityScope(access, permission, vendor.entityId);
+    return vendor;
   }
 }

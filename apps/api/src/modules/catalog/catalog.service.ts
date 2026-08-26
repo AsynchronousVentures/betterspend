@@ -205,9 +205,24 @@ export class CatalogService {
 
   async remove(id: string, organizationId: string, access?: AccessPolicy) {
     await this.findOne(id, organizationId, access, 'catalog:manage');
-    await this.db
+    const [deleted] = await this.db
       .delete(catalogItems)
-      .where(and(eq(catalogItems.id, id), eq(catalogItems.organizationId, organizationId)));
+      .where(
+        and(
+          eq(catalogItems.id, id),
+          eq(catalogItems.organizationId, organizationId),
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'catalog',
+            'catalog:manage',
+            catalogItems.vendorId,
+          ),
+        ),
+      )
+      .returning({ id: catalogItems.id });
+    if (!deleted) throw new NotFoundException(`Catalog item ${id} not found`);
   }
 
   async getCategories(organizationId: string, access?: AccessPolicy): Promise<string[]> {
@@ -273,33 +288,50 @@ export class CatalogService {
 
     // Guard on pending state so a second review cannot re-apply an old price
     // or clobber the original application metadata.
-    const [updated] = await this.db
-      .update(catalogPriceProposals)
-      .set({
-        status: input.status,
-        reviewedBy: reviewerId,
-        reviewedAt: new Date(),
-        reviewNote: input.reviewNote ?? null,
-      })
-      .where(
-        and(
-          eq(catalogPriceProposals.id, proposalId),
-          eq(catalogPriceProposals.organizationId, organizationId),
-          eq(catalogPriceProposals.status, 'pending'),
-          scopedVendorPredicate(
-            this.db,
-            organizationId,
-            access,
-            'catalog',
-            'catalog:manage',
-            catalogPriceProposals.vendorId,
+    const updated = await this.db.transaction(async (tx) => {
+      const [reviewed] = await tx
+        .update(catalogPriceProposals)
+        .set({
+          status: input.status,
+          reviewedBy: reviewerId,
+          reviewedAt: new Date(),
+          reviewNote: input.reviewNote ?? null,
+        })
+        .where(
+          and(
+            eq(catalogPriceProposals.id, proposalId),
+            eq(catalogPriceProposals.organizationId, organizationId),
+            eq(catalogPriceProposals.status, 'pending'),
+            scopedVendorPredicate(
+              this.db,
+              organizationId,
+              access,
+              'catalog',
+              'catalog:manage',
+              catalogPriceProposals.vendorId,
+            ),
           ),
-        ),
-      )
-      .returning();
-    if (!updated) {
-      throw new BadRequestException(`Catalog price proposal ${proposalId} was already reviewed`);
-    }
+        )
+        .returning();
+      if (!reviewed) {
+        throw new BadRequestException(`Catalog price proposal ${proposalId} was already reviewed`);
+      }
+
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: reviewerId,
+        entityType: 'catalog_price_proposal',
+        entityId: proposalId,
+        action: input.status,
+        changes: {
+          status: input.status,
+          reviewNote: input.reviewNote ?? null,
+          currentPrice: reviewed.currentPrice,
+          proposedPrice: reviewed.proposedPrice,
+        },
+      });
+      return reviewed;
+    });
 
     // Approved proposals take effect immediately unless the supplier set a
     // future effective date; those are applied by applyDueApprovedProposals.
@@ -310,7 +342,19 @@ export class CatalogService {
     await this.notifyVendorOfDecision(updated, input.status, input.reviewNote);
 
     return this.db.query.catalogPriceProposals.findFirst({
-      where: (p, { and, eq }) => and(eq(p.id, proposalId), eq(p.organizationId, organizationId)),
+      where: (p, { and, eq }) =>
+        and(
+          eq(p.id, proposalId),
+          eq(p.organizationId, organizationId),
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'catalog',
+            'catalog:manage',
+            p.vendorId,
+          ),
+        ),
       with: {
         item: { with: { vendor: true } },
         vendor: true,
