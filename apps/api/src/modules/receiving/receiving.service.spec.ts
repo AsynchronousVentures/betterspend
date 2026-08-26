@@ -26,6 +26,8 @@ describe('ReceivingService response context', () => {
         purchaseOrder: {
           id: 'po-1',
           number: 'PO-2026-0001',
+          totalAmount: '125.00',
+          currency: 'USD',
           organizationId,
           vendor: { id: 'vendor-1', name: 'Acme Supplies', organizationId },
         },
@@ -39,6 +41,8 @@ describe('ReceivingService response context', () => {
         purchaseOrder: {
           id: 'po-1',
           number: 'PO-2026-0001',
+          totalAmount: '125.00',
+          currency: 'USD',
           vendor: { id: 'vendor-1', name: 'Acme Supplies' },
         },
       },
@@ -52,6 +56,8 @@ describe('ReceivingService response context', () => {
     expect(options.with.purchaseOrder.columns).toMatchObject({
       id: true,
       number: true,
+      totalAmount: true,
+      currency: true,
       organizationId: true,
     });
     expect(options.with.purchaseOrder.with).toEqual({

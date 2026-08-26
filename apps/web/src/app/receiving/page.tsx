@@ -19,6 +19,15 @@ import {
   TableRow,
 } from '../../components/ui/table';
 
+function formatCurrency(amount: string | number | null | undefined, currency = 'USD') {
+  if (amount == null) return '—';
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(amount));
+  } catch {
+    return `${currency} ${amount}`;
+  }
+}
+
 export default function ReceivingPage() {
   const [grns, setGrns] = useState<ReceivingListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,6 +81,8 @@ export default function ReceivingPage() {
                     kind: 'purchase_order' as const,
                     id: grn.purchaseOrder?.id,
                     label: grn.purchaseOrder?.number,
+                    totalAmount: grn.purchaseOrder?.totalAmount,
+                    currency: grn.purchaseOrder?.currency,
                     relation: 'Purchase order',
                   };
                   const vendor = {
@@ -115,6 +126,12 @@ export default function ReceivingPage() {
                           </dd>
                         </div>
                         <div>
+                          <dt className="text-xs text-muted-foreground">PO amount</dt>
+                          <dd className="mt-1 font-medium text-foreground">
+                            {formatCurrency(purchaseOrder.totalAmount, purchaseOrder.currency)}
+                          </dd>
+                        </div>
+                        <div>
                           <dt className="text-xs text-muted-foreground">Lines</dt>
                           <dd className="mt-1 text-foreground">{grn.lines?.length ?? 0}</dd>
                         </div>
@@ -138,6 +155,7 @@ export default function ReceivingPage() {
                       <TableHead>PO Number</TableHead>
                       <TableHead>Vendor</TableHead>
                       <TableHead>Received Date</TableHead>
+                      <TableHead>PO Amount</TableHead>
                       <TableHead>Lines</TableHead>
                       <TableHead>Status</TableHead>
                     </TableRow>
@@ -148,6 +166,8 @@ export default function ReceivingPage() {
                         kind: 'purchase_order' as const,
                         id: grn.purchaseOrder?.id,
                         label: grn.purchaseOrder?.number,
+                        totalAmount: grn.purchaseOrder?.totalAmount,
+                        currency: grn.purchaseOrder?.currency,
                         relation: 'Purchase order',
                       };
                       const vendor = {
@@ -175,6 +195,9 @@ export default function ReceivingPage() {
                           </TableCell>
                           <TableCell className="text-muted-foreground">
                             {new Date(grn.receivedDate).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell className="font-medium text-foreground">
+                            {formatCurrency(purchaseOrder.totalAmount, purchaseOrder.currency)}
                           </TableCell>
                           <TableCell className="text-muted-foreground">
                             {grn.lines?.length ?? 0} line{grn.lines?.length !== 1 ? 's' : ''}

@@ -32,6 +32,14 @@ import { Badge } from './ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Separator } from './ui/separator';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog';
 import { cn } from '../lib/utils';
 import { useAccess } from './access-provider';
 import { createSearchRequestController } from '../lib/search-request';
@@ -201,11 +209,11 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   useEffect(() => {
     const requestId = searchRequestController.begin();
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    setLoading(false);
     if (query.length < 2) {
       setResults([]);
       setTotalResults(0);
       setActiveIndex(-1);
-      setLoading(false);
       setSearchAnnouncement('');
       return;
     }
@@ -272,6 +280,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   }, []);
 
   function navigate(href: string) {
+    searchRequestController.invalidate();
     setOpen(false);
     const normalizedQuery = query.trim();
     if (normalizedQuery) {
@@ -289,6 +298,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   }
 
   function applyRecentSearch(searchValue: string) {
+    searchRequestController.invalidate();
     setQuery(searchValue);
     setOpen(true);
     inputRef.current?.focus();
@@ -303,6 +313,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
 
   function handleKeyDown(event: React.KeyboardEvent) {
     if (event.key === 'Escape') {
+      searchRequestController.invalidate();
       if (query) {
         setQuery('');
         setResults([]);
@@ -365,6 +376,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
           ref={inputRef}
           value={query}
           onChange={(event) => {
+            searchRequestController.invalidate();
             setQuery(event.target.value);
             if (event.target.value.length >= 2 || recentSearches.length > 0) setOpen(true);
           }}
@@ -416,6 +428,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
                     key={item}
                     id={getSearchOptionId(index)}
                     type="button"
+                    tabIndex={-1}
                     role="option"
                     aria-selected={activeIndex === index}
                     onClick={() => applyRecentSearch(item)}
@@ -435,6 +448,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
                       key={`${result._type}-${result.id}`}
                       id={getSearchOptionId(index)}
                       type="button"
+                      tabIndex={-1}
                       role="option"
                       aria-selected={activeIndex === index}
                       onClick={() => navigate(result._href)}
@@ -824,41 +838,35 @@ function ShortcutsModal({
   shortcutsDisabled,
   onClose,
   onToggleDisabled,
+  returnFocusRef,
 }: {
   open: boolean;
   shortcutsDisabled: boolean;
   onClose: () => void;
   onToggleDisabled: (nextValue: boolean) => void;
+  returnFocusRef: React.MutableRefObject<HTMLElement | null>;
 }) {
-  useEffect(() => {
-    if (!open) return;
-
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose();
-    }
-
-    window.addEventListener('keydown', handleEscape);
-    return () => window.removeEventListener('keydown', handleEscape);
-  }, [onClose, open]);
-
-  if (!open) return null;
-
   return (
-    <div
-      onClick={onClose}
-      className="fixed inset-0 z-[120] flex items-center justify-center bg-[rgba(19,18,21,0.48)] px-4 py-6"
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
     >
-      <Card
-        className="w-full max-w-xl overflow-hidden"
-        onClick={(event) => event.stopPropagation()}
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          restoreFocus(returnFocusRef.current);
+        }}
       >
-        <CardHeader className="border-b border-border/70 pb-4">
-          <CardTitle className="text-base font-semibold">Keyboard Shortcuts</CardTitle>
-          <p className="text-sm text-muted-foreground">
+        <DialogHeader>
+          <DialogTitle>Keyboard Shortcuts</DialogTitle>
+          <DialogDescription>
             Global navigation and form actions for faster workflows.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-4 pt-5">
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
           {[
             ['/', 'Focus global search'],
             ['Ctrl/Cmd + K', 'Focus global search'],
@@ -889,14 +897,14 @@ function ShortcutsModal({
               </div>
             </div>
           </label>
-          <div className="flex justify-end">
-            <Button type="button" onClick={onClose}>
-              Close
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+        <DialogFooter>
+          <Button type="button" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -907,6 +915,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [shortcutsDisabled, setShortcutsDisabled] = useState(false);
+  const shortcutsReturnFocusRef = useRef<HTMLElement | null>(null);
   const mobileSidebarRef = useRef<HTMLElement>(null);
   const mobileSidebarCloseRef = useRef<HTMLButtonElement>(null);
   const sidebarTriggerRef = useRef<HTMLButtonElement>(null);
@@ -1035,6 +1044,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       if (!typing && event.key === '?') {
         event.preventDefault();
+        shortcutsReturnFocusRef.current = document.activeElement as HTMLElement | null;
         setShowShortcutsModal(true);
       }
     }
@@ -1137,6 +1147,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         shortcutsDisabled={shortcutsDisabled}
         onClose={() => setShowShortcutsModal(false)}
         onToggleDisabled={handleToggleShortcutsDisabled}
+        returnFocusRef={shortcutsReturnFocusRef}
       />
 
       {!isMobile ? sidebar : null}
@@ -1178,7 +1189,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 type="button"
                 variant="ghost"
                 size="icon"
-                onClick={() => setShowShortcutsModal(true)}
+                onClick={(event) => {
+                  shortcutsReturnFocusRef.current = event.currentTarget;
+                  setShowShortcutsModal(true);
+                }}
                 className="hidden size-9 rounded-lg border border-border/70 bg-background/80 text-muted-foreground hover:bg-muted md:inline-flex"
                 aria-label="Keyboard shortcuts"
               >

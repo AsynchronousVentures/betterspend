@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  createSearchRequestController,
   getFocusTrapIndex,
   getSearchActiveIndex,
   getSearchOptionId,
@@ -35,4 +36,20 @@ test('modal focus restoration calls the opener only while it remains connected',
   assert.equal(restoreFocus(disconnected), false);
   assert.equal(restoreFocus(null), false);
   assert.equal(focusCalls, 1);
+});
+
+test('search request controller ignores a response after a newer request starts', async () => {
+  const controller = createSearchRequestController();
+  const firstRequest = controller.begin();
+  const secondRequest = controller.begin();
+  const applied: string[] = [];
+
+  await Promise.resolve().then(() => {
+    if (controller.isCurrent(firstRequest)) applied.push('stale');
+    if (controller.isCurrent(secondRequest)) applied.push('current');
+  });
+
+  assert.deepEqual(applied, ['current']);
+  controller.invalidate();
+  assert.equal(controller.isCurrent(secondRequest), false);
 });

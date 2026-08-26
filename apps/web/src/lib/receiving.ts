@@ -1,6 +1,8 @@
 export interface ReceivingPurchaseOrderSummary {
   id: string;
   number: string;
+  totalAmount: string;
+  currency: string;
   vendor: { id: string; name: string } | null;
 }
 

@@ -59,3 +59,20 @@ export function getSearchSelectionIndex(
   if (key !== 'Enter' || activeIndex < 0 || activeIndex >= optionCount) return null;
   return activeIndex;
 }
+
+export function createSearchRequestController() {
+  let currentRequest = 0;
+
+  return {
+    begin() {
+      currentRequest += 1;
+      return currentRequest;
+    },
+    invalidate() {
+      currentRequest += 1;
+    },
+    isCurrent(requestId: number) {
+      return requestId === currentRequest;
+    },
+  };
+}

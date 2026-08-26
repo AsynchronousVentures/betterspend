@@ -86,6 +86,8 @@ export interface CreateGrnInput {
 export type ReceivingPurchaseOrderSummary = {
   id: string;
   number: string;
+  totalAmount: string;
+  currency: string;
   vendor: { id: string; name: string } | null;
 };
 
@@ -106,6 +108,8 @@ export type ReceivingDetail = typeof goodsReceipts.$inferSelect & {
 type PurchaseOrderRelation = {
   id: string;
   number: string;
+  totalAmount: string;
+  currency: string;
   organizationId?: string;
   vendor?: { id: string; name: string; organizationId?: string } | null;
 };
@@ -135,7 +139,13 @@ export class ReceivingService {
       with: {
         lines: true,
         purchaseOrder: {
-          columns: { id: true, number: true, organizationId: true },
+          columns: {
+            id: true,
+            number: true,
+            totalAmount: true,
+            currency: true,
+            organizationId: true,
+          },
           with: { vendor: { columns: { id: true, name: true, organizationId: true } } },
         },
       },
@@ -169,7 +179,13 @@ export class ReceivingService {
       with: {
         lines: { with: { poLine: true } },
         purchaseOrder: {
-          columns: { id: true, number: true, organizationId: true },
+          columns: {
+            id: true,
+            number: true,
+            totalAmount: true,
+            currency: true,
+            organizationId: true,
+          },
           with: { vendor: { columns: { id: true, name: true, organizationId: true } } },
         },
       },
@@ -190,6 +206,8 @@ export class ReceivingService {
     return {
       id: purchaseOrder.id,
       number: purchaseOrder.number,
+      totalAmount: purchaseOrder.totalAmount,
+      currency: purchaseOrder.currency,
       vendor:
         purchaseOrder.vendor?.organizationId === organizationId
           ? { id: purchaseOrder.vendor.id, name: purchaseOrder.vendor.name }
