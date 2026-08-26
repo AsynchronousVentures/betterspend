@@ -59,6 +59,7 @@ test('rejects literal loopback, private, link-local, and metadata addresses', as
     '::1',
     'fd00:ec2::254',
     '[4000::1]',
+    '[::ffff:8.8.8.8]',
   ]) {
     await assert.rejects(
       resolveSafeWebhookTarget(`http://${address}`),

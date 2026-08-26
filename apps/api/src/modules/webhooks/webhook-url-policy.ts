@@ -209,10 +209,8 @@ export function requestPinnedWebhook(
 function isGlobalIp(address: string): boolean {
   if (!ipaddr.isValid(address)) return false;
   const parsed = ipaddr.parse(address);
-  const normalized =
-    parsed.kind() === 'ipv6' && parsed.range() === 'ipv4Mapped'
-      ? (parsed as ipaddr.IPv6).toIPv4Address()
-      : parsed;
+  if (parsed.kind() === 'ipv6' && parsed.range() === 'ipv4Mapped') return false;
+  const normalized = parsed;
   if (normalized.kind() === 'ipv6') {
     return normalized.range() === 'unicast' && normalized.match(IPV6_GLOBAL_UNICAST);
   }
