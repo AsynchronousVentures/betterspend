@@ -94,7 +94,7 @@ export class SupplierScorecardService {
           AND po.organization_id = ${organizationId}
       WHERE v.organization_id = ${organizationId}
         AND v.status = 'active'
-        ${vendorScope}
+        AND ${vendorScope}
         GROUP BY v.id, v.name
       ),
       vendor_invoices AS (

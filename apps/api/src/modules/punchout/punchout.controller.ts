@@ -5,6 +5,8 @@ import type { PunchOutSetupRequest, PunchOutOrderMessage } from './cxml.types';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { OperationalPermissions } from '../../common/decorators/operational-permissions.decorator';
+import { CurrentAccess } from '../auth/current-access.decorator';
+import type { AccessPolicy } from '../auth/access-policy';
 
 @ApiTags('punchout')
 @Controller('punchout')
@@ -29,8 +31,9 @@ export class PunchoutController {
     @Param('vendorId') vendorId: string,
     @Body() body: PunchOutSetupRequest,
     @CurrentOrgId() organizationId: string,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.punchoutService.handleSetupRequest(vendorId, organizationId, body);
+    return this.punchoutService.handleSetupRequest(vendorId, organizationId, body, access);
   }
 
   /**

@@ -58,7 +58,7 @@ export class CatalogService {
     filters?: { vendorId?: string; category?: string; activeOnly?: boolean },
     access?: AccessPolicy,
   ) {
-    await this.applyDueApprovedProposals(organizationId);
+    await this.applyDueApprovedProposals(organizationId, access);
     return this.db.query.catalogItems.findMany({
       where: (c, { and, eq }) => {
         const conditions = [eq(c.organizationId, organizationId)];
@@ -82,7 +82,7 @@ export class CatalogService {
   }
 
   async search(organizationId: string, q: string, access?: AccessPolicy) {
-    await this.applyDueApprovedProposals(organizationId);
+    await this.applyDueApprovedProposals(organizationId, access);
     const term = `%${q}%`;
     return this.db.query.catalogItems.findMany({
       where: (c, { and, eq, or, ilike }) =>
@@ -111,7 +111,7 @@ export class CatalogService {
     access?: AccessPolicy,
     permission = 'catalog:view',
   ) {
-    await this.applyDueApprovedProposals(organizationId);
+    await this.applyDueApprovedProposals(organizationId, access);
     const item = await this.db.query.catalogItems.findFirst({
       where: (c, { and, eq }) =>
         and(
@@ -305,7 +305,7 @@ export class CatalogService {
   }
 
   async listPriceProposals(organizationId: string, status?: string, access?: AccessPolicy) {
-    await this.applyDueApprovedProposals(organizationId);
+    await this.applyDueApprovedProposals(organizationId, access);
     return this.db.query.catalogPriceProposals.findMany({
       where: (p, { and, eq }) =>
         and(
@@ -489,7 +489,7 @@ export class CatalogService {
   }
 
   /** Apply approved proposals whose effective date has arrived. Idempotent; runs lazily on buyer reads. */
-  async applyDueApprovedProposals(organizationId: string): Promise<void> {
+  async applyDueApprovedProposals(organizationId: string, access?: AccessPolicy): Promise<void> {
     const due = await this.db.query.catalogPriceProposals.findMany({
       where: (p, { and, eq, isNull, lte }) =>
         and(
@@ -497,6 +497,14 @@ export class CatalogService {
           eq(p.status, 'approved'),
           isNull(p.appliedAt),
           or(isNull(p.effectiveDate), lte(p.effectiveDate, new Date())),
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'catalog',
+            'catalog:view',
+            p.vendorId,
+          ),
         ),
       // Apply in effective-date order so the chronologically latest due
       // proposal ends up as the item's final price.

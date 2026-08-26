@@ -420,75 +420,84 @@ export class ContractsService {
     }
 
     const extracted = this.extractContractIntelligence(extractedText, contract);
-    const [extraction] = await this.db
-      .insert(contractExtractions)
-      .values({
-        organizationId,
-        contractId,
-        documentId: input.documentId,
-        sourceType,
-        sourceName,
-        extractedText,
-        extractedFields: extracted.fields,
-        confidence: extracted.confidence.toFixed(4),
-        status: 'pending_review',
-        createdBy: userId,
-      })
-      .returning();
+    const persisted = await this.db.transaction(async (tx) => {
+      const lockedContract = await this.lockManagedContract(tx, contractId, organizationId, access);
+      const [extraction] = await tx
+        .insert(contractExtractions)
+        .values({
+          organizationId,
+          contractId,
+          documentId: input.documentId,
+          sourceType,
+          sourceName,
+          extractedText,
+          extractedFields: extracted.fields,
+          confidence: extracted.confidence.toFixed(4),
+          status: 'pending_review',
+          createdBy: userId,
+        })
+        .returning();
 
-    const clauses = extracted.clauses.length
-      ? await this.db
-          .insert(contractClauses)
-          .values(
-            extracted.clauses.map((clause) => ({
-              organizationId,
-              contractId,
-              extractionId: extraction.id,
-              clauseType: clause.clauseType,
-              title: clause.title,
-              extractedText: clause.extractedText,
-              normalizedSummary: clause.normalizedSummary,
-              riskLevel: clause.riskLevel,
-              riskReason: clause.riskReason,
-              confidence: clause.confidence.toFixed(4),
-              sourceReference: clause.sourceReference,
-              status: 'pending_review',
-            })),
-          )
-          .returning()
-      : [];
+      const clauses = extracted.clauses.length
+        ? await tx
+            .insert(contractClauses)
+            .values(
+              extracted.clauses.map((clause) => ({
+                organizationId,
+                contractId,
+                extractionId: extraction.id,
+                clauseType: clause.clauseType,
+                title: clause.title,
+                extractedText: clause.extractedText,
+                normalizedSummary: clause.normalizedSummary,
+                riskLevel: clause.riskLevel,
+                riskReason: clause.riskReason,
+                confidence: clause.confidence.toFixed(4),
+                sourceReference: clause.sourceReference,
+                status: 'pending_review',
+              })),
+            )
+            .returning()
+        : [];
 
-    const clauseByType = new Map(clauses.map((clause) => [clause.clauseType, clause.id]));
-    const obligations = extracted.obligations.length
-      ? await this.db
-          .insert(contractObligations)
-          .values(
-            extracted.obligations.map((obligation) => ({
-              organizationId,
-              contractId,
-              clauseId: obligation.sourceClauseType
-                ? clauseByType.get(obligation.sourceClauseType)
-                : undefined,
-              ownerId: contract.ownerId ?? contract.createdBy,
-              obligationType: obligation.obligationType,
-              title: obligation.title,
-              description: obligation.description,
-              dueDate: obligation.dueDate,
-              recurrence: obligation.recurrence,
-              notificationLeadDays: obligation.notificationLeadDays,
-              sourceReference: obligation.sourceReference,
-              status: 'open',
-            })),
-          )
-          .returning()
-      : [];
+      const clauseByType = new Map(clauses.map((clause) => [clause.clauseType, clause.id]));
+      const obligations = extracted.obligations.length
+        ? await tx
+            .insert(contractObligations)
+            .values(
+              extracted.obligations.map((obligation) => ({
+                organizationId,
+                contractId,
+                clauseId: obligation.sourceClauseType
+                  ? clauseByType.get(obligation.sourceClauseType)
+                  : undefined,
+                ownerId: lockedContract.ownerId ?? lockedContract.createdBy,
+                obligationType: obligation.obligationType,
+                title: obligation.title,
+                description: obligation.description,
+                dueDate: obligation.dueDate,
+                recurrence: obligation.recurrence,
+                notificationLeadDays: obligation.notificationLeadDays,
+                sourceReference: obligation.sourceReference,
+                status: 'open',
+              })),
+            )
+            .returning()
+        : [];
 
-    await this.createObligationNotifications(organizationId, contract, obligations);
+      return { contract: lockedContract, extraction, clauses, obligations };
+    });
+
+    await this.createObligationNotifications(
+      organizationId,
+      persisted.contract,
+      persisted.obligations,
+    );
     await this.auditService
       .log(organizationId, userId, 'contract', contractId, 'intelligence_extracted', {
-        extractionId: extraction.id,
-        clauseCount: clauses.length,
-        obligationCount: obligations.length,
+        extractionId: persisted.extraction.id,
+        clauseCount: persisted.clauses.length,
+        obligationCount: persisted.obligations.length,
         riskScore: extracted.riskScore,
       })
       .catch(() => {});
