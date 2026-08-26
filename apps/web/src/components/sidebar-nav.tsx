@@ -27,11 +27,7 @@ import {
   BarChart2,
   FileBarChart2,
   Building2,
-  Star,
-  Leaf,
-  UserPlus,
   ScrollText,
-  KeyRound,
   Users,
   FolderTree,
   Briefcase,
@@ -80,7 +76,6 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   Delegations: ArrowLeftRight,
   Budgets: PiggyBank,
   'Spend Guard': ShieldAlert,
-  'Risk Screening': ShieldCheck,
   'Tax Codes': Percent,
   'AP Aging': Clock,
   'Payment Runs': CreditCard,
@@ -88,12 +83,8 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   'Add-ons': Puzzle,
   Analytics: BarChart2,
   Reports: FileBarChart2,
-  Vendors: Building2,
-  'Supplier Scorecard': Star,
-  'Supplier Diversity & ESG': Leaf,
-  'Vendor Onboarding': UserPlus,
+  Suppliers: Building2,
   Contracts: ScrollText,
-  'Software Licenses': KeyRound,
   Users: Users,
   Departments: FolderTree,
   Projects: Briefcase,
@@ -112,7 +103,8 @@ const GROUP_ICONS: Record<string, LucideIcon> = {
   Approvals: CheckSquare,
   Finance: PiggyBank,
   'Analytics & Reports': BarChart2,
-  Organization: Building2,
+  'Supplier operations': Building2,
+  Organization: Building,
   System: Settings,
 };
 
@@ -169,15 +161,15 @@ const NAV_CONFIG: NavEntry[] = [
     ],
   },
   {
+    label: 'Supplier operations',
+    children: [
+      { label: 'Suppliers', href: '/vendors' },
+      { label: 'Contracts', href: '/contracts' },
+    ],
+  },
+  {
     label: 'Organization',
     children: [
-      { label: 'Vendors', href: '/vendors' },
-      { label: 'Supplier Scorecard', href: '/supplier-scorecard' },
-      { label: 'Supplier Diversity & ESG', href: '/supplier-diversity' },
-      { label: 'Vendor Onboarding', href: '/vendors/onboarding' },
-      { label: 'Risk Screening', href: '/risk-screening' },
-      { label: 'Contracts', href: '/contracts' },
-      { label: 'Software Licenses', href: '/software-licenses' },
       { label: 'Users', href: '/users' },
       { label: 'Departments', href: '/departments' },
       { label: 'Projects', href: '/projects' },
@@ -280,7 +272,7 @@ export default function SidebarNav({
     if (href === '/approvals' && pendingApprovalsCount > 0) return pendingApprovalsCount;
     if (href === '/invoices' && invoiceExceptionCount > 0) return invoiceExceptionCount;
     if (href === '/spend-guard' && spendGuardCount > 0) return spendGuardCount;
-    if (href === '/software-licenses' && softwareRenewalCount > 0) return softwareRenewalCount;
+    if (href === '/contracts' && softwareRenewalCount > 0) return softwareRenewalCount;
     return undefined;
   }
 

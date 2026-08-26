@@ -6,6 +6,7 @@ import { Layers3, Plus } from 'lucide-react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
 import { StatusBadge } from '../../components/status-badge';
+import { SupplierHubNav } from '../../components/supplier-hub-nav';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
@@ -165,6 +166,8 @@ export default function SoftwareLicensesPage() {
           </>
         }
       />
+
+      <SupplierHubNav />
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card>

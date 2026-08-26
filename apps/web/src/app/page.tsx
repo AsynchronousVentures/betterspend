@@ -315,7 +315,7 @@ export default function HomePage() {
                   <ActionItem label="Pending Approvals" count={pending.pendingApprovals ?? 0} href="/approvals" />
                   <ActionItem label="Invoice Exceptions" count={pending.invoiceExceptions ?? 0} href="/invoices" urgent />
                   <ActionItem label="Spend Guard Alerts" count={pending.spendGuardAlerts ?? 0} href="/spend-guard" urgent />
-                  <ActionItem label="Software Renewals Due" count={pending.upcomingSoftwareRenewals ?? 0} href="/software-licenses" />
+                  <ActionItem label="Software Renewals Due" count={pending.upcomingSoftwareRenewals ?? 0} href="/contracts?view=software" />
                   <ActionItem label="Requisitions Awaiting Approval" count={pending.requisitionsPendingApproval ?? 0} href="/requisitions" />
                   <ActionItem label="POs Awaiting First Receipt" count={pending.posAwaitingReceipt ?? 0} href="/receiving" />
                   <ActionItem label="Overdue Invoices" count={pending.overdueInvoices ?? 0} href="/invoices" urgent />

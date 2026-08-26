@@ -6,6 +6,7 @@ import { FileSignature, Plus } from 'lucide-react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
 import { StatusBadge } from '../../components/status-badge';
+import { SupplierHubNav } from '../../components/supplier-hub-nav';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -120,6 +121,8 @@ export default function ContractsPage() {
           </Button>
         }
       />
+
+      <SupplierHubNav />
 
       <div className="flex flex-wrap gap-2">
         {TABS.map((tab) => {
