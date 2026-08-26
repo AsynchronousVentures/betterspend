@@ -35,6 +35,14 @@ import { Separator } from './ui/separator';
 import { cn } from '../lib/utils';
 import { useAccess } from './access-provider';
 import { createSearchRequestController } from '../lib/search-request';
+import {
+  getFocusableElements,
+  getFocusTrapIndex,
+  getSearchActiveIndex,
+  getSearchOptionId,
+  getSearchSelectionIndex,
+  restoreFocus,
+} from '../lib/accessibility';
 
 function OfflineIndicator() {
   const [isOffline, setIsOffline] = useState(false);
@@ -170,6 +178,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [searchAnnouncement, setSearchAnnouncement] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -197,9 +206,14 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
       setTotalResults(0);
       setActiveIndex(-1);
       setLoading(false);
+      setSearchAnnouncement('');
       return;
     }
 
+    setActiveIndex(-1);
+    setResults([]);
+    setTotalResults(0);
+    setSearchAnnouncement(`Searching for ${query}`);
     debounceRef.current = setTimeout(() => {
       setLoading(true);
       api.search
@@ -213,6 +227,11 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
           setTotalResults(all.length);
           setResults(all.slice(0, 10));
           setActiveIndex(all.length > 0 ? 0 : -1);
+          setSearchAnnouncement(
+            all.length === 0
+              ? `No results found for ${query}`
+              : `${all.length} result${all.length === 1 ? '' : 's'} found for ${query}`,
+          );
           setOpen(true);
         })
         .catch(() => {
@@ -221,6 +240,11 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
           setResults(fallback.slice(0, 10));
           setTotalResults(fallback.length);
           setActiveIndex(fallback.length > 0 ? 0 : -1);
+          setSearchAnnouncement(
+            fallback.length === 0
+              ? `Search failed for ${query}`
+              : `${fallback.length} result${fallback.length === 1 ? '' : 's'} found for ${query}`,
+          );
           setOpen(fallback.length > 0);
         })
         .finally(() => {
@@ -290,25 +314,35 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
       return;
     }
 
-    if (!open || results.length === 0) return;
+    const optionCount =
+      results.length > 0 ? results.length : query.length < 2 ? recentSearches.length : 0;
+    if (!open || optionCount === 0) return;
 
-    if (event.key === 'ArrowDown') {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const nextIndex = getSearchActiveIndex(activeIndex, optionCount, event.key);
+      if (nextIndex === null) return;
       event.preventDefault();
-      setActiveIndex((prev) => (prev + 1) % results.length);
+      setActiveIndex(nextIndex);
       return;
     }
 
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      setActiveIndex((prev) => (prev <= 0 ? results.length - 1 : prev - 1));
-      return;
-    }
-
-    if (event.key === 'Enter' && activeIndex >= 0 && results[activeIndex]) {
-      event.preventDefault();
-      navigate(results[activeIndex]._href);
+    if (event.key === 'Enter' && activeIndex >= 0) {
+      const selectionIndex = getSearchSelectionIndex(activeIndex, optionCount, event.key);
+      if (selectionIndex === null) return;
+      if (results[selectionIndex]) {
+        event.preventDefault();
+        navigate(results[selectionIndex]._href);
+      } else if (query.length < 2 && recentSearches[selectionIndex]) {
+        event.preventDefault();
+        applyRecentSearch(recentSearches[selectionIndex]);
+      }
     }
   }
+
+  const listboxId = 'global-search-results';
+  const optionCount =
+    results.length > 0 ? results.length : query.length < 2 ? recentSearches.length : 0;
+  const listboxOpen = open && optionCount > 0;
 
   return (
     <div ref={containerRef} className={cn('relative', isMobile ? 'w-full' : 'w-[22rem]')}>
@@ -317,6 +351,17 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
         <Input
           data-global-search="true"
           aria-label="Global search"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          aria-expanded={listboxOpen}
+          aria-controls={listboxId}
+          aria-activedescendant={
+            listboxOpen && activeIndex >= 0 && activeIndex < optionCount
+              ? getSearchOptionId(activeIndex)
+              : undefined
+          }
+          aria-busy={loading}
           ref={inputRef}
           value={query}
           onChange={(event) => {
@@ -341,7 +386,11 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
         )}
       </div>
 
-      {open && (results.length > 0 || (query.length < 2 && recentSearches.length > 0)) ? (
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {searchAnnouncement}
+      </div>
+
+      {listboxOpen ? (
         <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-50 animate-[slideDown_0.15s_ease-out_both] overflow-hidden rounded-lg border border-border/70 bg-card shadow-xl">
           {query.length < 2 && recentSearches.length > 0 ? (
             <>
@@ -357,48 +406,62 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
                   Clear
                 </button>
               </div>
-              {recentSearches.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => applyRecentSearch(item)}
-                  className="flex w-full items-center px-4 py-3 text-left text-sm text-foreground transition-colors hover:bg-muted/60"
-                >
-                  {item}
-                </button>
-              ))}
             </>
           ) : null}
 
-          {results.map((result, index) => {
-            const tone = TYPE_TONE[result._type] ?? 'bg-muted text-muted-foreground';
-            return (
-              <button
-                key={`${result._type}-${result.id}`}
-                onClick={() => navigate(result._href)}
-                onMouseEnter={() => setActiveIndex(index)}
-                className={cn(
-                  'flex w-full items-center gap-3 border-b border-border/50 px-4 py-3 text-left transition-colors',
-                  activeIndex === index ? 'bg-muted/70' : 'hover:bg-muted/40',
-                )}
-              >
-                <span
-                  className={cn(
-                    'rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em]',
-                    tone,
-                  )}
-                >
-                  {TYPE_LABELS[result._type] ?? result._type}
-                </span>
-                <span className="truncate text-sm text-foreground">{result._label}</span>
-                {result.status ? (
-                  <span className="ml-auto shrink-0 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                    {result.status}
-                  </span>
-                ) : null}
-              </button>
-            );
-          })}
+          <div id={listboxId} role="listbox" aria-label="Global search results">
+            {query.length < 2
+              ? recentSearches.map((item, index) => (
+                  <button
+                    key={item}
+                    id={getSearchOptionId(index)}
+                    type="button"
+                    role="option"
+                    aria-selected={activeIndex === index}
+                    onClick={() => applyRecentSearch(item)}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    className={cn(
+                      'flex w-full items-center border-b border-border/50 px-4 py-3 text-left text-sm text-foreground transition-colors',
+                      activeIndex === index ? 'bg-muted/70' : 'hover:bg-muted/60',
+                    )}
+                  >
+                    {item}
+                  </button>
+                ))
+              : results.map((result, index) => {
+                  const tone = TYPE_TONE[result._type] ?? 'bg-muted text-muted-foreground';
+                  return (
+                    <button
+                      key={`${result._type}-${result.id}`}
+                      id={getSearchOptionId(index)}
+                      type="button"
+                      role="option"
+                      aria-selected={activeIndex === index}
+                      onClick={() => navigate(result._href)}
+                      onMouseEnter={() => setActiveIndex(index)}
+                      className={cn(
+                        'flex w-full items-center gap-3 border-b border-border/50 px-4 py-3 text-left transition-colors',
+                        activeIndex === index ? 'bg-muted/70' : 'hover:bg-muted/40',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em]',
+                          tone,
+                        )}
+                      >
+                        {TYPE_LABELS[result._type] ?? result._type}
+                      </span>
+                      <span className="truncate text-sm text-foreground">{result._label}</span>
+                      {result.status ? (
+                        <span className="ml-auto shrink-0 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                          {result.status}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+          </div>
 
           {query.length >= 2 && totalResults > 0 ? (
             <div className="flex items-center justify-between bg-muted/50 px-4 py-3">
@@ -844,6 +907,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [shortcutsDisabled, setShortcutsDisabled] = useState(false);
+  const mobileSidebarRef = useRef<HTMLElement>(null);
+  const mobileSidebarCloseRef = useRef<HTMLButtonElement>(null);
+  const sidebarTriggerRef = useRef<HTMLButtonElement>(null);
+  const wasSidebarOpenRef = useRef(false);
   const isAuthPage = AUTH_PATHS.some(
     (path) => pathname === path || pathname.startsWith(path + '/'),
   );
@@ -858,6 +925,37 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setSidebarOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+
+    if (sidebarOpen) {
+      wasSidebarOpenRef.current = true;
+      mobileSidebarCloseRef.current?.focus();
+      return;
+    }
+
+    if (wasSidebarOpenRef.current) {
+      wasSidebarOpenRef.current = false;
+      restoreFocus(sidebarTriggerRef.current);
+    }
+  }, [isMobile, sidebarOpen]);
+
+  function handleMobileSidebarKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setSidebarOpen(false);
+      return;
+    }
+
+    if (event.key !== 'Tab' || !mobileSidebarRef.current) return;
+    const focusable = getFocusableElements(mobileSidebarRef.current);
+    const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
+    const nextIndex = getFocusTrapIndex(focusable.length, currentIndex, event.shiftKey);
+    if (nextIndex === null) return;
+    event.preventDefault();
+    focusable[nextIndex]?.focus();
+  }
 
   useEffect(() => {
     if (shortcutsDisabled) return;
@@ -966,6 +1064,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const sidebar = (
     <aside
+      ref={isMobile ? mobileSidebarRef : undefined}
+      role={isMobile ? 'dialog' : undefined}
+      aria-modal={isMobile ? true : undefined}
+      aria-label={isMobile ? `${branding.app_name} navigation` : undefined}
+      onKeyDown={isMobile ? handleMobileSidebarKeyDown : undefined}
       className={cn(
         'flex h-screen shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200',
         isMobile ? 'fixed left-0 top-0 z-[60]' : 'sticky top-0',
@@ -984,6 +1087,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           />
         ) : (
           <span
+            id={isMobile ? 'mobile-sidebar-title' : undefined}
             title={sidebarCollapsed ? branding.app_name : undefined}
             className="text-lg font-bold tracking-[-0.02em] text-sidebar-foreground"
           >
@@ -1013,6 +1117,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               variant="ghost"
               size="icon"
               onClick={() => setSidebarOpen(false)}
+              ref={mobileSidebarCloseRef}
               className="size-8 rounded-lg text-sidebar-muted hover:bg-white/8 hover:text-sidebar-foreground"
               aria-label="Close sidebar"
             >
@@ -1040,6 +1145,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <>
           <div
             className="fixed inset-0 z-50 bg-[rgba(19,18,21,0.48)]"
+            aria-hidden="true"
             onClick={() => setSidebarOpen(false)}
           />
           {sidebar}
@@ -1056,6 +1162,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 variant="ghost"
                 size="icon"
                 onClick={() => setSidebarOpen(true)}
+                ref={sidebarTriggerRef}
                 className="size-9 rounded-lg border border-border/70 bg-background/80"
                 aria-label="Open sidebar"
               >

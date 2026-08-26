@@ -10,7 +10,14 @@ import { RelatedRecordLink } from '../../components/related-records';
 import { StatusBadge } from '../../components/status-badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../components/ui/table';
 
 export default function ReceivingPage() {
   const [grns, setGrns] = useState<ReceivingListItem[]>([]);
@@ -58,19 +65,9 @@ export default function ReceivingPage() {
               </div>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>GRN Number</TableHead>
-                  <TableHead>PO Number</TableHead>
-                  <TableHead>Vendor</TableHead>
-                  <TableHead>Received Date</TableHead>
-                  <TableHead>Lines</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-              {grns.map((grn) => {
+            <>
+              <div className="divide-y divide-border/70 md:hidden">
+                {grns.map((grn) => {
                   const purchaseOrder = {
                     kind: 'purchase_order' as const,
                     id: grn.purchaseOrder?.id,
@@ -85,32 +82,113 @@ export default function ReceivingPage() {
                   };
 
                   return (
-                  <TableRow key={grn.id}>
-                    <TableCell className="font-semibold">
-                      <Link href={`/receiving/${grn.id}`} className="text-primary hover:underline">
-                        {grn.number}
+                    <article key={grn.id} className="space-y-4 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <Link
+                            href={`/receiving/${grn.id}`}
+                            className="font-semibold text-primary hover:underline"
+                          >
+                            {grn.number}
+                          </Link>
+                          <div className="mt-1 text-xs text-muted-foreground">Goods receipt</div>
+                        </div>
+                        <StatusBadge value={grn.status} />
+                      </div>
+                      <dl className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                        <div className="min-w-0">
+                          <dt className="text-xs text-muted-foreground">Purchase order</dt>
+                          <dd className="mt-1 truncate text-foreground">
+                            <RelatedRecordLink record={purchaseOrder} />
+                          </dd>
+                        </div>
+                        <div className="min-w-0">
+                          <dt className="text-xs text-muted-foreground">Supplier</dt>
+                          <dd className="mt-1 truncate text-foreground">
+                            <RelatedRecordLink record={vendor} />
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-muted-foreground">Received</dt>
+                          <dd className="mt-1 text-foreground">
+                            {new Date(grn.receivedDate).toLocaleDateString()}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-muted-foreground">Lines</dt>
+                          <dd className="mt-1 text-foreground">{grn.lines?.length ?? 0}</dd>
+                        </div>
+                      </dl>
+                      <Link
+                        href={`/receiving/${grn.id}`}
+                        className="inline-flex text-sm font-semibold text-primary hover:underline"
+                      >
+                        View receipt
                       </Link>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      <RelatedRecordLink record={purchaseOrder} />
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      <RelatedRecordLink record={vendor} />
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {new Date(grn.receivedDate).toLocaleDateString()}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {grn.lines?.length ?? 0} line{grn.lines?.length !== 1 ? 's' : ''}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge value={grn.status} />
-                    </TableCell>
-                  </TableRow>
+                    </article>
                   );
                 })}
-              </TableBody>
-            </Table>
+              </div>
+
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>GRN Number</TableHead>
+                      <TableHead>PO Number</TableHead>
+                      <TableHead>Vendor</TableHead>
+                      <TableHead>Received Date</TableHead>
+                      <TableHead>Lines</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {grns.map((grn) => {
+                      const purchaseOrder = {
+                        kind: 'purchase_order' as const,
+                        id: grn.purchaseOrder?.id,
+                        label: grn.purchaseOrder?.number,
+                        relation: 'Purchase order',
+                      };
+                      const vendor = {
+                        kind: 'vendor' as const,
+                        id: grn.purchaseOrder?.vendor?.id,
+                        label: grn.purchaseOrder?.vendor?.name,
+                        relation: 'Supplier',
+                      };
+
+                      return (
+                        <TableRow key={grn.id}>
+                          <TableCell className="font-semibold">
+                            <Link
+                              href={`/receiving/${grn.id}`}
+                              className="text-primary hover:underline"
+                            >
+                              {grn.number}
+                            </Link>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            <RelatedRecordLink record={purchaseOrder} />
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            <RelatedRecordLink record={vendor} />
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {new Date(grn.receivedDate).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {grn.lines?.length ?? 0} line{grn.lines?.length !== 1 ? 's' : ''}
+                          </TableCell>
+                          <TableCell>
+                            <StatusBadge value={grn.status} />
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

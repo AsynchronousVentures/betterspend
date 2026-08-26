@@ -1,8 +1,17 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { apiUrl } from '../../../lib/api-url';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../../components/ui/dialog';
+import { restoreFocus } from '../../../lib/accessibility';
 
 interface POActionsProps {
   id: string;
@@ -20,6 +29,7 @@ export default function POActions({ id, status, pdfUrl }: POActionsProps) {
   const [changeReason, setChangeReason] = useState('');
   const [changeSubmitting, setChangeSubmitting] = useState(false);
   const [changeError, setChangeError] = useState('');
+  const changeDialogTriggerRef = useRef<HTMLButtonElement>(null);
 
   const canIssue = status === 'draft' || status === 'approved';
   const canChangeOrder = status !== 'closed' && status !== 'cancelled';
@@ -115,6 +125,7 @@ export default function POActions({ id, status, pdfUrl }: POActionsProps) {
 
         {canChangeOrder && (
           <button
+            ref={changeDialogTriggerRef}
             onClick={() => setChangeDialogOpen(true)}
             disabled={loading !== null}
             style={{
@@ -149,126 +160,72 @@ export default function POActions({ id, status, pdfUrl }: POActionsProps) {
         </div>
       )}
 
-      {/* Change Order Dialog */}
-      {changeDialogOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.4)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 50,
-          }}
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setChangeDialogOpen(false);
+      <Dialog
+        open={changeDialogOpen}
+        onOpenChange={(open) => {
+          setChangeDialogOpen(open);
+          if (!open) setChangeError('');
+        }}
+      >
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus(changeDialogTriggerRef.current);
           }}
         >
-          <div
-            style={{
-              background: '#fff',
-              borderRadius: '10px',
-              padding: '1.75rem',
-              width: '100%',
-              maxWidth: '480px',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
-            }}
-          >
-            <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem', fontWeight: 700, color: '#111827' }}>
-              Create Change Order
-            </h2>
-            <p style={{ margin: '0 0 1.25rem', fontSize: '0.875rem', color: '#6b7280' }}>
+          <DialogHeader>
+            <DialogTitle>Create Change Order</DialogTitle>
+            <DialogDescription>
               Describe the reason for this change order. A new version of the PO will be created.
-            </p>
-
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
             <label
-              style={{
-                display: 'block',
-                fontSize: '0.8rem',
-                fontWeight: 600,
-                color: '#374151',
-                marginBottom: '0.375rem',
-              }}
+              htmlFor="po-action-change-reason"
+              className="text-sm font-semibold text-foreground"
             >
-              Change Reason <span style={{ color: '#ef4444' }}>*</span>
+              Change Reason <span className="text-destructive">*</span>
             </label>
             <textarea
+              id="po-action-change-reason"
               value={changeReason}
-              onChange={(e) => setChangeReason(e.target.value)}
+              onChange={(event) => setChangeReason(event.target.value)}
               rows={4}
               placeholder="e.g. Updated pricing agreed with vendor on 2026-03-10"
-              style={{
-                width: '100%',
-                padding: '0.5rem 0.75rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '6px',
-                fontSize: '0.875rem',
-                boxSizing: 'border-box',
-                resize: 'vertical',
-                outline: 'none',
-                color: '#111827',
-              }}
+              className="flex min-h-20 w-full rounded-md border border-input bg-white/80 px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             />
-
-            {changeError && (
-              <div
-                style={{
-                  marginTop: '0.75rem',
-                  background: '#fee2e2',
-                  border: '1px solid #fca5a5',
-                  borderRadius: '6px',
-                  padding: '0.5rem 0.75rem',
-                  color: '#991b1b',
-                  fontSize: '0.8rem',
-                }}
-              >
-                {changeError}
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem', justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                onClick={() => {
-                  setChangeDialogOpen(false);
-                  setChangeReason('');
-                  setChangeError('');
-                }}
-                style={{
-                  background: '#fff',
-                  color: '#374151',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '6px',
-                  padding: '0.5rem 1rem',
-                  fontSize: '0.875rem',
-                  cursor: 'pointer',
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={submitChangeOrder}
-                disabled={changeSubmitting}
-                style={{
-                  background: '#111827',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '6px',
-                  padding: '0.5rem 1.25rem',
-                  fontSize: '0.875rem',
-                  fontWeight: 600,
-                  cursor: changeSubmitting ? 'not-allowed' : 'pointer',
-                  opacity: changeSubmitting ? 0.7 : 1,
-                }}
-              >
-                {changeSubmitting ? 'Submitting...' : 'Submit Change Order'}
-              </button>
-            </div>
           </div>
-        </div>
-      )}
+          {changeError ? (
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              {changeError}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => {
+                setChangeDialogOpen(false);
+                setChangeReason('');
+                setChangeError('');
+              }}
+              className="rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submitChangeOrder}
+              disabled={changeSubmitting}
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
+            >
+              {changeSubmitting ? 'Submitting...' : 'Submit Change Order'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

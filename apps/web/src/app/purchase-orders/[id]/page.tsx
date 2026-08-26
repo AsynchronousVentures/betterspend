@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
@@ -30,6 +30,15 @@ import {
 } from '../../../components/ui/table';
 import { Textarea } from '../../../components/ui/textarea';
 import { MessageThread } from '../../../components/message-thread';
+import { restoreFocus } from '../../../lib/accessibility';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../../components/ui/dialog';
 
 interface POLine {
   id: string;
@@ -131,6 +140,8 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
   const [releaseDesc, setReleaseDesc] = useState('');
   const [releaseError, setReleaseError] = useState('');
   const [releaseSubmitting, setReleaseSubmitting] = useState(false);
+  const changeDialogTriggerRef = useRef<HTMLButtonElement>(null);
+  const releaseDialogTriggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     params.then(({ id: pid }) => {
@@ -404,7 +415,11 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
               </Button>
             ) : null}
             {showReleaseAsPrimary ? (
-              <Button type="button" onClick={() => setReleaseDialogOpen(true)}>
+              <Button
+                type="button"
+                ref={releaseDialogTriggerRef}
+                onClick={() => setReleaseDialogOpen(true)}
+              >
                 New Release
               </Button>
             ) : null}
@@ -426,6 +441,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
                       type="button"
                       variant="outline"
                       className="justify-start"
+                      ref={releaseDialogTriggerRef}
                       onClick={() => setReleaseDialogOpen(true)}
                     >
                       New Release
@@ -444,6 +460,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
                       type="button"
                       variant="outline"
                       className="justify-start"
+                      ref={changeDialogTriggerRef}
                       onClick={() => setChangeDialogOpen(true)}
                     >
                       Change Order
@@ -886,17 +903,29 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
         </CardContent>
       </Card>
 
-      {changeDialogOpen ? (
-        <ModalShell onClose={() => setChangeDialogOpen(false)}>
+      <Dialog
+        open={changeDialogOpen}
+        onOpenChange={(open) => {
+          setChangeDialogOpen(open);
+          if (!open) setChangeError('');
+        }}
+      >
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus(changeDialogTriggerRef.current);
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Create Change Order</DialogTitle>
+            <DialogDescription>
+              Describe the reason for this change order. A new version of the PO will be created.
+            </DialogDescription>
+          </DialogHeader>
           <div className="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">Create Change Order</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Describe the reason for this change order. A new version of the PO will be created.
-              </p>
-            </div>
-            <Field label="Change Reason">
+            <Field id="change-reason" label="Change Reason">
               <Textarea
+                id="change-reason"
                 value={changeReason}
                 onChange={(event) => setChangeReason(event.target.value)}
                 rows={4}
@@ -908,47 +937,52 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
                 <AlertDescription>{changeError}</AlertDescription>
               </Alert>
             ) : null}
-            <div className="flex justify-end gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setChangeDialogOpen(false);
-                  setChangeReason('');
-                  setChangeError('');
-                }}
-              >
-                Cancel
-              </Button>
-              <Button type="button" onClick={submitChangeOrder} disabled={changeSubmitting}>
-                {changeSubmitting ? 'Submitting...' : 'Submit Change Order'}
-              </Button>
-            </div>
           </div>
-        </ModalShell>
-      ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setChangeDialogOpen(false);
+                setChangeReason('');
+                setChangeError('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={submitChangeOrder} disabled={changeSubmitting}>
+              {changeSubmitting ? 'Submitting...' : 'Submit Change Order'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {releaseDialogOpen ? (
-        <ModalShell
-          onClose={() => {
-            setReleaseDialogOpen(false);
-            setReleaseAmount('');
-            setReleaseDesc('');
-            setReleaseError('');
+      <Dialog
+        open={releaseDialogOpen}
+        onOpenChange={(open) => {
+          setReleaseDialogOpen(open);
+          if (!open) setReleaseError('');
+        }}
+      >
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus(releaseDialogTriggerRef.current);
           }}
         >
+          <DialogHeader>
+            <DialogTitle>New Blanket Release</DialogTitle>
+            <DialogDescription>
+              Release funds against this blanket PO.
+              {blanketRemaining !== null
+                ? ` Remaining: ${formatCurrency(blanketRemaining, po.currency)}`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
           <div className="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">New Blanket Release</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Release funds against this blanket PO.
-                {blanketRemaining !== null
-                  ? ` Remaining: ${formatCurrency(blanketRemaining, po.currency)}`
-                  : ''}
-              </p>
-            </div>
-            <Field label={`Amount (${po.currency})`}>
+            <Field id="release-amount" label={`Amount (${po.currency})`}>
               <Input
+                id="release-amount"
                 type="number"
                 min="0.01"
                 step="0.01"
@@ -957,8 +991,9 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
                 placeholder="0.00"
               />
             </Field>
-            <Field label="Description">
+            <Field id="release-description" label="Description">
               <Input
+                id="release-description"
                 value={releaseDesc}
                 onChange={(event) => setReleaseDesc(event.target.value)}
                 placeholder="Q1 office supplies"
@@ -969,26 +1004,26 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
                 <AlertDescription>{releaseError}</AlertDescription>
               </Alert>
             ) : null}
-            <div className="flex justify-end gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setReleaseDialogOpen(false);
-                  setReleaseAmount('');
-                  setReleaseDesc('');
-                  setReleaseError('');
-                }}
-              >
-                Cancel
-              </Button>
-              <Button type="button" onClick={submitRelease} disabled={releaseSubmitting}>
-                {releaseSubmitting ? 'Creating...' : 'Create Release'}
-              </Button>
-            </div>
           </div>
-        </ModalShell>
-      ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setReleaseDialogOpen(false);
+                setReleaseAmount('');
+                setReleaseDesc('');
+                setReleaseError('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={submitRelease} disabled={releaseSubmitting}>
+              {releaseSubmitting ? 'Creating...' : 'Create Release'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1019,28 +1054,16 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ id, label, children }: { id: string; label: string; children: React.ReactNode }) {
   return (
-    <label className="space-y-2">
-      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+    <div className="space-y-2">
+      <label
+        htmlFor={id}
+        className="block text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+      >
         {label}
-      </span>
+      </label>
       {children}
-    </label>
-  );
-}
-
-function ModalShell({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div className="w-full max-w-xl rounded-lg border border-border/70 bg-background p-6 shadow-[0_30px_100px_-40px_rgba(15,23,42,0.6)]">
-        {children}
-      </div>
     </div>
   );
 }

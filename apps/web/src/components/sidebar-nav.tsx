@@ -71,6 +71,10 @@ function isNavPathActive(pathname: string, href: string) {
   return pathname.startsWith(`${href}/`) && !pathname.endsWith('/new');
 }
 
+function groupId(value: string) {
+  return `sidebar-group-${value.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+}
+
 const NAV_ICONS: Record<ProductRouteIcon, LucideIcon> = {
   Dashboard: LayoutDashboard,
   StartRequest: Sparkles,
@@ -258,6 +262,7 @@ export default function SidebarNav({
 
   function renderGroup(group: ProductNavigationSection & { label: string }) {
     const open = openGroups.has(group.key);
+    const childrenId = groupId(group.key);
     const hasActiveChild = group.routes.some((route) => isActive(route.href));
     const groupBadge = group.routes.reduce((sum, route) => sum + (getBadge(route.href) ?? 0), 0);
     const GroupIcon = GROUP_ICONS[group.key];
@@ -267,6 +272,8 @@ export default function SidebarNav({
         <button
           type="button"
           onClick={() => toggleGroup(group.key)}
+          aria-expanded={open}
+          aria-controls={childrenId}
           title={collapsed ? group.label : undefined}
           className={cn(
             'flex w-full items-center justify-between rounded-md px-3 py-1.5 transition-colors',
@@ -305,8 +312,12 @@ export default function SidebarNav({
           ) : null}
         </button>
         {open ? (
-          <div className="space-y-0.5">{group.routes.map((route) => renderLink(route, true))}</div>
-        ) : null}
+          <div id={childrenId} className="space-y-0.5">
+            {group.routes.map((route) => renderLink(route, true))}
+          </div>
+        ) : (
+          <div id={childrenId} hidden />
+        )}
       </div>
     );
   }
