@@ -27,7 +27,7 @@ describe('ReceivingService response context', () => {
           id: 'po-1',
           number: 'PO-2026-0001',
           organizationId,
-          vendor: { id: 'vendor-1', name: 'Acme Supplies' },
+          vendor: { id: 'vendor-1', name: 'Acme Supplies', organizationId },
         },
         lines: [],
       },
@@ -55,7 +55,7 @@ describe('ReceivingService response context', () => {
       organizationId: true,
     });
     expect(options.with.purchaseOrder.with).toEqual({
-      vendor: { columns: { id: true, name: true } },
+      vendor: { columns: { id: true, name: true, organizationId: true } },
     });
 
     const eq = jest.fn((column: string, value: string) => ({ column, value }));
@@ -74,7 +74,7 @@ describe('ReceivingService response context', () => {
           id: 'po-other-org',
           number: 'PO-OTHER-ORG',
           organizationId: 'organization-2',
-          vendor: { id: 'vendor-2', name: 'Other Org Supplies' },
+          vendor: { id: 'vendor-2', name: 'Other Org Supplies', organizationId: 'organization-2' },
         },
         lines: [],
       },
@@ -82,6 +82,32 @@ describe('ReceivingService response context', () => {
 
     await expect(service.findAll(organizationId)).resolves.toMatchObject([
       { id: 'grn-1', purchaseOrder: null },
+    ]);
+  });
+
+  it('does not expose a vendor that is outside the receipt organization', async () => {
+    const { findMany, service } = createService();
+    findMany.mockResolvedValue([
+      {
+        id: 'grn-1',
+        number: 'GRN-2026-0001',
+        organizationId,
+        purchaseOrder: {
+          id: 'po-1',
+          number: 'PO-2026-0001',
+          organizationId,
+          vendor: {
+            id: 'vendor-other-org',
+            name: 'Other Org Supplies',
+            organizationId: 'organization-2',
+          },
+        },
+        lines: [],
+      },
+    ]);
+
+    await expect(service.findAll(organizationId)).resolves.toMatchObject([
+      { id: 'grn-1', purchaseOrder: { id: 'po-1', vendor: null } },
     ]);
   });
 });

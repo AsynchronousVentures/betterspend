@@ -46,7 +46,7 @@ type PurchaseOrderRelation = {
   id: string;
   number: string;
   organizationId?: string;
-  vendor?: { id: string; name: string } | null;
+  vendor?: { id: string; name: string; organizationId?: string } | null;
 };
 
 @Injectable()
@@ -66,7 +66,7 @@ export class ReceivingService {
         lines: true,
         purchaseOrder: {
           columns: { id: true, number: true, organizationId: true },
-          with: { vendor: { columns: { id: true, name: true } } },
+          with: { vendor: { columns: { id: true, name: true, organizationId: true } } },
         },
       },
       orderBy: (g, { desc }) => desc(g.createdAt),
@@ -85,7 +85,7 @@ export class ReceivingService {
         lines: { with: { poLine: true } },
         purchaseOrder: {
           columns: { id: true, number: true, organizationId: true },
-          with: { vendor: { columns: { id: true, name: true } } },
+          with: { vendor: { columns: { id: true, name: true, organizationId: true } } },
         },
       },
     });
@@ -105,7 +105,7 @@ export class ReceivingService {
     return {
       id: purchaseOrder.id,
       number: purchaseOrder.number,
-      vendor: purchaseOrder.vendor
+      vendor: purchaseOrder.vendor?.organizationId === organizationId
         ? { id: purchaseOrder.vendor.id, name: purchaseOrder.vendor.name }
         : null,
     };
