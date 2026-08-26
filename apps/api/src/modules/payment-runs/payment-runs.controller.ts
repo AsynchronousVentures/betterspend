@@ -45,9 +45,10 @@ export class PaymentRunsController {
   createVendorAccount(
     @CurrentOrgId() orgId: string,
     @Body() body: CreateVendorPaymentAccountInput,
+    @CurrentUserId() userId: string,
     @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.paymentRunsService.createVendorAccount(orgId, body, access);
+    return this.paymentRunsService.createVendorAccount(orgId, body, userId, access);
   }
 
   @Patch('vendor-accounts/:id/verify')

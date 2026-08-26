@@ -421,7 +421,12 @@ export class ApprovalEngineService {
       return req.id;
     });
 
-    const result = { autoApproved: false as const, rule, requestId };
+    const result = {
+      autoApproved: false as const,
+      rule,
+      requestId,
+      initialApproverId: firstStep ? effectiveApproverId : requiredApproval?.approverId,
+    };
     if (!transaction) {
       this.publishInitiation(organizationId, entityType, entityId, result, requiredApproval);
     }
@@ -438,6 +443,7 @@ export class ApprovalEngineService {
           fastLane?: boolean;
           threshold?: number;
           requestId?: string;
+          initialApproverId?: string;
           rule?: {
             name: string;
             steps?: Array<{ stepOrder: number; approverId?: string | null }>;
@@ -478,7 +484,10 @@ export class ApprovalEngineService {
     const firstRuleStep = result.rule?.steps
       ?.slice()
       .sort((left, right) => left.stepOrder - right.stepOrder)[0];
+    const resolvedInitialApproverId =
+      'initialApproverId' in result ? result.initialApproverId : undefined;
     const initialApproverId =
+      resolvedInitialApproverId ??
       firstRuleStep?.approverId ??
       (hasRuleStep ? DEMO_ADMIN_USER_ID : requiredApproval?.approverId);
     if (!initialApproverId) return;
@@ -908,34 +917,56 @@ export class ApprovalEngineService {
         })
       : null;
     const enriched = await this.enrichWithEntityInfo(rows);
-    return enriched.filter((row) => {
-      const currentStep = row.rule?.steps?.find(
-        (step: { stepOrder: number }) => step.stepOrder === row.currentStep,
-      );
-      const approverRole =
-        currentStep?.approverType === 'role'
-          ? currentStep.approverRole
-          : currentStep?.approverType === 'department_head'
-            ? 'approver'
-            : null;
-      const roleAssigned = approverRole
-        ? actor?.userRoles.some(
-            (assignment) =>
-              assignment.role === approverRole &&
-              roleAssignmentMatchesApprovalScope(
-                assignment,
-                row.entitySummary ?? {},
-                currentStep?.approverType === 'department_head',
+    const pending = await Promise.all(
+      enriched.map(async (row) => {
+        const currentStep = row.rule?.steps?.find(
+          (step: { stepOrder: number }) => step.stepOrder === row.currentStep,
+        );
+        const approverRole =
+          currentStep?.approverType === 'role'
+            ? currentStep.approverRole
+            : currentStep?.approverType === 'department_head'
+              ? 'approver'
+              : null;
+        const roleAssigned = approverRole
+          ? actor?.userRoles.some(
+              (assignment) =>
+                assignment.role === approverRole &&
+                roleAssignmentMatchesApprovalScope(
+                  assignment,
+                  row.entitySummary ?? {},
+                  currentStep?.approverType === 'department_head',
+                ),
+            )
+          : false;
+        const delegateApproverIds = [row.requiredApproverId, currentStep?.approverId].filter(
+          (approverId): approverId is string => !!approverId,
+        );
+        const delegatedToActor =
+          !!actorId &&
+          !!this.delegations &&
+          (
+            await Promise.all(
+              delegateApproverIds.map((approverId) =>
+                this.delegations!.getActiveDelegatee(organizationId, approverId, this.db),
               ),
-          )
-        : false;
-      const actorAssigned =
-        !actorId ||
-        row.requiredApproverId === actorId ||
-        currentStep?.approverId === actorId ||
-        roleAssigned;
-      return actorAssigned && scopeAllowsApproval(access, row.entitySummary ?? {});
-    });
+            )
+          ).includes(actorId);
+        const actorAssigned =
+          !actorId ||
+          row.requiredApproverId === actorId ||
+          currentStep?.approverId === actorId ||
+          delegatedToActor ||
+          roleAssigned;
+        return { row, actorAssigned };
+      }),
+    );
+    return pending
+      .filter(
+        ({ row, actorAssigned }) =>
+          actorAssigned && scopeAllowsApproval(access, row.entitySummary ?? {}),
+      )
+      .map(({ row }) => row);
   }
 
   // Process an approve or reject action

@@ -4,6 +4,7 @@ import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import {
   invoices,
+  auditLog,
   paymentRunEvents,
   paymentRunInvoices,
   paymentRuns,
@@ -439,6 +440,7 @@ export class PaymentRunsService {
   async createVendorAccount(
     orgId: string,
     input: CreateVendorPaymentAccountInput,
+    userId: string,
     access?: AccessPolicy,
   ) {
     requirePermission(access, 'payments:manage');
@@ -453,21 +455,32 @@ export class PaymentRunsService {
         ),
     });
     if (!vendor) throw new NotFoundException(`Vendor ${input.vendorId} not found`);
-    const [account] = await this.db
-      .insert(vendorPaymentAccounts)
-      .values({
-        orgId,
-        vendorId: input.vendorId,
-        accountName: input.accountName,
-        paymentMethod: input.paymentMethod ?? 'ach',
-        country: input.country ?? null,
-        currency: input.currency ?? 'USD',
-        maskedAccount: input.maskedAccount,
-        provider: input.provider ?? null,
-        providerAccountId: input.providerAccountId ?? null,
-        verificationStatus: 'pending',
-      })
-      .returning();
+    const account = await this.db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(vendorPaymentAccounts)
+        .values({
+          orgId,
+          vendorId: input.vendorId,
+          accountName: input.accountName,
+          paymentMethod: input.paymentMethod ?? 'ach',
+          country: input.country ?? null,
+          currency: input.currency ?? 'USD',
+          maskedAccount: input.maskedAccount,
+          provider: input.provider ?? null,
+          providerAccountId: input.providerAccountId ?? null,
+          verificationStatus: 'pending',
+        })
+        .returning();
+      await tx.insert(auditLog).values({
+        organizationId: orgId,
+        userId,
+        entityType: 'vendor_payment_account',
+        entityId: created.id,
+        action: 'created',
+        changes: { vendorId: input.vendorId, paymentMethod: input.paymentMethod ?? 'ach' },
+      });
+      return created;
+    });
 
     return account;
   }

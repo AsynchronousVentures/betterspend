@@ -83,6 +83,32 @@ export class RequisitionsService {
     return req;
   }
 
+  private async findOneForMutation(
+    id: string,
+    organizationId: string,
+    actorId: string,
+    access?: AccessPolicy,
+  ) {
+    if (access?.can('requisitions:create')) {
+      const ownDraft = await this.db.query.requisitions.findFirst({
+        where: (r, { and, eq }) =>
+          and(
+            eq(r.id, id),
+            eq(r.organizationId, organizationId),
+            eq(r.requesterId, actorId),
+            eq(r.status, 'draft'),
+            permissionScopePredicate(access, 'requisition', ['requisitions:create'], {
+              department: (departmentId) => eq(r.departmentId, departmentId),
+              project: (projectId) => eq(r.projectId, projectId),
+            }),
+          ),
+        with: { lines: true },
+      });
+      if (ownDraft) return ownDraft;
+    }
+    return this.findOne(id, organizationId, access);
+  }
+
   async create(
     organizationId: string,
     requesterId: string,
@@ -153,7 +179,7 @@ export class RequisitionsService {
     input: Partial<CreateRequisitionInput>,
     access?: AccessPolicy,
   ) {
-    const req = await this.findOne(id, organizationId, access);
+    const req = await this.findOneForMutation(id, organizationId, actorId, access);
     const nextScope = {
       departmentId: input.departmentId ?? req.departmentId,
       projectId: input.projectId ?? req.projectId,
@@ -204,7 +230,7 @@ export class RequisitionsService {
   }
 
   async submit(id: string, organizationId: string, requesterId?: string, access?: AccessPolicy) {
-    const req = await this.findOne(id, organizationId, access);
+    const req = await this.findOneForMutation(id, organizationId, requesterId ?? '', access);
     this.assertCanMutate(req, requesterId ?? req.requesterId, access);
     if (req.status !== 'draft') {
       throw new BadRequestException('Only draft requisitions can be submitted');
@@ -288,7 +314,7 @@ export class RequisitionsService {
   }
 
   async cancel(id: string, organizationId: string, actorId?: string, access?: AccessPolicy) {
-    const req = await this.findOne(id, organizationId, access);
+    const req = await this.findOneForMutation(id, organizationId, actorId ?? '', access);
     this.assertCanMutate(req, actorId ?? req.requesterId, access);
     if (['cancelled', 'converted'].includes(req.status)) {
       throw new BadRequestException(`Cannot cancel a ${req.status} requisition`);
