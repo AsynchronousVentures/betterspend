@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { CheckCircle2, CreditCard, FileCheck2, RefreshCw, Send, XCircle } from 'lucide-react';
 import { api } from '../../lib/api';
+import { formatCurrencyMinorUnits, sumCurrencyAmounts } from '../../lib/money';
 import { PageHeader } from '../../components/page-header';
 import { StatusBadge } from '../../components/status-badge';
 import { Alert, AlertDescription } from '../../components/ui/alert';
@@ -133,8 +134,11 @@ function PaymentRunsContent() {
     [eligibleInvoices, selected],
   );
 
-  const selectedTotal = selectedInvoices.reduce((sum, invoice) => sum + Number(invoice.totalAmount ?? 0), 0);
   const selectedCurrency = selectedInvoices[0]?.currency ?? 'USD';
+  const selectedTotal = sumCurrencyAmounts(
+    selectedInvoices.map((invoice) => invoice.totalAmount),
+    selectedCurrency,
+  );
   const mixedCurrency = new Set(selectedInvoices.map((invoice) => invoice.currency)).size > 1;
   const mixedEntity = new Set(selectedInvoices.map((invoice) => invoice.entity?.name ?? 'none')).size > 1;
 
@@ -282,7 +286,7 @@ function PaymentRunsContent() {
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/30 px-4 py-3">
             <div className="text-sm">
               <span className="font-semibold">{selectedInvoices.length}</span> selected ·{' '}
-              <span className="font-semibold">{formatMoney(selectedTotal, selectedCurrency)}</span>
+              <span className="font-semibold">{formatCurrencyMinorUnits(selectedTotal, selectedCurrency)}</span>
               {mixedCurrency ? <span className="ml-2 text-destructive">Split by currency before creating.</span> : null}
               {mixedEntity ? <span className="ml-2 text-destructive">Split by entity before creating.</span> : null}
             </div>
