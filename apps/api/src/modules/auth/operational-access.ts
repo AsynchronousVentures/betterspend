@@ -76,7 +76,7 @@ export function scopedVendorPredicate(
   );
 }
 
-export function requiresGlobalOperationalAccess(
+export function hasUnrestrictedOperationalAccess(
   access: AccessPolicy | undefined,
   resource: OperationalResource,
   permission: string,

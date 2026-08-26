@@ -7,6 +7,19 @@ describe('VendorPortalController session boundary', () => {
   const vendorId = '00000000-0000-0000-0000-000000000001';
   const organizationId = '00000000-0000-0000-0000-000000000002';
 
+  it('passes the current access policy when sending a portal link', async () => {
+    const access = {} as never;
+    const service = {
+      sendAccessLink: jest.fn(async () => ({ success: true })),
+    };
+    const controller = new VendorPortalController(service as never, {} as never);
+
+    await expect(controller.sendAccess({ vendorId }, organizationId, access)).resolves.toEqual({
+      success: true,
+    });
+    expect(service.sendAccessLink).toHaveBeenCalledWith(vendorId, organizationId, access);
+  });
+
   it('exchanges the link token for a scoped HttpOnly cookie', async () => {
     const service = {
       exchangeLinkToken: jest.fn(async () => ({

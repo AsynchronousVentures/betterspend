@@ -24,7 +24,7 @@ import { SettingsService } from '../settings/settings.service';
 import type { AccessPolicy } from '../auth/access-policy';
 import {
   operationalScope,
-  requiresGlobalOperationalAccess,
+  hasUnrestrictedOperationalAccess,
   scopedEntityPredicate,
   scopedVendorPredicate,
 } from '../auth/operational-access';
@@ -73,7 +73,7 @@ export class RiskScreeningService {
     source = 'ofac_sdn',
     access?: AccessPolicy,
   ): Promise<{ count: number; source: string }> {
-    if (!requiresGlobalOperationalAccess(access, 'supplier_risk', 'supplier_risk:manage')) {
+    if (!hasUnrestrictedOperationalAccess(access, 'supplier_risk', 'supplier_risk:manage')) {
       throw new ForbiddenException('Sanctions registry ingestion requires a global grant');
     }
     const listUrl =

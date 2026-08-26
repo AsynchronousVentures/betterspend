@@ -23,7 +23,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import type { AccessPolicy } from '../auth/access-policy';
 import {
   operationalScope,
-  requiresGlobalOperationalAccess,
+  hasUnrestrictedOperationalAccess,
   scopedVendorPredicate,
 } from '../auth/operational-access';
 
@@ -313,7 +313,7 @@ export class ContractsService {
   }
 
   async syncExpiringStatus(organizationId: string, access?: AccessPolicy) {
-    if (!requiresGlobalOperationalAccess(access, 'contract', 'contracts:manage')) {
+    if (!hasUnrestrictedOperationalAccess(access, 'contract', 'contracts:manage')) {
       throw new ForbiddenException('Contract status synchronization requires a global grant');
     }
     const now = new Date();

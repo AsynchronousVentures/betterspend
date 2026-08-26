@@ -5,7 +5,7 @@ import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { inventoryItems, inventoryMovements } from '@betterspend/db';
 import type { AccessPolicy } from '../auth/access-policy';
-import { requiresGlobalOperationalAccess } from '../auth/operational-access';
+import { hasUnrestrictedOperationalAccess } from '../auth/operational-access';
 
 export interface CreateInventoryItemInput {
   sku: string;
@@ -254,7 +254,7 @@ export class InventoryService {
   }
 
   private assertGlobal(access: AccessPolicy | undefined, permission: string) {
-    if (!requiresGlobalOperationalAccess(access, 'inventory', permission)) {
+    if (!hasUnrestrictedOperationalAccess(access, 'inventory', permission)) {
       throw new ForbiddenException('Inventory access requires a global grant');
     }
   }

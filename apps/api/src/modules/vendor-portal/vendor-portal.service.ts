@@ -26,6 +26,7 @@ import { SequenceService } from '../../common/services/sequence.service';
 import { MatchingService } from '../invoices/matching.service';
 import { VendorsService } from '../vendors/vendors.service';
 import { CatalogService } from '../catalog/catalog.service';
+import type { AccessPolicy } from '../auth/access-policy';
 import { hashPortalSessionToken, PORTAL_SESSION_TTL_MS } from './vendor-portal-session';
 
 export interface SubmitInvoiceInput {
@@ -72,11 +73,12 @@ export class VendorPortalService {
     private readonly catalogService: CatalogService,
   ) {}
 
-  async sendAccessLink(vendorId: string, orgId: string): Promise<{ success: boolean }> {
-    const vendor = await this.db.query.vendors.findFirst({
-      where: (v, { and, eq }) => and(eq(v.id, vendorId), eq(v.organizationId, orgId)),
-    });
-    if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
+  async sendAccessLink(
+    vendorId: string,
+    orgId: string,
+    access?: AccessPolicy,
+  ): Promise<{ success: boolean }> {
+    const vendor = await this.vendorsService.findOne(vendorId, orgId, access, 'vendors:edit');
 
     const token = randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
