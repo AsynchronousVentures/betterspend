@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { CheckCircle2, CreditCard, FileCheck2, RefreshCw, Send, XCircle } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -73,6 +73,7 @@ function PaymentRunsContent() {
   const searchParams = useSearchParams();
   const selectedRunId = searchParams.get('run');
   const selectedInvoiceId = searchParams.get('invoiceId');
+  const lastSelectedInvoiceId = useRef(selectedInvoiceId);
   const [eligibleInvoices, setEligibleInvoices] = useState<Invoice[]>([]);
   const [runs, setRuns] = useState<PaymentRun[]>([]);
   const [summary, setSummary] = useState<any>(null);
@@ -117,8 +118,13 @@ function PaymentRunsContent() {
   }, [loading, selectedRunId, runs]);
 
   useEffect(() => {
+    if (lastSelectedInvoiceId.current === selectedInvoiceId) return;
+    lastSelectedInvoiceId.current = selectedInvoiceId;
+    setSelected(selectedInvoiceId ? new Set([selectedInvoiceId]) : new Set());
+  }, [selectedInvoiceId]);
+
+  useEffect(() => {
     if (!selectedInvoiceId || loading || !eligibleInvoices.some((invoice) => invoice.id === selectedInvoiceId)) return;
-    setSelected((current) => (current.has(selectedInvoiceId) ? current : new Set(current).add(selectedInvoiceId)));
     document.getElementById(`payment-invoice-${selectedInvoiceId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [eligibleInvoices, loading, selectedInvoiceId]);
 
