@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Bot, FileStack, Plus, Sparkles } from 'lucide-react';
 import { api } from '../../../lib/api';
-import { apiUrl } from '../../../lib/api-url';
 import { PageHeader } from '../../../components/page-header';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge } from '../../../components/ui/badge';
@@ -264,15 +263,7 @@ function NewRequisitionContent() {
     setAiLoading(true);
     setAiMsg('');
     try {
-      const response = await fetch(apiUrl('/api/v1/requisitions/ai-parse'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-org-id': '00000000-0000-0000-0000-000000000001',
-        },
-        body: JSON.stringify({ text: aiText }),
-      });
-      const parsed = await response.json();
+      const parsed = await api.requisitions.aiParse(aiText);
       if (parsed.error) {
         setAiMsg(`Parse failed: ${parsed.error}`);
         return;
@@ -283,7 +274,7 @@ function NewRequisitionContent() {
       if (parsed.neededBy) setNeededBy(parsed.neededBy.slice(0, 10));
       if (parsed.lines?.length) {
         setLines(
-          parsed.lines.map((line: any) => ({
+          parsed.lines.map((line) => ({
             description: line.description || '',
             qty: String(line.quantity || 1),
             uom: line.unitOfMeasure || 'each',

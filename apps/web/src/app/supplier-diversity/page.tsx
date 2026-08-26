@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Leaf, ShieldCheck, Sprout, Users2 } from 'lucide-react';
-import { api } from '../../lib/api';
-import { apiUrl } from '../../lib/api-url';
+import { api, type VendorDiversitySummary, type VendorEsgUpdateInput } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
@@ -56,11 +55,11 @@ const CERT_LABELS: Record<string, string> = {
 };
 
 export default function SupplierDiversityPage() {
-  const [summary, setSummary] = useState<any>(null);
+  const [summary, setSummary] = useState<VendorDiversitySummary | null>(null);
   const [vendors, setVendors] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<any>({});
+  const [editForm, setEditForm] = useState<VendorEsgUpdateInput>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -72,9 +71,7 @@ export default function SupplierDiversityPage() {
     setLoading(true);
     try {
       const [sum, vendorList] = await Promise.all([
-        fetch(apiUrl('/api/v1/vendors/diversity/summary'), {
-          headers: { 'x-org-id': '00000000-0000-0000-0000-000000000001' },
-        }).then((response) => response.json()),
+        api.vendors.getDiversitySummary(),
         api.vendors.list(),
       ]);
       setSummary(sum);
@@ -100,17 +97,10 @@ export default function SupplierDiversityPage() {
   async function saveEdit(id: string) {
     setSaving(true);
     try {
-      await fetch(apiUrl(`/api/v1/vendors/${id}/esg`), {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-org-id': '00000000-0000-0000-0000-000000000001',
-        },
-        body: JSON.stringify({
-          ...editForm,
-          esgRating: editForm.esgRating || undefined,
-          carbonFootprintTons: editForm.carbonFootprintTons || undefined,
-        }),
+      await api.vendors.updateEsg(id, {
+        ...editForm,
+        esgRating: editForm.esgRating || undefined,
+        carbonFootprintTons: editForm.carbonFootprintTons || undefined,
       });
       setEditingId(null);
       setMessage('ESG data saved.');
@@ -178,7 +168,7 @@ export default function SupplierDiversityPage() {
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-3">
-              {Object.entries(summary.diversityBreakdown).map(([category, count]: any) => (
+              {Object.entries(summary.diversityBreakdown).map(([category, count]) => (
                 <Badge
                   key={category}
                   variant="outline"
