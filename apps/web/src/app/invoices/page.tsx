@@ -1,17 +1,25 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, Download, FileSpreadsheet, Plus } from 'lucide-react';
-import { api } from '../../lib/api';
+import { AlertTriangle, Download, FileSpreadsheet, Inbox, Plus, Upload } from 'lucide-react';
+import { api, loadFailureState } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
 import { RelatedRecordLink } from '../../components/related-records';
+import { ListState } from '../../components/resource-state';
 import { StatusBadge } from '../../components/status-badge';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
 import { Select } from '../../components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../components/ui/table';
 
 interface Invoice {
   id: string;
@@ -50,31 +58,43 @@ async function downloadCsv(type: string) {
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [statusFilter, setStatusFilter] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkResult, setBulkResult] = useState<{ success: number; failed: number } | null>(null);
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
+  const [showAddSources, setShowAddSources] = useState(false);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
-    api.invoices
-      .list()
-      .then((data) => setInvoices(Array.isArray(data) ? data : []))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }
-
-  useEffect(() => {
-    load();
+    setLoadError(null);
+    try {
+      const data = await api.invoices.list();
+      setInvoices(Array.isArray(data) ? data : []);
+    } catch (loadFailure) {
+      setLoadError(loadFailure);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const filtered = statusFilter ? invoices.filter((invoice) => invoice.status === statusFilter) : invoices;
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const filtered = statusFilter
+    ? invoices.filter((invoice) => invoice.status === statusFilter)
+    : invoices;
 
   const approvableSelected = [...selected].filter((id) => {
     const invoice = invoices.find((item) => item.id === id);
-    return invoice && !['approved', 'paid', 'cancelled'].includes(invoice.status) && invoice.matchStatus !== 'exception';
+    return (
+      invoice &&
+      !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
+      invoice.matchStatus !== 'exception'
+    );
   });
 
   function toggleSelect(id: string) {
@@ -88,7 +108,9 @@ export default function InvoicesPage() {
 
   function toggleAll() {
     const approvable = filtered.filter(
-      (invoice) => !['approved', 'paid', 'cancelled'].includes(invoice.status) && invoice.matchStatus !== 'exception',
+      (invoice) =>
+        !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
+        invoice.matchStatus !== 'exception',
     );
 
     if (approvable.every((invoice) => selected.has(invoice.id))) {
@@ -167,7 +189,10 @@ export default function InvoicesPage() {
         actions={
           <>
             {selected.size > 0 ? (
-              <Button onClick={handleBulkApprove} disabled={bulkLoading || approvableSelected.length === 0}>
+              <Button
+                onClick={handleBulkApprove}
+                disabled={bulkLoading || approvableSelected.length === 0}
+              >
                 {bulkLoading ? 'Approving...' : `Approve ${approvableSelected.length} Selected`}
               </Button>
             ) : null}
@@ -188,39 +213,75 @@ export default function InvoicesPage() {
               <option value="paid">Paid</option>
             </Select>
             <Button variant="outline" onClick={handleExportCsv} disabled={exporting}>
-              {exporting ? <Download className="h-4 w-4 animate-pulse" /> : <FileSpreadsheet className="h-4 w-4" />}
+              {exporting ? (
+                <Download className="h-4 w-4 animate-pulse" />
+              ) : (
+                <FileSpreadsheet className="h-4 w-4" />
+              )}
               {exporting ? 'Exporting...' : 'Export CSV'}
             </Button>
-            <Button asChild>
-              <Link href="/invoices/new">
-                <Plus className="h-4 w-4" />
-                New Invoice
-              </Link>
+            <Button type="button" onClick={() => setShowAddSources((open) => !open)}>
+              <Plus className="h-4 w-4" />
+              Add invoice
             </Button>
           </>
         }
       />
 
+      {showAddSources ? (
+        <Card>
+          <CardContent className="grid gap-3 p-4 md:grid-cols-3">
+            <Link
+              href="/invoices/new"
+              className="border border-border/70 p-4 transition-colors hover:bg-muted/40"
+            >
+              <Upload className="h-4 w-4 text-muted-foreground" />
+              <p className="mt-3 font-semibold text-foreground">Manual or upload</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Enter an invoice or upload a file for OCR.
+              </p>
+            </Link>
+            <Link
+              href="/intake"
+              className="border border-border/70 p-4 transition-colors hover:bg-muted/40"
+            >
+              <Inbox className="h-4 w-4 text-muted-foreground" />
+              <p className="mt-3 font-semibold text-foreground">Email inbox</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Review invoices received through email intake.
+              </p>
+            </Link>
+            <Link
+              href="/vendors"
+              className="border border-border/70 p-4 transition-colors hover:bg-muted/40"
+            >
+              <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+              <p className="mt-3 font-semibold text-foreground">Vendor submissions</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Send a supplier their portal link from the supplier record.
+              </p>
+            </Link>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card className="overflow-hidden">
         <CardContent className="p-0">
-          {loading ? (
-            <div className="flex min-h-[260px] items-center justify-center text-sm text-muted-foreground">
-              Loading invoices...
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="flex min-h-[300px] flex-col items-center justify-center gap-3 px-6 text-center">
-              <div className="rounded-full bg-muted p-4">
-                <FileSpreadsheet className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="text-base font-semibold text-foreground">
-                  {statusFilter ? `No ${statusFilter.replace(/_/g, ' ')} invoices` : 'No invoices yet'}
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {statusFilter ? 'Try a different filter.' : 'Create an invoice to start three-way matching against your PO and receipt data.'}
-                </p>
-              </div>
-            </div>
+          {loading || loadError || filtered.length === 0 ? (
+            <ListState
+              state={loading ? 'loading' : loadError ? loadFailureState(loadError) : 'empty'}
+              loadingLabel="Loading invoices..."
+              emptyTitle={
+                statusFilter ? `No ${statusFilter.replace(/_/g, ' ')} invoices` : 'No invoices yet'
+              }
+              emptyDescription={
+                statusFilter
+                  ? 'Try a different filter.'
+                  : 'Add an invoice from manual entry, email intake, or a vendor submission.'
+              }
+              icon={FileSpreadsheet}
+              onRetry={() => void load()}
+            />
           ) : (
             <Table>
               <TableHeader>
@@ -237,7 +298,9 @@ export default function InvoicesPage() {
                               invoice.matchStatus !== 'exception',
                           )
                           .every((invoice) => selected.has(invoice.id)) &&
-                        filtered.some((invoice) => !['approved', 'paid', 'cancelled'].includes(invoice.status))
+                        filtered.some(
+                          (invoice) => !['approved', 'paid', 'cancelled'].includes(invoice.status),
+                        )
                       }
                     />
                   </TableHead>
@@ -259,10 +322,14 @@ export default function InvoicesPage() {
                     !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
                     new Date(invoice.dueDate) < new Date();
                   const canSelect =
-                    !['approved', 'paid', 'cancelled'].includes(invoice.status) && invoice.matchStatus !== 'exception';
+                    !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
+                    invoice.matchStatus !== 'exception';
 
                   return (
-                    <TableRow key={invoice.id} className={isOverdue ? 'bg-rose-50/70 hover:bg-rose-50' : undefined}>
+                    <TableRow
+                      key={invoice.id}
+                      className={isOverdue ? 'bg-rose-50/70 hover:bg-rose-50' : undefined}
+                    >
                       <TableCell>
                         {canSelect ? (
                           <input
@@ -273,23 +340,48 @@ export default function InvoicesPage() {
                         ) : null}
                       </TableCell>
                       <TableCell className="font-semibold">
-                        <Link href={`/invoices/${invoice.id}`} className="text-primary hover:underline">
+                        <Link
+                          href={`/invoices/${invoice.id}`}
+                          className="text-primary hover:underline"
+                        >
                           {invoice.internalNumber}
                         </Link>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{invoice.invoiceNumber}</TableCell>
                       <TableCell className="text-muted-foreground">
-                        <RelatedRecordLink record={{ kind: 'vendor', id: invoice.vendor?.id, label: invoice.vendor?.name, relation: 'Supplier' }} />
+                        {invoice.invoiceNumber}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        <RelatedRecordLink record={{ kind: 'purchase_order', id: invoice.purchaseOrder?.id, label: invoice.purchaseOrder?.number, relation: 'Purchase order' }} />
+                        <RelatedRecordLink
+                          record={{
+                            kind: 'vendor',
+                            id: invoice.vendor?.id,
+                            label: invoice.vendor?.name,
+                            relation: 'Supplier',
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        <RelatedRecordLink
+                          record={{
+                            kind: 'purchase_order',
+                            id: invoice.purchaseOrder?.id,
+                            label: invoice.purchaseOrder?.number,
+                            relation: 'Purchase order',
+                          }}
+                        />
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {new Date(invoice.invoiceDate).toLocaleDateString()}
                       </TableCell>
-                      <TableCell className={isOverdue ? 'font-semibold text-rose-700' : 'text-muted-foreground'}>
+                      <TableCell
+                        className={
+                          isOverdue ? 'font-semibold text-rose-700' : 'text-muted-foreground'
+                        }
+                      >
                         <div className="flex items-center gap-2">
-                          <span>{invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : '—'}</span>
+                          <span>
+                            {invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : '—'}
+                          </span>
                           {isOverdue ? <AlertTriangle className="h-4 w-4" /> : null}
                         </div>
                       </TableCell>

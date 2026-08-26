@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
+import { useAccess } from '../../../components/access-provider';
 import { PageHeader } from '../../../components/page-header';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge } from '../../../components/ui/badge';
@@ -84,7 +85,9 @@ function ComplianceBadge({
   }
 
   if (result.status === 'compliant') {
-    return <Badge variant="success">Contract: {formatCurrency(result.contractedUnitPrice ?? 0)}</Badge>;
+    return (
+      <Badge variant="success">Contract: {formatCurrency(result.contractedUnitPrice ?? 0)}</Badge>
+    );
   }
 
   if (result.status === 'deviation') {
@@ -103,6 +106,9 @@ function ComplianceBadge({
 
 export default function NewPurchaseOrderPage() {
   const router = useRouter();
+  const { access, loading: accessLoading } = useAccess();
+  const [accessResolved, setAccessResolved] = useState(() => access !== null);
+  const hasLoadedAccess = useRef(false);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [vendorsLoading, setVendorsLoading] = useState(true);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
@@ -119,8 +125,18 @@ export default function NewPurchaseOrderPage() {
   const [deviationThreshold, setDeviationThreshold] = useState(5);
   const [deviationAction, setDeviationAction] = useState('warn');
   const debounceTimers = useRef<Array<ReturnType<typeof setTimeout> | null>>([null]);
+  const canCreateStandalone = access?.permissions.includes('purchase_orders:create') ?? false;
 
   useEffect(() => {
+    if (accessLoading) {
+      hasLoadedAccess.current = true;
+      return;
+    }
+    if (access || hasLoadedAccess.current) setAccessResolved(true);
+  }, [access, accessLoading]);
+
+  useEffect(() => {
+    if (accessLoading || !canCreateStandalone) return;
     Promise.allSettled([
       api.vendors.list(),
       api.taxCodes.list(),
@@ -130,7 +146,7 @@ export default function NewPurchaseOrderPage() {
       .then(([vendorsResult, taxCodesResult, settingsResult, currencyResult]) => {
         if (vendorsResult.status === 'fulfilled') {
           const data = vendorsResult.value;
-          const list: Vendor[] = Array.isArray(data) ? data : (data as any).data ?? [];
+          const list: Vendor[] = Array.isArray(data) ? data : ((data as any).data ?? []);
           setVendors(list);
           if (list.length > 0) setVendorId(list[0].id);
         }
@@ -156,41 +172,44 @@ export default function NewPurchaseOrderPage() {
       })
       .catch(() => {})
       .finally(() => setVendorsLoading(false));
-  }, []);
+  }, [accessLoading, canCreateStandalone]);
 
-  const runComplianceCheck = useCallback((lineIdx: number, vid: string, price: number, desc: string) => {
-    if (!vid || Number.isNaN(price) || price <= 0) {
-      setLineCompliance((prev) => {
-        const next = [...prev];
-        next[lineIdx] = null;
-        return next;
-      });
-      return;
-    }
-
-    if (debounceTimers.current[lineIdx]) {
-      clearTimeout(debounceTimers.current[lineIdx]!);
-    }
-
-    debounceTimers.current[lineIdx] = setTimeout(async () => {
-      try {
-        const result = await api.purchaseOrders.checkCompliance({
-          vendorId: vid,
-          unitPrice: price,
-          description: desc || undefined,
-        });
+  const runComplianceCheck = useCallback(
+    (lineIdx: number, vid: string, price: number, desc: string) => {
+      if (!vid || Number.isNaN(price) || price <= 0) {
         setLineCompliance((prev) => {
           const next = [...prev];
-          next[lineIdx] = result;
+          next[lineIdx] = null;
           return next;
         });
-        if (result.deviationThreshold != null) setDeviationThreshold(result.deviationThreshold);
-        if (result.deviationAction) setDeviationAction(result.deviationAction);
-      } catch {
-        // noop
+        return;
       }
-    }, 600);
-  }, []);
+
+      if (debounceTimers.current[lineIdx]) {
+        clearTimeout(debounceTimers.current[lineIdx]!);
+      }
+
+      debounceTimers.current[lineIdx] = setTimeout(async () => {
+        try {
+          const result = await api.purchaseOrders.checkCompliance({
+            vendorId: vid,
+            unitPrice: price,
+            description: desc || undefined,
+          });
+          setLineCompliance((prev) => {
+            const next = [...prev];
+            next[lineIdx] = result;
+            return next;
+          });
+          if (result.deviationThreshold != null) setDeviationThreshold(result.deviationThreshold);
+          if (result.deviationAction) setDeviationAction(result.deviationAction);
+        } catch {
+          // noop
+        }
+      }, 600);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!vendorId) return;
@@ -239,7 +258,9 @@ export default function NewPurchaseOrderPage() {
 
   const hasBlockingDeviation =
     deviationAction === 'block' &&
-    lineCompliance.some((c) => c?.status === 'deviation' && (c.deltaPercent ?? 0) > deviationThreshold);
+    lineCompliance.some(
+      (c) => c?.status === 'deviation' && (c.deltaPercent ?? 0) > deviationThreshold,
+    );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -285,11 +306,27 @@ export default function NewPurchaseOrderPage() {
     }
   }
 
+  if (!accessResolved || accessLoading) {
+    return <div className="p-4 text-sm text-muted-foreground lg:p-8">Checking access...</div>;
+  }
+
+  if (!canCreateStandalone) {
+    return (
+      <div className="p-4 lg:p-8">
+        <Alert variant="destructive">
+          <AlertDescription>
+            Access denied. You do not have permission to create a standalone purchase order.
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 p-4 lg:p-8">
       <PageHeader
-        title="New Purchase Order"
-        description="Create a purchase order with tax-aware line items and contract deviation checks."
+        title="Standalone PO"
+        description="Use this exception only when no approved requisition or awarded RFQ should be the source record."
         actions={
           <Button asChild variant="outline">
             <Link href="/purchase-orders">Back to Purchase Orders</Link>
@@ -301,7 +338,9 @@ export default function NewPurchaseOrderPage() {
         <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Details</CardTitle>
-            <CardDescription>Vendor, commercial terms, base currency, and internal notes.</CardDescription>
+            <CardDescription>
+              Vendor, commercial terms, base currency, and internal notes.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <Field label="Vendor">
@@ -318,7 +357,12 @@ export default function NewPurchaseOrderPage() {
                   </AlertDescription>
                 </Alert>
               ) : (
-                <Select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className="w-full" required>
+                <Select
+                  value={vendorId}
+                  onChange={(e) => setVendorId(e.target.value)}
+                  className="w-full"
+                  required
+                >
                   <option value="">Select vendor</option>
                   {vendors.map((vendor) => (
                     <option key={vendor.id} value={vendor.id}>
@@ -331,7 +375,11 @@ export default function NewPurchaseOrderPage() {
 
             <div className="grid gap-4 md:grid-cols-3">
               <Field label="Payment Terms">
-                <Input value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} placeholder="Net 30" />
+                <Input
+                  value={paymentTerms}
+                  onChange={(e) => setPaymentTerms(e.target.value)}
+                  placeholder="Net 30"
+                />
               </Field>
               <Field label="Currency">
                 <Input
@@ -352,7 +400,8 @@ export default function NewPurchaseOrderPage() {
             </div>
 
             <div className="text-sm text-muted-foreground">
-              Organization base currency is {baseCurrency}. Use `1` when the PO is already in {baseCurrency}.
+              Organization base currency is {baseCurrency}. Use `1` when the PO is already in{' '}
+              {baseCurrency}.
             </div>
 
             <Field label="Notes">
@@ -370,7 +419,9 @@ export default function NewPurchaseOrderPage() {
           <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-1.5">
               <CardTitle className="text-xl">Line Items</CardTitle>
-              <CardDescription>Tax-aware lines with contract compliance checks per item.</CardDescription>
+              <CardDescription>
+                Tax-aware lines with contract compliance checks per item.
+              </CardDescription>
             </div>
             <Button type="button" variant="outline" onClick={addLine}>
               Add Line
@@ -405,7 +456,10 @@ export default function NewPurchaseOrderPage() {
                             placeholder="Item description"
                           />
                           {compliance ? (
-                            <ComplianceBadge result={compliance} deviationThreshold={deviationThreshold} />
+                            <ComplianceBadge
+                              result={compliance}
+                              deviationThreshold={deviationThreshold}
+                            />
                           ) : null}
                         </div>
                       </TableCell>
@@ -493,7 +547,9 @@ export default function NewPurchaseOrderPage() {
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                   Total
                 </div>
-                <div className="mt-1 text-2xl font-semibold text-foreground">{formatCurrency(total)}</div>
+                <div className="mt-1 text-2xl font-semibold text-foreground">
+                  {formatCurrency(total)}
+                </div>
               </div>
             </div>
           </CardContent>
@@ -508,15 +564,15 @@ export default function NewPurchaseOrderPage() {
         {hasBlockingDeviation ? (
           <Alert variant="destructive">
             <AlertDescription>
-              One or more line prices exceed the contract deviation threshold ({deviationThreshold}%).
-              Submission is blocked.
+              One or more line prices exceed the contract deviation threshold ({deviationThreshold}
+              %). Submission is blocked.
             </AlertDescription>
           </Alert>
         ) : null}
 
         <div className="flex flex-wrap gap-3">
           <Button type="submit" disabled={submitting || vendorsLoading || hasBlockingDeviation}>
-            {submitting ? 'Saving...' : 'Create Purchase Order'}
+            {submitting ? 'Saving...' : 'Create Standalone PO'}
           </Button>
           <Button asChild variant="outline">
             <Link href="/purchase-orders">Cancel</Link>
@@ -527,13 +583,7 @@ export default function NewPurchaseOrderPage() {
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="space-y-2">
       <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">

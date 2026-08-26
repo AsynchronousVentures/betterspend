@@ -50,4 +50,42 @@ describe('IntakeConciergeService workflow links', () => {
     );
     expect(update).toHaveBeenCalled();
   });
+
+  it('does not create a guided draft while routing questions remain', async () => {
+    const db = {
+      query: {
+        intakeConciergeSessions: {
+          findFirst: jest.fn(async () => ({
+            id: 'session-1',
+            status: 'draft',
+            draft: { title: 'Office chairs', lines: [] },
+            plan: {
+              route: { workflow: 'requisition', label: 'Requisition', reason: 'Default route.' },
+              missingFields: ['neededBy'],
+              questions: [
+                {
+                  field: 'neededBy',
+                  prompt: 'When do you need this by?',
+                  reason: 'Required to finalize routing.',
+                },
+              ],
+            },
+          })),
+        },
+      },
+    };
+    const service = new IntakeConciergeService(
+      db as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    await expect(
+      service.convertSession('session-1', 'organization-1', 'requester-1', {
+        workflow: 'requisition',
+      }),
+    ).rejects.toThrow('Answer the routing questions before creating a guided draft.');
+  });
 });

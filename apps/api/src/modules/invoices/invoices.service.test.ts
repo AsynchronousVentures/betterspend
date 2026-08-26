@@ -777,3 +777,45 @@ describe('InvoicesService material edits', () => {
     );
   });
 });
+
+describe('InvoicesService external payments', () => {
+  function createPaymentService() {
+    return new InvoicesService(
+      {} as Db,
+      {} as SequenceService,
+      {} as MatchingService,
+      {} as WebhookEventService,
+      {} as GlExportService,
+      {} as BudgetsService,
+      {} as AuditService,
+      {} as NotificationsService,
+      {} as EntitiesService,
+      {} as ExchangeRatesService,
+      {} as SpendGuardService,
+      {} as SettingsService,
+      {} as WorkflowExecutionService,
+    );
+  }
+
+  it('requires an auditable external payment date, method, and reference', async () => {
+    const service = createPaymentService();
+
+    await assert.rejects(
+      service.markPaid('invoice-1', 'organization-1', 'user-1', {
+        paymentDate: '',
+        paymentMethod: 'ach',
+        paymentReference: '',
+      }),
+      /Payment date, method, and external reference are required/,
+    );
+
+    await assert.rejects(
+      service.markPaid('invoice-1', 'organization-1', 'user-1', {
+        paymentDate: '2026-02-30',
+        paymentMethod: 'ach',
+        paymentReference: 'ACH-123',
+      }),
+      /Payment date is invalid/,
+    );
+  });
+});

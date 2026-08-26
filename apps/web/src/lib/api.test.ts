@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { api } from './api';
+import { ApiError, api, loadFailureState } from './api';
 import { apiUrl } from './api-url';
 
 type CapturedRequest = {
@@ -130,6 +130,57 @@ test('shared API errors are propagated for each organization-scoped method', asy
       runWithMockedRequest<unknown>(jsonResponse({ message: 'Request rejected' }, 422), call),
       { message: 'Request rejected' },
     );
+  }
+});
+
+test('shared API errors retain the failure kind needed by data-state UI', async () => {
+  await assert.rejects(
+    runWithMockedRequest(jsonResponse({ message: 'Not permitted' }, 403), () =>
+      api.invoices.list(),
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.kind, 'forbidden');
+      assert.equal(error.status, 403);
+      assert.equal(loadFailureState(error), 'denied');
+      return true;
+    },
+  );
+
+  const originalFetch = globalThis.fetch;
+  const originalConsoleError = console.error;
+  const reports: unknown[][] = [];
+  try {
+    console.error = (...args: unknown[]) => {
+      reports.push(args);
+    };
+
+    await assert.rejects(
+      runWithMockedRequest(jsonResponse({ message: 'internal stack detail' }, 503), () =>
+        api.invoices.list(),
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof ApiError);
+        assert.equal(error.kind, 'server');
+        assert.equal(error.message, 'Something went wrong. Try again.');
+        assert.equal(loadFailureState(error), 'failed');
+        return true;
+      },
+    );
+
+    globalThis.fetch = async () => {
+      throw new TypeError('Network unavailable');
+    };
+    await assert.rejects(api.invoices.list(), (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.kind, 'network');
+      assert.equal(loadFailureState(error), 'failed');
+      return true;
+    });
+    assert.equal(reports.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
   }
 });
 

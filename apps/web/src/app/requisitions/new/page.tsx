@@ -328,10 +328,13 @@ function NewRequisitionContent() {
   return (
     <div className="space-y-6 p-4 lg:p-8">
       <PageHeader
-        title="New Requisition"
-        description="Create a request manually, from a template, or from an AI-assisted plain-language description."
+        title="Manual requisition"
+        description="Use direct entry when you already have the details. Start Request is the guided path for ordinary purchase needs."
         actions={
           <div className="flex flex-wrap gap-3">
+            <Button asChild>
+              <Link href="/start">Start Request</Link>
+            </Button>
             <Button asChild variant="outline">
               <Link href="/requisitions">Back to Requisitions</Link>
             </Button>
@@ -348,7 +351,8 @@ function NewRequisitionContent() {
       {templateBanner ? (
         <Alert variant="success">
           <AlertDescription>
-            Pre-filled from template <strong>{templateBanner}</strong>. Review and adjust the fields before creating.
+            Pre-filled from template <strong>{templateBanner}</strong>. Review and adjust the fields
+            before creating.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -401,7 +405,9 @@ function NewRequisitionContent() {
         <Card className="rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Details</CardTitle>
-            <CardDescription>Set the header details and request urgency for this requisition.</CardDescription>
+            <CardDescription>
+              Set the header details and request urgency for this requisition.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <Field label="Title">
@@ -423,7 +429,11 @@ function NewRequisitionContent() {
             </Field>
             <div className="grid gap-4 md:grid-cols-3">
               <Field label="Priority">
-                <Select value={priority} onChange={(event) => setPriority(event.target.value)} className="w-full">
+                <Select
+                  value={priority}
+                  onChange={(event) => setPriority(event.target.value)}
+                  className="w-full"
+                >
                   <option value="low">Low</option>
                   <option value="normal">Normal</option>
                   <option value="high">High</option>
@@ -454,7 +464,8 @@ function NewRequisitionContent() {
             <div className="space-y-1.5">
               <CardTitle className="text-xl">Line Items</CardTitle>
               <CardDescription>
-                Search the catalog inline. Selecting an item auto-fills price, unit, and vendor context.
+                Search the catalog inline. Selecting an item auto-fills price, unit, and vendor
+                context.
               </CardDescription>
             </div>
             <Button type="button" variant="outline" onClick={addLine}>
@@ -548,7 +559,7 @@ function NewRequisitionContent() {
 
         <div className="flex flex-wrap gap-3">
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Saving...' : 'Create Requisition'}
+            {submitting ? 'Saving...' : 'Create manual requisition'}
           </Button>
           <Button asChild variant="outline">
             <Link href="/requisitions">Cancel</Link>
@@ -575,13 +586,7 @@ export default function NewRequisitionPage() {
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="space-y-2">
       <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">

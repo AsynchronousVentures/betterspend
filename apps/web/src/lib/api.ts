@@ -12,6 +12,75 @@ import type { ReceivingDetail, ReceivingListItem } from './receiving';
 
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 
+export type ApiErrorKind = 'unauthorized' | 'forbidden' | 'network' | 'server' | 'request';
+
+export class ApiError extends Error {
+  readonly kind: ApiErrorKind;
+  readonly status: number | null;
+
+  constructor(message: string, options: { kind: ApiErrorKind; status?: number | null }) {
+    super(message);
+    this.name = 'ApiError';
+    this.kind = options.kind;
+    this.status = options.status ?? null;
+  }
+}
+
+function errorKindForStatus(status: number): ApiErrorKind {
+  if (status === 401) return 'unauthorized';
+  if (status === 403) return 'forbidden';
+  if (status >= 500) return 'server';
+  return 'request';
+}
+
+function errorMessage(payload: unknown, fallback: string): string {
+  if (!payload || typeof payload !== 'object' || !('message' in payload)) return fallback;
+  const message = payload.message;
+  if (typeof message === 'string' && message.trim()) return message;
+  if (Array.isArray(message)) {
+    const first = message.find(
+      (value): value is string => typeof value === 'string' && Boolean(value.trim()),
+    );
+    if (first) return first;
+  }
+  return fallback;
+}
+
+async function responseError(res: Response): Promise<ApiError> {
+  const payload: unknown = await res.json().catch(() => null);
+  const kind = errorKindForStatus(res.status);
+  return new ApiError(
+    kind === 'server'
+      ? 'Something went wrong. Try again.'
+      : errorMessage(payload, `Request failed (${res.status})`),
+    {
+      kind,
+      status: res.status,
+    },
+  );
+}
+
+function reportUnexpectedApiFailure(error: ApiError) {
+  if (error.kind !== 'network' && error.kind !== 'server') return;
+  console.error('[BetterSpend] API request failed', {
+    kind: error.kind,
+    status: error.status,
+  });
+}
+
+function networkError(): ApiError {
+  return new ApiError('Unable to reach BetterSpend. Check your connection and try again.', {
+    kind: 'network',
+  });
+}
+
+/** Maps client request failures to the user-facing states shared by data surfaces. */
+export function loadFailureState(error: unknown): 'denied' | 'failed' {
+  return error instanceof ApiError && (error.kind === 'unauthorized' || error.kind === 'forbidden')
+    ? 'denied'
+    : 'failed';
+}
+
 function getCookie(name: string): string | undefined {
   if (typeof document === 'undefined') return undefined;
   return document.cookie
@@ -23,6 +92,8 @@ function getCookie(name: string): string | undefined {
 function clearAuthAndRedirect() {
   if (typeof document !== 'undefined') {
     document.cookie = 'bs_token=; Max-Age=0; path=/';
+  }
+  if (typeof window !== 'undefined') {
     window.location.href = '/login';
   }
 }
@@ -52,23 +123,34 @@ function withEntityBody(data: unknown): unknown {
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const token = getCookie('bs_token');
-  const res = await fetch(apiUrl(`/api/v1${path}`), {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options?.headers,
-    },
-    ...options,
-  });
+  let res: Response;
+  try {
+    res = await fetch(apiUrl(`/api/v1${path}`), {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options?.headers,
+      },
+      ...options,
+    });
+  } catch {
+    const error = networkError();
+    reportUnexpectedApiFailure(error);
+    throw error;
+  }
 
   if (res.status === 401) {
     clearAuthAndRedirect();
-    throw new Error('Session expired. Please log in again.');
+    throw new ApiError('Session expired. Please log in again.', {
+      kind: 'unauthorized',
+      status: 401,
+    });
   }
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ message: 'Request failed' }));
-    throw new Error(error.message || `HTTP ${res.status}`);
+    const error = await responseError(res);
+    reportUnexpectedApiFailure(error);
+    throw error;
   }
 
   if (res.status === 204) return undefined as T;
@@ -80,19 +162,30 @@ async function apiFetchForm<T>(path: string, options?: RequestInit): Promise<T> 
   const headers = new Headers(options?.headers);
   if (token) headers.set('Authorization', `Bearer ${token}`);
 
-  const res = await fetch(apiUrl(`/api/v1${path}`), {
-    ...options,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(apiUrl(`/api/v1${path}`), {
+      ...options,
+      headers,
+    });
+  } catch {
+    const error = networkError();
+    reportUnexpectedApiFailure(error);
+    throw error;
+  }
 
   if (res.status === 401) {
     clearAuthAndRedirect();
-    throw new Error('Session expired. Please log in again.');
+    throw new ApiError('Session expired. Please log in again.', {
+      kind: 'unauthorized',
+      status: 401,
+    });
   }
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ message: 'Request failed' }));
-    throw new Error(error.message || `HTTP ${res.status}`);
+    const error = await responseError(res);
+    reportUnexpectedApiFailure(error);
+    throw error;
   }
 
   if (res.status === 204) return undefined as T;
@@ -100,18 +193,26 @@ async function apiFetchForm<T>(path: string, options?: RequestInit): Promise<T> 
 }
 
 async function vendorPortalFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(apiUrl(`/api/v1${path}`), {
-    ...options,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(apiUrl(`/api/v1${path}`), {
+      ...options,
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+    });
+  } catch {
+    const error = networkError();
+    reportUnexpectedApiFailure(error);
+    throw error;
+  }
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ message: 'Request failed' }));
-    throw new Error(error.message || `HTTP ${res.status}`);
+    const error = await responseError(res);
+    reportUnexpectedApiFailure(error);
+    throw error;
   }
 
   if (res.status === 204) return undefined as T;
@@ -440,6 +541,7 @@ export const api = {
   },
   glExportJobs: {
     list: () => apiFetch<any[]>('/gl/export-jobs'),
+    forInvoice: (invoiceId: string) => apiFetch<any[]>(`/gl/export-jobs/invoice/${invoiceId}`),
     trigger: (invoiceId: string, targetSystem: string) =>
       apiFetch<any>(`/gl/export-jobs/trigger/${invoiceId}?targetSystem=${targetSystem}`, {
         method: 'POST',
@@ -602,10 +704,13 @@ export const api = {
       }),
     bulkApprove: (ids: string[]) =>
       apiFetch<any[]>('/invoices/bulk-approve', { method: 'POST', body: JSON.stringify({ ids }) }),
-    markPaid: (id: string, data?: { paymentReference?: string }) =>
+    markPaid: (
+      id: string,
+      data: { paymentReference: string; paymentDate: string; paymentMethod: string },
+    ) =>
       apiFetch<any>(`/invoices/${id}/mark-paid`, {
         method: 'PATCH',
-        body: JSON.stringify(data ?? {}),
+        body: JSON.stringify(data),
       }),
     rerunMatch: (id: string) => apiFetch<any>(`/invoices/${id}/match`, { method: 'POST' }),
     aging: () => apiFetch<any>('/invoices/aging'),
@@ -670,8 +775,10 @@ export const api = {
     get: (id: string) => apiFetch<ReceivingDetail>(`/receiving/${id}`),
     create: (data: unknown) =>
       apiFetch<ReceivingDetail>('/receiving', { method: 'POST', body: JSON.stringify(data) }),
-    confirm: (id: string) => apiFetch<ReceivingDetail>(`/receiving/${id}/confirm`, { method: 'PATCH' }),
-    cancel: (id: string) => apiFetch<ReceivingDetail>(`/receiving/${id}/cancel`, { method: 'PATCH' }),
+    confirm: (id: string) =>
+      apiFetch<ReceivingDetail>(`/receiving/${id}/confirm`, { method: 'PATCH' }),
+    cancel: (id: string) =>
+      apiFetch<ReceivingDetail>(`/receiving/${id}/cancel`, { method: 'PATCH' }),
   },
   budgets: {
     list: () => apiFetch<any[]>(appendEntityId('/budgets')),

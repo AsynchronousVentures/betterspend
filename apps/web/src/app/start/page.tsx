@@ -91,7 +91,9 @@ const EXAMPLE_REQUEST =
   'Need 25 ergonomic keyboards for the support team by July 15, 2026. Prefer our current office equipment supplier and keep it under $2,500 if possible.';
 
 function formatCurrency(amount?: number, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(amount ?? 0));
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(
+    Number(amount ?? 0),
+  );
 }
 
 function workflowBadgeVariant(workflow?: Workflow) {
@@ -157,9 +159,20 @@ export default function StartRequestPage() {
   const route = plan?.route;
   const lines = draft?.lines ?? [];
   const total = useMemo(
-    () => lines.reduce((sum, line) => sum + Number(line.quantity ?? 0) * Number(line.unitPrice ?? 0), 0),
+    () =>
+      lines.reduce(
+        (sum, line) => sum + Number(line.quantity ?? 0) * Number(line.unitPrice ?? 0),
+        0,
+      ),
     [lines],
   );
+  const unansweredFields = Array.from(
+    new Set([
+      ...(plan?.missingFields ?? []),
+      ...(plan?.questions?.map((question) => question.field) ?? []),
+    ]),
+  );
+  const conversionBlocked = unansweredFields.length > 0;
 
   async function handleStart(event: FormEvent) {
     event.preventDefault();
@@ -192,7 +205,7 @@ export default function StartRequestPage() {
   }
 
   async function handleConvert() {
-    if (!session) return;
+    if (!session || conversionBlocked) return;
     setError(null);
     setConverting(true);
     try {
@@ -267,7 +280,10 @@ export default function StartRequestPage() {
               {plan?.questions && plan.questions.length > 0 ? (
                 <div className="space-y-3">
                   {plan.questions.map((question) => (
-                    <div key={question.field} className="rounded-md border border-border/70 px-3 py-2">
+                    <div
+                      key={question.field}
+                      className="rounded-md border border-border/70 px-3 py-2"
+                    >
                       <p className="text-sm font-medium text-foreground">{question.prompt}</p>
                       <p className="mt-1 text-xs text-muted-foreground">{question.reason}</p>
                     </div>
@@ -305,12 +321,18 @@ export default function StartRequestPage() {
                     {session.transcript.map((entry, index) => (
                       <div
                         key={`${entry.role}-${entry.createdAt}-${index}`}
-                        className={entry.role === 'assistant' ? 'rounded-md bg-muted/60 px-3 py-2' : 'px-3 py-1'}
+                        className={
+                          entry.role === 'assistant'
+                            ? 'rounded-md bg-muted/60 px-3 py-2'
+                            : 'px-3 py-1'
+                        }
                       >
                         <div className="mb-1 text-[11px] font-medium uppercase text-muted-foreground">
                           {entry.role === 'assistant' ? 'Assistant' : 'Requester'}
                         </div>
-                        <p className="whitespace-pre-wrap text-sm leading-6 text-foreground">{entry.content}</p>
+                        <p className="whitespace-pre-wrap text-sm leading-6 text-foreground">
+                          {entry.content}
+                        </p>
                       </div>
                     ))}
                   </div>
@@ -334,13 +356,23 @@ export default function StartRequestPage() {
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="min-w-0 space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant={workflowBadgeVariant(route?.workflow)}>{route?.label ?? 'Draft'}</Badge>
-                        <Badge variant="outline">{Math.round((plan.confidence ?? 0) * 100)}% confidence</Badge>
+                        <Badge variant={workflowBadgeVariant(route?.workflow)}>
+                          {route?.label ?? 'Draft'}
+                        </Badge>
+                        <Badge variant="outline">
+                          {Math.round((plan.confidence ?? 0) * 100)}% confidence
+                        </Badge>
                       </div>
                       <p className="text-sm text-muted-foreground">{route?.reason}</p>
                     </div>
-                    <Button type="button" onClick={handleConvert} disabled={converting || session?.status !== 'draft'}>
-                      {route?.workflow === 'vendor_onboarding' || route?.workflow === 'software_license' ? (
+                    <Button
+                      type="button"
+                      onClick={handleConvert}
+                      disabled={converting || session?.status !== 'draft' || conversionBlocked}
+                      aria-describedby={conversionBlocked ? 'conversion-requirements' : undefined}
+                    >
+                      {route?.workflow === 'vendor_onboarding' ||
+                      route?.workflow === 'software_license' ? (
                         <ExternalLink className="h-4 w-4" />
                       ) : (
                         <CheckCircle2 className="h-4 w-4" />
@@ -348,6 +380,13 @@ export default function StartRequestPage() {
                       {converting ? 'Converting...' : workflowActionLabel(route?.workflow)}
                     </Button>
                   </div>
+
+                  {conversionBlocked ? (
+                    <p id="conversion-requirements" className="text-sm text-muted-foreground">
+                      Answer {unansweredFields.length} routing question
+                      {unansweredFields.length === 1 ? '' : 's'} before creating this draft.
+                    </p>
+                  ) : null}
 
                   {plan.warnings && plan.warnings.length > 0 ? (
                     <Alert variant="warning">
@@ -364,13 +403,17 @@ export default function StartRequestPage() {
 
                   <div className="grid gap-3 md:grid-cols-3">
                     <div className="rounded-md border border-border/70 px-4 py-3">
-                      <p className="text-xs font-medium uppercase text-muted-foreground">Estimated Total</p>
+                      <p className="text-xs font-medium uppercase text-muted-foreground">
+                        Estimated Total
+                      </p>
                       <p className="mt-1 text-lg font-semibold text-foreground">
                         {formatCurrency(plan.estimatedAmount ?? total, plan.currency)}
                       </p>
                     </div>
                     <div className="rounded-md border border-border/70 px-4 py-3">
-                      <p className="text-xs font-medium uppercase text-muted-foreground">Approval Rules</p>
+                      <p className="text-xs font-medium uppercase text-muted-foreground">
+                        Approval Rules
+                      </p>
                       <p className="mt-1 text-lg font-semibold text-foreground">
                         {plan.approvalEstimate?.activeRuleCount ?? 0}
                       </p>
@@ -394,7 +437,9 @@ export default function StartRequestPage() {
                     <Alert>
                       <WalletCards className="absolute left-4 top-3.5 h-4 w-4 text-muted-foreground" />
                       <AlertTitle className="pl-6">Budget</AlertTitle>
-                      <AlertDescription className="pl-6">{plan.budgetImpact?.summary}</AlertDescription>
+                      <AlertDescription className="pl-6">
+                        {plan.budgetImpact?.summary}
+                      </AlertDescription>
                     </Alert>
                   </div>
                 </>
@@ -406,7 +451,8 @@ export default function StartRequestPage() {
                   <div>
                     <p className="text-base font-semibold text-foreground">No plan yet</p>
                     <p className="mt-1 max-w-md text-sm text-muted-foreground">
-                      Submit a request to generate routing, draft data, supplier guidance, and policy citations.
+                      Submit a request to generate routing, draft data, supplier guidance, and
+                      policy citations.
                     </p>
                   </div>
                 </div>
@@ -426,17 +472,23 @@ export default function StartRequestPage() {
                 <div>
                   <h2 className="text-lg font-semibold text-foreground">{draft.title}</h2>
                   {draft.description ? (
-                    <p className="mt-1 text-sm leading-6 text-muted-foreground">{draft.description}</p>
+                    <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                      {draft.description}
+                    </p>
                   ) : null}
                 </div>
                 <div className="grid gap-3 md:grid-cols-3">
                   <div className="rounded-md bg-muted/50 px-3 py-2 text-sm">
                     <span className="text-muted-foreground">Priority</span>
-                    <p className="font-medium capitalize text-foreground">{draft.priority ?? 'normal'}</p>
+                    <p className="font-medium capitalize text-foreground">
+                      {draft.priority ?? 'normal'}
+                    </p>
                   </div>
                   <div className="rounded-md bg-muted/50 px-3 py-2 text-sm">
                     <span className="text-muted-foreground">Supplier</span>
-                    <p className="font-medium text-foreground">{draft.suggestedVendor ?? 'Not set'}</p>
+                    <p className="font-medium text-foreground">
+                      {draft.suggestedVendor ?? 'Not set'}
+                    </p>
                   </div>
                   <div className="rounded-md bg-muted/50 px-3 py-2 text-sm">
                     <span className="text-muted-foreground">Needed By</span>
@@ -479,7 +531,8 @@ export default function StartRequestPage() {
                   <div>
                     <p className="font-medium text-foreground">{item.name}</p>
                     <p className="mt-1 text-muted-foreground">
-                      {item.vendorName ?? 'Vendor not set'} - {formatCurrency(Number(item.unitPrice ?? 0), item.currency)}
+                      {item.vendorName ?? 'Vendor not set'} -{' '}
+                      {formatCurrency(Number(item.unitPrice ?? 0), item.currency)}
                     </p>
                   </div>
                 )}
