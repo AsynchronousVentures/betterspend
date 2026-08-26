@@ -134,7 +134,7 @@ export default function SoftwareLicenseDetailPage({
     <div className="space-y-6 p-4 lg:p-8">
       <Breadcrumbs
         items={[
-          { label: 'Software Licenses', href: '/contracts?view=software' },
+          { label: 'Software Licenses', href: '/software-licenses' },
           { label: license.productName },
         ]}
       />
@@ -148,7 +148,7 @@ export default function SoftwareLicenseDetailPage({
               {String(license.status).replace(/_/g, ' ')}
             </Badge>
             <Button asChild variant="outline">
-              <Link href="/contracts?view=software">
+              <Link href="/software-licenses">
                 <ArrowLeft className="h-4 w-4" />
                 Back to Licenses
               </Link>

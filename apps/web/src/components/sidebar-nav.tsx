@@ -27,6 +27,7 @@ import {
   BarChart2,
   FileBarChart2,
   Building2,
+  KeyRound,
   ScrollText,
   Users,
   FolderTree,
@@ -58,6 +59,12 @@ function isGroup(entry: NavEntry): entry is NavGroup {
   return 'children' in entry;
 }
 
+function isNavPathActive(pathname: string, href: string) {
+  if (href === '/') return pathname === '/';
+  if (pathname === href) return true;
+  return pathname.startsWith(`${href}/`) && !pathname.endsWith('/new');
+}
+
 const NAV_ICONS: Record<string, LucideIcon> = {
   Dashboard: LayoutDashboard,
   'Start Request': Sparkles,
@@ -85,6 +92,7 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   Reports: FileBarChart2,
   Suppliers: Building2,
   Contracts: ScrollText,
+  'Software Licenses': KeyRound,
   Users: Users,
   Departments: FolderTree,
   Projects: Briefcase,
@@ -165,6 +173,7 @@ const NAV_CONFIG: NavEntry[] = [
     children: [
       { label: 'Suppliers', href: '/vendors' },
       { label: 'Contracts', href: '/contracts' },
+      { label: 'Software Licenses', href: '/software-licenses' },
     ],
   },
   {
@@ -210,7 +219,7 @@ export default function SidebarNav({
       if (!isGroup(entry)) continue;
       if (entry.defaultOpen) initial.add(entry.label);
       for (const child of entry.children) {
-        if (child.href === '/' ? pathname === '/' : pathname.startsWith(child.href)) {
+        if (isNavPathActive(pathname, child.href)) {
           initial.add(entry.label);
         }
       }
@@ -225,7 +234,7 @@ export default function SidebarNav({
     for (const entry of NAV_CONFIG) {
       if (!isGroup(entry)) continue;
       for (const child of entry.children) {
-        if (child.href === '/' ? pathname === '/' : pathname.startsWith(child.href)) {
+        if (isNavPathActive(pathname, child.href)) {
           activeGroups.add(entry.label);
         }
       }
@@ -260,8 +269,7 @@ export default function SidebarNav({
   }
 
   function isActive(href: string) {
-    if (href === '/') return pathname === '/';
-    return pathname.startsWith(href);
+    return isNavPathActive(pathname, href);
   }
 
   function handleLinkClick() {
@@ -272,7 +280,7 @@ export default function SidebarNav({
     if (href === '/approvals' && pendingApprovalsCount > 0) return pendingApprovalsCount;
     if (href === '/invoices' && invoiceExceptionCount > 0) return invoiceExceptionCount;
     if (href === '/spend-guard' && spendGuardCount > 0) return spendGuardCount;
-    if (href === '/contracts' && softwareRenewalCount > 0) return softwareRenewalCount;
+    if (href === '/software-licenses' && softwareRenewalCount > 0) return softwareRenewalCount;
     return undefined;
   }
 

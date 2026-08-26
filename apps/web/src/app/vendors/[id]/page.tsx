@@ -305,7 +305,7 @@ export default function VendorDetailPage() {
 
               <div className="flex flex-wrap gap-3">
                 <Button asChild variant="outline">
-                  <Link href="/vendors?view=onboarding">Open Onboarding Queue</Link>
+                  <Link href="/vendors/onboarding">Open Onboarding Queue</Link>
                 </Button>
                 {vendor.onboardingStatus === 'pending_review' ? (
                   <>
@@ -355,7 +355,7 @@ export default function VendorDetailPage() {
                   {screeningBusy ? 'Screening...' : 'Screen Against Sanctions Lists'}
                 </Button>
                 <Button asChild variant="ghost">
-                  <Link href="/vendors?view=risk">Open Risk Screening</Link>
+                  <Link href="/risk-screening">Open Risk Screening</Link>
                 </Button>
               </div>
             </CardContent>
@@ -366,19 +366,16 @@ export default function VendorDetailPage() {
               <CardTitle className="text-base">Supplier workspaces</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-wrap gap-x-5 gap-y-3 text-sm">
-              <Link href="/vendors?view=performance" className="text-primary hover:underline">
+              <Link href="/supplier-scorecard" className="text-primary hover:underline">
                 Performance
               </Link>
-              <Link href="/vendors?view=diversity" className="text-primary hover:underline">
+              <Link href="/supplier-diversity" className="text-primary hover:underline">
                 Diversity and ESG
               </Link>
               <Link href="/contracts" className="text-primary hover:underline">
                 Contracts
               </Link>
-              <Link
-                href="/contracts?view=software"
-                className="text-primary hover:underline"
-              >
+              <Link href="/software-licenses" className="text-primary hover:underline">
                 Software licenses
               </Link>
             </CardContent>
