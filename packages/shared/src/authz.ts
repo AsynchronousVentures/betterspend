@@ -107,7 +107,9 @@ export const BUILT_IN_ROLE_PERMISSIONS: Record<BuiltInRole, readonly PermissionK
  * resource-specific scope instead of treating a scope ID as global.
  */
 export const ACCESS_RESOURCE_SCOPE_TYPES = {
-  requisition: ['department', 'project', 'entity'],
+  // Requisitions carry department and project dimensions. Entity scope starts
+  // at the purchase order because the requisition schema has no entity column.
+  requisition: ['department', 'project'],
   purchase_order: ['department', 'project', 'entity'],
   receiving: ['department', 'project', 'entity'],
   approval: ['department', 'project', 'entity'],

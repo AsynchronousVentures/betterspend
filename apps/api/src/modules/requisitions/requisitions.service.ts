@@ -90,6 +90,10 @@ export class RequisitionsService {
     access?: AccessPolicy,
   ) {
     requirePermission(access, 'requisitions:create');
+    this.assertRequisitionScope(access, 'requisitions:create', {
+      departmentId: input.departmentId ?? null,
+      projectId: input.projectId ?? null,
+    });
     const createdId = await this.db.transaction(async (tx) => {
       const number = await this.sequenceService.next(organizationId, 'requisition', tx);
       const totalAmount = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
@@ -150,7 +154,11 @@ export class RequisitionsService {
     access?: AccessPolicy,
   ) {
     const req = await this.findOne(id, organizationId, access);
-    this.assertCanMutate(req, actorId, access);
+    const nextScope = {
+      departmentId: input.departmentId ?? req.departmentId,
+      projectId: input.projectId ?? req.projectId,
+    };
+    this.assertCanMutate(req, actorId, access, nextScope);
     if (req.status !== 'draft') {
       throw new BadRequestException('Only draft requisitions can be edited');
     }
@@ -310,22 +318,52 @@ export class RequisitionsService {
   }
 
   private assertCanMutate(
-    req: { requesterId: string; departmentId: string | null; projectId: string | null },
+    req: {
+      requesterId: string;
+      departmentId: string | null;
+      projectId: string | null;
+      status: string;
+    },
     actorId: string,
     access?: AccessPolicy,
+    nextScope?: { departmentId: string | null; projectId: string | null },
   ) {
     if (!access) return;
     if (access.can('requisitions:manage')) {
       const scope = access.scopeFor('requisition', 'requisitions:manage');
       if (
         scope.unrestricted ||
-        scope.departmentIds.includes(req.departmentId ?? '') ||
-        scope.projectIds.includes(req.projectId ?? '')
+        scope.departmentIds.includes(nextScope?.departmentId ?? req.departmentId ?? '') ||
+        scope.projectIds.includes(nextScope?.projectId ?? req.projectId ?? '')
       ) {
         return;
       }
     }
-    if (access.can('requisitions:create') && req.requesterId === actorId) return;
+    if (
+      access.can('requisitions:create') &&
+      req.requesterId === actorId &&
+      req.status === 'draft'
+    ) {
+      this.assertRequisitionScope(access, 'requisitions:create', nextScope ?? req);
+      return;
+    }
     throw new ForbiddenException('You do not have permission to manage this requisition');
+  }
+
+  private assertRequisitionScope(
+    access: AccessPolicy | undefined,
+    permission: 'requisitions:create' | 'requisitions:manage',
+    requisition: { departmentId: string | null; projectId: string | null },
+  ) {
+    if (!access) return;
+    const scope = access.scopeFor('requisition', permission);
+    if (
+      scope.unrestricted ||
+      scope.departmentIds.includes(requisition.departmentId ?? '') ||
+      scope.projectIds.includes(requisition.projectId ?? '')
+    ) {
+      return;
+    }
+    throw new ForbiddenException('The requisition is outside your assigned scope');
   }
 }

@@ -6,7 +6,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { eq, and, ne, isNull, lte, gte, sql } from 'drizzle-orm';
+import { eq, and, ne, isNull, lte, gte, or, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
 import { updateInvoiceSchema, type UpdateInvoiceInput } from '@betterspend/shared';
@@ -47,6 +47,9 @@ import {
   requirePermission,
 } from '../auth/access-scope';
 
+type InvoiceLookupPermission =
+  'invoices:view_all' | 'invoices:manage' | 'invoices:approve' | 'payments:manage';
+
 function invoiceScopePredicates(organizationId: string) {
   const poScope = (condition: ReturnType<typeof sql>) =>
     sql`${invoices.purchaseOrderId} IN (
@@ -70,7 +73,7 @@ function invoiceScopePredicates(organizationId: string) {
 
 function assertInvoiceScope(
   access: AccessPolicy | undefined,
-  permission: 'invoices:manage' | 'invoices:approve' | 'payments:manage',
+  permission: 'invoices:create' | 'invoices:manage' | 'invoices:approve' | 'payments:manage',
   invoice: {
     entityId: string | null;
     createdBy: string | null;
@@ -103,6 +106,22 @@ function assertInvoiceScope(
     return;
   }
   throw new ForbiddenException('You do not have permission to access this invoice');
+}
+
+function invoiceReportScopePredicate(access: AccessPolicy | undefined, organizationId: string) {
+  return (
+    or(
+      permissionScopePredicate(
+        access,
+        'invoice',
+        ['invoices:view_all'],
+        invoiceScopePredicates(organizationId),
+      ),
+      permissionScopePredicate(access, 'payment', ['payments:view'], {
+        entity: (entityId) => eq(invoices.entityId, entityId),
+      }),
+    ) ?? sql`false`
+  );
 }
 
 export type { UpdateInvoiceInput } from '@betterspend/shared';
@@ -301,7 +320,17 @@ export class InvoicesService {
     return invoice;
   }
 
-  async findOne(id: string, organizationId: string, access?: AccessPolicy) {
+  async findOne(
+    id: string,
+    organizationId: string,
+    access?: AccessPolicy,
+    permissions: readonly InvoiceLookupPermission[] = [
+      'invoices:view_all',
+      'invoices:manage',
+      'invoices:approve',
+    ],
+    resource: 'invoice' | 'payment' = 'invoice',
+  ) {
     if (!access) return this.findOneWithExecutor(id, organizationId, this.db);
     const invoice = await this.db.query.invoices.findFirst({
       where: (i, { and, eq }) =>
@@ -310,8 +339,8 @@ export class InvoicesService {
           eq(i.organizationId, organizationId),
           permissionScopePredicate(
             access,
-            'invoice',
-            ['invoices:view_all', 'invoices:manage', 'invoices:approve'],
+            resource,
+            permissions,
             invoiceScopePredicates(organizationId),
           ),
         ),
@@ -749,17 +778,43 @@ export class InvoicesService {
     let resolvedEntityId = input.entityId ?? null;
     let resolvedCurrency = input.currency ?? 'USD';
     let resolvedExchangeRate = input.exchangeRate ?? null;
+    let linkedPurchaseOrder: {
+      id: string;
+      entityId: string | null;
+      currency: string;
+      exchangeRate: string;
+      requisition?: {
+        requesterId: string;
+        departmentId: string | null;
+        projectId: string | null;
+      } | null;
+    } | null = null;
     if (input.purchaseOrderId) {
       const po = await this.db.query.purchaseOrders.findFirst({
         where: (record, { and, eq }) =>
           and(eq(record.id, input.purchaseOrderId!), eq(record.organizationId, organizationId)),
+        with: { requisition: true },
       });
       if (!po) throw new BadRequestException(`Purchase order ${input.purchaseOrderId} not found`);
+      if (input.entityId && po.entityId && input.entityId !== po.entityId) {
+        throw new BadRequestException('Invoice entity must match the linked purchase order entity');
+      }
+      linkedPurchaseOrder = po;
       resolvedEntityId = po.entityId ?? resolvedEntityId;
       resolvedCurrency = input.currency ?? po.currency;
       resolvedExchangeRate = input.exchangeRate ?? Number(po.exchangeRate ?? '1');
     }
     await this.entitiesService.assertBelongsToOrg(organizationId, resolvedEntityId);
+    assertInvoiceScope(
+      access,
+      'invoices:create',
+      {
+        entityId: resolvedEntityId,
+        createdBy,
+        purchaseOrder: linkedPurchaseOrder,
+      },
+      createdBy,
+    );
 
     // Duplicate invoice detection: same vendor + same invoice number in this org
     const duplicate = await this.db.query.invoices.findFirst({
@@ -1030,7 +1085,7 @@ export class InvoicesService {
     input?: MarkPaidInput,
     access?: AccessPolicy,
   ) {
-    const invoice = await this.findOne(id, organizationId, access);
+    const invoice = await this.findOne(id, organizationId, access, ['payments:manage'], 'payment');
     assertInvoiceScope(access, 'payments:manage', invoice, userId);
     if ((invoice as any).status !== 'approved') {
       throw new BadRequestException('Only approved invoices can be marked as paid');
@@ -1063,7 +1118,12 @@ export class InvoicesService {
     // Fetch all unpaid invoices (paidAt IS NULL and status != 'paid')
     const unpaidInvoices = await this.db.query.invoices.findMany({
       where: (i, { and, eq, isNull, ne }) =>
-        and(eq(i.organizationId, organizationId), isNull(i.paidAt), ne(i.status, 'paid')),
+        and(
+          eq(i.organizationId, organizationId),
+          isNull(i.paidAt),
+          ne(i.status, 'paid'),
+          invoiceReportScopePredicate(access, organizationId),
+        ),
       with: { vendor: true },
     });
 
@@ -1132,7 +1192,12 @@ export class InvoicesService {
 
     const unpaidInvoices = await this.db.query.invoices.findMany({
       where: (i, { and, eq, isNull, ne }) =>
-        and(eq(i.organizationId, organizationId), isNull(i.paidAt), ne(i.status, 'paid')),
+        and(
+          eq(i.organizationId, organizationId),
+          isNull(i.paidAt),
+          ne(i.status, 'paid'),
+          invoiceReportScopePredicate(access, organizationId),
+        ),
     });
 
     for (const inv of unpaidInvoices) {
@@ -1160,7 +1225,12 @@ export class InvoicesService {
 
     const unpaidInvoices = await this.db.query.invoices.findMany({
       where: (i, { and, eq, isNull, ne }) =>
-        and(eq(i.organizationId, organizationId), isNull(i.paidAt), ne(i.status, 'paid')),
+        and(
+          eq(i.organizationId, organizationId),
+          isNull(i.paidAt),
+          ne(i.status, 'paid'),
+          invoiceReportScopePredicate(access, organizationId),
+        ),
       with: { vendor: true },
     });
 

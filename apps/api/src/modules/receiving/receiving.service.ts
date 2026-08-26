@@ -15,6 +15,7 @@ import { AuditService } from '../audit/audit.service';
 import { InventoryService } from '../inventory/inventory.service';
 import type { AccessPolicy } from '../auth/access-policy';
 import { permissionScopePredicate, requirePermission } from '../auth/access-scope';
+import type { PermissionKey } from '@betterspend/shared';
 
 function receiptScopePredicates(organizationId: string) {
   const poScope = (condition: ReturnType<typeof sql>) =>
@@ -151,6 +152,7 @@ export class ReceivingService {
     id: string,
     organizationId: string,
     access?: AccessPolicy,
+    permissions: readonly PermissionKey[] = ['receiving:view', 'receiving:manage'],
   ): Promise<ReceivingDetail> {
     const grn = await this.db.query.goodsReceipts.findFirst({
       where: (g, { eq }) =>
@@ -160,7 +162,7 @@ export class ReceivingService {
           permissionScopePredicate(
             access,
             'receiving',
-            ['receiving:view', 'receiving:manage'],
+            permissions,
             receiptScopePredicates(organizationId),
           ),
         ),
@@ -253,7 +255,7 @@ export class ReceivingService {
     // Update PO status based on receipt completeness
     await this.updatePoReceiptStatus(input.purchaseOrderId, organizationId);
 
-    const grn = await this.findOne(grnId, organizationId, access);
+    const grn = await this.findOne(grnId, organizationId, access, ['receiving:create']);
     this.webhookEvents.emit(organizationId, 'grn.created', { goodsReceipt: grn });
     this.audit
       .log(organizationId, input.receivedBy, 'goods_receipt', grnId, 'created', {
@@ -283,25 +285,25 @@ export class ReceivingService {
 
   async confirm(id: string, organizationId: string, access?: AccessPolicy) {
     requirePermission(access, 'receiving:manage');
-    const grn = await this.findOne(id, organizationId, access);
+    const grn = await this.findOne(id, organizationId, access, ['receiving:manage']);
     if (grn.status === 'confirmed') return grn;
     if (grn.status === 'cancelled') throw new BadRequestException('Cannot confirm a cancelled GRN');
     await this.db
       .update(goodsReceipts)
       .set({ status: 'confirmed', updatedAt: new Date() })
       .where(eq(goodsReceipts.id, id));
-    return this.findOne(id, organizationId, access);
+    return this.findOne(id, organizationId, access, ['receiving:manage']);
   }
 
   async cancelGrn(id: string, organizationId: string, access?: AccessPolicy) {
     requirePermission(access, 'receiving:manage');
-    const grn = await this.findOne(id, organizationId, access);
+    const grn = await this.findOne(id, organizationId, access, ['receiving:manage']);
     if (grn.status === 'cancelled') return grn;
     await this.db
       .update(goodsReceipts)
       .set({ status: 'cancelled', updatedAt: new Date() })
       .where(eq(goodsReceipts.id, id));
-    return this.findOne(id, organizationId, access);
+    return this.findOne(id, organizationId, access, ['receiving:manage']);
   }
 
   private async updatePoReceiptStatus(poId: string, organizationId: string) {

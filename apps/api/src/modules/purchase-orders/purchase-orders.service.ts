@@ -122,7 +122,7 @@ function purchaseOrderScopePredicates(organizationId: string) {
 
 function assertPurchaseOrderScope(
   access: AccessPolicy | undefined,
-  permission: 'purchase_orders:issue' | 'purchase_orders:manage',
+  permission: 'purchase_orders:create' | 'purchase_orders:issue' | 'purchase_orders:manage',
   po: {
     entityId: string | null;
     issuedBy: string | null;
@@ -293,6 +293,25 @@ export class PurchaseOrdersService {
         `Vendor onboarding is ${vendor.onboardingStatus.replace(/_/g, ' ')} and must be approved before a PO can be created`,
       );
     }
+    const linkedRequisition = input.requisitionId
+      ? await this.db.query.requisitions.findFirst({
+          where: (record, { and, eq }) =>
+            and(eq(record.id, input.requisitionId!), eq(record.organizationId, organizationId)),
+        })
+      : null;
+    if (input.requisitionId && !linkedRequisition) {
+      throw new BadRequestException('The linked requisition was not found in this organization');
+    }
+    assertPurchaseOrderScope(
+      access,
+      'purchase_orders:create',
+      {
+        entityId: input.entityId ?? null,
+        issuedBy,
+        requisition: linkedRequisition,
+      },
+      issuedBy,
+    );
     const sanctionsWarning = await this.riskScreening.checkVendorForPo(organizationId, vendor);
     const currency = input.currency ?? 'USD';
     const taxCodeMap = await this.getTaxCodeMap(
@@ -408,10 +427,22 @@ export class PurchaseOrdersService {
 
       // If created from a requisition, mark it as converted
       if (input.requisitionId) {
-        await tx
+        const [converted] = await tx
           .update(requisitions)
           .set({ status: 'converted', updatedAt: new Date() })
-          .where(eq(requisitions.id, input.requisitionId));
+          .where(
+            and(
+              eq(requisitions.id, input.requisitionId),
+              eq(requisitions.organizationId, organizationId),
+              eq(requisitions.status, 'approved'),
+            ),
+          )
+          .returning({ id: requisitions.id });
+        if (!converted) {
+          throw new BadRequestException(
+            'Only an approved requisition in this organization can be converted to a purchase order',
+          );
+        }
       }
 
       if (sanctionsWarning) {
