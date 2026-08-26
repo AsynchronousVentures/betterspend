@@ -177,14 +177,29 @@ export class CatalogService {
     if (input.vendorId !== undefined) {
       await this.assertVendorScope(organizationId, access, 'catalog:manage', input.vendorId);
     }
-    await this.db
+    const [updated] = await this.db
       .update(catalogItems)
       .set({
         ...input,
         unitPrice: input.unitPrice !== undefined ? String(input.unitPrice) : undefined,
         updatedAt: new Date(),
       })
-      .where(and(eq(catalogItems.id, id), eq(catalogItems.organizationId, organizationId)));
+      .where(
+        and(
+          eq(catalogItems.id, id),
+          eq(catalogItems.organizationId, organizationId),
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'catalog',
+            'catalog:manage',
+            catalogItems.vendorId,
+          ),
+        ),
+      )
+      .returning();
+    if (!updated) throw new NotFoundException(`Catalog item ${id} not found`);
     return this.findOne(id, organizationId, access, 'catalog:manage');
   }
 

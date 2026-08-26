@@ -171,7 +171,13 @@ export class ContractsService {
     const [updated] = await this.db
       .update(contracts)
       .set({ ...data, updatedAt: new Date() })
-      .where(and(eq(contracts.id, id), eq(contracts.organizationId, organizationId)))
+      .where(
+        and(
+          eq(contracts.id, id),
+          eq(contracts.organizationId, organizationId),
+          this.managedContractScope(organizationId, access),
+        ),
+      )
       .returning();
 
     if (!updated) throw new NotFoundException(`Contract ${id} not found`);
@@ -272,7 +278,13 @@ export class ContractsService {
       await this.db
         .update(contracts)
         .set({ totalValue: (currentValue + delta).toFixed(2), updatedAt: new Date() })
-        .where(eq(contracts.id, contractId));
+        .where(
+          and(
+            eq(contracts.id, contractId),
+            eq(contracts.organizationId, organizationId),
+            this.managedContractScope(organizationId, access),
+          ),
+        );
     }
 
     // If new end date, update contract
@@ -280,7 +292,13 @@ export class ContractsService {
       await this.db
         .update(contracts)
         .set({ endDate: new Date(data.newEndDate as unknown as string), updatedAt: new Date() })
-        .where(eq(contracts.id, contractId));
+        .where(
+          and(
+            eq(contracts.id, contractId),
+            eq(contracts.organizationId, organizationId),
+            this.managedContractScope(organizationId, access),
+          ),
+        );
     }
 
     return amendment;
@@ -516,7 +534,13 @@ export class ContractsService {
         await this.db
           .update(contracts)
           .set({ ...authoritative, updatedAt: new Date() })
-          .where(and(eq(contracts.id, contractId), eq(contracts.organizationId, organizationId)));
+          .where(
+            and(
+              eq(contracts.id, contractId),
+              eq(contracts.organizationId, organizationId),
+              this.managedContractScope(organizationId, access),
+            ),
+          );
       }
     }
 
@@ -990,6 +1014,17 @@ export class ContractsService {
         )
         .catch(() => {});
     }
+  }
+
+  private managedContractScope(organizationId: string, access?: AccessPolicy) {
+    return scopedVendorPredicate(
+      this.db,
+      organizationId,
+      access,
+      'contract',
+      'contracts:manage',
+      contracts.vendorId,
+    );
   }
 
   private async assertVendorScope(

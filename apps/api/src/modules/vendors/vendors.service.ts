@@ -11,7 +11,7 @@ import type { Db } from '@betterspend/db';
 import { onboardingQuestionnaires, vendorOnboardingSubmissions, vendors } from '@betterspend/db';
 import { EntitiesService } from '../entities/entities.service';
 import type { AccessPolicy } from '../auth/access-policy';
-import { scopedVendorPredicate } from '../auth/operational-access';
+import { scopedEntityPredicate, scopedVendorPredicate } from '../auth/operational-access';
 import type { PermissionKey } from '@betterspend/shared';
 
 @Injectable()
@@ -250,7 +250,18 @@ export class VendorsService {
     const [submissions, questionnaires] = await Promise.all([
       this.db.query.vendorOnboardingSubmissions.findMany({
         where: (record, { and, eq }) =>
-          and(eq(record.organizationId, organizationId), eq(record.vendorId, vendorId)),
+          and(
+            eq(record.organizationId, organizationId),
+            eq(record.vendorId, vendorId),
+            scopedVendorPredicate(
+              this.db,
+              organizationId,
+              access,
+              'vendor',
+              'vendors:view',
+              record.vendorId,
+            ),
+          ),
         with: { questionnaire: true },
         orderBy: (record, { desc }) => desc(record.createdAt),
       }),
@@ -464,6 +475,8 @@ export class VendorsService {
 
   async getTransactions(id: string, organizationId: string, access?: AccessPolicy) {
     await this.findOne(id, organizationId, access, 'vendors:view');
+    const vendorScope =
+      scopedEntityPredicate(access, 'vendor', 'vendors:view', sql.raw('v.entity_id')) ?? sql`true`;
 
     const [invoiceRows, poRows] = await Promise.all([
       this.db.execute(sql`
@@ -472,7 +485,12 @@ export class VendorsService {
           i.status, i.match_status AS "matchStatus", i.total_amount::numeric AS amount,
           i.invoice_date AS date, i.approved_at AS "approvedAt"
         FROM invoices i
-        WHERE i.vendor_id = ${id} AND i.organization_id = ${organizationId}
+        JOIN vendors v
+          ON v.id = i.vendor_id
+          AND v.organization_id = i.organization_id
+        WHERE i.vendor_id = ${id}
+          AND i.organization_id = ${organizationId}
+          AND ${vendorScope}
         ORDER BY i.created_at DESC
         LIMIT 50
       `),
@@ -481,7 +499,12 @@ export class VendorsService {
           po.id, po.internal_number AS number, po.status,
           po.total_amount::numeric AS amount, po.issued_at AS "issuedAt", po.created_at AS date
         FROM purchase_orders po
-        WHERE po.vendor_id = ${id} AND po.organization_id = ${organizationId}
+        JOIN vendors v
+          ON v.id = po.vendor_id
+          AND v.organization_id = po.organization_id
+        WHERE po.vendor_id = ${id}
+          AND po.organization_id = ${organizationId}
+          AND ${vendorScope}
         ORDER BY po.created_at DESC
         LIMIT 50
       `),

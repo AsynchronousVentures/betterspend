@@ -188,6 +188,8 @@ export class SupplierScorecardService {
   ): Promise<ScorecardDetail> {
     const vendorScope =
       scopedEntityPredicate(access, 'vendor', 'vendors:view', sql.raw('entity_id')) ?? sql`true`;
+    const relatedVendorScope =
+      scopedEntityPredicate(access, 'vendor', 'vendors:view', sql.raw('v.entity_id')) ?? sql`true`;
     // Vendor info
     const vendorRows = await this.db.execute(sql`
       SELECT id, name, email, phone, status
@@ -217,8 +219,12 @@ export class SupplierScorecardService {
             ), 0
           ) AS invoice_accuracy_score
         FROM invoices i
+        JOIN vendors v
+          ON v.id = i.vendor_id
+          AND v.organization_id = i.organization_id
         WHERE i.organization_id = ${organizationId}
           AND i.vendor_id = ${vendorId}
+          AND ${relatedVendorScope}
       `),
         // Delivery score
         this.db.execute(sql`
@@ -231,9 +237,13 @@ export class SupplierScorecardService {
           ) AS delivery_score
         FROM goods_receipts gr
         JOIN purchase_orders po ON po.id = gr.purchase_order_id
+        JOIN vendors v
+          ON v.id = gr.vendor_id
+          AND v.organization_id = gr.organization_id
         WHERE gr.organization_id = ${organizationId}
           AND gr.vendor_id = ${vendorId}
           AND po.expected_delivery_date IS NOT NULL
+          AND ${relatedVendorScope}
       `),
         // Price score
         this.db.execute(sql`
@@ -241,27 +251,39 @@ export class SupplierScorecardService {
           COALESCE(
             GREATEST(
               0,
-              100 - ROUND(AVG(ABS(price_variance_pct::numeric)) * 10, 1)
+              100 - ROUND(AVG(ABS(mr.price_variance_pct::numeric)) * 10, 1)
             ), 100
           ) AS price_score
-        FROM match_results
-        WHERE organization_id = ${organizationId}
-          AND vendor_id = ${vendorId}
-          AND price_variance_pct IS NOT NULL
+        FROM match_results mr
+        JOIN vendors v
+          ON v.id = mr.vendor_id
+          AND v.organization_id = mr.organization_id
+        WHERE mr.organization_id = ${organizationId}
+          AND mr.vendor_id = ${vendorId}
+          AND mr.price_variance_pct IS NOT NULL
+          AND ${relatedVendorScope}
       `),
         // PO count
         this.db.execute(sql`
         SELECT COUNT(*)::int AS total_pos
-        FROM purchase_orders
-        WHERE organization_id = ${organizationId}
-          AND vendor_id = ${vendorId}
+        FROM purchase_orders po
+        JOIN vendors v
+          ON v.id = po.vendor_id
+          AND v.organization_id = po.organization_id
+        WHERE po.organization_id = ${organizationId}
+          AND po.vendor_id = ${vendorId}
+          AND ${relatedVendorScope}
       `),
         // Invoice count (redundant but cleaner)
         this.db.execute(sql`
         SELECT COUNT(*)::int AS total_invoices
-        FROM invoices
-        WHERE organization_id = ${organizationId}
-          AND vendor_id = ${vendorId}
+        FROM invoices i
+        JOIN vendors v
+          ON v.id = i.vendor_id
+          AND v.organization_id = i.organization_id
+        WHERE i.organization_id = ${organizationId}
+          AND i.vendor_id = ${vendorId}
+          AND ${relatedVendorScope}
       `),
       ],
     );
@@ -296,12 +318,16 @@ export class SupplierScorecardService {
           ), 100
         ) AS price_score_monthly
       FROM invoices i
+      JOIN vendors v
+        ON v.id = i.vendor_id
+        AND v.organization_id = i.organization_id
       LEFT JOIN match_results mr ON mr.vendor_id = i.vendor_id
         AND mr.organization_id = i.organization_id
         AND DATE_TRUNC('month', mr.matched_at) = DATE_TRUNC('month', i.invoice_date)
       WHERE i.organization_id = ${organizationId}
         AND i.vendor_id = ${vendorId}
         AND i.invoice_date >= NOW() - INTERVAL '6 months'
+        AND ${relatedVendorScope}
       GROUP BY DATE_TRUNC('month', i.invoice_date)
       ORDER BY month ASC
     `);
@@ -309,32 +335,40 @@ export class SupplierScorecardService {
     // Recent POs (last 5)
     const recentPoRows = await this.db.execute(sql`
       SELECT
-        id,
-        po_number AS "poNumber",
-        status,
-        total_amount::numeric AS "totalAmount",
-        issued_at AS "issuedAt",
-        expected_delivery_date AS "expectedDeliveryDate"
-      FROM purchase_orders
-      WHERE organization_id = ${organizationId}
-        AND vendor_id = ${vendorId}
-      ORDER BY created_at DESC
+        po.id,
+        po.po_number AS "poNumber",
+        po.status,
+        po.total_amount::numeric AS "totalAmount",
+        po.issued_at AS "issuedAt",
+        po.expected_delivery_date AS "expectedDeliveryDate"
+      FROM purchase_orders po
+      JOIN vendors v
+        ON v.id = po.vendor_id
+        AND v.organization_id = po.organization_id
+      WHERE po.organization_id = ${organizationId}
+        AND po.vendor_id = ${vendorId}
+        AND ${relatedVendorScope}
+      ORDER BY po.created_at DESC
       LIMIT 5
     `);
 
     // Recent invoices (last 5)
     const recentInvoiceRows = await this.db.execute(sql`
       SELECT
-        id,
-        invoice_number AS "invoiceNumber",
-        status,
-        match_status AS "matchStatus",
-        total_amount::numeric AS "totalAmount",
-        invoice_date AS "invoiceDate"
-      FROM invoices
-      WHERE organization_id = ${organizationId}
-        AND vendor_id = ${vendorId}
-      ORDER BY created_at DESC
+        i.id,
+        i.invoice_number AS "invoiceNumber",
+        i.status,
+        i.match_status AS "matchStatus",
+        i.total_amount::numeric AS "totalAmount",
+        i.invoice_date AS "invoiceDate"
+      FROM invoices i
+      JOIN vendors v
+        ON v.id = i.vendor_id
+        AND v.organization_id = i.organization_id
+      WHERE i.organization_id = ${organizationId}
+        AND i.vendor_id = ${vendorId}
+        AND ${relatedVendorScope}
+      ORDER BY i.created_at DESC
       LIMIT 5
     `);
 

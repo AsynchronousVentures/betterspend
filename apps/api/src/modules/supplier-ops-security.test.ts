@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { Db } from '@betterspend/db';
 import type { AccessPolicy } from './auth/access-policy';
 import type { AuditService } from './audit/audit.service';
@@ -138,6 +138,51 @@ describe('supplier operational authorization regressions', () => {
       (error: unknown) => error instanceof ForbiddenException,
     );
     assert.equal(insertCalled, false);
+  });
+
+  it('does not update a catalog item after its vendor leaves scope', async () => {
+    let updateCalled = false;
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: () => ({}),
+        }),
+      }),
+      query: {
+        catalogItems: {
+          findFirst: async () => ({
+            id: 'item-1',
+            organizationId,
+            vendorId: 'vendor-1',
+            name: 'Scoped item',
+          }),
+        },
+        catalogPriceProposals: {
+          findMany: async () => [],
+        },
+      },
+      update: () => ({
+        set: () => ({
+          where: () => ({
+            returning: async () => {
+              updateCalled = true;
+              return [];
+            },
+          }),
+        }),
+      }),
+    } as unknown as Db;
+    const service = new CatalogService(
+      db,
+      undefined as unknown as MailService,
+      undefined as unknown as SettingsService,
+    );
+
+    await assert.rejects(
+      service.update('item-1', organizationId, { name: 'Updated item' }, entityScopedAccess()),
+      (error: unknown) => error instanceof NotFoundException,
+    );
+    assert.equal(updateCalled, true);
   });
 
   it('locks a license before checking both the current and replacement vendors', async () => {
