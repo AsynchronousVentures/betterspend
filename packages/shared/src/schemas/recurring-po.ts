@@ -97,14 +97,20 @@ function totalMatchesLines(
   value: { totalAmount?: string; lines?: readonly RecurringPoLine[] },
   context: z.RefinementCtx,
 ) {
-  if (value.totalAmount === undefined || value.lines === undefined) return;
+  if (value.lines === undefined) return;
 
   let subtotal: string;
   try {
     subtotal = calculateRecurringPoAmounts(value.lines).subtotal;
   } catch {
+    context.addIssue({
+      code: 'custom',
+      path: ['lines'],
+      message: 'Line totals exceed the supported range',
+    });
     return;
   }
+  if (value.totalAmount === undefined) return;
   if (value.totalAmount !== subtotal) {
     context.addIssue({
       code: 'custom',

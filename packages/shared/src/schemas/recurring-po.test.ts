@@ -55,5 +55,19 @@ test('recurring PO input rejects unsafe precision, inconsistent totals, and inva
     createRecurringPoSchema.safeParse({ ...createBody, startDate: '2026-02-30' }).success,
     false,
   );
+  assert.equal(
+    createRecurringPoSchema.safeParse({
+      title: createBody.title,
+      frequency: createBody.frequency,
+      lines: [
+        {
+          description: 'Oversized line',
+          quantity: '99999999.99',
+          unitPrice: '9999999999.99',
+        },
+      ],
+    }).success,
+    false,
+  );
   assert.equal(updateRecurringPoSchema.safeParse({ totalAmount: '1.00' }).success, false);
 });

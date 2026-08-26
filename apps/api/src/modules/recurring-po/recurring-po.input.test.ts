@@ -22,4 +22,18 @@ test('recurring PO API input maps shared validation failures to HTTP 400', () =>
     () => parseRecurringPoCreateInput({ ...body, startDate: '2026-02-30' }),
     BadRequestException,
   );
+  assert.throws(
+    () =>
+      parseRecurringPoCreateInput({
+        ...body,
+        lines: [
+          {
+            description: 'Oversized line',
+            quantity: '99999999.99',
+            unitPrice: '9999999999.99',
+          },
+        ],
+      }),
+    BadRequestException,
+  );
 });
