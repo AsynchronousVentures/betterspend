@@ -825,7 +825,7 @@ export class PurchaseOrdersService {
           budgetDecision: outcome.budgetEnforcement,
         },
       );
-      const pending = await this.findOne(id, organizationId);
+      const pending = await this.findOne(id, organizationId, access);
       return { ...pending, budgetEnforcement: outcome.budgetEnforcement };
     }
 
