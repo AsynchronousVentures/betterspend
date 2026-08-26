@@ -18,4 +18,4 @@ Before pushing material fixes to a ready pull request, convert it back to draft.
 
 ## Branch protection
 
-Require the stable `Validate` check, one approving review, and resolved review threads. `Validate` reports the event's CI result and stays present when non-runtime changes intentionally skip Full CI, including in the merge queue. GitHub's native review rule accepts an approval from Macroscope Approvability or a human reviewer. CodeRabbit is not a required status check or reviewer.
+Require the stable `Validate` check, one approving review, and resolved review threads. `Validate` reports the event's CI result and stays present when non-runtime changes intentionally skip Full CI, including in the merge queue. Non-runtime pushes to `main` stop after validation and do not publish images. GitHub's native review rule accepts an approval from Macroscope Approvability or a human reviewer. CodeRabbit is not a required status check or reviewer.

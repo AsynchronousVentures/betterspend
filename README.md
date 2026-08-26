@@ -164,7 +164,7 @@ A fresh production database still needs organization and first-admin provisionin
 
 ### Automated releases
 
-Every merge to `main` publishes only immutable `sha-<commit>` images. Pushing a valid `vX.Y.Z` tag promotes that commit's existing API, web, and migrator manifests to both `vX.Y.Z` and `latest`, then deploys the version tag when the protected `production` environment and `DEPLOY_SSH_*` secrets are configured. The SHA images remain available for exact testing and manual deploys. If the secrets are absent, promotion succeeds and deployment is skipped.
+Runtime and packaging changes merged to `main` publish immutable `sha-<commit>` images; documentation and agent-metadata-only merges do not. Pushing a valid `vX.Y.Z` tag builds any missing exact-commit SHA images after full validation, promotes the API, web, and migrator manifests to both `vX.Y.Z` and `latest`, then deploys the version tag when the protected `production` environment and `DEPLOY_SSH_*` secrets are configured. The SHA images remain available for exact testing and manual deploys. If the secrets are absent, promotion succeeds and deployment is skipped.
 
 The containers receive `APP_VERSION` at deploy time, so the API health response and web UI show the selected release without rebuilding the image. Version tags display without `v`; SHA deploys display `sha-<commit>`. With no runtime value, both fall back to the synchronized workspace package version. Rollback updates the image and displayed version together. After synchronizing the workspace package versions in a release preparation change, run `pnpm release:tag 0.2.4` from a clean, current `main` checkout, then push the annotated tag manually.
 

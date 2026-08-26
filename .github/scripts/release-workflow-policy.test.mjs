@@ -145,8 +145,8 @@ test('promotes all release images to the version and latest aliases', () => {
   const staging = workflow.slice(stageIndex, verifyIndex);
   const verification = workflow.slice(verifyIndex, latestIndex);
   const latest = workflow.slice(latestIndex, workflow.indexOf('  deploy-preflight:'));
-  assert.match(sourceWait, /max_attempts=90/);
-  assert.match(sourceWait, /Waiting for immutable image/);
+  assert.match(sourceWait, /max_attempts=1[\s\S]*?max_attempts=3/);
+  assert.match(sourceWait, /Retrying immutable image lookup/);
   assert.match(staging, /inspect --raw "\$source_tag"/);
   assert.match(staging, /inspect --raw "\$release_tag"/);
   assert.match(staging, /already refers to a different manifest/);
@@ -236,5 +236,30 @@ test('keeps the required Validate check while skipping expensive non-runtime val
     workflow,
     /elif \[ "\$RUNTIME_VALIDATION" = "false" \]; then[\s\S]*?test "\$FULL_CI_RESULT" = "skipped"/,
   );
+  assert.match(
+    workflow,
+    /publish:\n    name: Publish Images[\s\S]*?needs\.change-scope\.outputs\.runtime == 'true'[\s\S]*?needs: \[change-scope, validate\]/,
+  );
   assert.doesNotMatch(workflow, /paths-ignore:/);
+});
+
+test('builds missing immutable sources only during a fully validated release fallback', () => {
+  assert.match(
+    workflow,
+    /push\)[\s\S]*?if \[\[ "\$GITHUB_REF" == refs\/tags\/\* \]\]; then[\s\S]*?ci-change-policy\.mjs --force-runtime/,
+  );
+  assert.match(
+    workflow,
+    /name: Set up release Docker builder\n        if: startsWith\(github\.ref, 'refs\/tags\/v'\)\n        uses: docker\/setup-buildx-action@v3/,
+  );
+  for (const image of ['API', 'web', 'migrator']) {
+    assert.match(
+      workflow,
+      new RegExp(
+        `name: Build and push missing ${image} source for release[\\s\\S]*?if: startsWith\\(github\\.ref, 'refs/tags/v'\\) && steps\\.existing_images\\.outputs\\.${image.toLowerCase()}_exists != 'true'[\\s\\S]*?uses: docker/build-push-action@v6`,
+      ),
+    );
+  }
+  assert.doesNotMatch(workflow, /name: Require immutable source images for release/);
+  assert.match(workflow, /name: Stage release version aliases[\s\S]*?inspect --raw "\$source_tag"/);
 });

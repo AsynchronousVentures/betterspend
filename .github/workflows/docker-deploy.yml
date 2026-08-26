@@ -3,12 +3,12 @@ name: Docker CI/CD
 # Flow:
 #   draft PR          -> classify -> fast CI or non-runtime pass -> agent marks ready
 #   merge group       -> classify -> full CI or non-runtime pass -> validate result
-#   push to main      -> reuse proof, full CI, or non-runtime pass -> publish images
-#   push v* tag       -> reuse exact-SHA CI proof (or full CI) -> promote -> deploy
+#   push to main      -> runtime changes publish; non-runtime changes stop after validate
+#   push v* tag       -> full validation -> ensure exact-SHA images -> promote -> deploy
 #   workflow_dispatch -> full CI -> validate result (manual re-check / republish)
 #
-# Releases are tags. Any merge to main is instantly deployable because its
-# images are already in GHCR under sha-<sha>; tagging just promotes it.
+# Releases are tags. Runtime changes publish sha-<sha> images from main. A tag
+# can build missing immutable images after full validation before promotion.
 
 on:
   pull_request:
@@ -340,10 +340,14 @@ jobs:
 
   publish:
     name: Publish Images
-    # Every merge to main produces deployable artifacts. Release tags promote
-    # those immutable artifacts without rebuilding or replacing sha-* tags.
-    if: always() && github.event_name == 'push' && needs.validate.result == 'success'
-    needs: validate
+    # Non-runtime main pushes stop at Validate. Tags force runtime validation
+    # and may build missing exact-SHA sources before promotion.
+    if: >-
+      always()
+      && github.event_name == 'push'
+      && needs.change-scope.outputs.runtime == 'true'
+      && needs.validate.result == 'success'
+    needs: [change-scope, validate]
     outputs:
       release_tag: ${{ steps.release_ref.outputs.release_tag }}
     runs-on: ${{ startsWith(github.ref, 'refs/tags/v') && 'ubuntu-latest' || 'blacksmith-2vcpu-ubuntu-2404' }}
@@ -407,6 +411,10 @@ jobs:
           cache-key: betterspend/application-images
           nofallback: true
 
+      - name: Set up release Docker builder
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -422,13 +430,12 @@ jobs:
           MIGRATOR_TAG: ${{ steps.image_settings.outputs.migrator_tag }}
           RELEASE_TAG: ${{ steps.release_ref.outputs.release_tag }}
         run: |
-          max_attempts=3
+          max_attempts=1
           retry_delay=5
           if [ -n "$RELEASE_TAG" ]; then
-            # A tag push can finish CI before the matching main run publishes
-            # its immutable images. Give that run time to finish.
-            max_attempts=90
-            retry_delay=10
+            # Publish jobs for the same commit are serialized. Brief retries
+            # cover registry consistency before the tag fallback builds.
+            max_attempts=3
           fi
 
           for image in API WEB MIGRATOR; do
@@ -441,11 +448,11 @@ jobs:
                 break
               fi
               if printf '%s' "$inspect_output" | grep -Eqi 'manifest unknown|name unknown|not found'; then
-                if [ -z "$RELEASE_TAG" ] || [ "$attempt" -eq "$max_attempts" ]; then
+                if [ "$attempt" -eq "$max_attempts" ]; then
                   printf '%s=false\n' "$output_name" >> "$GITHUB_OUTPUT"
                   break
                 fi
-                printf 'Waiting for immutable image %s (attempt %s/%s).\n' \
+                printf 'Retrying immutable image lookup for %s (attempt %s/%s).\n' \
                   "$tag" "$attempt" "$max_attempts"
               elif [ "$attempt" -eq "$max_attempts" ]; then
                 printf 'Unable to determine whether %s exists:\n%s\n' "$tag" "$inspect_output" >&2
@@ -453,22 +460,6 @@ jobs:
               fi
               sleep "$retry_delay"
             done
-          done
-
-      - name: Require immutable source images for release
-        if: steps.release_ref.outputs.release_tag != ''
-        env:
-          API_EXISTS: ${{ steps.existing_images.outputs.api_exists }}
-          WEB_EXISTS: ${{ steps.existing_images.outputs.web_exists }}
-          MIGRATOR_EXISTS: ${{ steps.existing_images.outputs.migrator_exists }}
-          RELEASE_TAG: ${{ steps.release_ref.outputs.release_tag }}
-        run: |
-          for image in API WEB MIGRATOR; do
-            exists_variable="${image}_EXISTS"
-            if [ "${!exists_variable}" != "true" ]; then
-              echo "Missing immutable ${image,,} image for release $RELEASE_TAG." >&2
-              exit 1
-            fi
           done
 
       - name: Build and push API image
@@ -494,6 +485,36 @@ jobs:
       - name: Build and push migrator image
         if: github.ref == 'refs/heads/main' && steps.existing_images.outputs.migrator_exists != 'true'
         uses: useblacksmith/build-push-action@v2
+        with:
+          context: .
+          file: docker/migrator.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image_settings.outputs.migrator_tag }}
+
+      - name: Build and push missing API source for release
+        if: startsWith(github.ref, 'refs/tags/v') && steps.existing_images.outputs.api_exists != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/api.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image_settings.outputs.api_tag }}
+
+      - name: Build and push missing web source for release
+        if: startsWith(github.ref, 'refs/tags/v') && steps.existing_images.outputs.web_exists != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/web.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image_settings.outputs.web_tag }}
+
+      - name: Build and push missing migrator source for release
+        if: startsWith(github.ref, 'refs/tags/v') && steps.existing_images.outputs.migrator_exists != 'true'
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/migrator.Dockerfile
