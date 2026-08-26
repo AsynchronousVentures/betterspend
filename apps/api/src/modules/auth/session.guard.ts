@@ -11,9 +11,10 @@ import { IS_PUBLIC_KEY } from '../../common/decorators/public.decorator';
 import { AUTH_INSTANCE } from './auth.tokens';
 import type { AuthInstance, AuthSession, AuthUser } from '../../auth/auth.instance';
 import { DB_TOKEN } from '../../database/database.module';
-import { and, eq, gt, inArray } from 'drizzle-orm';
+import { and, eq, gt } from 'drizzle-orm';
 import * as schema from '@betterspend/db';
 import { isDemoModeEnabled } from '../../common/demo-mode';
+import { AccessPolicyService, type AccessPolicy } from './access-policy';
 
 // Extend Express Request to carry our user type
 declare global {
@@ -21,15 +22,8 @@ declare global {
   namespace Express {
     interface Request {
       authSessionId?: string;
-      authUser?: AuthUser & {
-        roles: Array<{
-          role: string;
-          scopeType: string;
-          scopeId: string | null;
-          customRoleId?: string | null;
-          customRole?: { id: string; name: string; permissions: string[] } | null;
-        }>;
-      };
+      authUser?: AuthUser;
+      authAccess?: AccessPolicy;
     }
   }
 }
@@ -41,6 +35,7 @@ export class SessionGuard implements CanActivate {
     @Inject(AUTH_INSTANCE) private readonly auth: AuthInstance,
     @Inject(DB_TOKEN)
     private readonly db: ReturnType<typeof import('drizzle-orm/postgres-js').drizzle>,
+    private readonly accessPolicy: AccessPolicyService,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
@@ -80,42 +75,21 @@ export class SessionGuard implements CanActivate {
       user = cookieSession.user;
     }
 
-    if (!user) {
-      [user] = await db
-        .select()
-        .from(schema.users)
-        .where(eq(schema.users.id, session.userId))
-        .limit(1);
-    }
-
-    if (!user) {
-      throw new UnauthorizedException('User not found');
-    }
-
-    const roles = await db
+    // Always load the current row, including for cookie sessions. Better Auth
+    // may have returned a cached user document, while deactivation must take
+    // effect at this seam immediately.
+    [user] = await db
       .select()
-      .from(schema.userRoles)
-      .where(eq(schema.userRoles.userId, user.id));
+      .from(schema.users)
+      .where(eq(schema.users.id, session.userId))
+      .limit(1);
 
-    const customRoleIds = roles
-      .map((role: any) => role.customRoleId)
-      .filter((id: unknown): id is string => typeof id === 'string');
+    if (!user) throw new UnauthorizedException('User not found');
+    if (!user.isActive) throw new UnauthorizedException('User is inactive');
 
-    const customRoleRows = customRoleIds.length
-      ? await db
-          .select()
-          .from(schema.customRoles)
-          .where(inArray(schema.customRoles.id, customRoleIds))
-      : [];
-
-    const customRolesById = new Map(customRoleRows.map((role: any) => [role.id, role]));
-    req.authUser = {
-      ...user,
-      roles: roles.map((role: any) => ({
-        ...role,
-        customRole: role.customRoleId ? (customRolesById.get(role.customRoleId) ?? null) : null,
-      })),
-    };
+    const resolved = await this.accessPolicy.resolve(user);
+    req.authUser = user;
+    req.authAccess = resolved.policy;
     req.authSessionId = session.id;
     return true;
   }

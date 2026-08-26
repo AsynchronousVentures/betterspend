@@ -122,6 +122,7 @@ export class BootstrapService {
       if (!existingAdminRole) {
         await transaction.insert(userRoles).values({
           userId,
+          organizationId: organization.id,
           role: 'admin',
           scopeType: 'global',
         });

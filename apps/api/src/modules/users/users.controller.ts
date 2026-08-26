@@ -1,9 +1,19 @@
 import {
-  Controller, Get, Post, Patch, Delete, Param, Body, ParseUUIDPipe, HttpCode, HttpStatus,
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Param,
+  Body,
+  ParseUUIDPipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
+import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('users')
@@ -23,8 +33,9 @@ export class UsersController {
   create(
     @Body() body: { name: string; email: string; password: string; role?: string },
     @CurrentOrgId() orgId: string,
+    @CurrentUserId() actorUserId: string,
   ) {
-    return this.usersService.create(orgId, body);
+    return this.usersService.create(orgId, body, actorUserId);
   }
 
   @Get('roles/permissions')
@@ -44,8 +55,9 @@ export class UsersController {
   createCustomRole(
     @Body() body: { name?: string; description?: string; permissions?: string[] },
     @CurrentOrgId() orgId: string,
+    @CurrentUserId() actorUserId: string,
   ) {
-    return this.usersService.createCustomRole(orgId, body);
+    return this.usersService.createCustomRole(orgId, body, actorUserId);
   }
 
   @Patch('roles/custom/:roleId')
@@ -54,8 +66,9 @@ export class UsersController {
     @Param('roleId', ParseUUIDPipe) roleId: string,
     @Body() body: { name?: string; description?: string | null; permissions?: string[] },
     @CurrentOrgId() orgId: string,
+    @CurrentUserId() actorUserId: string,
   ) {
-    return this.usersService.updateCustomRole(roleId, orgId, body);
+    return this.usersService.updateCustomRole(roleId, orgId, body, actorUserId);
   }
 
   @Delete('roles/custom/:roleId')
@@ -64,8 +77,9 @@ export class UsersController {
   deleteCustomRole(
     @Param('roleId', ParseUUIDPipe) roleId: string,
     @CurrentOrgId() orgId: string,
+    @CurrentUserId() actorUserId: string,
   ) {
-    return this.usersService.deleteCustomRole(roleId, orgId);
+    return this.usersService.deleteCustomRole(roleId, orgId, actorUserId);
   }
 
   @Get(':id')
@@ -78,20 +92,28 @@ export class UsersController {
   @ApiOperation({ summary: 'Update user (name, department, active)' })
   update(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { name?: string; departmentId?: string; isActive?: boolean },
+    @Body() body: { name?: string; departmentId?: string | null; isActive?: boolean },
     @CurrentOrgId() orgId: string,
+    @CurrentUserId() actorUserId: string,
   ) {
-    return this.usersService.update(id, orgId, body);
+    return this.usersService.update(id, orgId, body, actorUserId);
   }
 
   @Post(':id/roles')
   @ApiOperation({ summary: 'Add a role to a user' })
   addRole(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { role?: string; customRoleId?: string; scopeType?: string; scopeId?: string },
+    @Body()
+    body: {
+      role?: string;
+      customRoleId?: string;
+      scopeType?: string;
+      scopeId?: string | null;
+    },
     @CurrentOrgId() orgId: string,
+    @CurrentUserId() actorUserId: string,
   ) {
-    return this.usersService.addRole(id, orgId, body);
+    return this.usersService.addRole(id, orgId, body, actorUserId);
   }
 
   @Delete(':id/roles/:roleId')
@@ -101,19 +123,28 @@ export class UsersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Param('roleId', ParseUUIDPipe) roleId: string,
     @CurrentOrgId() orgId: string,
+    @CurrentUserId() actorUserId: string,
   ) {
-    return this.usersService.removeRole(id, roleId, orgId);
+    return this.usersService.removeRole(id, roleId, orgId, actorUserId);
   }
 
   @Patch(':id/deactivate')
   @ApiOperation({ summary: 'Deactivate a user' })
-  deactivate(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
-    return this.usersService.update(id, orgId, { isActive: false });
+  deactivate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() actorUserId: string,
+  ) {
+    return this.usersService.update(id, orgId, { isActive: false }, actorUserId);
   }
 
   @Patch(':id/activate')
   @ApiOperation({ summary: 'Activate a user' })
-  activate(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
-    return this.usersService.update(id, orgId, { isActive: true });
+  activate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() actorUserId: string,
+  ) {
+    return this.usersService.update(id, orgId, { isActive: true }, actorUserId);
   }
 }

@@ -1,22 +1,33 @@
 import { BUILT_IN_ROLE_PERMISSIONS, normalizePermissions } from '../../common/permissions';
+import { builtInRoleSchema } from '@betterspend/shared';
 
 export interface InvoiceApprovalCandidate {
   id: string;
+  organizationId: string;
   name: string;
   departmentId: string | null;
   isActive: boolean;
   userRoles: Array<{
     role: string;
     scopeType: string;
-    customRole?: { permissions: unknown } | null;
+    customRole?: { organizationId: string; permissions: unknown } | null;
   }>;
 }
 
 function grantsGlobalInvoiceApproval(candidate: InvoiceApprovalCandidate): boolean {
   return candidate.userRoles.some((assignment) => {
     if (assignment.scopeType !== 'global') return false;
-    if (BUILT_IN_ROLE_PERMISSIONS[assignment.role]?.includes('invoices:approve')) return true;
-    return normalizePermissions(assignment.customRole?.permissions).includes('invoices:approve');
+    const builtInRole = builtInRoleSchema.safeParse(assignment.role);
+    if (
+      builtInRole.success &&
+      BUILT_IN_ROLE_PERMISSIONS[builtInRole.data].includes('invoices:approve')
+    ) {
+      return true;
+    }
+    return (
+      assignment.customRole?.organizationId === candidate.organizationId &&
+      normalizePermissions(assignment.customRole.permissions).includes('invoices:approve')
+    );
   });
 }
 

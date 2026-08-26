@@ -9,12 +9,7 @@ import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { PERMISSIONS_KEY } from '../../common/decorators/permissions.decorator';
 import { ROLES_KEY, UserRole } from '../../common/decorators/roles.decorator';
-import {
-  BUILT_IN_ROLE_PERMISSIONS,
-  ROLE_COMPATIBILITY_PERMISSIONS,
-  normalizePermissions,
-  type PermissionKey,
-} from '../../common/permissions';
+import { BUILT_IN_ROLE_PERMISSIONS, type PermissionKey } from '../../common/permissions';
 import { isDemoModeEnabled } from '../../common/demo-mode';
 
 @Injectable()
@@ -40,48 +35,32 @@ export class RolesGuard implements CanActivate {
     }
 
     const req = ctx.switchToHttp().getRequest<Request>();
-    const { authUser } = req;
+    const { authUser, authAccess } = req;
 
-    if (!authUser) {
+    if (!authUser || !authAccess) {
       if (isDemoModeEnabled()) return true;
       throw new UnauthorizedException('Authentication required');
     }
 
-    // Global admin always passes, regardless of what roles or permissions are required
-    const isAdmin = authUser.roles?.some((r) => r.role === 'admin');
-    if (isAdmin) return true;
-
-    const grantedPermissions = new Set<PermissionKey>();
-    for (const role of authUser.roles ?? []) {
-      for (const permission of BUILT_IN_ROLE_PERMISSIONS[role.role] ?? []) {
-        grantedPermissions.add(permission);
-      }
-      for (const permission of normalizePermissions(role.customRole?.permissions ?? [])) {
-        grantedPermissions.add(permission);
-      }
-    }
-
     if (requiredPermissions?.length) {
-      const hasPermissions = requiredPermissions.every((permission) =>
-        grantedPermissions.has(permission),
-      );
+      const hasPermissions = requiredPermissions.every((permission) => authAccess.can(permission));
       if (!hasPermissions) {
         throw new ForbiddenException(`Requires permissions: ${requiredPermissions.join(', ')}`);
       }
       return true;
     }
 
-    // Check whether the user holds at least one of the required roles
-    const hasRole = requiredRoles.some((required) =>
-      authUser.roles?.some((r) => r.role === required),
-    );
-
-    const hasCompatibleCustomRole = requiredRoles.some((required) => {
-      const compatiblePermissions = ROLE_COMPATIBILITY_PERMISSIONS[required] ?? [];
-      return compatiblePermissions.every((permission) => grantedPermissions.has(permission));
+    // Legacy @Roles metadata is translated through effective permissions. The
+    // admin compatibility path is limited to a global built-in admin assignment,
+    // so scoped and custom grants never receive a global bypass.
+    const hasRole = requiredRoles.some((required) => {
+      if (required === 'admin') {
+        return authAccess.isGlobalBuiltInAdmin();
+      }
+      return BUILT_IN_ROLE_PERMISSIONS[required].every((permission) => authAccess.can(permission));
     });
 
-    if (!hasRole && !hasCompatibleCustomRole) {
+    if (!hasRole) {
       throw new ForbiddenException(`Requires one of: ${requiredRoles.join(', ')}`);
     }
 

@@ -646,6 +646,7 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
     rows.userRoles.push({
       id: stableUuid(seed, 'user-role', index),
       userId: userIds[index] as string,
+      organizationId: DEMO_ORG_ID,
       role: choose(
         ['requester', 'approver', 'receiver', 'finance', 'admin'] as const,
         seed,
