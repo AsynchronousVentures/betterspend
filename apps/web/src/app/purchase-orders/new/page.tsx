@@ -106,9 +106,13 @@ function ComplianceBadge({
 
 export default function NewPurchaseOrderPage() {
   const router = useRouter();
-  const { access, loading: accessLoading } = useAccess();
-  const [accessResolved, setAccessResolved] = useState(() => access !== null);
-  const hasLoadedAccess = useRef(false);
+  const {
+    access,
+    error: accessError,
+    loading: accessLoading,
+    refresh: refreshAccess,
+    resolved: accessResolved,
+  } = useAccess();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [vendorsLoading, setVendorsLoading] = useState(true);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
@@ -126,14 +130,6 @@ export default function NewPurchaseOrderPage() {
   const [deviationAction, setDeviationAction] = useState('warn');
   const debounceTimers = useRef<Array<ReturnType<typeof setTimeout> | null>>([null]);
   const canCreateStandalone = access?.permissions.includes('purchase_orders:create') ?? false;
-
-  useEffect(() => {
-    if (accessLoading) {
-      hasLoadedAccess.current = true;
-      return;
-    }
-    if (access || hasLoadedAccess.current) setAccessResolved(true);
-  }, [access, accessLoading]);
 
   useEffect(() => {
     if (accessLoading || !canCreateStandalone) return;
@@ -308,6 +304,21 @@ export default function NewPurchaseOrderPage() {
 
   if (!accessResolved || accessLoading) {
     return <div className="p-4 text-sm text-muted-foreground lg:p-8">Checking access...</div>;
+  }
+
+  if (accessError) {
+    return (
+      <div className="p-4 lg:p-8">
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+            <span>Could not verify your access. Try again.</span>
+            <Button type="button" variant="outline" onClick={() => void refreshAccess()}>
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
   }
 
   if (!canCreateStandalone) {

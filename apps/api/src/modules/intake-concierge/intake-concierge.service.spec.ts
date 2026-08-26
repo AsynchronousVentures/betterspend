@@ -13,10 +13,13 @@ describe('IntakeConciergeService workflow links', () => {
             status: 'draft',
             draft: {
               title: 'Office chairs',
+              neededBy: '2026-10-01',
+              suggestedVendor: 'Acme Office',
               lines: [{ description: 'Office chair', quantity: 2, unitPrice: 100 }],
             },
             plan: {
               route: { workflow: 'rfq', label: 'RFQ', reason: 'Competitive sourcing applies.' },
+              estimatedAmount: 200,
               preferredVendors: [],
             },
           })),
@@ -37,7 +40,13 @@ describe('IntakeConciergeService workflow links', () => {
     );
 
     await expect(
-      service.convertSession('session-1', 'organization-1', 'requester-1', { workflow: 'rfq' }),
+      service.convertSession('session-1', 'organization-1', 'requester-1', {
+        workflow: 'rfq',
+        acceptedValues: {
+          departmentId: '00000000-0000-4000-8000-000000000001',
+          supplierShortlist: ['00000000-0000-4000-8000-000000000002'],
+        },
+      }),
     ).resolves.toMatchObject({
       workflow: 'rfq',
       draftId: 'rfq-1',
@@ -46,7 +55,10 @@ describe('IntakeConciergeService workflow links', () => {
     expect(rfqService.create).toHaveBeenCalledWith(
       'organization-1',
       'requester-1',
-      expect.objectContaining({ title: 'Office chairs' }),
+      expect.objectContaining({
+        title: 'Office chairs',
+        vendorIds: ['00000000-0000-4000-8000-000000000002'],
+      }),
     );
     expect(update).toHaveBeenCalled();
   });
@@ -101,10 +113,13 @@ describe('IntakeConciergeService workflow links', () => {
             status: 'draft',
             draft: {
               title: 'Office chairs',
+              neededBy: '2026-10-01',
+              suggestedVendor: 'Acme Office',
               lines: [{ description: 'Office chair', quantity: 2, unitPrice: 100 }],
             },
             plan: {
               route: { workflow: 'requisition', label: 'Requisition', reason: 'Default route.' },
+              estimatedAmount: 200,
               missingFields: ['departmentOrProject'],
               questions: [
                 {
@@ -140,5 +155,84 @@ describe('IntakeConciergeService workflow links', () => {
       'requester-1',
       expect.objectContaining({ departmentId: '00000000-0000-4000-8000-000000000001' }),
     );
+  });
+
+  it('requires the selected workflow fields when a caller overrides the planned route', async () => {
+    const db = {
+      query: {
+        intakeConciergeSessions: {
+          findFirst: jest.fn(async () => ({
+            id: 'session-1',
+            status: 'draft',
+            draft: {
+              title: 'Office chairs',
+              neededBy: '2026-10-01',
+              suggestedVendor: 'Acme Office',
+              lines: [{ description: 'Office chair', quantity: 2, unitPrice: 100 }],
+            },
+            plan: {
+              route: { workflow: 'requisition', label: 'Requisition', reason: 'Default route.' },
+              estimatedAmount: 200,
+              missingFields: [],
+              questions: [],
+            },
+          })),
+        },
+      },
+    };
+    const service = new IntakeConciergeService(
+      db as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    await expect(
+      service.convertSession('session-1', 'organization-1', 'requester-1', {
+        workflow: 'rfq',
+        acceptedValues: { departmentId: '00000000-0000-4000-8000-000000000001' },
+      }),
+    ).rejects.toThrow('Answer the routing questions before creating a guided draft.');
+  });
+
+  it('rejects routing values that cannot be applied to the conversion', async () => {
+    const db = {
+      query: {
+        intakeConciergeSessions: {
+          findFirst: jest.fn(async () => ({
+            id: 'session-1',
+            status: 'draft',
+            draft: {
+              title: 'Office chairs',
+              neededBy: '2026-10-01',
+              suggestedVendor: 'Acme Office',
+              lines: [{ description: 'Office chair', quantity: 2, unitPrice: 100 }],
+            },
+            plan: {
+              route: { workflow: 'requisition', label: 'Requisition', reason: 'Default route.' },
+              estimatedAmount: 200,
+              missingFields: ['departmentOrProject'],
+              questions: [],
+            },
+          })),
+        },
+      },
+    };
+    const requisitionsService = { create: jest.fn() };
+    const service = new IntakeConciergeService(
+      db as never,
+      {} as never,
+      requisitionsService as never,
+      {} as never,
+      {} as never,
+    );
+
+    await expect(
+      service.convertSession('session-1', 'organization-1', 'requester-1', {
+        acceptedValues: { departmentOrProject: {} },
+      }),
+    ).rejects.toThrow('Routing answers are invalid.');
+    expect(requisitionsService.create).not.toHaveBeenCalled();
   });
 });

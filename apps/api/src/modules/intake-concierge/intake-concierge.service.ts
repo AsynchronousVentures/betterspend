@@ -1,6 +1,12 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
-import { recordHref, createRequisitionSchema, type CreateRequisitionInput } from '@betterspend/shared';
+import {
+  createRequisitionSchema,
+  intakeConciergeConversionSchema,
+  recordHref,
+  type CreateRequisitionInput,
+  type IntakeConciergeAcceptedValues,
+} from '@betterspend/shared';
 import {
   intakeConciergeSessions,
   procurementPolicies,
@@ -308,31 +314,29 @@ export class IntakeConciergeService {
     id: string,
     organizationId: string,
     requesterId: string,
-    input: { workflow?: WorkflowRoute; acceptedValues?: Record<string, unknown> },
+    input: unknown,
   ) {
     const session = await this.findSession(id, organizationId);
     if (session.status !== 'draft') {
       throw new BadRequestException('This concierge session has already been converted or routed');
     }
 
-    const acceptedValues = input.acceptedValues ?? {};
+    const parsedInput = intakeConciergeConversionSchema.safeParse(input);
+    if (!parsedInput.success) {
+      throw new BadRequestException('Routing answers are invalid.');
+    }
+
+    const acceptedValues = parsedInput.data.acceptedValues;
     const plan = session.plan as unknown as ConciergePlan;
-    const unansweredQuestions = Array.from(
-      new Set([
-        ...(plan.missingFields ?? []),
-        ...(plan.questions?.map((question) => question.field) ?? []),
-      ]),
-    ).filter((field) => {
-      const value =
-        field === 'departmentOrProject'
-          ? acceptedValues.departmentId ?? acceptedValues.projectId ?? acceptedValues[field]
-          : acceptedValues[field];
-      return value === undefined || value === null || (typeof value === 'string' && !value.trim());
-    });
+    const workflow = parsedInput.data.workflow ?? plan.route.workflow;
+    const unansweredQuestions = this.requiredConversionFields(
+      session.draft as unknown as AiParsedRequisition,
+      plan,
+      workflow,
+    ).filter((field) => !this.hasAcceptedValue(field, acceptedValues));
     if (unansweredQuestions.length > 0) {
       throw new BadRequestException('Answer the routing questions before creating a guided draft.');
     }
-    const workflow = input.workflow ?? plan.route.workflow;
 
     if (workflow === 'requisition') {
       const requisitionInput = this.toRequisitionInput(
@@ -836,6 +840,36 @@ export class IntakeConciergeService {
     return Array.from(new Set(fields));
   }
 
+  private requiredConversionFields(
+    draft: AiParsedRequisition,
+    plan: ConciergePlan,
+    workflow: WorkflowRoute,
+  ) {
+    const routeSpecificFields = new Set(['supplierShortlist', 'licenseOwner', 'supplierContact']);
+    const plannedGenericFields = [
+      ...(plan.missingFields ?? []),
+      ...(plan.questions?.map((question) => question.field) ?? []),
+    ].filter((field) => !routeSpecificFields.has(field));
+
+    return Array.from(
+      new Set([
+        ...plannedGenericFields,
+        ...this.missingFields(draft, workflow, plan.estimatedAmount),
+      ]),
+    );
+  }
+
+  private hasAcceptedValue(field: string, acceptedValues: IntakeConciergeAcceptedValues) {
+    if (field === 'departmentOrProject') {
+      return Boolean(acceptedValues.departmentId || acceptedValues.projectId);
+    }
+
+    const value = acceptedValues[field as keyof IntakeConciergeAcceptedValues];
+    if (typeof value === 'string') return Boolean(value.trim());
+    if (typeof value === 'number') return Number.isFinite(value) && value > 0;
+    return Array.isArray(value) && value.length > 0;
+  }
+
   private promptForField(field: string) {
     const prompts: Record<string, string> = {
       neededBy: 'When do you need this by?',
@@ -892,7 +926,7 @@ export class IntakeConciergeService {
 
   private toRfqInput(
     draft: AiParsedRequisition,
-    acceptedValues: Record<string, unknown>,
+    acceptedValues: IntakeConciergeAcceptedValues,
     plan: ConciergePlan,
   ) {
     const merged = { ...draft, ...acceptedValues } as AiParsedRequisition & Record<string, unknown>;
@@ -907,10 +941,12 @@ export class IntakeConciergeService {
         unitOfMeasure: line.unitOfMeasure,
         targetPrice: line.unitPrice ?? undefined,
       })),
-      vendorIds: plan.preferredVendors
-        .filter((vendor) => Number(vendor.score ?? 0) > 0)
-        .map((vendor) => String(vendor.id))
-        .filter((id) => id.length > 0),
+      vendorIds:
+        acceptedValues.supplierShortlist ??
+        plan.preferredVendors
+          .filter((vendor) => Number(vendor.score ?? 0) > 0)
+          .map((vendor) => String(vendor.id))
+          .filter((id) => id.length > 0),
     };
   }
 

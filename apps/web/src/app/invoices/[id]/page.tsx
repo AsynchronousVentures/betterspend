@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { RefreshCw } from 'lucide-react';
 import { api, loadFailureState } from '../../../lib/api';
@@ -108,32 +108,56 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const [paymentDate, setPaymentDate] = useState(localDateInputValue);
   const [paymentMethod, setPaymentMethod] = useState('ach');
   const [paymentReference, setPaymentReference] = useState('');
+  const activeInvoiceId = useRef('');
+  const exportJobsRequestId = useRef(0);
 
   const refreshExportJobs = useCallback(async (invoiceId: string) => {
+    const currentRequestId = ++exportJobsRequestId.current;
+    const isCurrentRequest = () =>
+      activeInvoiceId.current === invoiceId && exportJobsRequestId.current === currentRequestId;
+
+    if (!isCurrentRequest()) return;
     setGlJobsLoading(true);
     setGlJobsError(null);
     try {
       const jobs = await api.glExportJobs.forInvoice(invoiceId);
-      setGlJobs(Array.isArray(jobs) ? (jobs as GlExportJob[]) : []);
+      if (isCurrentRequest()) setGlJobs(Array.isArray(jobs) ? (jobs as GlExportJob[]) : []);
     } catch (error) {
-      setGlJobsError(error);
+      if (isCurrentRequest()) setGlJobsError(error);
     } finally {
-      setGlJobsLoading(false);
+      if (isCurrentRequest()) setGlJobsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    params.then(({ id: pid }) => {
+    let cancelled = false;
+    void params.then(({ id: pid }) => {
+      if (cancelled) return;
+      activeInvoiceId.current = pid;
+      exportJobsRequestId.current += 1;
       setId(pid);
+      setInvoice(null);
+      setGlJobs([]);
+      setGlJobsError(null);
+      setLoading(true);
       api.invoices
         .get(pid)
         .then((data) => {
+          if (cancelled || activeInvoiceId.current !== pid) return;
           setInvoice(data);
           void refreshExportJobs(pid);
         })
-        .catch(() => setInvoice(null))
-        .finally(() => setLoading(false));
+        .catch(() => {
+          if (!cancelled && activeInvoiceId.current === pid) setInvoice(null);
+        })
+        .finally(() => {
+          if (!cancelled && activeInvoiceId.current === pid) setLoading(false);
+        });
     });
+    return () => {
+      cancelled = true;
+      exportJobsRequestId.current += 1;
+    };
   }, [params, refreshExportJobs]);
 
   async function refresh() {
