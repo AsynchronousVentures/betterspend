@@ -125,6 +125,9 @@ export class ContractsService {
           with: { owner: true },
           orderBy: (obligation, { asc }) => asc(obligation.dueDate),
         },
+        softwareLicenses: {
+          columns: { id: true, productName: true, status: true },
+        },
       },
     });
     if (!contract) throw new NotFoundException(`Contract ${id} not found`);

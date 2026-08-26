@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Layers3, Plus } from 'lucide-react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
+import { RelatedRecordLink } from '../../components/related-records';
 import { StatusBadge } from '../../components/status-badge';
 import { SupplierHubNav } from '../../components/supplier-hub-nav';
 import { Alert, AlertDescription } from '../../components/ui/alert';
@@ -236,7 +237,9 @@ export default function SoftwareLicensesPage() {
                           {license.productName}
                         </Link>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{license.vendor?.name ?? '—'}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        <RelatedRecordLink record={{ kind: 'vendor', id: license.vendor?.id, label: license.vendor?.name, relation: 'Supplier' }} />
+                      </TableCell>
                       <TableCell className="text-muted-foreground">
                         {license.seatsUsed}/{license.seatCount}
                       </TableCell>

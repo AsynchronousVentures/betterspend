@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { PackageCheck, Plus } from 'lucide-react';
 import { api } from '../../lib/api';
-import { relatedRecordLink, type ReceivingListItem, type RelatedRecordLink } from '../../lib/receiving';
+import { type ReceivingListItem } from '../../lib/receiving';
 import { PageHeader } from '../../components/page-header';
+import { RelatedRecordLink } from '../../components/related-records';
 import { StatusBadge } from '../../components/status-badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
@@ -69,19 +70,19 @@ export default function ReceivingPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {grns.map((grn) => {
-                  const purchaseOrderLink = relatedRecordLink(
-                    grn.purchaseOrder
-                      ? { id: grn.purchaseOrder.id, label: grn.purchaseOrder.number }
-                      : null,
-                    'purchase-orders',
-                  );
-                  const vendorLink = relatedRecordLink(
-                    grn.purchaseOrder?.vendor
-                      ? { id: grn.purchaseOrder.vendor.id, label: grn.purchaseOrder.vendor.name }
-                      : null,
-                    'vendors',
-                  );
+              {grns.map((grn) => {
+                  const purchaseOrder = {
+                    kind: 'purchase_order' as const,
+                    id: grn.purchaseOrder?.id,
+                    label: grn.purchaseOrder?.number,
+                    relation: 'Purchase order',
+                  };
+                  const vendor = {
+                    kind: 'vendor' as const,
+                    id: grn.purchaseOrder?.vendor?.id,
+                    label: grn.purchaseOrder?.vendor?.name,
+                    relation: 'Supplier',
+                  };
 
                   return (
                   <TableRow key={grn.id}>
@@ -91,10 +92,10 @@ export default function ReceivingPage() {
                       </Link>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      <RelatedLink link={purchaseOrderLink} />
+                      <RelatedRecordLink record={purchaseOrder} />
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      <RelatedLink link={vendorLink} />
+                      <RelatedRecordLink record={vendor} />
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {new Date(grn.receivedDate).toLocaleDateString()}
@@ -114,14 +115,5 @@ export default function ReceivingPage() {
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function RelatedLink({ link }: { link: RelatedRecordLink }) {
-  if (!link.href) return <span>{link.label}</span>;
-  return (
-    <Link href={link.href} className="text-primary hover:underline">
-      {link.label}
-    </Link>
   );
 }

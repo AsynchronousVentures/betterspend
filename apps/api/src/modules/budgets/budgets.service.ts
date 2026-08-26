@@ -198,7 +198,18 @@ export class BudgetsService {
     const budget = await this.db.query.budgets.findFirst({
       where: (b, { and, eq }) =>
         and(eq(b.id, id), eq(b.organizationId, organizationId), scopeCondition),
-      with: { periods: true, entity: true },
+      with: {
+        periods: true,
+        entity: true,
+        commitmentEvents: {
+          with: {
+            requisition: { columns: { id: true, number: true } },
+            purchaseOrder: { columns: { id: true, number: true } },
+            invoice: { columns: { id: true, internalNumber: true, invoiceNumber: true } },
+          },
+          orderBy: (event, { desc }) => desc(event.createdAt),
+        },
+      },
     });
     if (!budget) throw new NotFoundException(`Budget ${id} not found`);
     return budget;

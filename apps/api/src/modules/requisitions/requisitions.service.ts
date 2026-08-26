@@ -14,7 +14,7 @@ import { AuditService } from '../audit/audit.service';
 import { BudgetsService } from '../budgets/budgets.service';
 import { SpendGuardService } from '../spend-guard/spend-guard.service';
 import type { Db } from '@betterspend/db';
-import { requisitions, requisitionLines } from '@betterspend/db';
+import { approvalRequests, requisitions, requisitionLines } from '@betterspend/db';
 import type { CreateRequisitionInput } from '@betterspend/shared';
 import type { AccessPolicy } from '../auth/access-policy';
 import { permissionScopePredicate, requirePermission } from '../auth/access-scope';
@@ -77,10 +77,30 @@ export class RequisitionsService {
             },
           ),
         ),
-      with: { lines: true },
+      with: {
+        lines: true,
+        purchaseOrders: { columns: { id: true, number: true, status: true } },
+        commitmentEvents: {
+          columns: { id: true, budgetId: true },
+          with: { budget: { columns: { id: true, name: true } } },
+        },
+      },
     });
     if (!req) throw new NotFoundException(`Requisition ${id} not found`);
-    return req;
+    const activeApproval =
+      !access || access.can('approvals:view') || access.can('approvals:act')
+        ? await this.db.query.approvalRequests.findFirst({
+            where: (approval, { and, eq }) =>
+              and(
+                eq(approval.organizationId, organizationId),
+                eq(approval.approvableType, 'requisition'),
+                eq(approval.approvableId, id),
+                eq(approval.status, 'pending'),
+              ),
+            columns: { id: true, currentStep: true, status: true },
+          })
+        : null;
+    return { ...req, activeApproval };
   }
 
   private async findOneForMutation(

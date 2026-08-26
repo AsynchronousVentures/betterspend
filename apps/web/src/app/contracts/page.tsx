@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { FileSignature, Plus } from 'lucide-react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
+import { RelatedRecordLink } from '../../components/related-records';
 import { StatusBadge } from '../../components/status-badge';
 import { SupplierHubNav } from '../../components/supplier-hub-nav';
 import { Alert, AlertDescription } from '../../components/ui/alert';
@@ -178,20 +179,23 @@ export default function ContractsPage() {
                   const intelligence = contract.intelligenceSummary ?? {};
                   const risk = intelligence.riskLevel ?? 'none';
                   return (
-                    <TableRow
-                      key={contract.id}
-                      className="cursor-pointer"
-                      onClick={() => {
-                        window.location.href = `/contracts/${contract.id}`;
-                      }}
-                    >
+                    <TableRow key={contract.id}>
                       <TableCell className="font-mono text-xs font-semibold text-primary">
-                        {contract.contractNumber || '—'}
+                        <Link href={`/contracts/${contract.id}`} className="hover:underline">
+                          {contract.contractNumber || '—'}
+                        </Link>
                       </TableCell>
                       <TableCell className="max-w-[260px] font-semibold text-foreground">
-                        <span className="block truncate">{contract.title}</span>
+                        <Link href={`/contracts/${contract.id}`} className="block truncate hover:text-primary hover:underline">
+                          {contract.title}
+                        </Link>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{contract.vendor?.name ?? contract.vendorId ?? '—'}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        <RelatedRecordLink
+                          record={{ kind: 'vendor', id: contract.vendor?.id, label: contract.vendor?.name, relation: 'Supplier' }}
+                          fallback={contract.vendorId ?? '—'}
+                        />
+                      </TableCell>
                       <TableCell className="text-muted-foreground">
                         {CONTRACT_TYPE_LABELS[contract.type] ?? contract.type ?? '—'}
                       </TableCell>

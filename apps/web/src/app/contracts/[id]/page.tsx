@@ -1,11 +1,13 @@
 'use client';
 
 import { FormEvent, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Brain, CheckCircle2, ClipboardCheck, Power, ShieldAlert, XCircle } from 'lucide-react';
 import { api } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { DocumentUploader } from '../../../components/document-uploader';
+import { RelatedRecordLink, RelatedRecords } from '../../../components/related-records';
 import { StatusBadge } from '../../../components/status-badge';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge } from '../../../components/ui/badge';
@@ -44,7 +46,7 @@ const fmtDate = (d: string | null | undefined) => {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
-function OverviewField({ label, value }: { label: string; value: string }) {
+function OverviewField({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
@@ -204,6 +206,11 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const clauses = contract.clauses ?? [];
   const obligations = contract.obligations ?? [];
   const intelligence = contract.intelligenceSummary ?? {};
+  const supplier = { kind: 'vendor' as const, id: contract.vendor?.id, label: contract.vendor?.name, relation: 'Supplier' };
+  const relatedRecords = [
+    supplier,
+    ...(contract.softwareLicenses ?? []).map((license: any) => ({ kind: 'software_license' as const, id: license.id, label: license.productName, relation: 'Software license' })),
+  ];
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -250,12 +257,14 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
         </div>
       </div>
 
+      <RelatedRecords records={relatedRecords} />
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Overview</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-3">
-          <OverviewField label="Vendor" value={contract.vendor?.name ?? '—'} />
+          <OverviewField label="Vendor" value={<RelatedRecordLink record={supplier} />} />
           <OverviewField label="Type" value={CONTRACT_TYPE_LABELS[contract.type] ?? contract.type ?? '—'} />
           <OverviewField label="Payment Terms" value={contract.paymentTerms ?? '—'} />
           <OverviewField label="Start Date" value={fmtDate(contract.startDate)} />

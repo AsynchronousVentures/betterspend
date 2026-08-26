@@ -286,10 +286,20 @@ export class PurchaseOrdersService {
         ),
       with: {
         vendor: true,
-        lines: { with: { taxCode: true } },
+        lines: { with: { taxCode: true, matchedContract: true } },
         versions: true,
         entity: true,
         requisition: true,
+        goodsReceipts: {
+          columns: { id: true, number: true, status: true },
+        },
+        invoices: {
+          columns: { id: true, internalNumber: true, invoiceNumber: true, status: true },
+        },
+        commitmentEvents: {
+          columns: { id: true, budgetId: true },
+          with: { budget: { columns: { id: true, name: true } } },
+        },
       },
     });
     if (!po) throw new NotFoundException(`Purchase Order ${id} not found`);

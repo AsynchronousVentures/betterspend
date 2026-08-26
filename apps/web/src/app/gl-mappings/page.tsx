@@ -47,6 +47,7 @@ function GlMappingsContent() {
   const activeTab = searchParams.get('view') === 'export-history' ? 'jobs' : 'mappings';
   const [mappings, setMappings] = useState<GlMapping[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [filterSystem, setFilterSystem] = useState<TargetSystem | ''>(() => {
     const targetSystem = searchParams.get('targetSystem');
     return targetSystem === 'qbo' || targetSystem === 'xero' ? targetSystem : '';
@@ -57,8 +58,13 @@ function GlMappingsContent() {
   const [form, setForm] = useState(EMPTY_FORM);
 
   async function loadMappings() {
-    const data = await api.glMappings.list(filterSystem || undefined).catch(() => []);
-    setMappings(data as GlMapping[]);
+    try {
+      const data = await api.glMappings.list(filterSystem || undefined);
+      setMappings(data as GlMapping[]);
+      setLoadError('');
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Failed to load GL mappings');
+    }
   }
 
   useEffect(() => {
@@ -130,6 +136,12 @@ function GlMappingsContent() {
           </div>
         }
       />
+
+      {loadError ? (
+        <Alert variant="destructive">
+          <AlertDescription>{loadError}</AlertDescription>
+        </Alert>
+      ) : null}
 
       {activeTab === 'mappings' ? (
         <>
@@ -272,7 +284,7 @@ function GlMappingsContent() {
             </Card>
           </div>
         </>
-      ) : <GlExportHistory />}
+      ) : <GlExportHistory selectedJobId={searchParams.get('job')} />}
     </div>
   );
 }

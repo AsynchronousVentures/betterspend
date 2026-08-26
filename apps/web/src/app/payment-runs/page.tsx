@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { CheckCircle2, CreditCard, FileCheck2, RefreshCw, Send, XCircle } from 'lucide-react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
@@ -69,6 +70,8 @@ function statusTone(status: string) {
 }
 
 export default function PaymentRunsPage() {
+  const searchParams = useSearchParams();
+  const selectedRunId = searchParams.get('run');
   const [eligibleInvoices, setEligibleInvoices] = useState<Invoice[]>([]);
   const [runs, setRuns] = useState<PaymentRun[]>([]);
   const [summary, setSummary] = useState<any>(null);
@@ -104,6 +107,11 @@ export default function PaymentRunsPage() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    if (!selectedRunId || loading) return;
+    document.getElementById(`payment-run-${selectedRunId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [loading, selectedRunId, runs]);
 
   const selectedInvoices = useMemo(
     () => eligibleInvoices.filter((invoice) => selected.has(invoice.id)),
@@ -368,7 +376,12 @@ export default function PaymentRunsPage() {
                     const usesVirtualCard = methods.includes('virtual_card');
                     const actionBusy = (action: string) => busy === `${action}:${run.id}`;
                     return (
-                      <TableRow key={run.id}>
+                      <TableRow
+                        key={run.id}
+                        id={`payment-run-${run.id}`}
+                        aria-current={run.id === selectedRunId ? 'true' : undefined}
+                        className={run.id === selectedRunId ? 'bg-muted/50' : undefined}
+                      >
                         <TableCell>
                           <StatusBadge value={statusTone(run.status)} label={run.status.replace(/_/g, ' ')} />
                         </TableCell>

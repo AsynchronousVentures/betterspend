@@ -38,7 +38,7 @@ function invoiceLabel(job: GlExportJob): string {
   );
 }
 
-export function GlExportHistory() {
+export function GlExportHistory({ selectedJobId }: { selectedJobId?: string | null }) {
   const [jobs, setJobs] = useState<GlExportJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -48,6 +48,13 @@ export function GlExportHistory() {
   useEffect(() => {
     refresh();
   }, []);
+
+  useEffect(() => {
+    if (!selectedJobId || loading || !jobs.some((job) => job.id === selectedJobId)) return;
+    const job = jobs.find((candidate) => candidate.id === selectedJobId);
+    if (job?.errorMessage) setExpanded(selectedJobId);
+    document.getElementById(`gl-export-job-${selectedJobId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [jobs, loading, selectedJobId]);
 
   function refresh() {
     setLoading(true);
@@ -123,7 +130,9 @@ export function GlExportHistory() {
                 return (
                   <Fragment key={job.id}>
                     <TableRow
-                      className={hasError ? 'cursor-pointer' : undefined}
+                      id={`gl-export-job-${job.id}`}
+                      aria-current={job.id === selectedJobId ? 'true' : undefined}
+                      className={job.id === selectedJobId ? 'bg-muted/50' : hasError ? 'cursor-pointer' : undefined}
                       onClick={() => hasError && setExpanded(isExpanded ? null : job.id)}
                     >
                       <TableCell>
