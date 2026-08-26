@@ -457,7 +457,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                   <Button asChild type="button" variant="outline" className="justify-start">
                     <Link href="/gl-mappings?view=export-history">View export history</Link>
                   </Button>
-                  {canOpenPaymentRuns && !latestGlJob ? (
+                  {canOpenPaymentRuns && !glJobsLoading && !glJobsError && !latestGlJob ? (
                     <Button
                       type="button"
                       variant="outline"

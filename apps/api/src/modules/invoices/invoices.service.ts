@@ -437,7 +437,7 @@ export class InvoicesService {
     const visibleVendor =
       invoice.vendor &&
       canViewRelatedRecord(access, 'vendor', ['vendors:view'], {
-        entityId: invoice.vendor.entityId ?? invoice.entityId,
+        entityId: invoice.vendor.entityId,
       })
         ? invoice.vendor
         : null;
@@ -463,7 +463,13 @@ export class InvoicesService {
       ...invoiceRecord,
       vendor: visibleVendor,
       purchaseOrder: visiblePurchaseOrder
-        ? { ...visiblePurchaseOrder, requisition: visibleRequisition, goodsReceipts }
+        ? {
+            ...visiblePurchaseOrder,
+            requisition: visibleRequisition
+              ? { id: visibleRequisition.id, number: visibleRequisition.number }
+              : null,
+            goodsReceipts,
+          }
         : null,
       paymentRuns,
       activeApproval,

@@ -250,8 +250,9 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
   );
   const lifecycleRecords = [request, ...(approval ? [approval] : []), ...purchaseOrders];
   const relatedRecords = [...budgets];
-  const canSubmit = req.status === 'draft';
-  const canCreatePurchaseOrder = req.status === 'approved';
+  const showApprovalAsPrimary = Boolean(approval);
+  const canSubmit = !showApprovalAsPrimary && req.status === 'draft';
+  const canCreatePurchaseOrder = !showApprovalAsPrimary && req.status === 'approved';
   const canCancel = req.status === 'draft' || req.status === 'pending_approval';
 
   return (
@@ -267,6 +268,11 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
             <Badge variant={statusVariant(req.status) as any}>
               {STATUS_LABELS[req.status] ?? req.status}
             </Badge>
+            {showApprovalAsPrimary ? (
+              <Button asChild>
+                <Link href={`/approvals/${approval?.id}`}>Review approval</Link>
+              </Button>
+            ) : null}
             {canSubmit ? (
               <Button
                 type="button"

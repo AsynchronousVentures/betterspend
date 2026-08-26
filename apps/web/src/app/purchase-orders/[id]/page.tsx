@@ -90,9 +90,14 @@ interface PurchaseOrder {
   lines: POLine[];
   versions?: POVersion[];
   requisition?: { id: string; number: string } | null;
+  activeApproval?: { id: string; currentStep: number; status: string } | null;
   goodsReceipts?: { id: string; number: string; status: string }[];
   invoices?: { id: string; internalNumber: string; invoiceNumber: string; status: string }[];
-  commitmentEvents?: { id: string; budgetId: string; budget?: { id: string; name: string } | null }[];
+  commitmentEvents?: {
+    id: string;
+    budgetId: string;
+    budget?: { id: string; name: string } | null;
+  }[];
 }
 
 function formatCurrency(amount: string | number | null, currency = 'USD') {
@@ -308,6 +313,14 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
     label: po.requisition?.number,
     relation: 'Request',
   };
+  const approval = po.activeApproval
+    ? {
+        kind: 'approval_request' as const,
+        id: po.activeApproval.id,
+        label: `Step ${po.activeApproval.currentStep}`,
+        relation: 'Approval',
+      }
+    : null;
   const supplier = {
     kind: 'vendor' as const,
     id: po.vendor?.id,
@@ -352,12 +365,14 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
   );
   const lifecycleRecords = [
     request,
+    ...(approval ? [approval] : []),
     { kind: 'purchase_order' as const, id: po.id, label: po.number, relation: 'Purchase order' },
     ...receipts,
     ...invoices,
   ];
   const relatedRecords = [supplier, ...contracts, ...budgets];
-  const showIssueAsPrimary = canIssue;
+  const showApprovalAsPrimary = Boolean(approval);
+  const showIssueAsPrimary = !showApprovalAsPrimary && canIssue;
   const showReleaseAsPrimary = !showIssueAsPrimary && canCreateRelease;
   const showReceivingAsPrimary = !showIssueAsPrimary && !showReleaseAsPrimary && canReceive;
 
@@ -378,6 +393,11 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
             </Badge>
             <Badge variant="outline">V{po.version ?? 1}</Badge>
             {isBlanket ? <Badge variant="warning">Blanket PO</Badge> : null}
+            {showApprovalAsPrimary ? (
+              <Button asChild>
+                <Link href={`/approvals/${approval?.id}`}>Review approval</Link>
+              </Button>
+            ) : null}
             {showIssueAsPrimary ? (
               <Button type="button" onClick={issuePO} disabled={actionLoading !== null}>
                 {actionLoading === 'issue' ? 'Issuing...' : 'Issue PO'}
@@ -474,7 +494,9 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <DetailField label="Vendor" value={<RelatedRecordLink record={supplier} />} />
-          {po.requisition ? <DetailField label="Source Request" value={<RelatedRecordLink record={request} />} /> : null}
+          {po.requisition ? (
+            <DetailField label="Source Request" value={<RelatedRecordLink record={request} />} />
+          ) : null}
           <DetailField label="Payment Terms" value={po.paymentTerms ?? '—'} />
           <DetailField label="Currency" value={po.currency} />
           <DetailField label="Status" value={po.status.replace(/_/g, ' ')} />
