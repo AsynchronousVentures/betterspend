@@ -256,19 +256,17 @@ export default function RecurringPoPage() {
     setSaving(true);
     setError('');
     try {
-      const total = lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
       await api.recurringPo.create({
         title: form.title,
         description: form.description || undefined,
         vendorId: form.vendorId || undefined,
         frequency: form.frequency,
         dayOfMonth: ['monthly', 'quarterly', 'annually'].includes(form.frequency) ? form.dayOfMonth : undefined,
-        totalAmount: total,
         currency: form.currency,
         lines: lines.map((line) => ({
           description: line.description,
-          quantity: line.quantity,
-          unitPrice: line.unitPrice,
+          quantity: line.quantity.toFixed(2),
+          unitPrice: line.unitPrice.toFixed(2),
           unitOfMeasure: line.unitOfMeasure,
         })),
         glAccount: form.glAccount || undefined,
