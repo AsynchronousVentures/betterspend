@@ -1,16 +1,16 @@
-import { Logger, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Logger, UnauthorizedException } from '@nestjs/common';
 import type { Db } from '@betterspend/db';
 import { VendorPortalService } from './vendor-portal.service';
 import { hashPortalSessionToken, PORTAL_SESSION_TTL_MS } from './vendor-portal-session';
 
-function createService(db: unknown, settingsService: unknown = {}) {
+function createService(db: unknown, settingsService: unknown = {}, vendorsService: unknown = {}) {
   return new VendorPortalService(
     db as Db,
     {} as never,
     settingsService as never,
     {} as never,
     {} as never,
-    {} as never,
+    vendorsService as never,
     {} as never,
   );
 }
@@ -178,13 +178,41 @@ describe('VendorPortalService sessions', () => {
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
 
-    await createService(db, {
-      getAll: jest.fn(async () => ({ app_url: 'https://app.example.com' })),
-    }).sendAccessLink(vendorId, organizationId);
+    await createService(
+      db,
+      {
+        getAll: jest.fn(async () => ({ app_url: 'https://app.example.com' })),
+      },
+      {
+        findOne: jest.fn(async () => ({
+          id: vendorId,
+          name: 'Vendor',
+          contactInfo: { email: 'vendor@example.com' },
+        })),
+      },
+    ).sendAccessLink(vendorId, organizationId);
 
     const messages = [...warn.mock.calls, ...log.mock.calls].flat().join(' ');
     expect(insertedToken).toHaveLength(64);
     expect(messages).not.toContain(insertedToken);
     expect(messages).not.toContain('token=');
+  });
+
+  it('does not create a portal token for a vendor outside the caller scope', async () => {
+    const insert = jest.fn();
+    const service = createService(
+      { insert },
+      {},
+      {
+        findOne: jest.fn(async () => {
+          throw new ForbiddenException('The vendor is outside your assigned scope');
+        }),
+      },
+    );
+
+    await expect(
+      service.sendAccessLink(vendorId, organizationId, {} as never),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(insert).not.toHaveBeenCalled();
   });
 });

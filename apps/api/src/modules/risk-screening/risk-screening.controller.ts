@@ -11,7 +11,9 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { manualSanctionsReviewSchema, sanctionsIngestRequestSchema } from '@betterspend/shared';
 import type { Request } from 'express';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { OperationalPermissions } from '../../common/decorators/operational-permissions.decorator';
+import { CurrentAccess } from '../auth/current-access.decorator';
+import type { AccessPolicy } from '../auth/access-policy';
 import { RiskScreeningService } from './risk-screening.service';
 
 @ApiTags('risk-screening')
@@ -32,50 +34,55 @@ export class RiskScreeningController {
   }
 
   @Get()
-  @Roles('admin', 'approver', 'finance')
+  @OperationalPermissions('supplier_risk:view')
   @ApiOperation({ summary: 'Sanctions screening status for all vendors' })
-  listStatus(@Req() req: Request) {
+  listStatus(@Req() req: Request, @CurrentAccess() access?: AccessPolicy) {
     const { organizationId } = this.requireSession(req);
-    return this.riskScreeningService.listStatus(organizationId);
+    return this.riskScreeningService.listStatus(organizationId, access);
   }
 
   @Post('vendors/:vendorId/screen')
-  @Roles('admin', 'approver', 'finance')
+  @OperationalPermissions('supplier_risk:manage')
   @ApiOperation({ summary: 'Re-screen a single vendor against sanctions entries' })
-  screenVendor(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Req() req: Request) {
+  screenVendor(
+    @Param('vendorId', ParseUUIDPipe) vendorId: string,
+    @Req() req: Request,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
     const { organizationId, userId } = this.requireSession(req);
-    return this.riskScreeningService.screenVendor(organizationId, vendorId, userId);
+    return this.riskScreeningService.screenVendor(organizationId, vendorId, userId, access);
   }
 
   @Post('screen-all')
-  @Roles('admin', 'approver')
+  @OperationalPermissions('supplier_risk:manage')
   @ApiOperation({ summary: 'Re-screen every active vendor' })
-  screenAll(@Req() req: Request) {
+  screenAll(@Req() req: Request, @CurrentAccess() access?: AccessPolicy) {
     const { organizationId, userId } = this.requireSession(req);
-    return this.riskScreeningService.screenAllVendors(organizationId, userId);
+    return this.riskScreeningService.screenAllVendors(organizationId, userId, access);
   }
 
   @Post('vendors/:vendorId/manual-review')
-  @Roles('admin')
+  @OperationalPermissions('supplier_risk:manage')
   @ApiOperation({ summary: 'Record a manual review decision for a flagged vendor' })
   manualReview(
     @Param('vendorId', ParseUUIDPipe) vendorId: string,
     @Body() body: unknown,
     @Req() req: Request,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
     const { organizationId, userId } = this.requireSession(req);
     const { note } = manualSanctionsReviewSchema.parse(body);
-    return this.riskScreeningService.manualReview(organizationId, vendorId, userId, note);
+    return this.riskScreeningService.manualReview(organizationId, vendorId, userId, note, access);
   }
 
   @Post('ingest')
-  @Roles('admin')
+  @OperationalPermissions('supplier_risk:manage')
   @ApiOperation({ summary: 'Download and replace the local sanctions list for a source' })
-  ingest(@Body() body: unknown, @Req() req: Request) {
+  ingest(@Body() body: unknown, @Req() req: Request, @CurrentAccess() access?: AccessPolicy) {
     // URLs are server-controlled per source; request bodies cannot point the
     // fetch at arbitrary hosts.
     const { organizationId, userId } = this.requireSession(req);
     const { source = 'ofac_sdn' } = sanctionsIngestRequestSchema.parse(body);
-    return this.riskScreeningService.ingest(organizationId, userId, source);
+    return this.riskScreeningService.ingest(organizationId, userId, source, access);
   }
 }

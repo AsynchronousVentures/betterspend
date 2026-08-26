@@ -1,4 +1,10 @@
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
@@ -142,7 +148,10 @@ export class RfqService {
       })
       .from(rfqRequests)
       .leftJoin(users, eq(rfqRequests.requesterId, users.id))
-      .leftJoin(vendors, eq(rfqRequests.awardedVendorId, vendors.id))
+      .leftJoin(
+        vendors,
+        and(eq(rfqRequests.awardedVendorId, vendors.id), eq(vendors.organizationId, orgId)),
+      )
       .where(eq(rfqRequests.organizationId, orgId))
       .orderBy(desc(rfqRequests.createdAt));
 
@@ -183,7 +192,10 @@ export class RfqService {
       })
       .from(rfqRequests)
       .leftJoin(users, eq(rfqRequests.requesterId, users.id))
-      .leftJoin(vendors, eq(rfqRequests.awardedVendorId, vendors.id))
+      .leftJoin(
+        vendors,
+        and(eq(rfqRequests.awardedVendorId, vendors.id), eq(vendors.organizationId, orgId)),
+      )
       .where(and(eq(rfqRequests.organizationId, orgId), eq(rfqRequests.id, id)));
 
     if (!row) throw new NotFoundException('RFQ not found');
@@ -197,13 +209,19 @@ export class RfqService {
     const invitations = await this.db
       .select({ inv: rfqInvitations, vendor: { id: vendors.id, name: vendors.name } })
       .from(rfqInvitations)
-      .leftJoin(vendors, eq(rfqInvitations.vendorId, vendors.id))
+      .leftJoin(
+        vendors,
+        and(eq(rfqInvitations.vendorId, vendors.id), eq(vendors.organizationId, orgId)),
+      )
       .where(eq(rfqInvitations.rfqId, id));
 
     const responses = await this.db
       .select({ res: rfqResponses, vendor: { id: vendors.id, name: vendors.name } })
       .from(rfqResponses)
-      .leftJoin(vendors, eq(rfqResponses.vendorId, vendors.id))
+      .innerJoin(
+        vendors,
+        and(eq(rfqResponses.vendorId, vendors.id), eq(vendors.organizationId, orgId)),
+      )
       .where(eq(rfqResponses.rfqId, id))
       .orderBy(rfqResponses.totalAmount);
 
@@ -267,6 +285,19 @@ export class RfqService {
       vendorIds?: string[];
     },
   ) {
+    const vendorIds = [...new Set(dto.vendorIds ?? [])];
+    if (vendorIds.length) {
+      const organizationVendors = await this.db
+        .select({ id: vendors.id })
+        .from(vendors)
+        .where(and(eq(vendors.organizationId, orgId), inArray(vendors.id, vendorIds)));
+      if (organizationVendors.length !== vendorIds.length) {
+        throw new BadRequestException(
+          'Every invited vendor must belong to the current organization',
+        );
+      }
+    }
+
     const number = await this.nextNumber(orgId);
 
     const [rfq] = await this.db
@@ -296,10 +327,10 @@ export class RfqService {
       );
     }
 
-    if (dto.vendorIds?.length) {
+    if (vendorIds.length) {
       await this.db
         .insert(rfqInvitations)
-        .values(dto.vendorIds.map((vendorId) => ({ rfqId: rfq.id, vendorId })));
+        .values(vendorIds.map((vendorId) => ({ rfqId: rfq.id, vendorId })));
     }
 
     return this.findOne(orgId, rfq.id);
@@ -357,7 +388,10 @@ export class RfqService {
         vendor: vendors,
       })
       .from(rfqResponses)
-      .leftJoin(vendors, eq(rfqResponses.vendorId, vendors.id))
+      .innerJoin(
+        vendors,
+        and(eq(rfqResponses.vendorId, vendors.id), eq(vendors.organizationId, orgId)),
+      )
       .where(and(eq(rfqResponses.id, responseId), eq(rfqResponses.rfqId, id)));
 
     if (!response) throw new NotFoundException('Response not found');
@@ -515,6 +549,21 @@ export class RfqService {
   ) {
     const rfq = await this.findOne(orgId, rfqId);
     if (rfq.status !== 'open') throw new BadRequestException('RFQ is not open for responses');
+
+    const [invitation] = await this.db
+      .select({ id: rfqInvitations.id })
+      .from(rfqInvitations)
+      .innerJoin(vendors, eq(rfqInvitations.vendorId, vendors.id))
+      .where(
+        and(
+          eq(rfqInvitations.rfqId, rfqId),
+          eq(rfqInvitations.vendorId, dto.vendorId),
+          eq(vendors.organizationId, orgId),
+        ),
+      );
+    if (!invitation) {
+      throw new ForbiddenException('Only an invited vendor may submit an RFQ response');
+    }
 
     const rfqLinesList = await this.db.select().from(rfqLines).where(eq(rfqLines.rfqId, rfqId));
     const lineMap = Object.fromEntries(rfqLinesList.map((l) => [l.id, l]));

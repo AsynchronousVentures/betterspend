@@ -23,6 +23,9 @@ import {
 import { MessagesService, parseThreadType } from '../messages/messages.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
+import { CurrentAccess } from '../auth/current-access.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
+import type { AccessPolicy } from '../auth/access-policy';
 import {
   PORTAL_SESSION_COOKIE,
   portalSessionCookieOptions,
@@ -39,11 +42,16 @@ export class VendorPortalController {
 
   /** Admin: send portal access link to a vendor (requires auth). */
   @Post('access')
+  @Permissions('vendors:edit')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send portal access link email to a vendor (admin use)' })
   @HttpCode(HttpStatus.OK)
-  async sendAccess(@Body() body: { vendorId: string }, @CurrentOrgId() orgId: string) {
-    return this.vendorPortalService.sendAccessLink(body.vendorId, orgId);
+  async sendAccess(
+    @Body() body: { vendorId: string },
+    @CurrentOrgId() orgId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.vendorPortalService.sendAccessLink(body.vendorId, orgId, access);
   }
 
   /** Public: exchange a one-time emailed credential for a scoped browser session. */

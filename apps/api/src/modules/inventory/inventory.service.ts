@@ -1,9 +1,11 @@
-import { Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { eq, and, lte, desc } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { inventoryItems, inventoryMovements } from '@betterspend/db';
+import type { AccessPolicy } from '../auth/access-policy';
+import { hasUnrestrictedOperationalAccess } from '../auth/operational-access';
 
 export interface CreateInventoryItemInput {
   sku: string;
@@ -35,7 +37,8 @@ export interface AdjustInventoryInput {
 export class InventoryService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  async list(orgId: string, params: { lowStockOnly?: boolean } = {}) {
+  async list(orgId: string, params: { lowStockOnly?: boolean } = {}, access?: AccessPolicy) {
+    this.assertGlobal(access, 'inventory:view');
     const items = await this.db
       .select()
       .from(inventoryItems)
@@ -45,7 +48,8 @@ export class InventoryService {
     return items.map((item) => this.enrichItem(item));
   }
 
-  async get(orgId: string, id: string) {
+  async get(orgId: string, id: string, access?: AccessPolicy) {
+    this.assertGlobal(access, 'inventory:view');
     const item = await this.db.query.inventoryItems.findFirst({
       where: (t, { and, eq }) => and(eq(t.id, id), eq(t.organizationId, orgId)),
     });
@@ -61,7 +65,8 @@ export class InventoryService {
     return { ...this.enrichItem(item), movements };
   }
 
-  async create(orgId: string, data: CreateInventoryItemInput) {
+  async create(orgId: string, data: CreateInventoryItemInput, access?: AccessPolicy) {
+    this.assertGlobal(access, 'inventory:manage');
     const [item] = await this.db
       .insert(inventoryItems)
       .values({
@@ -80,7 +85,8 @@ export class InventoryService {
     return this.enrichItem(item);
   }
 
-  async update(orgId: string, id: string, data: UpdateInventoryItemInput) {
+  async update(orgId: string, id: string, data: UpdateInventoryItemInput, access?: AccessPolicy) {
+    this.assertGlobal(access, 'inventory:manage');
     const existing = await this.db.query.inventoryItems.findFirst({
       where: (t, { and, eq }) => and(eq(t.id, id), eq(t.organizationId, orgId)),
     });
@@ -90,8 +96,11 @@ export class InventoryService {
     if (data.name !== undefined) updateData.name = data.name;
     if (data.description !== undefined) updateData.description = data.description;
     if (data.unit !== undefined) updateData.unit = data.unit;
-    if (data.reorderPoint !== undefined) updateData.reorderPoint = data.reorderPoint != null ? String(data.reorderPoint) : null;
-    if (data.reorderQuantity !== undefined) updateData.reorderQuantity = data.reorderQuantity != null ? String(data.reorderQuantity) : null;
+    if (data.reorderPoint !== undefined)
+      updateData.reorderPoint = data.reorderPoint != null ? String(data.reorderPoint) : null;
+    if (data.reorderQuantity !== undefined)
+      updateData.reorderQuantity =
+        data.reorderQuantity != null ? String(data.reorderQuantity) : null;
     if (data.location !== undefined) updateData.location = data.location;
     if (data.metadata !== undefined) updateData.metadata = data.metadata;
 
@@ -104,7 +113,8 @@ export class InventoryService {
     return this.enrichItem(updated);
   }
 
-  async adjust(orgId: string, id: string, input: AdjustInventoryInput) {
+  async adjust(orgId: string, id: string, input: AdjustInventoryInput, access?: AccessPolicy) {
+    this.assertGlobal(access, 'inventory:manage');
     const item = await this.db.query.inventoryItems.findFirst({
       where: (t, { and, eq }) => and(eq(t.id, id), eq(t.organizationId, orgId)),
     });
@@ -132,7 +142,8 @@ export class InventoryService {
     return this.enrichItem(updated);
   }
 
-  async movements(orgId: string, itemId: string) {
+  async movements(orgId: string, itemId: string, access?: AccessPolicy) {
+    this.assertGlobal(access, 'inventory:view');
     const item = await this.db.query.inventoryItems.findFirst({
       where: (t, { and, eq }) => and(eq(t.id, itemId), eq(t.organizationId, orgId)),
     });
@@ -145,7 +156,8 @@ export class InventoryService {
       .orderBy(desc(inventoryMovements.createdAt));
   }
 
-  async getLowStockItems(orgId: string) {
+  async getLowStockItems(orgId: string, access?: AccessPolicy) {
+    this.assertGlobal(access, 'inventory:view');
     const items = await this.db
       .select()
       .from(inventoryItems)
@@ -165,13 +177,18 @@ export class InventoryService {
    */
   async recordReceipt(
     orgId: string,
-    lines: Array<{ sku?: string; description?: string; quantityReceived: number; referenceId: string }>,
+    lines: Array<{
+      sku?: string;
+      description?: string;
+      quantityReceived: number;
+      referenceId: string;
+    }>,
   ) {
     for (const line of lines) {
       if (!line.sku && !line.description) continue;
 
       // Find matching inventory item by SKU (exact) or name (case-insensitive)
-      let item: (typeof inventoryItems.$inferSelect) | undefined;
+      let item: typeof inventoryItems.$inferSelect | undefined;
       if (line.sku) {
         item = await this.db.query.inventoryItems.findFirst({
           where: (t, { and, eq }) => and(eq(t.organizationId, orgId), eq(t.sku, line.sku!)),
@@ -213,8 +230,8 @@ export class InventoryService {
   }
 
   private enrichItem(item: typeof inventoryItems.$inferSelect) {
-    const onHand = parseFloat(item.quantityOnHand as string ?? '0');
-    const reserved = parseFloat(item.quantityReserved as string ?? '0');
+    const onHand = parseFloat((item.quantityOnHand as string) ?? '0');
+    const reserved = parseFloat((item.quantityReserved as string) ?? '0');
     const reorderPoint = item.reorderPoint != null ? parseFloat(item.reorderPoint as string) : null;
 
     let stockStatus: 'out_of_stock' | 'low_stock' | 'ok' = 'ok';
@@ -230,8 +247,15 @@ export class InventoryService {
       quantityReserved: reserved,
       quantityAvailable: onHand - reserved,
       reorderPoint,
-      reorderQuantity: item.reorderQuantity != null ? parseFloat(item.reorderQuantity as string) : null,
+      reorderQuantity:
+        item.reorderQuantity != null ? parseFloat(item.reorderQuantity as string) : null,
       stockStatus,
     };
+  }
+
+  private assertGlobal(access: AccessPolicy | undefined, permission: string) {
+    if (!hasUnrestrictedOperationalAccess(access, 'inventory', permission)) {
+      throw new ForbiddenException('Inventory access requires a global grant');
+    }
   }
 }

@@ -1,11 +1,22 @@
-import { Injectable, Inject, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
-import { eq, and, ilike, or, desc, isNull } from 'drizzle-orm';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  BadRequestException,
+  Logger,
+  ForbiddenException,
+} from '@nestjs/common';
+import { eq, and, ilike, or, desc, isNull, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { auditLog, catalogItems, catalogPriceProposals } from '@betterspend/db';
+import { auditLog, catalogItems, catalogPriceProposals, vendors } from '@betterspend/db';
 import { z } from 'zod';
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
+import type { AccessPolicy } from '../auth/access-policy';
+import { operationalScope, scopedVendorPredicate } from '../auth/operational-access';
+
+type CatalogTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 export interface CreateCatalogItemInput {
   vendorId?: string;
@@ -42,14 +53,27 @@ export class CatalogService {
     private readonly settingsService: SettingsService,
   ) {}
 
-  async findAll(organizationId: string, filters?: { vendorId?: string; category?: string; activeOnly?: boolean }) {
-    await this.applyDueApprovedProposals(organizationId);
+  async findAll(
+    organizationId: string,
+    filters?: { vendorId?: string; category?: string; activeOnly?: boolean },
+    access?: AccessPolicy,
+  ) {
+    await this.applyDueApprovedProposals(organizationId, access);
     return this.db.query.catalogItems.findMany({
       where: (c, { and, eq }) => {
         const conditions = [eq(c.organizationId, organizationId)];
         if (filters?.vendorId) conditions.push(eq(c.vendorId, filters.vendorId));
         if (filters?.category) conditions.push(eq(c.category, filters.category));
         if (filters?.activeOnly) conditions.push(eq(c.isActive, true));
+        const vendorScope = scopedVendorPredicate(
+          this.db,
+          organizationId,
+          access,
+          'catalog',
+          'catalog:view',
+          c.vendorId,
+        );
+        if (vendorScope) conditions.push(vendorScope);
         return and(...conditions);
       },
       with: { vendor: true },
@@ -57,8 +81,8 @@ export class CatalogService {
     });
   }
 
-  async search(organizationId: string, q: string) {
-    await this.applyDueApprovedProposals(organizationId);
+  async search(organizationId: string, q: string, access?: AccessPolicy) {
+    await this.applyDueApprovedProposals(organizationId, access);
     const term = `%${q}%`;
     return this.db.query.catalogItems.findMany({
       where: (c, { and, eq, or, ilike }) =>
@@ -66,6 +90,14 @@ export class CatalogService {
           eq(c.organizationId, organizationId),
           eq(c.isActive, true),
           or(ilike(c.name, term), ilike(c.sku, term), ilike(c.description, term)),
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'catalog',
+            'catalog:view',
+            c.vendorId,
+          ),
         ),
       with: { vendor: true },
       orderBy: (c, { asc }) => asc(c.name),
@@ -73,16 +105,38 @@ export class CatalogService {
     });
   }
 
-  async findOne(id: string, organizationId: string) {
-    await this.applyDueApprovedProposals(organizationId);
+  async findOne(
+    id: string,
+    organizationId: string,
+    access?: AccessPolicy,
+    permission = 'catalog:view',
+  ) {
+    await this.applyDueApprovedProposals(organizationId, access);
     const item = await this.db.query.catalogItems.findFirst({
-      where: (c, { and, eq }) => and(eq(c.id, id), eq(c.organizationId, organizationId)),
+      where: (c, { and, eq }) =>
+        and(
+          eq(c.id, id),
+          eq(c.organizationId, organizationId),
+          scopedVendorPredicate(this.db, organizationId, access, 'catalog', permission, c.vendorId),
+        ),
       with: { vendor: true },
     });
     if (!item) throw new NotFoundException(`Catalog item ${id} not found`);
+    const proposalVendorScope = scopedVendorPredicate(
+      this.db,
+      organizationId,
+      access,
+      'catalog',
+      permission,
+      catalogPriceProposals.vendorId,
+    );
     const proposals = await this.db.query.catalogPriceProposals.findMany({
       where: (proposal, { and, eq }) =>
-        and(eq(proposal.organizationId, organizationId), eq(proposal.itemId, id)),
+        and(
+          eq(proposal.organizationId, organizationId),
+          eq(proposal.itemId, id),
+          proposalVendorScope,
+        ),
       with: {
         vendor: true,
         reviewer: true,
@@ -95,61 +149,176 @@ export class CatalogService {
     };
   }
 
-  async create(organizationId: string, input: CreateCatalogItemInput) {
-    const [item] = await this.db
-      .insert(catalogItems)
-      .values({
+  async create(organizationId: string, input: CreateCatalogItemInput, access?: AccessPolicy) {
+    const item = await this.db.transaction(async (tx) => {
+      await this.assertVendorScopeInTransaction(
+        tx,
         organizationId,
-        vendorId: input.vendorId ?? null,
-        sku: input.sku ?? null,
-        name: input.name,
-        description: input.description ?? null,
-        category: input.category ?? null,
-        unitOfMeasure: input.unitOfMeasure ?? 'each',
-        unitPrice: String(input.unitPrice),
-        currency: input.currency ?? 'USD',
-        metadata: input.metadata ?? {},
-      })
-      .returning();
-    return this.findOne(item.id, organizationId);
+        access,
+        'catalog:manage',
+        input.vendorId,
+      );
+      const [created] = await tx
+        .insert(catalogItems)
+        .values({
+          organizationId,
+          vendorId: input.vendorId ?? null,
+          sku: input.sku ?? null,
+          name: input.name,
+          description: input.description ?? null,
+          category: input.category ?? null,
+          unitOfMeasure: input.unitOfMeasure ?? 'each',
+          unitPrice: String(input.unitPrice),
+          currency: input.currency ?? 'USD',
+          metadata: input.metadata ?? {},
+        })
+        .returning();
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: null,
+        entityType: 'catalog_item',
+        entityId: created.id,
+        action: 'created',
+        changes: {
+          vendorId: created.vendorId,
+          sku: created.sku,
+          name: created.name,
+          unitPrice: created.unitPrice,
+          currency: created.currency,
+        },
+      });
+      return created;
+    });
+    return this.findOne(item.id, organizationId, access, 'catalog:manage');
   }
 
-  async update(id: string, organizationId: string, input: UpdateCatalogItemInput) {
-    await this.findOne(id, organizationId);
-    await this.db
-      .update(catalogItems)
-      .set({
-        ...input,
-        unitPrice: input.unitPrice !== undefined ? String(input.unitPrice) : undefined,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(catalogItems.id, id), eq(catalogItems.organizationId, organizationId)));
-    return this.findOne(id, organizationId);
+  async update(
+    id: string,
+    organizationId: string,
+    input: UpdateCatalogItemInput,
+    access?: AccessPolicy,
+  ) {
+    const updated = await this.db.transaction(async (tx) => {
+      const existing = await this.lockManagedCatalogItem(tx, id, organizationId, access);
+      if (input.vendorId !== undefined) {
+        await this.assertVendorScopeInTransaction(
+          tx,
+          organizationId,
+          access,
+          'catalog:manage',
+          input.vendorId,
+        );
+      }
+      const [changed] = await tx
+        .update(catalogItems)
+        .set({
+          ...input,
+          unitPrice: input.unitPrice !== undefined ? String(input.unitPrice) : undefined,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(catalogItems.id, id),
+            eq(catalogItems.organizationId, organizationId),
+            scopedVendorPredicate(
+              this.db,
+              organizationId,
+              access,
+              'catalog',
+              'catalog:manage',
+              catalogItems.vendorId,
+            ),
+          ),
+        )
+        .returning();
+      if (!changed) throw new NotFoundException(`Catalog item ${id} not found`);
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: null,
+        entityType: 'catalog_item',
+        entityId: id,
+        action: 'updated',
+        changes: {
+          before: {
+            vendorId: existing.vendorId,
+            name: existing.name,
+            unitPrice: existing.unitPrice,
+          },
+          after: input,
+        },
+      });
+      return changed;
+    });
+    return this.findOne(id, organizationId, access, 'catalog:manage');
   }
 
-  async remove(id: string, organizationId: string) {
-    await this.findOne(id, organizationId);
-    await this.db
-      .delete(catalogItems)
-      .where(and(eq(catalogItems.id, id), eq(catalogItems.organizationId, organizationId)));
+  async remove(id: string, organizationId: string, access?: AccessPolicy) {
+    await this.db.transaction(async (tx) => {
+      const existing = await this.lockManagedCatalogItem(tx, id, organizationId, access);
+      const [deleted] = await tx
+        .delete(catalogItems)
+        .where(
+          and(
+            eq(catalogItems.id, id),
+            eq(catalogItems.organizationId, organizationId),
+            scopedVendorPredicate(
+              this.db,
+              organizationId,
+              access,
+              'catalog',
+              'catalog:manage',
+              catalogItems.vendorId,
+            ),
+          ),
+        )
+        .returning({ id: catalogItems.id });
+      if (!deleted) throw new NotFoundException(`Catalog item ${id} not found`);
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: null,
+        entityType: 'catalog_item',
+        entityId: id,
+        action: 'deleted',
+        changes: { vendorId: existing.vendorId, name: existing.name },
+      });
+    });
   }
 
-  async getCategories(organizationId: string): Promise<string[]> {
+  async getCategories(organizationId: string, access?: AccessPolicy): Promise<string[]> {
     const items = await this.db.query.catalogItems.findMany({
-      where: (c, { eq }) => eq(c.organizationId, organizationId),
+      where: (c, { and, eq }) =>
+        and(
+          eq(c.organizationId, organizationId),
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'catalog',
+            'catalog:view',
+            c.vendorId,
+          ),
+        ),
       columns: { category: true },
     });
     const cats = [...new Set(items.map((i) => i.category).filter(Boolean))] as string[];
     return cats.sort();
   }
 
-  async listPriceProposals(organizationId: string, status?: string) {
-    await this.applyDueApprovedProposals(organizationId);
+  async listPriceProposals(organizationId: string, status?: string, access?: AccessPolicy) {
+    await this.applyDueApprovedProposals(organizationId, access);
     return this.db.query.catalogPriceProposals.findMany({
       where: (p, { and, eq }) =>
         and(
           eq(p.organizationId, organizationId),
           status ? eq(p.status, status) : undefined,
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'catalog',
+            'catalog:view',
+            p.vendorId,
+          ),
         ),
       with: {
         item: { with: { vendor: true } },
@@ -165,37 +334,63 @@ export class CatalogService {
     organizationId: string,
     reviewerId: string,
     input: { status: 'approved' | 'rejected'; reviewNote?: string },
+    access?: AccessPolicy,
   ) {
     const proposal = await this.db.query.catalogPriceProposals.findFirst({
-      where: (p, { and, eq }) =>
-        and(eq(p.id, proposalId), eq(p.organizationId, organizationId)),
+      where: (p, { and, eq }) => and(eq(p.id, proposalId), eq(p.organizationId, organizationId)),
       with: {
         item: true,
       },
     });
     if (!proposal) throw new NotFoundException(`Catalog price proposal ${proposalId} not found`);
+    await this.assertVendorScope(organizationId, access, 'catalog:manage', proposal.vendorId);
 
     // Guard on pending state so a second review cannot re-apply an old price
     // or clobber the original application metadata.
-    const [updated] = await this.db
-      .update(catalogPriceProposals)
-      .set({
-        status: input.status,
-        reviewedBy: reviewerId,
-        reviewedAt: new Date(),
-        reviewNote: input.reviewNote ?? null,
-      })
-      .where(
-        and(
-          eq(catalogPriceProposals.id, proposalId),
-          eq(catalogPriceProposals.organizationId, organizationId),
-          eq(catalogPriceProposals.status, 'pending'),
-        ),
-      )
-      .returning();
-    if (!updated) {
-      throw new BadRequestException(`Catalog price proposal ${proposalId} was already reviewed`);
-    }
+    const updated = await this.db.transaction(async (tx) => {
+      const [reviewed] = await tx
+        .update(catalogPriceProposals)
+        .set({
+          status: input.status,
+          reviewedBy: reviewerId,
+          reviewedAt: new Date(),
+          reviewNote: input.reviewNote ?? null,
+        })
+        .where(
+          and(
+            eq(catalogPriceProposals.id, proposalId),
+            eq(catalogPriceProposals.organizationId, organizationId),
+            eq(catalogPriceProposals.status, 'pending'),
+            scopedVendorPredicate(
+              this.db,
+              organizationId,
+              access,
+              'catalog',
+              'catalog:manage',
+              catalogPriceProposals.vendorId,
+            ),
+          ),
+        )
+        .returning();
+      if (!reviewed) {
+        throw new BadRequestException(`Catalog price proposal ${proposalId} was already reviewed`);
+      }
+
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: reviewerId,
+        entityType: 'catalog_price_proposal',
+        entityId: proposalId,
+        action: input.status,
+        changes: {
+          status: input.status,
+          reviewNote: input.reviewNote ?? null,
+          currentPrice: reviewed.currentPrice,
+          proposedPrice: reviewed.proposedPrice,
+        },
+      });
+      return reviewed;
+    });
 
     // Approved proposals take effect immediately unless the supplier set a
     // future effective date; those are applied by applyDueApprovedProposals.
@@ -206,7 +401,19 @@ export class CatalogService {
     await this.notifyVendorOfDecision(updated, input.status, input.reviewNote);
 
     return this.db.query.catalogPriceProposals.findFirst({
-      where: (p, { eq }) => eq(p.id, proposalId),
+      where: (p, { and, eq }) =>
+        and(
+          eq(p.id, proposalId),
+          eq(p.organizationId, organizationId),
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'catalog',
+            'catalog:manage',
+            p.vendorId,
+          ),
+        ),
       with: {
         item: { with: { vendor: true } },
         vendor: true,
@@ -240,9 +447,7 @@ export class CatalogService {
     if (currentCents == null || proposedCents == null || currentCents <= 0n) return false;
 
     const differenceCents =
-      proposedCents >= currentCents
-        ? proposedCents - currentCents
-        : currentCents - proposedCents;
+      proposedCents >= currentCents ? proposedCents - currentCents : currentCents - proposedCents;
     if (differenceCents * 10_000n > currentCents * thresholdBasisPoints) return false;
 
     const changeBasisPoints = (differenceCents * 10_000n + currentCents / 2n) / currentCents;
@@ -284,7 +489,7 @@ export class CatalogService {
   }
 
   /** Apply approved proposals whose effective date has arrived. Idempotent; runs lazily on buyer reads. */
-  async applyDueApprovedProposals(organizationId: string): Promise<void> {
+  async applyDueApprovedProposals(organizationId: string, access?: AccessPolicy): Promise<void> {
     const due = await this.db.query.catalogPriceProposals.findMany({
       where: (p, { and, eq, isNull, lte }) =>
         and(
@@ -292,15 +497,22 @@ export class CatalogService {
           eq(p.status, 'approved'),
           isNull(p.appliedAt),
           or(isNull(p.effectiveDate), lte(p.effectiveDate, new Date())),
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'catalog',
+            'catalog:view',
+            p.vendorId,
+          ),
         ),
       // Apply in effective-date order so the chronologically latest due
       // proposal ends up as the item's final price.
-      orderBy: (p, { asc, sql: orderBySql }) =>
-        [
-          orderBySql`${p.effectiveDate} asc nulls first`,
-          asc(p.reviewedAt),
-          asc(p.id),
-        ],
+      orderBy: (p, { asc, sql: orderBySql }) => [
+        orderBySql`${p.effectiveDate} asc nulls first`,
+        asc(p.reviewedAt),
+        asc(p.id),
+      ],
       limit: 50,
     });
 
@@ -308,13 +520,17 @@ export class CatalogService {
       try {
         await this.applyProposalIfDue(proposal);
       } catch (error) {
-        this.logger.warn(`Failed to apply price proposal ${proposal.id}: ${error instanceof Error ? error.message : error}`);
+        this.logger.warn(
+          `Failed to apply price proposal ${proposal.id}: ${error instanceof Error ? error.message : error}`,
+        );
       }
     }
   }
 
   /** Write the proposed price to the catalog item once its effective date has arrived. */
-  private async applyProposalIfDue(proposal: typeof catalogPriceProposals.$inferSelect): Promise<boolean> {
+  private async applyProposalIfDue(
+    proposal: typeof catalogPriceProposals.$inferSelect,
+  ): Promise<boolean> {
     const due = !proposal.effectiveDate || proposal.effectiveDate.getTime() <= Date.now();
     if (!due) return false;
 
@@ -383,7 +599,9 @@ export class CatalogService {
       const settings = await this.settingsService.getAll(proposal.organizationId);
       const smtpHost = settings['smtp_host'] || '';
       if (!smtpHost) {
-        this.logger.log(`SMTP not configured; skipping vendor notification for proposal ${proposal.id}`);
+        this.logger.log(
+          `SMTP not configured; skipping vendor notification for proposal ${proposal.id}`,
+        );
         return;
       }
       const appName = escapeHtml(settings['app_name'] || 'BetterSpend');
@@ -422,7 +640,90 @@ export class CatalogService {
           .where(eq(catalogPriceProposals.id, proposal.id));
       }
     } catch (error) {
-      this.logger.warn(`Failed to notify vendor for proposal ${proposal.id}: ${error instanceof Error ? error.message : error}`);
+      this.logger.warn(
+        `Failed to notify vendor for proposal ${proposal.id}: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+
+  private async assertVendorScope(
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: string,
+    vendorId: string | null | undefined,
+  ) {
+    // Vendorless catalog items are organization-wide internal items. They are
+    // global-only, so scoped grants must not create or mutate them, and the
+    // query predicates above intentionally exclude NULL vendor IDs.
+    if (!vendorId) {
+      const scope = operationalScope(access, 'catalog', permission);
+      if (scope && !scope.unrestricted) {
+        throw new ForbiddenException('The catalog vendor is outside your assigned scope');
+      }
+      return;
+    }
+
+    const [vendor] = await this.db
+      .select({ id: vendors.id, entityId: vendors.entityId })
+      .from(vendors)
+      .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)));
+    if (!vendor) {
+      throw new ForbiddenException('The catalog vendor must belong to the current organization');
+    }
+
+    const scope = operationalScope(access, 'catalog', permission);
+    if (scope && !scope.unrestricted && !scope.entityIds.includes(vendor.entityId ?? '')) {
+      throw new ForbiddenException('The catalog vendor is outside your assigned scope');
+    }
+  }
+
+  private async lockManagedCatalogItem(
+    tx: CatalogTransaction,
+    id: string,
+    organizationId: string,
+    access?: AccessPolicy,
+  ) {
+    const [item] = await tx
+      .select()
+      .from(catalogItems)
+      .where(and(eq(catalogItems.id, id), eq(catalogItems.organizationId, organizationId)))
+      .for('update');
+    if (!item) throw new NotFoundException(`Catalog item ${id} not found`);
+    await this.assertVendorScopeInTransaction(
+      tx,
+      organizationId,
+      access,
+      'catalog:manage',
+      item.vendorId,
+    );
+    return item;
+  }
+
+  private async assertVendorScopeInTransaction(
+    tx: CatalogTransaction,
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: string,
+    vendorId: string | null | undefined,
+  ) {
+    const scope = operationalScope(access, 'catalog', permission);
+    if (!vendorId) {
+      if (scope && !scope.unrestricted) {
+        throw new ForbiddenException('The catalog vendor is outside your assigned scope');
+      }
+      return;
+    }
+
+    const [vendor] = await tx
+      .select({ id: vendors.id, entityId: vendors.entityId })
+      .from(vendors)
+      .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
+      .for('share');
+    if (!vendor) {
+      throw new ForbiddenException('The catalog vendor must belong to the current organization');
+    }
+    if (scope && !scope.unrestricted && !scope.entityIds.includes(vendor.entityId ?? '')) {
+      throw new ForbiddenException('The catalog vendor is outside your assigned scope');
     }
   }
 }
@@ -444,7 +745,9 @@ function decimalToScaledInteger(value: string, scale: number): bigint | null {
 
 function formatBasisPoints(value: bigint): string {
   const whole = value / 100n;
-  const fraction = String(value % 100n).padStart(2, '0').replace(/0+$/, '');
+  const fraction = String(value % 100n)
+    .padStart(2, '0')
+    .replace(/0+$/, '');
   return fraction ? `${whole}.${fraction}` : String(whole);
 }
 

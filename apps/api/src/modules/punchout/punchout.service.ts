@@ -10,9 +10,14 @@ import type {
   PunchOutOrderMessage,
   CxmlCartItem,
 } from './cxml.types';
+import type { AccessPolicy } from '../auth/access-policy';
+import { scopedVendorPredicate } from '../auth/operational-access';
 
 // In-memory session store (replace with Redis in production)
-const sessions = new Map<string, { vendorId: string; buyerCookie: string; returnUrl: string; createdAt: Date }>();
+const sessions = new Map<
+  string,
+  { vendorId: string; buyerCookie: string; returnUrl: string; createdAt: Date }
+>();
 
 @Injectable()
 export class PunchoutService {
@@ -30,9 +35,15 @@ export class PunchoutService {
     vendorId: string,
     organizationId: string,
     request: PunchOutSetupRequest,
+    access?: AccessPolicy,
   ): Promise<PunchOutSetupResponse> {
     const vendor = await this.db.query.vendors.findFirst({
-      where: (v, { and, eq }) => and(eq(v.id, vendorId), eq(v.organizationId, organizationId)),
+      where: (v, { and, eq }) =>
+        and(
+          eq(v.id, vendorId),
+          eq(v.organizationId, organizationId),
+          scopedVendorPredicate(this.db, organizationId, access, 'catalog', 'catalog:view', v.id),
+        ),
     });
 
     if (!vendor) {

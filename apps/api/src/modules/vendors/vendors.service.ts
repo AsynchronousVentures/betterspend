@@ -1,9 +1,20 @@
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, and, sql } from 'drizzle-orm';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { onboardingQuestionnaires, vendorOnboardingSubmissions, vendors } from '@betterspend/db';
 import { EntitiesService } from '../entities/entities.service';
+import type { AccessPolicy } from '../auth/access-policy';
+import { scopedEntityPredicate, scopedVendorPredicate } from '../auth/operational-access';
+import type { PermissionKey } from '@betterspend/shared';
+
+type VendorTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 @Injectable()
 export class VendorsService {
@@ -12,22 +23,42 @@ export class VendorsService {
     private readonly entitiesService: EntitiesService,
   ) {}
 
-  async findAll(organizationId: string, entityId?: string) {
+  async findAll(organizationId: string, entityId?: string, access?: AccessPolicy) {
+    const scope = access?.scopeFor('vendor', 'vendors:view');
     return this.db.query.vendors.findMany({
       where: (v, { and, eq, isNull, or }) =>
         and(
           eq(v.organizationId, organizationId),
           entityId ? or(eq(v.entityId, entityId), isNull(v.entityId)) : undefined,
+          scope && !scope.unrestricted
+            ? scope.entityIds.length > 0
+              ? inArray(v.entityId, scope.entityIds)
+              : sql`false`
+            : undefined,
         ),
       orderBy: (v, { asc }) => asc(v.name),
       with: { entity: true },
     });
   }
 
-  async findOne(id: string, organizationId: string) {
+  async findOne(
+    id: string,
+    organizationId: string,
+    access?: AccessPolicy,
+    permission: PermissionKey = 'vendors:view',
+  ) {
+    const scope = access?.scopeFor('vendor', permission);
     const vendor = await this.db.query.vendors.findFirst({
       where: (v, { and, eq }) =>
-        and(eq(v.id, id), eq(v.organizationId, organizationId)),
+        and(
+          eq(v.id, id),
+          eq(v.organizationId, organizationId),
+          scope && !scope.unrestricted
+            ? scope.entityIds.length > 0
+              ? inArray(v.entityId, scope.entityIds)
+              : sql`false`
+            : undefined,
+        ),
       with: { entity: true },
     });
 
@@ -40,10 +71,30 @@ export class VendorsService {
       name: 'Default Supplier Onboarding',
       isDefault: true,
       questions: [
-        { id: 'tax_registered', label: 'Are you tax registered in your operating jurisdiction?', type: 'yes_no', required: true },
-        { id: 'sanctions_program', label: 'Do you maintain sanctions and denied-party screening controls?', type: 'yes_no', required: true },
-        { id: 'security_program', label: 'Describe your information security program or certifications.', type: 'long_text', required: true },
-        { id: 'insurance_expiry', label: 'When does your current certificate of insurance expire?', type: 'date', required: false },
+        {
+          id: 'tax_registered',
+          label: 'Are you tax registered in your operating jurisdiction?',
+          type: 'yes_no',
+          required: true,
+        },
+        {
+          id: 'sanctions_program',
+          label: 'Do you maintain sanctions and denied-party screening controls?',
+          type: 'yes_no',
+          required: true,
+        },
+        {
+          id: 'security_program',
+          label: 'Describe your information security program or certifications.',
+          type: 'long_text',
+          required: true,
+        },
+        {
+          id: 'insurance_expiry',
+          label: 'When does your current certificate of insurance expire?',
+          type: 'date',
+          required: false,
+        },
       ],
       scoringRules: [
         { questionId: 'tax_registered', equals: 'no', points: 30 },
@@ -55,12 +106,20 @@ export class VendorsService {
 
   private normalizeAnswer(value: unknown) {
     if (typeof value === 'boolean') return value ? 'yes' : 'no';
-    return String(value ?? '').trim().toLowerCase();
+    return String(value ?? '')
+      .trim()
+      .toLowerCase();
   }
 
-  private computeRisk(questionnaire: any, responses: Record<string, unknown>, documentLinks: Record<string, unknown>) {
+  private computeRisk(
+    questionnaire: any,
+    responses: Record<string, unknown>,
+    documentLinks: Record<string, unknown>,
+  ) {
     let score = 0;
-    const scoringRules = Array.isArray(questionnaire?.scoringRules) ? questionnaire.scoringRules : [];
+    const scoringRules = Array.isArray(questionnaire?.scoringRules)
+      ? questionnaire.scoringRules
+      : [];
     for (const rule of scoringRules) {
       const actual = this.normalizeAnswer(responses?.[rule?.questionId]);
       const expected = this.normalizeAnswer(rule?.equals);
@@ -76,26 +135,42 @@ export class VendorsService {
     return { score, riskLevel };
   }
 
-  async create(data: typeof vendors.$inferInsert) {
+  async create(data: typeof vendors.$inferInsert, access?: AccessPolicy) {
+    this.assertEntityScope(access, 'vendors:create', data.entityId);
     await this.entitiesService.assertBelongsToOrg(data.organizationId, data.entityId);
     const [vendor] = await this.db.insert(vendors).values(data).returning();
     return vendor;
   }
 
-  async update(id: string, organizationId: string, data: Partial<typeof vendors.$inferInsert>) {
-    await this.findOne(id, organizationId);
+  async update(
+    id: string,
+    organizationId: string,
+    data: Partial<typeof vendors.$inferInsert>,
+    access?: AccessPolicy,
+  ) {
+    await this.findOne(id, organizationId, access, 'vendors:edit');
+    if (data.entityId !== undefined) {
+      this.assertEntityScope(access, 'vendors:edit', data.entityId);
+    }
     await this.entitiesService.assertBelongsToOrg(organizationId, data.entityId);
     const [vendor] = await this.db
       .update(vendors)
       .set({ ...data, updatedAt: new Date() })
-      .where(and(eq(vendors.id, id), eq(vendors.organizationId, organizationId)))
+      .where(
+        and(
+          eq(vendors.id, id),
+          eq(vendors.organizationId, organizationId),
+          scopedEntityPredicate(access, 'vendor', 'vendors:edit', vendors.entityId),
+        ),
+      )
       .returning();
 
     if (!vendor) throw new NotFoundException(`Vendor ${id} not found`);
     return vendor;
   }
 
-  async listOnboardingQuestionnaires(organizationId: string) {
+  async listOnboardingQuestionnaires(organizationId: string, access?: AccessPolicy) {
+    this.assertGlobalScope(access, 'vendors:view');
     const questionnaires = await this.db.query.onboardingQuestionnaires.findMany({
       where: (record, { eq }) => eq(record.organizationId, organizationId),
       orderBy: (record, { desc, asc }) => [desc(record.isDefault), asc(record.name)],
@@ -121,7 +196,9 @@ export class VendorsService {
       questions?: any[];
       scoringRules?: any[];
     },
+    access?: AccessPolicy,
   ) {
+    this.assertGlobalScope(access, 'vendors:edit');
     const fallback = this.defaultQuestionnaireDefinition();
     if (data.isDefault) {
       await this.db
@@ -136,7 +213,10 @@ export class VendorsService {
         organizationId,
         name: data.name?.trim() || fallback.name,
         isDefault: !!data.isDefault,
-        questions: Array.isArray(data.questions) && data.questions.length > 0 ? data.questions : fallback.questions,
+        questions:
+          Array.isArray(data.questions) && data.questions.length > 0
+            ? data.questions
+            : fallback.questions,
         scoringRules:
           Array.isArray(data.scoringRules) && data.scoringRules.length > 0
             ? data.scoringRules
@@ -146,12 +226,20 @@ export class VendorsService {
     return created;
   }
 
-  async listOnboardingQueue(organizationId: string) {
+  async listOnboardingQueue(organizationId: string, access?: AccessPolicy) {
     const submissions = await this.db.query.vendorOnboardingSubmissions.findMany({
       where: (record, { and, eq, inArray }) =>
         and(
           eq(record.organizationId, organizationId),
           inArray(record.status, ['submitted', 'changes_requested']),
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'vendor',
+            'vendors:view',
+            record.vendorId,
+          ),
         ),
       with: { vendor: true, questionnaire: true },
       orderBy: (record, { desc }) => desc(record.submittedAt),
@@ -159,21 +247,33 @@ export class VendorsService {
 
     const latestByVendor = new Map<string, any>();
     for (const submission of submissions) {
-      if (!latestByVendor.has(submission.vendorId)) latestByVendor.set(submission.vendorId, submission);
+      if (!latestByVendor.has(submission.vendorId))
+        latestByVendor.set(submission.vendorId, submission);
     }
     return Array.from(latestByVendor.values());
   }
 
-  async getOnboardingDetail(vendorId: string, organizationId: string) {
-    const vendor = await this.findOne(vendorId, organizationId);
+  async getOnboardingDetail(vendorId: string, organizationId: string, access?: AccessPolicy) {
+    const vendor = await this.findOne(vendorId, organizationId, access, 'vendors:view');
     const [submissions, questionnaires] = await Promise.all([
       this.db.query.vendorOnboardingSubmissions.findMany({
         where: (record, { and, eq }) =>
-          and(eq(record.organizationId, organizationId), eq(record.vendorId, vendorId)),
+          and(
+            eq(record.organizationId, organizationId),
+            eq(record.vendorId, vendorId),
+            scopedVendorPredicate(
+              this.db,
+              organizationId,
+              access,
+              'vendor',
+              'vendors:view',
+              record.vendorId,
+            ),
+          ),
         with: { questionnaire: true },
         orderBy: (record, { desc }) => desc(record.createdAt),
       }),
-      this.listOnboardingQuestionnaires(organizationId),
+      this.listOnboardingQuestionnaires(organizationId, access),
     ]);
     return { vendor, submissions, questionnaires };
   }
@@ -181,7 +281,8 @@ export class VendorsService {
   async getPortalOnboarding(vendorId: string, organizationId: string) {
     const vendor = await this.findOne(vendorId, organizationId);
     const questionnaires = await this.listOnboardingQuestionnaires(organizationId);
-    const questionnaire = questionnaires.find((item: any) => item.isDefault) ?? questionnaires[0] ?? null;
+    const questionnaire =
+      questionnaires.find((item: any) => item.isDefault) ?? questionnaires[0] ?? null;
     const latestSubmission = await this.db.query.vendorOnboardingSubmissions.findFirst({
       where: (record, { and, eq }) =>
         and(eq(record.organizationId, organizationId), eq(record.vendorId, vendorId)),
@@ -206,9 +307,9 @@ export class VendorsService {
     const vendor = await this.findOne(vendorId, organizationId);
     const questionnaires = await this.listOnboardingQuestionnaires(organizationId);
     const questionnaire =
-      questionnaires.find((item: any) => item.id === data.questionnaireId)
-      ?? questionnaires.find((item: any) => item.isDefault)
-      ?? questionnaires[0];
+      questionnaires.find((item: any) => item.id === data.questionnaireId) ??
+      questionnaires.find((item: any) => item.isDefault) ??
+      questionnaires[0];
 
     if (!questionnaire) throw new BadRequestException('No onboarding questionnaire is configured');
 
@@ -239,7 +340,11 @@ export class VendorsService {
     await this.db
       .update(vendors)
       .set({
-        onboardingStatus: data.submit ? 'pending_review' : vendor.onboardingStatus === 'approved' ? 'approved' : 'not_started',
+        onboardingStatus: data.submit
+          ? 'pending_review'
+          : vendor.onboardingStatus === 'approved'
+            ? 'approved'
+            : 'not_started',
         onboardingRiskScore: score,
         onboardingRiskLevel: riskLevel,
         onboardingLastSubmittedAt: data.submit ? new Date() : vendor.onboardingLastSubmittedAt,
@@ -254,66 +359,125 @@ export class VendorsService {
     vendorId: string,
     organizationId: string,
     data: { decision: 'approved' | 'changes_requested'; reviewNote?: string },
+    access?: AccessPolicy,
   ) {
-    await this.findOne(vendorId, organizationId);
-    const latest = await this.db.query.vendorOnboardingSubmissions.findFirst({
-      where: (record, { and, eq }) =>
-        and(eq(record.organizationId, organizationId), eq(record.vendorId, vendorId)),
-      orderBy: (record, { desc }) => desc(record.createdAt),
+    return this.db.transaction(async (tx) => {
+      await this.lockVendorForMutation(tx, vendorId, organizationId, access, 'vendors:edit');
+      const [latest] = await tx
+        .select()
+        .from(vendorOnboardingSubmissions)
+        .where(
+          and(
+            eq(vendorOnboardingSubmissions.organizationId, organizationId),
+            eq(vendorOnboardingSubmissions.vendorId, vendorId),
+          ),
+        )
+        .orderBy(desc(vendorOnboardingSubmissions.createdAt))
+        .limit(1);
+      if (!latest)
+        throw new NotFoundException(`No onboarding submission found for vendor ${vendorId}`);
+
+      const nextStatus = data.decision === 'approved' ? 'approved' : 'changes_requested';
+      await tx
+        .update(vendorOnboardingSubmissions)
+        .set({
+          status: nextStatus,
+          reviewNote: data.reviewNote?.trim() || null,
+          reviewedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(vendorOnboardingSubmissions.id, latest.id),
+            eq(vendorOnboardingSubmissions.organizationId, organizationId),
+            scopedVendorPredicate(
+              this.db,
+              organizationId,
+              access,
+              'vendor',
+              'vendors:edit',
+              vendorOnboardingSubmissions.vendorId,
+            ),
+          ),
+        );
+
+      const [vendor] = await tx
+        .update(vendors)
+        .set({
+          onboardingStatus: data.decision === 'approved' ? 'approved' : 'changes_requested',
+          onboardingApprovedAt: data.decision === 'approved' ? new Date() : null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(vendors.id, vendorId),
+            eq(vendors.organizationId, organizationId),
+            scopedEntityPredicate(access, 'vendor', 'vendors:edit', vendors.entityId),
+          ),
+        )
+        .returning();
+      if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
+      return vendor;
     });
-    if (!latest) throw new NotFoundException(`No onboarding submission found for vendor ${vendorId}`);
-
-    const nextStatus = data.decision === 'approved' ? 'approved' : 'changes_requested';
-    await this.db
-      .update(vendorOnboardingSubmissions)
-      .set({
-        status: nextStatus,
-        reviewNote: data.reviewNote?.trim() || null,
-        reviewedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(vendorOnboardingSubmissions.id, latest.id));
-
-    const [vendor] = await this.db
-      .update(vendors)
-      .set({
-        onboardingStatus: data.decision === 'approved' ? 'approved' : 'changes_requested',
-        onboardingApprovedAt: data.decision === 'approved' ? new Date() : null,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
-      .returning();
-    return vendor;
   }
 
-  async updateEsg(id: string, organizationId: string, data: {
-    diversityCategories?: string[];
-    esgRating?: string;
-    carbonFootprintTons?: string;
-    sustainabilityCertifications?: string[];
-    esgNotes?: string;
-    diversityVerifiedAt?: string;
-  }) {
-    await this.findOne(id, organizationId);
+  async updateEsg(
+    id: string,
+    organizationId: string,
+    data: {
+      diversityCategories?: string[];
+      esgRating?: string;
+      carbonFootprintTons?: string;
+      sustainabilityCertifications?: string[];
+      esgNotes?: string;
+      diversityVerifiedAt?: string;
+    },
+    access?: AccessPolicy,
+  ) {
+    await this.findOne(id, organizationId, access, 'vendors:edit');
     const [vendor] = await this.db
       .update(vendors)
       .set({
-        ...(data.diversityCategories !== undefined && { diversityCategories: data.diversityCategories }),
+        ...(data.diversityCategories !== undefined && {
+          diversityCategories: data.diversityCategories,
+        }),
         ...(data.esgRating !== undefined && { esgRating: data.esgRating }),
-        ...(data.carbonFootprintTons !== undefined && { carbonFootprintTons: data.carbonFootprintTons }),
-        ...(data.sustainabilityCertifications !== undefined && { sustainabilityCertifications: data.sustainabilityCertifications }),
+        ...(data.carbonFootprintTons !== undefined && {
+          carbonFootprintTons: data.carbonFootprintTons,
+        }),
+        ...(data.sustainabilityCertifications !== undefined && {
+          sustainabilityCertifications: data.sustainabilityCertifications,
+        }),
         ...(data.esgNotes !== undefined && { esgNotes: data.esgNotes }),
-        ...(data.diversityVerifiedAt && { diversityVerifiedAt: new Date(data.diversityVerifiedAt) }),
+        ...(data.diversityVerifiedAt && {
+          diversityVerifiedAt: new Date(data.diversityVerifiedAt),
+        }),
         updatedAt: new Date(),
       })
-      .where(and(eq(vendors.id, id), eq(vendors.organizationId, organizationId)))
+      .where(
+        and(
+          eq(vendors.id, id),
+          eq(vendors.organizationId, organizationId),
+          scopedEntityPredicate(access, 'vendor', 'vendors:edit', vendors.entityId),
+        ),
+      )
       .returning();
+    if (!vendor) throw new NotFoundException(`Vendor ${id} not found`);
     return vendor;
   }
 
-  async getDiversitySummary(organizationId: string) {
+  async getDiversitySummary(organizationId: string, access?: AccessPolicy) {
+    const scope = access?.scopeFor('vendor', 'vendors:view');
     const allVendors = await this.db.query.vendors.findMany({
-      where: eq(vendors.organizationId, organizationId),
+      where: (vendor, { and, eq }) =>
+        and(
+          eq(vendor.organizationId, organizationId),
+          scope && !scope.unrestricted
+            ? scope.entityIds.length > 0
+              ? inArray(vendor.entityId, scope.entityIds)
+              : sql`false`
+            : undefined,
+        ),
     });
 
     const diversityCategories: Record<string, number> = {};
@@ -343,12 +507,19 @@ export class VendorsService {
       topDiverseVendors: allVendors
         .filter((v) => ((v.diversityCategories as string[]) ?? []).length > 0)
         .slice(0, 10)
-        .map((v) => ({ id: v.id, name: v.name, categories: v.diversityCategories, esgRating: v.esgRating })),
+        .map((v) => ({
+          id: v.id,
+          name: v.name,
+          categories: v.diversityCategories,
+          esgRating: v.esgRating,
+        })),
     };
   }
 
-  async getTransactions(id: string, organizationId: string) {
-    await this.findOne(id, organizationId);
+  async getTransactions(id: string, organizationId: string, access?: AccessPolicy) {
+    await this.findOne(id, organizationId, access, 'vendors:view');
+    const vendorScope =
+      scopedEntityPredicate(access, 'vendor', 'vendors:view', sql.raw('v.entity_id')) ?? sql`true`;
 
     const [invoiceRows, poRows] = await Promise.all([
       this.db.execute(sql`
@@ -357,7 +528,12 @@ export class VendorsService {
           i.status, i.match_status AS "matchStatus", i.total_amount::numeric AS amount,
           i.invoice_date AS date, i.approved_at AS "approvedAt"
         FROM invoices i
-        WHERE i.vendor_id = ${id} AND i.organization_id = ${organizationId}
+        JOIN vendors v
+          ON v.id = i.vendor_id
+          AND v.organization_id = i.organization_id
+        WHERE i.vendor_id = ${id}
+          AND i.organization_id = ${organizationId}
+          AND ${vendorScope}
         ORDER BY i.created_at DESC
         LIMIT 50
       `),
@@ -366,12 +542,54 @@ export class VendorsService {
           po.id, po.internal_number AS number, po.status,
           po.total_amount::numeric AS amount, po.issued_at AS "issuedAt", po.created_at AS date
         FROM purchase_orders po
-        WHERE po.vendor_id = ${id} AND po.organization_id = ${organizationId}
+        JOIN vendors v
+          ON v.id = po.vendor_id
+          AND v.organization_id = po.organization_id
+        WHERE po.vendor_id = ${id}
+          AND po.organization_id = ${organizationId}
+          AND ${vendorScope}
         ORDER BY po.created_at DESC
         LIMIT 50
       `),
     ]);
 
     return { invoices: invoiceRows, purchaseOrders: poRows };
+  }
+
+  private assertEntityScope(
+    access: AccessPolicy | undefined,
+    permission: PermissionKey,
+    entityId: string | null | undefined,
+  ) {
+    if (!access) return;
+    const scope = access.scopeFor('vendor', permission);
+    if (scope.unrestricted) return;
+    if (!entityId || !scope.entityIds.includes(entityId)) {
+      throw new ForbiddenException('The vendor is outside your assigned scope');
+    }
+  }
+
+  private assertGlobalScope(access: AccessPolicy | undefined, permission: PermissionKey) {
+    if (!access) return;
+    if (!access.scopeFor('vendor', permission).unrestricted) {
+      throw new ForbiddenException('This supplier operation requires a global grant');
+    }
+  }
+
+  private async lockVendorForMutation(
+    tx: VendorTransaction,
+    id: string,
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: PermissionKey,
+  ) {
+    const [vendor] = await tx
+      .select()
+      .from(vendors)
+      .where(and(eq(vendors.id, id), eq(vendors.organizationId, organizationId)))
+      .for('update');
+    if (!vendor) throw new NotFoundException(`Vendor ${id} not found`);
+    this.assertEntityScope(access, permission, vendor.entityId);
+    return vendor;
   }
 }
