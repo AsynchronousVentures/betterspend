@@ -86,7 +86,7 @@ jobs:
             exit
           fi
 
-          git diff --name-only -z "$base_sha" "$GITHUB_SHA" |
+          git diff --no-renames --name-only -z "$base_sha" "$GITHUB_SHA" |
             node .github/scripts/ci-change-policy.mjs --stdin0
 
   fast-ci:
