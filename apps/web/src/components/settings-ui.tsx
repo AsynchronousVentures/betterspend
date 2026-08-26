@@ -147,7 +147,7 @@ export function IntegrationCard({
               <Link href={manageHref}>Manage mappings</Link>
             </Button>
             <Button asChild type="button" variant="outline" size="sm">
-              <Link href={activityHref}>View export jobs</Link>
+              <Link href={activityHref}>View export history</Link>
             </Button>
           </div>
         </div>

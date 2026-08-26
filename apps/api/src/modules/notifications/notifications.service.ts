@@ -3,29 +3,20 @@ import { eq, and, isNull, sql, asc } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
 import { notificationPreferences, notifications } from '@betterspend/db';
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  DEFAULT_NOTIFICATION_TYPES,
+  type NotificationPreferences,
+} from '@betterspend/shared';
 
-const DEFAULT_NOTIFICATION_TYPES = [
-  'approval_request',
-  'po_issued',
-  'invoice_exception',
-  'invoice_approved',
-  'spend_guard',
-  'software_license',
-];
-
-export type NotificationPreferencesInput = {
-  emailEnabled?: boolean;
-  frequency?: 'instant' | 'daily' | 'weekly';
-  enabledTypes?: string[];
-};
+export type NotificationPreferencesInput = Partial<NotificationPreferences>;
 
 function defaultPreferences(orgId: string, userId: string) {
   return {
     organizationId: orgId,
     userId,
-    emailEnabled: true,
-    frequency: 'instant' as const,
-    enabledTypes: DEFAULT_NOTIFICATION_TYPES,
+    ...DEFAULT_NOTIFICATION_PREFERENCES,
+    enabledTypes: [...DEFAULT_NOTIFICATION_PREFERENCES.enabledTypes],
   };
 }
 
@@ -127,7 +118,7 @@ export class NotificationsService {
       organizationId: stored.organizationId,
       userId: stored.userId,
       emailEnabled: stored.emailEnabled,
-      frequency: (stored.frequency as 'instant' | 'daily' | 'weekly') ?? 'instant',
+      frequency: (stored.frequency as NotificationPreferences['frequency']) ?? 'instant',
       enabledTypes: Array.isArray(stored.enabledTypes)
         ? stored.enabledTypes
         : DEFAULT_NOTIFICATION_TYPES,
@@ -164,7 +155,7 @@ export class NotificationsService {
       organizationId: updated.organizationId,
       userId: updated.userId,
       emailEnabled: updated.emailEnabled,
-      frequency: updated.frequency as 'instant' | 'daily' | 'weekly',
+      frequency: updated.frequency as NotificationPreferences['frequency'],
       enabledTypes: Array.isArray(updated.enabledTypes)
         ? updated.enabledTypes
         : DEFAULT_NOTIFICATION_TYPES,
