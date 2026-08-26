@@ -2,7 +2,7 @@
 
 Run `pnpm ci:preflight` locally before the first push. Use `pnpm ci:preflight:docker` to check production images explicitly. The shared pre-push hook automatically selects the Docker tier when Dockerfiles, workspace package manifests, the lockfile, Compose files, or deployment packaging changed.
 
-Open agent-authored pull requests as drafts. Fast CI runs before external review. After Fast CI passes on the latest head, the watching agent must run `gh pr ready <PR URL>`. Leave a failing PR as a draft and fix it before promotion. Macroscope then reviews the verified candidate.
+Open agent-authored pull requests as drafts. Fast CI runs before external review. Documentation and agent-metadata-only changes take a cheap Fast CI path; workflow, packaging, dependency, script, source, and unknown changes run the full local preflight. After Fast CI passes on the latest head, the watching agent must run `gh pr ready <PR URL>`. Leave a failing PR as a draft and fix it before promotion. Macroscope then reviews the verified candidate.
 
 Macroscope is the primary reviewer. Its correctness, security, migration-history, and approvability checks run automatically after promotion. Approvability supplies the required approval for routine changes. If Macroscope withholds approval, a human reviewer decides whether to approve. Triage every Macroscope finding.
 
@@ -18,4 +18,4 @@ Before pushing material fixes to a ready pull request, convert it back to draft.
 
 ## Branch protection
 
-Require the stable `Validate` check, one approving review, and resolved review threads. `Validate` reports only the event's CI result. GitHub's native review rule accepts an approval from Macroscope Approvability or a human reviewer. CodeRabbit is not a required status check or reviewer.
+Require the stable `Validate` check, one approving review, and resolved review threads. `Validate` reports the event's CI result and stays present when non-runtime changes intentionally skip Full CI, including in the merge queue. Non-runtime pushes to `main` stop after validation and do not publish images. GitHub's native review rule accepts an approval from Macroscope Approvability or a human reviewer. CodeRabbit is not a required status check or reviewer.

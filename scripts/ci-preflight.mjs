@@ -32,6 +32,7 @@ function run(name, command, commandArguments, options = {}) {
 
 run('Workflow policy tests', 'node', [
   '--test',
+  '.github/scripts/ci-change-policy.test.mjs',
   '.github/scripts/review-policy.test.mjs',
   '.github/scripts/release-workflow-policy.test.mjs',
   'scripts/pre-push.test.mjs',
