@@ -1,15 +1,23 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { RefreshCw } from 'lucide-react';
 import { api, loadFailureState } from '../../../lib/api';
 import { localDateInputValue } from '../../../lib/date-input';
 import Breadcrumbs from '../../../components/breadcrumbs';
+import { DetailActionMenu } from '../../../components/detail-action-menu';
 import { DocumentUploader } from '../../../components/document-uploader';
+import { LifecycleStrip } from '../../../components/lifecycle-strip';
 import { MessageThread } from '../../../components/message-thread';
 import { PageHeader } from '../../../components/page-header';
 import { PanelError } from '../../../components/resource-state';
+import {
+  RelatedRecordLink,
+  RelatedRecords,
+  type RelatedRecord,
+} from '../../../components/related-records';
 import { StatusBadge } from '../../../components/status-badge';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge } from '../../../components/ui/badge';
@@ -64,10 +72,17 @@ interface Invoice {
   taxAmount: string;
   totalAmount: string;
   currency: string;
-  vendor: { name: string } | null;
-  purchaseOrder: { id: string; number: string } | null;
+  vendor: { id: string; name: string } | null;
+  purchaseOrder: {
+    id: string;
+    number: string;
+    requisition?: { id: string; number: string } | null;
+    goodsReceipts?: { id: string; number: string; status: string }[];
+  } | null;
   lines: InvoiceLine[];
   approvedAt: string | null;
+  activeApproval?: { id: string; currentStep: number; status: string } | null;
+  paymentRuns?: { id: string; status: string }[];
 }
 
 interface GlExportJob {
@@ -90,6 +105,10 @@ function statusVariant(status: string) {
 function formatCurrency(amount: string | number | null, currency = 'USD') {
   if (!amount) return '—';
   return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(amount));
+}
+
+function scrollToInvoiceSection(sectionId: string) {
+  document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 export default function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -291,6 +310,82 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const hasExceptions = invoice.matchStatus === 'exception';
   const workflowApprovalPending = invoice.status === 'pending_approval';
   const latestGlJob = glJobs[0] ?? null;
+  const requestRecord = invoice.purchaseOrder?.requisition
+    ? {
+        kind: 'requisition' as const,
+        id: invoice.purchaseOrder.requisition.id,
+        label: invoice.purchaseOrder.requisition.number,
+        relation: 'Request',
+      }
+    : null;
+  const approvalRecord = invoice.activeApproval
+    ? {
+        kind: 'approval_request' as const,
+        id: invoice.activeApproval.id,
+        label: `Step ${invoice.activeApproval.currentStep}`,
+        relation: 'Approval',
+      }
+    : null;
+  const purchaseOrderRecord = invoice.purchaseOrder
+    ? {
+        kind: 'purchase_order' as const,
+        id: invoice.purchaseOrder.id,
+        label: invoice.purchaseOrder.number,
+        relation: 'PO',
+      }
+    : null;
+  const receiptRecords = (invoice.purchaseOrder?.goodsReceipts ?? []).map((receipt) => ({
+    kind: 'receipt' as const,
+    id: receipt.id,
+    label: receipt.number,
+    relation: 'Receipt',
+  }));
+  const invoiceRecord = {
+    kind: 'invoice' as const,
+    id: invoice.id,
+    label: invoice.internalNumber,
+    relation: 'Invoice',
+  };
+  const paymentRecords = (invoice.paymentRuns ?? []).map((paymentRun) => ({
+    kind: 'payment_run' as const,
+    id: paymentRun.id,
+    label: `Payment run (${paymentRun.status.replace(/_/g, ' ')})`,
+    relation: 'Payment',
+  }));
+  const exportRecords = glJobs.map((job) => ({
+    kind: 'gl_export_job' as const,
+    id: job.id,
+    label: `${job.targetSystem === 'qbo' ? 'QuickBooks Online' : 'Xero'} export`,
+    relation: 'Accounting',
+  }));
+  const lifecycleRecords: RelatedRecord[] = [
+    ...(requestRecord ? [requestRecord] : []),
+    ...(approvalRecord ? [approvalRecord] : []),
+    ...(purchaseOrderRecord ? [purchaseOrderRecord] : []),
+    ...(receiptRecords[0] ? [receiptRecords[0]] : []),
+    invoiceRecord,
+    ...(paymentRecords[0] ? [paymentRecords[0]] : []),
+  ];
+  const relatedRecords: RelatedRecord[] = [
+    {
+      kind: 'vendor',
+      id: invoice.vendor?.id,
+      label: invoice.vendor?.name,
+      relation: 'Supplier',
+    },
+    ...(purchaseOrderRecord ? [purchaseOrderRecord] : []),
+    ...receiptRecords,
+    ...paymentRecords,
+    ...exportRecords,
+  ];
+  const canApprove =
+    !['approved', 'paid', 'pending_approval', 'cancelled'].includes(invoice.status) &&
+    invoice.matchStatus === 'full_match';
+  const needsMatch =
+    !['approved', 'paid', 'pending_approval', 'cancelled'].includes(invoice.status) &&
+    !hasExceptions &&
+    !canApprove;
+  const canOpenPaymentRuns = invoice.status === 'approved';
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -301,6 +396,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       <PageHeader
         title={invoice.internalNumber}
         description={`Vendor invoice ${invoice.invoiceNumber} from ${invoice.vendor?.name ?? 'Unknown vendor'}.`}
+        className="sticky top-28 z-20 -mx-4 bg-background px-4 py-4 min-[520px]:top-[4.5rem] lg:-mx-8 lg:px-8"
         actions={
           <div className="flex flex-wrap gap-3">
             <Badge variant={statusVariant(invoice.status) as any} className="capitalize">
@@ -309,17 +405,92 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             <Badge variant={statusVariant(invoice.matchStatus) as any} className="capitalize">
               Match: {invoice.matchStatus.replace(/_/g, ' ')}
             </Badge>
-            <Button asChild variant="outline">
-              <Link href="/invoices">Back to Invoices</Link>
-            </Button>
-            {invoice.status === 'approved' ? (
+            {hasExceptions ? (
+              <Button
+                type="button"
+                onClick={() => scrollToInvoiceSection('invoice-exception-resolution')}
+              >
+                Review exception
+              </Button>
+            ) : approvalRecord ? (
+              <Button asChild>
+                <Link href={`/approvals/${approvalRecord.id}`}>Review approval</Link>
+              </Button>
+            ) : canApprove ? (
+              <Button type="button" onClick={doApprove} disabled={actionLoading !== null}>
+                {actionLoading === 'approve' ? 'Approving...' : 'Approve for Payment'}
+              </Button>
+            ) : needsMatch ? (
+              <Button type="button" onClick={doRerunMatch} disabled={actionLoading !== null}>
+                {actionLoading === 'match' ? 'Running...' : 'Re-run Match'}
+              </Button>
+            ) : canOpenPaymentRuns ? (
               <Button asChild>
                 <Link href={`/payment-runs?invoiceId=${invoice.id}`}>Open Payment Runs</Link>
               </Button>
             ) : null}
+            <DetailActionMenu
+              secondary={
+                <>
+                  {canApprove ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="justify-start"
+                      onClick={doRerunMatch}
+                      disabled={actionLoading !== null}
+                    >
+                      {actionLoading === 'match' ? 'Running...' : 'Re-run Match'}
+                    </Button>
+                  ) : null}
+                  {latestGlJob && ['failed', 'skipped'].includes(latestGlJob.status) ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="justify-start"
+                      onClick={() => void retryGlExport(latestGlJob.id)}
+                      disabled={actionLoading !== null}
+                    >
+                      {actionLoading === `retry:${latestGlJob.id}` ? 'Retrying...' : 'Retry export'}
+                    </Button>
+                  ) : null}
+                  <Button asChild type="button" variant="outline" className="justify-start">
+                    <Link href="/gl-mappings?view=export-history">View export history</Link>
+                  </Button>
+                  {canOpenPaymentRuns && !latestGlJob ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="justify-start"
+                      onClick={() => scrollToInvoiceSection('invoice-accounting-export')}
+                    >
+                      Queue manual export
+                    </Button>
+                  ) : null}
+                </>
+              }
+              destructive={
+                canOpenPaymentRuns ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="justify-start"
+                    onClick={() => {
+                      setShowExternalPayment(true);
+                      scrollToInvoiceSection('invoice-external-payment');
+                    }}
+                  >
+                    Record external payment
+                  </Button>
+                ) : null
+              }
+            />
           </div>
         }
       />
+
+      <LifecycleStrip records={lifecycleRecords} current={{ kind: 'invoice', id: invoice.id }} />
+      <RelatedRecords records={relatedRecords} />
 
       {hasExceptions ? (
         <Alert variant="destructive">
@@ -355,7 +526,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       ) : null}
 
       {hasExceptions ? (
-        <Card className="rounded-lg">
+        <Card id="invoice-exception-resolution" className="scroll-mt-32 rounded-lg">
           <CardHeader>
             <CardTitle className="text-xl">Finance Exception Resolution</CardTitle>
             <CardDescription>
@@ -390,8 +561,32 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <DetailField label="Vendor" value={invoice.vendor?.name ?? '—'} />
-          <DetailField label="Linked PO" value={invoice.purchaseOrder?.number ?? '—'} />
+          <DetailField
+            label="Vendor"
+            value={
+              <RelatedRecordLink
+                record={{
+                  kind: 'vendor',
+                  id: invoice.vendor?.id,
+                  label: invoice.vendor?.name,
+                  relation: 'Supplier',
+                }}
+              />
+            }
+          />
+          <DetailField
+            label="Linked PO"
+            value={
+              <RelatedRecordLink
+                record={{
+                  kind: 'purchase_order',
+                  id: invoice.purchaseOrder?.id,
+                  label: invoice.purchaseOrder?.number,
+                  relation: 'PO',
+                }}
+              />
+            }
+          />
           <DetailField
             label="Invoice Date"
             value={new Date(invoice.invoiceDate).toLocaleDateString()}
@@ -509,31 +704,9 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         </CardContent>
       </Card>
 
-      <div className="flex flex-wrap gap-3">
-        {!['approved', 'paid', 'pending_approval'].includes(invoice.status) ? (
-          <>
-            <Button
-              type="button"
-              onClick={doApprove}
-              disabled={hasExceptions || actionLoading !== null}
-            >
-              {actionLoading === 'approve' ? 'Approving...' : 'Approve for Payment'}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={doRerunMatch}
-              disabled={actionLoading !== null}
-            >
-              {actionLoading === 'match' ? 'Running...' : 'Re-run Match'}
-            </Button>
-          </>
-        ) : null}
-      </div>
-
       {invoice.status === 'approved' ? (
         <div className="grid gap-4 xl:grid-cols-2">
-          <Card className="rounded-lg">
+          <Card id="invoice-accounting-export" className="scroll-mt-32 rounded-lg">
             <CardHeader>
               <CardTitle className="text-xl">Accounting export</CardTitle>
               <CardDescription>
@@ -578,7 +751,9 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                         disabled={actionLoading !== null}
                       >
                         <RefreshCw className="h-4 w-4" />
-                        {actionLoading === `retry:${latestGlJob.id}` ? 'Retrying...' : 'Retry export'}
+                        {actionLoading === `retry:${latestGlJob.id}`
+                          ? 'Retrying...'
+                          : 'Retry export'}
                       </Button>
                     ) : null}
                     <Button asChild type="button" variant="outline">
@@ -615,7 +790,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             </CardContent>
           </Card>
 
-          <Card className="rounded-lg">
+          <Card id="invoice-external-payment" className="scroll-mt-32 rounded-lg">
             <CardHeader>
               <CardTitle className="text-xl">External payment</CardTitle>
               <CardDescription>
@@ -716,7 +891,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   );
 }
 
-function DetailField({ label, value }: { label: string; value: string }) {
+function DetailField({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-lg border border-border/70 bg-background/70 p-4">
       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">

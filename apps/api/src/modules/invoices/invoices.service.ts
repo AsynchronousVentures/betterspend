@@ -18,6 +18,7 @@ import {
   purchaseOrders,
   requisitions,
   vendors,
+  approvalRequests,
 } from '@betterspend/db';
 import { SequenceService } from '../../common/services/sequence.service';
 import { MatchingService } from './matching.service';
@@ -42,6 +43,7 @@ import { WorkflowExecutionService } from '../workflow-execution/workflow-executi
 import { changedMaterialInvoiceFields, type MaterialInvoiceState } from './invoice-material-edit';
 import { calculateInvoiceLineAmounts } from './invoice-money';
 import type { AccessPolicy } from '../auth/access-policy';
+import { canViewRelatedRecord } from '../auth/related-record-access';
 import {
   permissionScopePredicate,
   requireAnyPermission,
@@ -350,12 +352,122 @@ export class InvoicesService {
       with: {
         vendor: true,
         entity: true,
-        purchaseOrder: { with: { lines: true, requisition: true } },
+        purchaseOrder: {
+          with: {
+            lines: true,
+            requisition: true,
+            goodsReceipts: { columns: { id: true, number: true, status: true } },
+          },
+        },
         lines: { with: { matchResults: true, taxCode: true } },
+        paymentRunInvoices: {
+          columns: { paymentRunId: true },
+          with: {
+            paymentRun: { columns: { id: true, status: true, entityId: true } },
+          },
+        },
       },
     });
     if (!invoice) throw new NotFoundException(`Invoice ${id} not found`);
-    return invoice;
+
+    const purchaseOrder = invoice.purchaseOrder;
+    const purchaseOrderScope = {
+      ownerIds: [purchaseOrder?.issuedBy, purchaseOrder?.requisition?.requesterId],
+      departmentId: purchaseOrder?.requisition?.departmentId,
+      projectId: purchaseOrder?.requisition?.projectId,
+      entityId: purchaseOrder?.entityId,
+    };
+    const relatedRecordScope = {
+      ownerIds: [invoice.createdBy, purchaseOrder?.requisition?.requesterId],
+      departmentId: purchaseOrder?.requisition?.departmentId,
+      projectId: purchaseOrder?.requisition?.projectId,
+      entityId: invoice.entityId ?? purchaseOrder?.entityId,
+    };
+    const visiblePurchaseOrder =
+      purchaseOrder &&
+      canViewRelatedRecord(
+        access,
+        'purchase_order',
+        [
+          'purchase_orders:view_all',
+          'purchase_orders:view_own',
+          'purchase_orders:manage',
+          'purchase_orders:issue',
+        ],
+        purchaseOrderScope,
+      )
+        ? purchaseOrder
+        : null;
+    const visibleRequisition =
+      visiblePurchaseOrder?.requisition &&
+      canViewRelatedRecord(
+        access,
+        'requisition',
+        ['requisitions:view_all', 'requisitions:view_own', 'requisitions:manage'],
+        {
+          ownerIds: [visiblePurchaseOrder.requisition.requesterId],
+          departmentId: visiblePurchaseOrder.requisition.departmentId,
+          projectId: visiblePurchaseOrder.requisition.projectId,
+        },
+      )
+        ? visiblePurchaseOrder.requisition
+        : null;
+    const goodsReceipts = visiblePurchaseOrder
+      ? (visiblePurchaseOrder.goodsReceipts ?? []).filter(() =>
+          canViewRelatedRecord(
+            access,
+            'receiving',
+            ['receiving:view', 'receiving:manage'],
+            purchaseOrderScope,
+          ),
+        )
+      : [];
+    const paymentRuns = (invoice.paymentRunInvoices ?? []).flatMap((paymentRunInvoice) => {
+      const paymentRun = paymentRunInvoice.paymentRun;
+      if (
+        !paymentRun ||
+        !canViewRelatedRecord(access, 'payment', ['payments:view', 'payments:manage'], {
+          entityId: paymentRun.entityId,
+        })
+      ) {
+        return [];
+      }
+      return [{ id: paymentRun.id, status: paymentRun.status }];
+    });
+    const visibleVendor =
+      invoice.vendor &&
+      canViewRelatedRecord(access, 'vendor', ['vendors:view'], {
+        entityId: invoice.vendor.entityId ?? invoice.entityId,
+      })
+        ? invoice.vendor
+        : null;
+    const activeApproval = canViewRelatedRecord(
+      access,
+      'approval',
+      ['approvals:view', 'approvals:act'],
+      relatedRecordScope,
+    )
+      ? await this.db.query.approvalRequests.findFirst({
+          where: (approval, { and, eq }) =>
+            and(
+              eq(approval.organizationId, organizationId),
+              eq(approval.approvableType, 'invoice'),
+              eq(approval.approvableId, id),
+              eq(approval.status, 'pending'),
+            ),
+          columns: { id: true, currentStep: true, status: true },
+        })
+      : null;
+    const { paymentRunInvoices: _paymentRunInvoices, ...invoiceRecord } = invoice;
+    return {
+      ...invoiceRecord,
+      vendor: visibleVendor,
+      purchaseOrder: visiblePurchaseOrder
+        ? { ...visiblePurchaseOrder, requisition: visibleRequisition, goodsReceipts }
+        : null,
+      paymentRuns,
+      activeApproval,
+    };
   }
 
   async update(

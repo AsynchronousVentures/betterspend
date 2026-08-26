@@ -5,6 +5,8 @@ import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
+import { DetailActionMenu } from '../../../components/detail-action-menu';
+import { LifecycleStrip } from '../../../components/lifecycle-strip';
 import { PageHeader } from '../../../components/page-header';
 import { RelatedRecordLink, RelatedRecords } from '../../../components/related-records';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
@@ -312,14 +314,52 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
     label: po.vendor?.name,
     relation: 'Supplier',
   };
-  const relatedRecords = [
+  const receipts = (po.goodsReceipts ?? []).map((receipt) => ({
+    kind: 'receipt' as const,
+    id: receipt.id,
+    label: receipt.number,
+    relation: 'Receipt',
+  }));
+  const invoices = (po.invoices ?? []).map((invoice) => ({
+    kind: 'invoice' as const,
+    id: invoice.id,
+    label: invoice.internalNumber || invoice.invoiceNumber,
+    relation: 'Invoice',
+  }));
+  const contracts = lines.flatMap((line) =>
+    line.matchedContract
+      ? [
+          {
+            kind: 'contract' as const,
+            id: line.matchedContract.id,
+            label: line.matchedContract.contractNumber || line.matchedContract.title,
+            relation: 'Contract',
+          },
+        ]
+      : [],
+  );
+  const budgets = (po.commitmentEvents ?? []).flatMap((event) =>
+    event.budget
+      ? [
+          {
+            kind: 'budget' as const,
+            id: event.budget.id,
+            label: event.budget.name,
+            relation: 'Budget',
+          },
+        ]
+      : [],
+  );
+  const lifecycleRecords = [
     request,
-    supplier,
-    ...(po.goodsReceipts ?? []).map((receipt) => ({ kind: 'receipt' as const, id: receipt.id, label: receipt.number, relation: 'Receipt' })),
-    ...(po.invoices ?? []).map((invoice) => ({ kind: 'invoice' as const, id: invoice.id, label: invoice.internalNumber || invoice.invoiceNumber, relation: 'Invoice' })),
-    ...lines.flatMap((line) => line.matchedContract ? [{ kind: 'contract' as const, id: line.matchedContract.id, label: line.matchedContract.contractNumber || line.matchedContract.title, relation: 'Contract' }] : []),
-    ...(po.commitmentEvents ?? []).flatMap((event) => event.budget ? [{ kind: 'budget' as const, id: event.budget.id, label: event.budget.name, relation: 'Budget' }] : []),
+    { kind: 'purchase_order' as const, id: po.id, label: po.number, relation: 'Purchase order' },
+    ...receipts,
+    ...invoices,
   ];
+  const relatedRecords = [supplier, ...contracts, ...budgets];
+  const showIssueAsPrimary = canIssue;
+  const showReleaseAsPrimary = !showIssueAsPrimary && canCreateRelease;
+  const showReceivingAsPrimary = !showIssueAsPrimary && !showReleaseAsPrimary && canReceive;
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -330,6 +370,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
       <PageHeader
         title={po.number}
         description={po.vendor?.name ?? 'No vendor assigned'}
+        className="sticky top-28 z-20 -mx-4 bg-background px-4 py-4 min-[520px]:top-[4.5rem] lg:-mx-8 lg:px-8"
         actions={
           <div className="flex flex-wrap gap-3">
             <Badge variant={statusVariant(po.status) as any} className="capitalize">
@@ -337,13 +378,78 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
             </Badge>
             <Badge variant="outline">V{po.version ?? 1}</Badge>
             {isBlanket ? <Badge variant="warning">Blanket PO</Badge> : null}
-            <Button asChild variant="outline">
-              <Link href="/purchase-orders">Back to Purchase Orders</Link>
-            </Button>
+            {showIssueAsPrimary ? (
+              <Button type="button" onClick={issuePO} disabled={actionLoading !== null}>
+                {actionLoading === 'issue' ? 'Issuing...' : 'Issue PO'}
+              </Button>
+            ) : null}
+            {showReleaseAsPrimary ? (
+              <Button type="button" onClick={() => setReleaseDialogOpen(true)}>
+                New Release
+              </Button>
+            ) : null}
+            {showReceivingAsPrimary ? (
+              <Button asChild>
+                <Link href={`/receiving/new?poId=${id}`}>Create GRN</Link>
+              </Button>
+            ) : null}
+            <DetailActionMenu
+              secondary={
+                <>
+                  {!showReceivingAsPrimary && canReceive ? (
+                    <Button asChild variant="outline" className="justify-start">
+                      <Link href={`/receiving/new?poId=${id}`}>Create GRN</Link>
+                    </Button>
+                  ) : null}
+                  {!showReleaseAsPrimary && canCreateRelease ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="justify-start"
+                      onClick={() => setReleaseDialogOpen(true)}
+                    >
+                      New Release
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="justify-start"
+                    onClick={downloadPDF}
+                  >
+                    Download PDF
+                  </Button>
+                  {canChangeOrder ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="justify-start"
+                      onClick={() => setChangeDialogOpen(true)}
+                    >
+                      Change Order
+                    </Button>
+                  ) : null}
+                </>
+              }
+              destructive={
+                canCancel ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="justify-start"
+                    onClick={cancelPO}
+                    disabled={actionLoading !== null}
+                  >
+                    {actionLoading === 'cancel' ? 'Cancelling...' : 'Cancel PO'}
+                  </Button>
+                ) : null
+              }
+            />
           </div>
         }
       />
 
+      <LifecycleStrip records={lifecycleRecords} current={{ kind: 'purchase_order', id: po.id }} />
       <RelatedRecords records={relatedRecords} />
 
       {actionError ? (
@@ -652,11 +758,6 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
                 {releases.length} release{releases.length === 1 ? '' : 's'} against this blanket PO.
               </CardDescription>
             </div>
-            {canCreateRelease ? (
-              <Button type="button" onClick={() => setReleaseDialogOpen(true)}>
-                New Release
-              </Button>
-            ) : null}
           </CardHeader>
           <CardContent className="pt-0">
             {releases.length === 0 ? (
@@ -762,37 +863,6 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
           <MessageThread threadType="po" threadId={id} />
         </CardContent>
       </Card>
-
-      <div className="flex flex-wrap gap-3">
-        {canIssue ? (
-          <Button type="button" onClick={issuePO} disabled={actionLoading !== null}>
-            {actionLoading === 'issue' ? 'Issuing...' : 'Issue PO'}
-          </Button>
-        ) : null}
-        <Button type="button" variant="outline" onClick={downloadPDF}>
-          Download PDF
-        </Button>
-        {canReceive ? (
-          <Button asChild>
-            <Link href={`/receiving/new?poId=${id}`}>Create GRN</Link>
-          </Button>
-        ) : null}
-        {canChangeOrder ? (
-          <Button type="button" variant="outline" onClick={() => setChangeDialogOpen(true)}>
-            Change Order
-          </Button>
-        ) : null}
-        {canCancel ? (
-          <Button
-            type="button"
-            variant="destructive"
-            onClick={cancelPO}
-            disabled={actionLoading !== null}
-          >
-            {actionLoading === 'cancel' ? 'Cancelling...' : 'Cancel PO'}
-          </Button>
-        ) : null}
-      </div>
 
       {changeDialogOpen ? (
         <ModalShell onClose={() => setChangeDialogOpen(false)}>
