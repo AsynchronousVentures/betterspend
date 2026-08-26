@@ -484,7 +484,8 @@ export class SoftwareLicensesService {
     const [vendor] = await tx
       .select({ id: vendors.id, entityId: vendors.entityId })
       .from(vendors)
-      .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)));
+      .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
+      .for('share');
     if (!vendor) {
       throw new ForbiddenException(
         'The software license vendor must belong to the current organization',

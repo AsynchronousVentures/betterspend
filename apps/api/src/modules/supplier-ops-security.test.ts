@@ -188,6 +188,7 @@ describe('supplier operational authorization regressions', () => {
   it('locks a license before checking both the current and replacement vendors', async () => {
     const events: string[] = [];
     let vendorChecks = 0;
+    let vendorShareLocks = 0;
     const existing = {
       id: 'license-1',
       organizationId,
@@ -214,16 +215,20 @@ describe('supplier operational authorization regressions', () => {
 
         return {
           from: () => ({
-            where: async () => {
-              vendorChecks += 1;
-              events.push(vendorChecks === 1 ? 'check-current-vendor' : 'check-new-vendor');
-              return [
-                {
-                  id: vendorChecks === 1 ? 'vendor-old' : 'vendor-new',
-                  entityId: 'entity-1',
-                },
-              ];
-            },
+            where: () => ({
+              for: async (lockMode: string) => {
+                assert.equal(lockMode, 'share');
+                vendorShareLocks += 1;
+                vendorChecks += 1;
+                events.push(vendorChecks === 1 ? 'check-current-vendor' : 'check-new-vendor');
+                return [
+                  {
+                    id: vendorChecks === 1 ? 'vendor-old' : 'vendor-new',
+                    entityId: 'entity-1',
+                  },
+                ];
+              },
+            }),
           }),
         };
       },
@@ -269,6 +274,7 @@ describe('supplier operational authorization regressions', () => {
     );
 
     assert.equal(result.vendorId, 'vendor-new');
+    assert.equal(vendorShareLocks, 2);
     assert.deepEqual(events, [
       'lock-license',
       'check-current-vendor',
