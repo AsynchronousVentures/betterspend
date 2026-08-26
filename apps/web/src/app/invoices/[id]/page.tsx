@@ -331,7 +331,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         kind: 'purchase_order' as const,
         id: invoice.purchaseOrder.id,
         label: invoice.purchaseOrder.number,
-        relation: 'PO',
+        relation: 'Purchase order',
       }
     : null;
   const receiptRecords = (invoice.purchaseOrder?.goodsReceipts ?? []).map((receipt) => ({
@@ -582,7 +582,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                   kind: 'purchase_order',
                   id: invoice.purchaseOrder?.id,
                   label: invoice.purchaseOrder?.number,
-                  relation: 'PO',
+                  relation: 'Purchase order',
                 }}
               />
             }

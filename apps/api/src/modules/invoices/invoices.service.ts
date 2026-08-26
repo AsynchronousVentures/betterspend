@@ -53,6 +53,18 @@ import {
 type InvoiceLookupPermission =
   'invoices:view_all' | 'invoices:manage' | 'invoices:approve' | 'payments:manage';
 
+type InvoiceAuthorizationScope = {
+  entityId: string | null;
+  createdBy: string | null;
+  purchaseOrder?: {
+    requisition?: {
+      requesterId: string;
+      departmentId: string | null;
+      projectId: string | null;
+    } | null;
+  } | null;
+};
+
 function invoiceScopePredicates(organizationId: string) {
   const poScope = (condition: ReturnType<typeof sql>) =>
     sql`${invoices.purchaseOrderId} IN (
@@ -77,27 +89,14 @@ function invoiceScopePredicates(organizationId: string) {
 function assertInvoiceScope(
   access: AccessPolicy | undefined,
   permission: 'invoices:create' | 'invoices:manage' | 'invoices:approve' | 'payments:manage',
-  invoice: {
-    entityId: string | null;
-    createdBy: string | null;
-    purchaseOrder?: unknown;
-  },
+  invoice: InvoiceAuthorizationScope,
   actorId: string,
 ) {
   requirePermission(access, permission);
   if (!access) return;
   const resource = permission === 'payments:manage' ? 'payment' : 'invoice';
   const scope = access.scopeFor(resource, permission);
-  const purchaseOrder = invoice.purchaseOrder as
-    | {
-        requisition?: {
-          requesterId: string;
-          departmentId: string | null;
-          projectId: string | null;
-        } | null;
-      }
-    | null
-    | undefined;
+  const purchaseOrder = invoice.purchaseOrder;
   if (
     scope.unrestricted ||
     scope.entityIds.includes(invoice.entityId ?? '') ||
@@ -325,10 +324,10 @@ export class InvoicesService {
     return invoice;
   }
 
-  async findOne(
+  private async findOneWithAuthorizationScope(
     id: string,
     organizationId: string,
-    access?: AccessPolicy,
+    access: AccessPolicy,
     permissions: readonly InvoiceLookupPermission[] = [
       'invoices:view_all',
       'invoices:manage',
@@ -336,7 +335,6 @@ export class InvoicesService {
     ],
     resource: 'invoice' | 'payment' = 'invoice',
   ) {
-    if (!access) return this.findOneWithExecutor(id, organizationId, this.db);
     const invoice = await this.db.query.invoices.findFirst({
       where: (i, { and, eq }) =>
         and(
@@ -371,6 +369,21 @@ export class InvoicesService {
     if (!invoice) throw new NotFoundException(`Invoice ${id} not found`);
 
     const purchaseOrder = invoice.purchaseOrder;
+    const authorizationScope: InvoiceAuthorizationScope = {
+      entityId: invoice.entityId,
+      createdBy: invoice.createdBy,
+      purchaseOrder: purchaseOrder
+        ? {
+            requisition: purchaseOrder.requisition
+              ? {
+                  requesterId: purchaseOrder.requisition.requesterId,
+                  departmentId: purchaseOrder.requisition.departmentId,
+                  projectId: purchaseOrder.requisition.projectId,
+                }
+              : null,
+          }
+        : null,
+    };
     const purchaseOrderScope = {
       ownerIds: [purchaseOrder?.issuedBy, purchaseOrder?.requisition?.requesterId],
       departmentId: purchaseOrder?.requisition?.departmentId,
@@ -460,20 +473,45 @@ export class InvoicesService {
       : null;
     const { paymentRunInvoices: _paymentRunInvoices, ...invoiceRecord } = invoice;
     return {
-      ...invoiceRecord,
-      vendor: visibleVendor,
-      purchaseOrder: visiblePurchaseOrder
-        ? {
-            ...visiblePurchaseOrder,
-            requisition: visibleRequisition
-              ? { id: visibleRequisition.id, number: visibleRequisition.number }
-              : null,
-            goodsReceipts,
-          }
-        : null,
-      paymentRuns,
-      activeApproval,
+      invoice: {
+        ...invoiceRecord,
+        vendor: visibleVendor,
+        purchaseOrder: visiblePurchaseOrder
+          ? {
+              ...visiblePurchaseOrder,
+              requisition: visibleRequisition
+                ? { id: visibleRequisition.id, number: visibleRequisition.number }
+                : null,
+              goodsReceipts,
+            }
+          : null,
+        paymentRuns,
+        activeApproval,
+      },
+      authorizationScope,
     };
+  }
+
+  async findOne(
+    id: string,
+    organizationId: string,
+    access?: AccessPolicy,
+    permissions: readonly InvoiceLookupPermission[] = [
+      'invoices:view_all',
+      'invoices:manage',
+      'invoices:approve',
+    ],
+    resource: 'invoice' | 'payment' = 'invoice',
+  ) {
+    if (!access) return this.findOneWithExecutor(id, organizationId, this.db);
+    const { invoice } = await this.findOneWithAuthorizationScope(
+      id,
+      organizationId,
+      access,
+      permissions,
+      resource,
+    );
+    return invoice;
   }
 
   async update(
@@ -485,8 +523,12 @@ export class InvoicesService {
   ) {
     const input = updateInvoiceSchema.parse(rawInput);
     if (access) {
-      const visibleInvoice = await this.findOne(id, organizationId, access);
-      assertInvoiceScope(access, 'invoices:manage', visibleInvoice, actorId);
+      const { authorizationScope } = await this.findOneWithAuthorizationScope(
+        id,
+        organizationId,
+        access,
+      );
+      assertInvoiceScope(access, 'invoices:manage', authorizationScope, actorId);
     }
     const result = await this.db.transaction(async (tx) => {
       const [lockedInvoice] = await tx
@@ -1098,8 +1140,12 @@ export class InvoicesService {
 
   async runMatch(id: string, organizationId: string, actorId: string, access?: AccessPolicy) {
     if (access) {
-      const visibleInvoice = await this.findOne(id, organizationId, access);
-      assertInvoiceScope(access, 'invoices:manage', visibleInvoice, actorId);
+      const { authorizationScope } = await this.findOneWithAuthorizationScope(
+        id,
+        organizationId,
+        access,
+      );
+      assertInvoiceScope(access, 'invoices:manage', authorizationScope, actorId);
     }
     const outcome = await this.db.transaction(async (tx) => {
       const [lockedInvoice] = await tx
@@ -1221,8 +1267,20 @@ export class InvoicesService {
     if (Number.isNaN(paidAt.getTime()) || paidAt.toISOString().slice(0, 10) !== paymentDate) {
       throw new BadRequestException('Payment date is invalid');
     }
-    const invoice = await this.findOne(id, organizationId, access, ['payments:manage'], 'payment');
-    assertInvoiceScope(access, 'payments:manage', invoice, userId);
+    let invoice;
+    if (access) {
+      const scoped = await this.findOneWithAuthorizationScope(
+        id,
+        organizationId,
+        access,
+        ['payments:manage'],
+        'payment',
+      );
+      assertInvoiceScope(access, 'payments:manage', scoped.authorizationScope, userId);
+      invoice = scoped.invoice;
+    } else {
+      invoice = await this.findOne(id, organizationId, access, ['payments:manage'], 'payment');
+    }
     if ((invoice as any).status !== 'approved') {
       throw new BadRequestException('Only approved invoices can be marked as paid');
     }
@@ -1407,8 +1465,14 @@ export class InvoicesService {
     input?: ResolveExceptionInput,
     access?: AccessPolicy,
   ) {
-    const invoice = await this.findOne(id, organizationId, access);
-    assertInvoiceScope(access, 'invoices:manage', invoice, reviewerId);
+    let invoice;
+    if (access) {
+      const scoped = await this.findOneWithAuthorizationScope(id, organizationId, access);
+      assertInvoiceScope(access, 'invoices:manage', scoped.authorizationScope, reviewerId);
+      invoice = scoped.invoice;
+    } else {
+      invoice = await this.findOne(id, organizationId);
+    }
     if (invoice.matchStatus !== 'exception') {
       throw new BadRequestException('Invoice does not have an active exception');
     }
@@ -1449,8 +1513,12 @@ export class InvoicesService {
 
   async approve(id: string, organizationId: string, approverId: string, access?: AccessPolicy) {
     if (access) {
-      const visibleInvoice = await this.findOne(id, organizationId, access);
-      assertInvoiceScope(access, 'invoices:approve', visibleInvoice, approverId);
+      const { authorizationScope } = await this.findOneWithAuthorizationScope(
+        id,
+        organizationId,
+        access,
+      );
+      assertInvoiceScope(access, 'invoices:approve', authorizationScope, approverId);
     }
     const result = await this.db.transaction(async (tx) => {
       const [lockedInvoice] = await tx
