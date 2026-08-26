@@ -1,8 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { CheckCircle2, CreditCard, FileCheck2, RefreshCw, Send, XCircle } from 'lucide-react';
 import { api } from '../../lib/api';
+import { formatCurrencyMinorUnits, sumCurrencyAmounts } from '../../lib/money';
 import { PageHeader } from '../../components/page-header';
 import { StatusBadge } from '../../components/status-badge';
 import { Alert, AlertDescription } from '../../components/ui/alert';
@@ -68,11 +70,17 @@ function statusTone(status: string) {
   return status;
 }
 
-export default function PaymentRunsPage() {
+function PaymentRunsContent() {
+  const searchParams = useSearchParams();
+  const selectedRunId = searchParams.get('run');
+  const selectedInvoiceId = searchParams.get('invoiceId');
+  const lastSelectedInvoiceId = useRef(selectedInvoiceId);
   const [eligibleInvoices, setEligibleInvoices] = useState<Invoice[]>([]);
   const [runs, setRuns] = useState<PaymentRun[]>([]);
   const [summary, setSummary] = useState<any>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(selectedInvoiceId ? [selectedInvoiceId] : []),
+  );
   const [paymentMethod, setPaymentMethod] = useState('manual');
   const [scheduledDate, setScheduledDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
@@ -105,13 +113,32 @@ export default function PaymentRunsPage() {
     load();
   }, []);
 
+  useEffect(() => {
+    if (!selectedRunId || loading) return;
+    document.getElementById(`payment-run-${selectedRunId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [loading, selectedRunId, runs]);
+
+  useEffect(() => {
+    if (lastSelectedInvoiceId.current === selectedInvoiceId) return;
+    lastSelectedInvoiceId.current = selectedInvoiceId;
+    setSelected(selectedInvoiceId ? new Set([selectedInvoiceId]) : new Set());
+  }, [selectedInvoiceId]);
+
+  useEffect(() => {
+    if (!selectedInvoiceId || loading || !eligibleInvoices.some((invoice) => invoice.id === selectedInvoiceId)) return;
+    document.getElementById(`payment-invoice-${selectedInvoiceId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [eligibleInvoices, loading, selectedInvoiceId]);
+
   const selectedInvoices = useMemo(
     () => eligibleInvoices.filter((invoice) => selected.has(invoice.id)),
     [eligibleInvoices, selected],
   );
 
-  const selectedTotal = selectedInvoices.reduce((sum, invoice) => sum + Number(invoice.totalAmount ?? 0), 0);
   const selectedCurrency = selectedInvoices[0]?.currency ?? 'USD';
+  const selectedTotal = sumCurrencyAmounts(
+    selectedInvoices.map((invoice) => invoice.totalAmount),
+    selectedCurrency,
+  );
   const mixedCurrency = new Set(selectedInvoices.map((invoice) => invoice.currency)).size > 1;
   const mixedEntity = new Set(selectedInvoices.map((invoice) => invoice.entity?.name ?? 'none')).size > 1;
 
@@ -259,7 +286,7 @@ export default function PaymentRunsPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/30 px-4 py-3">
             <div className="text-sm">
               <span className="font-semibold">{selectedInvoices.length}</span> selected ·{' '}
-              <span className="font-semibold">{formatMoney(selectedTotal, selectedCurrency)}</span>
+              <span className="font-semibold">{formatCurrencyMinorUnits(selectedTotal, selectedCurrency)}</span>
               {mixedCurrency ? <span className="ml-2 text-destructive">Split by currency before creating.</span> : null}
               {mixedEntity ? <span className="ml-2 text-destructive">Split by entity before creating.</span> : null}
             </div>
@@ -299,7 +326,12 @@ export default function PaymentRunsPage() {
                   </TableRow>
                 ) : (
                   eligibleInvoices.map((invoice) => (
-                    <TableRow key={invoice.id}>
+                    <TableRow
+                      key={invoice.id}
+                      id={`payment-invoice-${invoice.id}`}
+                      aria-current={invoice.id === selectedInvoiceId ? 'true' : undefined}
+                      className={invoice.id === selectedInvoiceId ? 'bg-muted/50' : undefined}
+                    >
                       <TableCell>
                         <input
                           type="checkbox"
@@ -368,7 +400,12 @@ export default function PaymentRunsPage() {
                     const usesVirtualCard = methods.includes('virtual_card');
                     const actionBusy = (action: string) => busy === `${action}:${run.id}`;
                     return (
-                      <TableRow key={run.id}>
+                      <TableRow
+                        key={run.id}
+                        id={`payment-run-${run.id}`}
+                        aria-current={run.id === selectedRunId ? 'true' : undefined}
+                        className={run.id === selectedRunId ? 'bg-muted/50' : undefined}
+                      >
                         <TableCell>
                           <StatusBadge value={statusTone(run.status)} label={run.status.replace(/_/g, ' ')} />
                         </TableCell>
@@ -427,5 +464,13 @@ export default function PaymentRunsPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function PaymentRunsPage() {
+  return (
+    <Suspense fallback={<div className="p-4 text-sm text-muted-foreground lg:p-8">Loading payment runs...</div>}>
+      <PaymentRunsContent />
+    </Suspense>
   );
 }

@@ -320,6 +320,8 @@ export const requisitionsRelations = relations(requisitions, ({ one, many }) => 
     references: [departments.id],
   }),
   lines: many(requisitionLines),
+  purchaseOrders: many(purchaseOrders),
+  commitmentEvents: many(budgetCommitmentEvents),
 }));
 
 export const purchaseOrdersRelations = relations(purchaseOrders, ({ one, many }) => ({
@@ -338,6 +340,7 @@ export const purchaseOrdersRelations = relations(purchaseOrders, ({ one, many })
   releases: many(blanketReleases),
   goodsReceipts: many(goodsReceipts),
   invoices: many(invoices),
+  commitmentEvents: many(budgetCommitmentEvents),
 }));
 
 export const requisitionLinesRelations = relations(requisitionLines, ({ one }) => ({
@@ -354,6 +357,10 @@ export const poLinesRelations = relations(poLines, ({ one }) => ({
     references: [purchaseOrders.id],
   }),
   taxCode: one(taxCodes, { fields: [poLines.taxCodeId], references: [taxCodes.id] }),
+  matchedContract: one(contracts, {
+    fields: [poLines.matchedContractId],
+    references: [contracts.id],
+  }),
 }));
 
 export const poVersionsRelations = relations(poVersions, ({ one }) => ({
@@ -539,6 +546,7 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
     relationName: 'invoiceCreator',
   }),
   lines: many(invoiceLines),
+  commitmentEvents: many(budgetCommitmentEvents),
 }));
 
 export const invoiceLinesRelations = relations(invoiceLines, ({ one, many }) => ({

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Download, FileSpreadsheet, Plus } from 'lucide-react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
+import { RelatedRecordLink } from '../../components/related-records';
 import { StatusBadge } from '../../components/status-badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
@@ -14,7 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 interface PurchaseOrder {
   id: string;
   number: string;
-  vendor: { name: string } | null;
+  vendor: { id: string; name: string } | null;
   version: number;
   status: string;
   currency: string;
@@ -155,7 +156,9 @@ export default function PurchaseOrdersPage() {
                         ) : null}
                       </div>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{purchaseOrder.vendor?.name ?? '—'}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      <RelatedRecordLink record={{ kind: 'vendor', id: purchaseOrder.vendor?.id, label: purchaseOrder.vendor?.name, relation: 'Supplier' }} />
+                    </TableCell>
                     <TableCell className="text-muted-foreground">V{purchaseOrder.version ?? 1}</TableCell>
                     <TableCell>
                       <StatusBadge value={purchaseOrder.status} label={STATUS_LABELS[purchaseOrder.status]} />

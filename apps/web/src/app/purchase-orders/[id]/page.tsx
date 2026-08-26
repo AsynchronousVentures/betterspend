@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { PageHeader } from '../../../components/page-header';
+import { RelatedRecordLink, RelatedRecords } from '../../../components/related-records';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -34,6 +36,7 @@ interface POLine {
   qty: string | number;
   uom: string;
   unitPrice: string | number;
+  matchedContract?: { id: string; contractNumber: string | null; title: string } | null;
 }
 
 interface POVersion {
@@ -68,7 +71,7 @@ interface ReceivingLine {
 interface PurchaseOrder {
   id: string;
   number: string;
-  vendor: { name: string } | null;
+  vendor: { id: string; name: string } | null;
   version: number;
   status: string;
   currency: string;
@@ -84,6 +87,10 @@ interface PurchaseOrder {
   blanketReleasedAmount: string | null;
   lines: POLine[];
   versions?: POVersion[];
+  requisition?: { id: string; number: string } | null;
+  goodsReceipts?: { id: string; number: string; status: string }[];
+  invoices?: { id: string; internalNumber: string; invoiceNumber: string; status: string }[];
+  commitmentEvents?: { id: string; budgetId: string; budget?: { id: string; name: string } | null }[];
 }
 
 function formatCurrency(amount: string | number | null, currency = 'USD') {
@@ -293,6 +300,26 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
   const blanketReleased = parseFloat(po.blanketReleasedAmount ?? '0');
   const blanketRemaining = blanketLimit !== null ? blanketLimit - blanketReleased : null;
   const blanketPct = blanketLimit && blanketLimit > 0 ? (blanketReleased / blanketLimit) * 100 : 0;
+  const request = {
+    kind: 'requisition' as const,
+    id: po.requisition?.id,
+    label: po.requisition?.number,
+    relation: 'Request',
+  };
+  const supplier = {
+    kind: 'vendor' as const,
+    id: po.vendor?.id,
+    label: po.vendor?.name,
+    relation: 'Supplier',
+  };
+  const relatedRecords = [
+    request,
+    supplier,
+    ...(po.goodsReceipts ?? []).map((receipt) => ({ kind: 'receipt' as const, id: receipt.id, label: receipt.number, relation: 'Receipt' })),
+    ...(po.invoices ?? []).map((invoice) => ({ kind: 'invoice' as const, id: invoice.id, label: invoice.internalNumber || invoice.invoiceNumber, relation: 'Invoice' })),
+    ...lines.flatMap((line) => line.matchedContract ? [{ kind: 'contract' as const, id: line.matchedContract.id, label: line.matchedContract.contractNumber || line.matchedContract.title, relation: 'Contract' }] : []),
+    ...(po.commitmentEvents ?? []).flatMap((event) => event.budget ? [{ kind: 'budget' as const, id: event.budget.id, label: event.budget.name, relation: 'Budget' }] : []),
+  ];
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -317,6 +344,8 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
         }
       />
 
+      <RelatedRecords records={relatedRecords} />
+
       {actionError ? (
         <Alert variant="destructive">
           <AlertDescription>{actionError}</AlertDescription>
@@ -338,7 +367,8 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
           <CardDescription>Commercial terms, supplier reference, and header notes.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <DetailField label="Vendor" value={po.vendor?.name ?? '—'} />
+          <DetailField label="Vendor" value={<RelatedRecordLink record={supplier} />} />
+          {po.requisition ? <DetailField label="Source Request" value={<RelatedRecordLink record={request} />} /> : null}
           <DetailField label="Payment Terms" value={po.paymentTerms ?? '—'} />
           <DetailField label="Currency" value={po.currency} />
           <DetailField label="Status" value={po.status.replace(/_/g, ' ')} />
@@ -871,7 +901,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
   );
 }
 
-function DetailField({ label, value }: { label: string; value: string }) {
+function DetailField({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-lg border border-border/70 bg-background/70 p-4">
       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">

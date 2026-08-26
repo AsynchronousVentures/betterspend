@@ -28,20 +28,3 @@ export interface ReceivingDetail extends ReceivingListItem {
   lines: ReceivingLine[];
   createdAt: string;
 }
-
-export interface RelatedRecordLink {
-  href: string | null;
-  label: string;
-}
-
-/** Convert an optional related record into a safe link or an explicit unavailable state. */
-export function relatedRecordLink(
-  record: { id: string; label: string } | null | undefined,
-  collection: string,
-): RelatedRecordLink {
-  if (!record?.id || !record.label) return { href: null, label: 'Unavailable' };
-  return {
-    href: `/${collection}/${encodeURIComponent(record.id)}`,
-    label: record.label,
-  };
-}

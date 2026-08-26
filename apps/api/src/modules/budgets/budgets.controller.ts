@@ -104,7 +104,12 @@ export class BudgetsController {
     @CurrentOrgId() orgId: string,
     @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.budgetsService.findOne(id, orgId, access?.scopeFor('budget', 'budgets:view'));
+    return this.budgetsService.findOne(
+      id,
+      orgId,
+      access?.scopeFor('budget', 'budgets:view'),
+      access,
+    );
   }
 
   @Post()
@@ -121,6 +126,7 @@ export class BudgetsController {
       userId,
       body,
       access?.scopeFor('budget', 'budgets:manage'),
+      access,
     );
   }
 
@@ -148,6 +154,7 @@ export class BudgetsController {
       userId,
       body,
       access?.scopeFor('budget', 'budgets:manage'),
+      access,
     );
   }
 
@@ -167,6 +174,7 @@ export class BudgetsController {
       body,
       userId,
       access?.scopeFor('budget', 'budgets:manage'),
+      access,
     );
   }
 
@@ -187,6 +195,7 @@ export class BudgetsController {
       orgId,
       userId,
       access?.scopeFor('budget', 'budgets:manage'),
+      access,
     );
   }
 }

@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { PageHeader } from '../../../components/page-header';
+import { RelatedRecords } from '../../../components/related-records';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -48,6 +50,9 @@ interface Requisition {
   neededBy: string | null;
   createdAt: string;
   lines: RequisitionLine[];
+  activeApproval?: { id: string; currentStep: number; status: string } | null;
+  purchaseOrders?: { id: string; number: string; status: string }[];
+  commitmentEvents?: { id: string; budgetId: string; budget?: { id: string; name: string } | null }[];
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -209,6 +214,11 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
   }
 
   const lines = req.lines ?? [];
+  const relatedRecords = [
+    ...(req.activeApproval ? [{ kind: 'approval_request' as const, id: req.activeApproval.id, label: `Step ${req.activeApproval.currentStep}`, relation: 'Approval' }] : []),
+    ...(req.purchaseOrders ?? []).map((purchaseOrder) => ({ kind: 'purchase_order' as const, id: purchaseOrder.id, label: purchaseOrder.number, relation: 'Purchase order' })),
+    ...(req.commitmentEvents ?? []).flatMap((event) => event.budget ? [{ kind: 'budget' as const, id: event.budget.id, label: event.budget.name, relation: 'Budget' }] : []),
+  ];
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -228,6 +238,8 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
           </div>
         }
       />
+
+      <RelatedRecords records={relatedRecords} />
 
       {error ? (
         <Alert variant="destructive">
@@ -464,7 +476,7 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
   );
 }
 
-function DetailField({ label, value }: { label: string; value: string }) {
+function DetailField({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-lg border border-border/70 bg-background/70 p-4">
       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>

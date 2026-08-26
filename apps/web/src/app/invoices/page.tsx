@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { AlertTriangle, Download, FileSpreadsheet, Plus } from 'lucide-react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
+import { RelatedRecordLink } from '../../components/related-records';
 import { StatusBadge } from '../../components/status-badge';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Button } from '../../components/ui/button';
@@ -22,8 +23,8 @@ interface Invoice {
   currency: string;
   invoiceDate: string;
   dueDate: string | null;
-  vendor: { name: string } | null;
-  purchaseOrder: { number: string } | null;
+  vendor: { id: string; name: string } | null;
+  purchaseOrder: { id: string; number: string } | null;
 }
 
 function formatCurrency(amount: string | number | null, currency = 'USD') {
@@ -277,8 +278,12 @@ export default function InvoicesPage() {
                         </Link>
                       </TableCell>
                       <TableCell className="text-muted-foreground">{invoice.invoiceNumber}</TableCell>
-                      <TableCell className="text-muted-foreground">{invoice.vendor?.name ?? '—'}</TableCell>
-                      <TableCell className="text-muted-foreground">{invoice.purchaseOrder?.number ?? '—'}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        <RelatedRecordLink record={{ kind: 'vendor', id: invoice.vendor?.id, label: invoice.vendor?.name, relation: 'Supplier' }} />
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        <RelatedRecordLink record={{ kind: 'purchase_order', id: invoice.purchaseOrder?.id, label: invoice.purchaseOrder?.number, relation: 'Purchase order' }} />
+                      </TableCell>
                       <TableCell className="text-muted-foreground">
                         {new Date(invoice.invoiceDate).toLocaleDateString()}
                       </TableCell>

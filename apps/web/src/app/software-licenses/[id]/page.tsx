@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -13,6 +14,7 @@ import { recordHref, type WorkflowRecordReference } from '@betterspend/shared';
 import { api } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { PageHeader } from '../../../components/page-header';
+import { RelatedRecordLink, RelatedRecords } from '../../../components/related-records';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -129,6 +131,8 @@ export default function SoftwareLicenseDetailPage({
   const renewalRefs = Array.isArray(license.renewalRefs)
     ? (license.renewalRefs as WorkflowRecordReference[])
     : [];
+  const supplier = { kind: 'vendor' as const, id: license.vendor?.id, label: license.vendor?.name, relation: 'Supplier' };
+  const contract = { kind: 'contract' as const, id: license.contract?.id, label: license.contract ? `${license.contract.contractNumber} · ${license.contract.title}` : null, relation: 'Contract' };
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -138,6 +142,8 @@ export default function SoftwareLicenseDetailPage({
           { label: license.productName },
         ]}
       />
+
+      <RelatedRecords records={[supplier, contract]} />
 
       <PageHeader
         title={license.productName}
@@ -197,7 +203,7 @@ export default function SoftwareLicenseDetailPage({
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-2">
-              <DetailField label="Vendor" value={license.vendor?.name ?? '—'} />
+              <DetailField label="Vendor" value={<RelatedRecordLink record={supplier} />} />
               <DetailField
                 label="Owner"
                 value={license.owner?.name ?? license.owner?.email ?? '—'}
@@ -205,14 +211,7 @@ export default function SoftwareLicenseDetailPage({
               />
               <DetailField label="Billing Cycle" value={license.billingCycle} />
               <DetailField label="Renewal Lead" value={`${license.renewalLeadDays} days`} />
-              <DetailField
-                label="Contract"
-                value={
-                  license.contract
-                    ? `${license.contract.contractNumber} · ${license.contract.title}`
-                    : '—'
-                }
-              />
+              <DetailField label="Contract" value={<RelatedRecordLink record={contract} />} />
               <DetailField label="Currency" value={license.currency} />
             </div>
             {license.notes ? (
@@ -336,7 +335,7 @@ function DetailField({
   icon: Icon,
 }: {
   label: string;
-  value: string;
+  value: ReactNode;
   icon?: React.ComponentType<{ className?: string }>;
 }) {
   return (

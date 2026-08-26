@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ArrowLeft, Pencil, Plus } from 'lucide-react';
 import { api } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
+import { RelatedRecordLink, type RelatedRecord } from '../../../components/related-records';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
@@ -24,6 +25,19 @@ function ProgressBar({ pct }: { pct: number }) {
       <div className={`h-full ${colorClass}`} style={{ width: `${clamped}%` }} />
     </div>
   );
+}
+
+function commitmentSource(event: any): RelatedRecord | null {
+  if (event.invoice) {
+    return { kind: 'invoice', id: event.invoice.id, label: event.invoice.internalNumber || event.invoice.invoiceNumber, relation: 'Invoice' };
+  }
+  if (event.purchaseOrder) {
+    return { kind: 'purchase_order', id: event.purchaseOrder.id, label: event.purchaseOrder.number, relation: 'Purchase order' };
+  }
+  if (event.requisition) {
+    return { kind: 'requisition', id: event.requisition.id, label: event.requisition.number, relation: 'Request' };
+  }
+  return null;
 }
 
 export default function BudgetDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -104,6 +118,7 @@ export default function BudgetDetailPage({ params }: { params: Promise<{ id: str
   const spent = parseFloat(budget.spentAmount ?? '0');
   const remaining = total - spent;
   const pct = total > 0 ? (spent / total) * 100 : 0;
+  const commitmentEvents = budget.commitmentEvents ?? [];
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -187,6 +202,48 @@ export default function BudgetDetailPage({ params }: { params: Promise<{ id: str
         </CardHeader>
         <CardContent>
           <ProgressBar pct={pct} />
+        </CardContent>
+      </Card>
+
+      <Card id="budget-activity" className="overflow-hidden">
+        <CardHeader>
+          <CardTitle className="text-base">Budget activity</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {commitmentEvents.length === 0 ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">No budget activity has been recorded.</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Date</TableHead>
+                  <TableHead>Event</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead className="text-right">Reserved</TableHead>
+                  <TableHead className="text-right">Committed</TableHead>
+                  <TableHead className="text-right">Spent</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {commitmentEvents.map((event: any) => {
+                  const source = commitmentSource(event);
+                  return (
+                    <TableRow key={event.id}>
+                      <TableCell className="text-muted-foreground">{new Date(event.createdAt).toLocaleDateString()}</TableCell>
+                      <TableCell>
+                        <div className="font-medium text-foreground">{String(event.eventType).replace(/_/g, ' ')}</div>
+                        <div className="text-xs text-muted-foreground">{event.reason}</div>
+                      </TableCell>
+                      <TableCell>{source ? <RelatedRecordLink record={source} /> : '—'}</TableCell>
+                      <TableCell className="text-right text-muted-foreground">{formatCurrency(event.baseReservedDelta, budget.baseCurrency ?? budget.currency)}</TableCell>
+                      <TableCell className="text-right text-muted-foreground">{formatCurrency(event.baseCommittedDelta, budget.baseCurrency ?? budget.currency)}</TableCell>
+                      <TableCell className="text-right text-muted-foreground">{formatCurrency(event.baseExpendedDelta, budget.baseCurrency ?? budget.currency)}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
 

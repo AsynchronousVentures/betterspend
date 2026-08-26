@@ -4,10 +4,12 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { ClipboardCheck, PackageCheck, XCircle } from 'lucide-react';
+import { recordHref } from '@betterspend/shared';
 import { api } from '../../../lib/api';
-import { relatedRecordLink, type ReceivingDetail, type RelatedRecordLink } from '../../../lib/receiving';
+import { type ReceivingDetail } from '../../../lib/receiving';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { PageHeader } from '../../../components/page-header';
+import { RelatedRecordLink, RelatedRecords } from '../../../components/related-records';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -104,16 +106,21 @@ export default function GRNDetailPage({ params }: { params: Promise<{ id: string
 
   const totalReceived = grn.lines.reduce((sum, line) => sum + parseFloat(line.quantityReceived), 0);
   const totalRejected = grn.lines.reduce((sum, line) => sum + parseFloat(line.quantityRejected), 0);
-  const purchaseOrderLink = relatedRecordLink(
-    grn.purchaseOrder ? { id: grn.purchaseOrder.id, label: grn.purchaseOrder.number } : null,
-    'purchase-orders',
-  );
-  const vendorLink = relatedRecordLink(
-    grn.purchaseOrder?.vendor
-      ? { id: grn.purchaseOrder.vendor.id, label: grn.purchaseOrder.vendor.name }
-      : null,
-    'vendors',
-  );
+  const purchaseOrder = {
+    kind: 'purchase_order' as const,
+    id: grn.purchaseOrder?.id,
+    label: grn.purchaseOrder?.number,
+    relation: 'Purchase order',
+  };
+  const vendor = {
+    kind: 'vendor' as const,
+    id: grn.purchaseOrder?.vendor?.id,
+    label: grn.purchaseOrder?.vendor?.name,
+    relation: 'Supplier',
+  };
+  const purchaseOrderHref = grn.purchaseOrder?.id
+    ? recordHref({ kind: 'purchase_order', id: grn.purchaseOrder.id })
+    : null;
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -121,7 +128,7 @@ export default function GRNDetailPage({ params }: { params: Promise<{ id: string
 
       <PageHeader
         title={grn.number}
-        description={`Goods receipt for PO ${purchaseOrderLink.label} from ${vendorLink.label}.`}
+        description={`Goods receipt for PO ${purchaseOrder.label ?? 'Unavailable'} from ${vendor.label ?? 'Unavailable'}.`}
         actions={
           <div className="flex flex-wrap gap-3">
             <Badge variant={statusVariant(grn.status) as any} className="capitalize">
@@ -130,14 +137,16 @@ export default function GRNDetailPage({ params }: { params: Promise<{ id: string
             <Button asChild variant="outline">
               <Link href="/receiving">Back to Receiving</Link>
             </Button>
-            {purchaseOrderLink.href ? (
+            {purchaseOrderHref ? (
               <Button asChild variant="outline">
-                <Link href={purchaseOrderLink.href}>Open PO</Link>
+                <Link href={purchaseOrderHref}>Open PO</Link>
               </Button>
             ) : null}
           </div>
         }
       />
+
+      <RelatedRecords records={[purchaseOrder, vendor]} />
 
       {error ? (
         <Alert variant="destructive">
@@ -158,8 +167,8 @@ export default function GRNDetailPage({ params }: { params: Promise<{ id: string
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <DetailField label="GRN Number" value={grn.number} />
-          <DetailField label="Purchase Order" value={<RelatedLink link={purchaseOrderLink} />} />
-          <DetailField label="Vendor" value={<RelatedLink link={vendorLink} />} />
+          <DetailField label="Purchase Order" value={<RelatedRecordLink record={purchaseOrder} />} />
+          <DetailField label="Vendor" value={<RelatedRecordLink record={vendor} />} />
           <DetailField label="Created" value={new Date(grn.createdAt).toLocaleString()} />
           <DetailField label="Status" value={grn.status.replace(/_/g, ' ')} />
           <DetailField label="Received Date" value={new Date(grn.receivedDate).toLocaleDateString()} />
@@ -219,15 +228,6 @@ export default function GRNDetailPage({ params }: { params: Promise<{ id: string
         </div>
       ) : null}
     </div>
-  );
-}
-
-function RelatedLink({ link }: { link: RelatedRecordLink }) {
-  if (!link.href) return <span>{link.label}</span>;
-  return (
-    <Link href={link.href} className="text-primary hover:underline">
-      {link.label}
-    </Link>
   );
 }
 

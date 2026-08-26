@@ -1,4 +1,4 @@
-/** Record kinds that have a canonical detail route in the web application. */
+/** Record kinds that have a canonical route in the web application. */
 export const RECORD_ROUTES = {
   requisition: 'requisitions',
   rfq: 'rfq',
@@ -6,6 +6,13 @@ export const RECORD_ROUTES = {
   invoice: 'invoices',
   vendor: 'vendors',
   catalog_item: 'catalog',
+  approval_request: 'approvals',
+  receipt: 'receiving',
+  contract: 'contracts',
+  software_license: 'software-licenses',
+  budget: 'budgets',
+  payment_run: 'payment-runs',
+  gl_export_job: 'gl-mappings',
 } as const;
 
 export type RecordKind = keyof typeof RECORD_ROUTES;
@@ -37,5 +44,15 @@ export function isApprovableRecordKind(value: string): value is ApprovableRecord
 
 /** Return the canonical web route for a supported record. */
 export function recordHref(record: { kind: RecordKind; id: string }): string {
-  return `/${RECORD_ROUTES[record.kind]}/${encodeURIComponent(record.id)}`;
+  if (!record.id) {
+    throw new Error(`Cannot build a ${record.kind} record link without an id`);
+  }
+
+  const id = encodeURIComponent(record.id);
+  if (record.kind === 'payment_run') return `/${RECORD_ROUTES[record.kind]}?run=${id}`;
+  if (record.kind === 'gl_export_job') {
+    return `/${RECORD_ROUTES[record.kind]}?view=export-history&job=${id}`;
+  }
+
+  return `/${RECORD_ROUTES[record.kind]}/${id}`;
 }
