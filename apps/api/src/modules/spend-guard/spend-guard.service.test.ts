@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { and, eq } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
+import { spendGuardAlerts } from '@betterspend/db';
 import { SpendGuardService } from './spend-guard.service';
 
 const scope = {
@@ -17,14 +19,16 @@ test('scoped alert reads fail closed before loading unrestricted rows', async ()
   const queries: unknown[] = [];
   let findManyCalled = false;
   const service = new SpendGuardService({
-    execute: async (query: unknown) => {
-      queries.push(query);
-      return [];
-    },
     query: {
       spendGuardAlerts: {
-        findMany: async () => {
+        findMany: async (options: {
+          where: (
+            alert: typeof spendGuardAlerts,
+            operators: { and: typeof and; eq: typeof eq },
+          ) => unknown;
+        }) => {
           findManyCalled = true;
+          queries.push(options.where(spendGuardAlerts, { and, eq }));
           return [];
         },
       },
@@ -34,8 +38,9 @@ test('scoped alert reads fail closed before loading unrestricted rows', async ()
   const alerts = await service.list('org-1', 'open', scope);
 
   assert.deepEqual(alerts, []);
-  assert.equal(findManyCalled, false);
+  assert.equal(findManyCalled, true);
   const query = new PgDialect().sqlToQuery(queries[0] as never);
+  assert.match(query.sql, /SELECT a\.id/);
   assert.match(query.sql, /record_type/);
   assert.ok(query.params.includes('department-1'));
 });
@@ -96,15 +101,19 @@ test('scoped alert mutations return the updated row from the atomic predicate', 
 });
 
 test('entity-scoped alert reads include requisitions through their purchase order entity', async () => {
-  const queries: unknown[] = [];
+  let predicate: unknown;
   const service = new SpendGuardService({
-    execute: async (query: unknown) => {
-      queries.push(query);
-      return [{ id: 'alert-entity-requisition' }];
-    },
     query: {
       spendGuardAlerts: {
-        findMany: async () => [{ id: 'alert-entity-requisition' }],
+        findMany: async (options: {
+          where: (
+            alert: typeof spendGuardAlerts,
+            operators: { and: typeof and; eq: typeof eq },
+          ) => unknown;
+        }) => {
+          predicate = options.where(spendGuardAlerts, { and, eq });
+          return [{ id: 'alert-entity-requisition' }];
+        },
       },
     },
   } as never);
@@ -116,7 +125,8 @@ test('entity-scoped alert reads include requisitions through their purchase orde
   });
 
   assert.deepEqual(alerts, [{ id: 'alert-entity-requisition' }]);
-  const query = new PgDialect().sqlToQuery(queries[0] as never);
+  const query = new PgDialect().sqlToQuery(predicate as never);
+  assert.match(query.sql, /SELECT a\.id/);
   assert.match(query.sql, /purchase_orders/);
   assert.match(query.sql, /po\.entity_id/);
   assert.ok(query.params.includes('entity-1'));

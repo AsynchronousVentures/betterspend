@@ -44,6 +44,7 @@ type SendOutcome =
 
 function invoiceScopePredicate(scope: ResourceScope | undefined): SQL | undefined {
   if (!scope || scope.unrestricted) return undefined;
+  if (scope.ownOnly) return sql`false`;
 
   const clauses: SQL[] = [
     ...scope.departmentIds.map(
@@ -265,18 +266,28 @@ export class GlExportService {
   }
 
   async findAll(organizationId: string, scope?: ResourceScope) {
-    const permittedInvoiceIds = await this.permittedInvoiceIds(organizationId, scope);
-    if (permittedInvoiceIds && permittedInvoiceIds.length === 0) return [];
+    const rowScope = invoiceScopePredicate(scope);
 
     const records = await this.db.query.syncRecords.findMany({
-      where: (record, { and: andFn, eq: eqFn, or: orFn }) =>
-        andFn(
+      where: (record, { and: andFn, eq: eqFn, or: orFn }) => {
+        const scopedInvoiceId = rowScope
+          ? sql`${record.localId} IN (
+              SELECT i.id
+              FROM invoices i
+              LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+              LEFT JOIN requisitions r ON r.id = po.requisition_id
+              WHERE i.organization_id = ${organizationId}
+                AND ${rowScope}
+            )`
+          : undefined;
+        return andFn(
           eqFn(record.organizationId, organizationId),
           eqFn(record.direction, 'outbound'),
           eqFn(record.localEntity, 'invoice'),
-          permittedInvoiceIds ? inArray(record.localId, permittedInvoiceIds) : undefined,
+          scopedInvoiceId,
           orFn(eqFn(record.provider, 'qbo'), eqFn(record.provider, 'xero')),
-        ),
+        );
+      },
       orderBy: (record, { desc }) => desc(record.createdAt),
       limit: 100,
     });
@@ -299,32 +310,26 @@ export class GlExportService {
     );
   }
 
-  private async permittedInvoiceIds(
-    organizationId: string,
-    scope: ResourceScope | undefined,
-  ): Promise<string[] | undefined> {
-    const scopePredicate = invoiceScopePredicate(scope);
-    if (!scopePredicate) return undefined;
-
-    const rows = await this.db.execute(sql`
-      SELECT i.id
-      FROM invoices i
-      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
-      LEFT JOIN requisitions r ON r.id = po.requisition_id
-      WHERE i.organization_id = ${organizationId}
-        AND ${scopePredicate}
-    `);
-    return (rows as unknown as Array<{ id: string }>).map((row) => row.id);
-  }
-
   private async assertInvoiceInScope(
     organizationId: string,
     invoiceId: string,
     scope: ResourceScope | undefined,
     throwOnFailure = true,
   ): Promise<boolean> {
-    const permittedInvoiceIds = await this.permittedInvoiceIds(organizationId, scope);
-    if (permittedInvoiceIds && !permittedInvoiceIds.includes(invoiceId)) {
+    const rowScope = invoiceScopePredicate(scope);
+    if (!rowScope) return true;
+
+    const rows = await this.db.execute(sql`
+      SELECT 1
+      FROM invoices i
+      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
+      WHERE i.organization_id = ${organizationId}
+        AND i.id = ${invoiceId}
+        AND ${rowScope}
+      LIMIT 1
+    `);
+    if ((rows as unknown as unknown[]).length === 0) {
       if (throwOnFailure) {
         throw new BadRequestException(`Invoice ${invoiceId} is outside your access scope`);
       }

@@ -1,5 +1,6 @@
-import type { Db } from '@betterspend/db';
 import { PgDialect } from 'drizzle-orm/pg-core';
+import { and, eq, or } from 'drizzle-orm';
+import { syncRecords, type Db } from '@betterspend/db';
 import { GlExportService } from './gl-export.service';
 import { QboConnectionRequiredError } from './qbo-client.service';
 
@@ -205,6 +206,62 @@ describe('GlExportService', () => {
     ).rejects.toThrow('outside your access scope');
     expect(queue.add).not.toHaveBeenCalled();
     expect(db.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed for own-only invoice scopes without an owner column', async () => {
+    const execute = jest.fn(async (..._args: unknown[]) => []);
+    const queue = { add: jest.fn() };
+    const db = { execute } as unknown as Db;
+    const service = new GlExportService(db, {} as never, {} as never, {} as never, queue as never);
+    const scope = {
+      organizationId: 'organization-1',
+      userId: 'user-1',
+      unrestricted: false,
+      ownOnly: true,
+      departmentIds: ['department-1'],
+      projectIds: [],
+      entityIds: [],
+    };
+
+    await expect(
+      service.enqueue('organization-1', 'invoice-own-only', 'qbo', undefined, scope),
+    ).rejects.toThrow('outside your access scope');
+    const query = new PgDialect().sqlToQuery(execute.mock.calls[0]?.[0] as never);
+    expect(query.sql).toContain('false');
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it('keeps scoped journal lists filtered in SQL without materializing invoice IDs', async () => {
+    let predicate: unknown;
+    const findMany = jest.fn(async (options: {
+      where: (
+        record: typeof syncRecords,
+        operators: { and: typeof and; eq: typeof eq; or: typeof or },
+      ) => unknown;
+    }) => {
+      predicate = options.where(syncRecords, { and, eq, or });
+      return [];
+    });
+    const db = {
+      query: { syncRecords: { findMany } },
+    } as unknown as Db;
+    const service = new GlExportService(db, {} as never, {} as never, {} as never, {} as never);
+    const scope = {
+      organizationId: 'organization-1',
+      userId: 'user-1',
+      unrestricted: false,
+      ownOnly: false,
+      departmentIds: ['department-1'],
+      projectIds: [],
+      entityIds: [],
+    };
+
+    await service.findAll('organization-1', scope);
+
+    const query = new PgDialect().sqlToQuery(predicate as never);
+    expect(query.sql).toContain('SELECT i.id');
+    expect(query.sql).toContain('department_id');
+    expect(query.params).toContain('department-1');
   });
 
   it('lets only the active attempt record a successful delivery', async () => {

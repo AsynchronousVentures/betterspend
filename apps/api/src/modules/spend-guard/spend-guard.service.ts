@@ -1,5 +1,5 @@
 import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { and, desc, eq, gte, inArray, ne, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, gte, ne, sql, type SQL } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { spendGuardAlerts } from '@betterspend/db';
@@ -96,21 +96,26 @@ export class SpendGuardService {
     status: AlertStatus | 'all' = 'open',
     scope?: ResourceScope,
   ) {
-    const permittedAlertIds = await this.permittedAlertIds(orgId, scope);
-    if (permittedAlertIds && permittedAlertIds.length === 0) return [];
+    const rowScope = alertScopePredicate(scope);
 
     return this.db.query.spendGuardAlerts.findMany({
-      where: (alert, operators) =>
-        status === 'all'
-          ? operators.and(
-              operators.eq(alert.orgId, orgId),
-              permittedAlertIds ? inArray(alert.id, permittedAlertIds) : undefined,
-            )
+      where: (alert, operators) => {
+        const scopedAlertId = rowScope
+          ? sql`${alert.id} IN (
+              SELECT a.id
+              FROM spend_guard_alerts a
+              WHERE a.org_id = ${orgId}
+                AND ${rowScope}
+            )`
+          : undefined;
+        return status === 'all'
+          ? operators.and(operators.eq(alert.orgId, orgId), scopedAlertId)
           : operators.and(
               operators.eq(alert.orgId, orgId),
               operators.eq(alert.status, status),
-              permittedAlertIds ? inArray(alert.id, permittedAlertIds) : undefined,
-            ),
+              scopedAlertId,
+            );
+      },
       orderBy: (alert) => [desc(alert.createdAt)],
     });
   }
@@ -147,22 +152,6 @@ export class SpendGuardService {
 
     if (!updated) throw new NotFoundException(`Spend guard alert ${id} not found`);
     return updated;
-  }
-
-  private async permittedAlertIds(
-    orgId: string,
-    scope: ResourceScope | undefined,
-  ): Promise<string[] | undefined> {
-    const scopePredicate = alertScopePredicate(scope);
-    if (!scopePredicate) return undefined;
-
-    const rows = await this.db.execute(sql`
-      SELECT a.id
-      FROM spend_guard_alerts a
-      WHERE a.org_id = ${orgId}
-        AND ${scopePredicate}
-    `);
-    return (rows as unknown as Array<{ id: string }>).map((row) => row.id);
   }
 
   async countOpen(orgId: string) {
