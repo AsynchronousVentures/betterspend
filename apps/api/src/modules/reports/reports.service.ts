@@ -1,5 +1,6 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
+import type { ResourceScope } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { randomUUID } from 'crypto';
@@ -19,8 +20,30 @@ function toCsv(rows: Record<string, unknown>[]): string {
   return lines.join('\n');
 }
 
+interface ScopeColumns {
+  department?: SQL;
+  project?: SQL;
+  entity?: SQL;
+}
+
+/** Build an OR-of-dimensions predicate before a report aggregates its rows. */
+function scopePredicate(scope: ResourceScope | undefined, columns: ScopeColumns): SQL {
+  if (!scope || scope.unrestricted) return sql`true`;
+  const clauses: SQL[] = [
+    ...scope.departmentIds.map((id) => (columns.department ? sql`${columns.department} = ${id}` : null)),
+    ...scope.projectIds.map((id) => (columns.project ? sql`${columns.project} = ${id}` : null)),
+    ...scope.entityIds.map((id) => (columns.entity ? sql`${columns.entity} = ${id}` : null)),
+  ].filter((clause): clause is SQL => clause !== null);
+  return clauses.length > 0 ? sql`(${sql.join(clauses, sql` OR `)})` : sql`false`;
+}
+
+function globalOnlyPredicate(scope: ResourceScope | undefined): SQL {
+  return !scope || scope.unrestricted ? sql`true` : sql`false`;
+}
+
 export interface SavedReport {
   id: string;
+  organizationId: string;
   name: string;
   reportType: string;
   filters: Record<string, unknown>;
@@ -44,13 +67,17 @@ export class ReportsService {
 
   // ─── Saved Reports CRUD ───────────────────────────────────────────────────
 
-  listSavedReports(): SavedReport[] {
-    return this.savedReports;
+  listSavedReports(organizationId: string): SavedReport[] {
+    return this.savedReports.filter((report) => report.organizationId === organizationId);
   }
 
-  saveReport(data: { name: string; reportType: string; filters: Record<string, unknown>; groupBy?: string }): SavedReport {
+  saveReport(
+    organizationId: string,
+    data: { name: string; reportType: string; filters: Record<string, unknown>; groupBy?: string },
+  ): SavedReport {
     const report: SavedReport = {
       id: randomUUID(),
+      organizationId,
       name: data.name,
       reportType: data.reportType,
       filters: data.filters ?? {},
@@ -61,8 +88,10 @@ export class ReportsService {
     return report;
   }
 
-  deleteSavedReport(id: string): boolean {
-    const idx = this.savedReports.findIndex((r) => r.id === id);
+  deleteSavedReport(organizationId: string, id: string): boolean {
+    const idx = this.savedReports.findIndex(
+      (report) => report.organizationId === organizationId && report.id === id,
+    );
     if (idx === -1) return false;
     this.savedReports.splice(idx, 1);
     return true;
@@ -70,28 +99,41 @@ export class ReportsService {
 
   // ─── Custom Report Runner ─────────────────────────────────────────────────
 
-  async runCustomReport(orgId: string, params: CustomReportParams): Promise<Record<string, unknown>[]> {
+  async runCustomReport(
+    orgId: string,
+    params: CustomReportParams,
+    scope?: ResourceScope,
+  ): Promise<Record<string, unknown>[]> {
     switch (params.reportType) {
       case 'spend_by_vendor':
-        return this.customSpendByVendor(orgId, params);
+        return this.customSpendByVendor(orgId, params, scope);
       case 'spend_by_department':
-        return this.customSpendByDepartment(orgId, params);
+        return this.customSpendByDepartment(orgId, params, scope);
       case 'spend_by_category':
-        return this.customSpendByCategory(orgId, params);
+        return this.customSpendByCategory(orgId, params, scope);
       case 'po_status_summary':
-        return this.customPoStatusSummary(orgId, params);
+        return this.customPoStatusSummary(orgId, params, scope);
       case 'invoice_aging':
-        return this.customInvoiceAging(orgId, params);
+        return this.customInvoiceAging(orgId, params, scope);
       case 'approval_cycle_time':
-        return this.customApprovalCycleTime(orgId, params);
+        return this.customApprovalCycleTime(orgId, params, scope);
       default:
         return [];
     }
   }
 
-  private async customSpendByVendor(orgId: string, params: CustomReportParams): Promise<Record<string, unknown>[]> {
+  private async customSpendByVendor(
+    orgId: string,
+    params: CustomReportParams,
+    scope?: ResourceScope,
+  ): Promise<Record<string, unknown>[]> {
     const startDate = params.startDate ?? null;
     const endDate = params.endDate ?? null;
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         v.name                                       AS "vendor",
@@ -102,8 +144,11 @@ export class ReportsService {
         MAX(i.invoice_date)::text                    AS "lastInvoice"
       FROM invoices i
       JOIN vendors v ON v.id = i.vendor_id
+      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${orgId}
         AND i.status NOT IN ('cancelled')
+        AND ${rowScope}
         ${startDate ? sql`AND i.created_at >= ${startDate}::timestamptz` : sql``}
         ${endDate ? sql`AND i.created_at <= ${endDate}::timestamptz` : sql``}
       GROUP BY v.id, v.name, v.code
@@ -112,9 +157,18 @@ export class ReportsService {
     return rows as Record<string, unknown>[];
   }
 
-  private async customSpendByDepartment(orgId: string, params: CustomReportParams): Promise<Record<string, unknown>[]> {
+  private async customSpendByDepartment(
+    orgId: string,
+    params: CustomReportParams,
+    scope?: ResourceScope,
+  ): Promise<Record<string, unknown>[]> {
     const startDate = params.startDate ?? null;
     const endDate = params.endDate ?? null;
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`po.entity_id`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         COALESCE(d.name, 'Unassigned')               AS "department",
@@ -125,6 +179,7 @@ export class ReportsService {
       LEFT JOIN departments  d  ON d.id = r.department_id
       WHERE po.organization_id = ${orgId}
         AND po.status NOT IN ('draft', 'cancelled')
+        AND ${rowScope}
         ${startDate ? sql`AND po.created_at >= ${startDate}::timestamptz` : sql``}
         ${endDate ? sql`AND po.created_at <= ${endDate}::timestamptz` : sql``}
       GROUP BY d.name
@@ -133,9 +188,18 @@ export class ReportsService {
     return rows as Record<string, unknown>[];
   }
 
-  private async customSpendByCategory(orgId: string, params: CustomReportParams): Promise<Record<string, unknown>[]> {
+  private async customSpendByCategory(
+    orgId: string,
+    params: CustomReportParams,
+    scope?: ResourceScope,
+  ): Promise<Record<string, unknown>[]> {
     const startDate = params.startDate ?? null;
     const endDate = params.endDate ?? null;
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         COALESCE(ci.category, 'Uncategorized')       AS "category",
@@ -144,8 +208,12 @@ export class ReportsService {
       FROM invoice_lines il
       JOIN invoices i ON i.id = il.invoice_id
       LEFT JOIN catalog_items ci ON ci.id = il.catalog_item_id
+      LEFT JOIN po_lines pl ON pl.id = il.po_line_id
+      LEFT JOIN purchase_orders po ON po.id = pl.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${orgId}
         AND i.status NOT IN ('cancelled')
+        AND ${rowScope}
         ${startDate ? sql`AND i.created_at >= ${startDate}::timestamptz` : sql``}
         ${endDate ? sql`AND i.created_at <= ${endDate}::timestamptz` : sql``}
       GROUP BY ci.category
@@ -154,16 +222,27 @@ export class ReportsService {
     return rows as Record<string, unknown>[];
   }
 
-  private async customPoStatusSummary(orgId: string, params: CustomReportParams): Promise<Record<string, unknown>[]> {
+  private async customPoStatusSummary(
+    orgId: string,
+    params: CustomReportParams,
+    scope?: ResourceScope,
+  ): Promise<Record<string, unknown>[]> {
     const startDate = params.startDate ?? null;
     const endDate = params.endDate ?? null;
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`po.entity_id`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         po.status                                    AS "status",
         COUNT(*)::int                                AS "count",
         SUM(po.total_amount)::numeric                AS "totalAmount"
       FROM purchase_orders po
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE po.organization_id = ${orgId}
+        AND ${rowScope}
         ${startDate ? sql`AND po.created_at >= ${startDate}::timestamptz` : sql``}
         ${endDate ? sql`AND po.created_at <= ${endDate}::timestamptz` : sql``}
       GROUP BY po.status
@@ -172,7 +251,16 @@ export class ReportsService {
     return rows as Record<string, unknown>[];
   }
 
-  private async customInvoiceAging(orgId: string, _params: CustomReportParams): Promise<Record<string, unknown>[]> {
+  private async customInvoiceAging(
+    orgId: string,
+    _params: CustomReportParams,
+    scope?: ResourceScope,
+  ): Promise<Record<string, unknown>[]> {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         CASE
@@ -185,15 +273,22 @@ export class ReportsService {
         COUNT(*)::int                                AS "invoiceCount",
         SUM(i.total_amount)::numeric                 AS "totalAmount"
       FROM invoices i
+      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${orgId}
         AND i.status NOT IN ('paid', 'cancelled')
+        AND ${rowScope}
       GROUP BY "agingBucket"
       ORDER BY "agingBucket"
     `);
     return rows as Record<string, unknown>[];
   }
 
-  private async customApprovalCycleTime(orgId: string, params: CustomReportParams): Promise<Record<string, unknown>[]> {
+  private async customApprovalCycleTime(
+    orgId: string,
+    params: CustomReportParams,
+    scope?: ResourceScope,
+  ): Promise<Record<string, unknown>[]> {
     const startDate = params.startDate ?? null;
     const endDate = params.endDate ?? null;
     const groupBy = params.groupBy ?? 'month';
@@ -205,6 +300,11 @@ export class ReportsService {
       periodExpr = sql`TO_CHAR(DATE_TRUNC('month', r.created_at), 'YYYY-MM')`;
     }
 
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`po.entity_id`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         ${periodExpr}                                AS "period",
@@ -214,6 +314,7 @@ export class ReportsService {
       JOIN requisitions r ON r.id = po.requisition_id
       WHERE po.organization_id = ${orgId}
         AND po.issued_at IS NOT NULL
+        AND ${rowScope}
         ${startDate ? sql`AND r.created_at >= ${startDate}::timestamptz` : sql``}
         ${endDate ? sql`AND r.created_at <= ${endDate}::timestamptz` : sql``}
       GROUP BY "period"
@@ -224,7 +325,16 @@ export class ReportsService {
 
   // ─── Existing CSV exports (preserved) ─────────────────────────────────────
 
-  async exportPOs(organizationId: string, status?: string): Promise<string> {
+  async exportPOs(
+    organizationId: string,
+    status?: string,
+    scope?: ResourceScope,
+  ): Promise<string> {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`po.entity_id`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         po.internal_number AS "PO Number",
@@ -236,14 +346,25 @@ export class ReportsService {
         po.created_at      AS "Created At"
       FROM purchase_orders po
       LEFT JOIN vendors v ON v.id = po.vendor_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE po.organization_id = ${organizationId}
+        AND ${rowScope}
         ${status ? sql`AND po.status = ${status}` : sql``}
       ORDER BY po.created_at DESC
     `);
     return toCsv(rows as Record<string, unknown>[]);
   }
 
-  async exportInvoices(organizationId: string, status?: string): Promise<string> {
+  async exportInvoices(
+    organizationId: string,
+    status?: string,
+    scope?: ResourceScope,
+  ): Promise<string> {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         i.internal_number  AS "Invoice Number",
@@ -261,14 +382,20 @@ export class ReportsService {
       FROM invoices i
       LEFT JOIN vendors v ON v.id = i.vendor_id
       LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${organizationId}
+        AND ${rowScope}
         ${status ? sql`AND i.status = ${status}` : sql``}
       ORDER BY i.created_at DESC
     `);
     return toCsv(rows as Record<string, unknown>[]);
   }
 
-  async exportRequisitions(organizationId: string): Promise<string> {
+  async exportRequisitions(organizationId: string, scope?: ResourceScope): Promise<string> {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         r.internal_number AS "REQ Number",
@@ -282,12 +409,18 @@ export class ReportsService {
       FROM requisitions r
       LEFT JOIN departments d ON d.id = r.department_id
       WHERE r.organization_id = ${organizationId}
+        AND ${rowScope}
       ORDER BY r.created_at DESC
     `);
     return toCsv(rows as Record<string, unknown>[]);
   }
 
-  async exportSpendSummary(organizationId: string): Promise<string> {
+  async exportSpendSummary(organizationId: string, scope?: ResourceScope): Promise<string> {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         v.name             AS "Vendor",
@@ -298,15 +431,23 @@ export class ReportsService {
         MAX(i.invoice_date) AS "Last Invoice"
       FROM invoices i
       JOIN vendors v ON v.id = i.vendor_id
+      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${organizationId}
         AND i.status = 'approved'
+        AND ${rowScope}
       GROUP BY v.id, v.name, v.code
       ORDER BY "Total Spend" DESC
     `);
     return toCsv(rows as Record<string, unknown>[]);
   }
 
-  async exportBudgets(organizationId: string): Promise<string> {
+  async exportBudgets(organizationId: string, scope?: ResourceScope): Promise<string> {
+    const rowScope = scopePredicate(scope, {
+      department: sql`CASE WHEN b.budget_type = 'department' THEN b.scope_id END`,
+      project: sql`CASE WHEN b.budget_type = 'project' THEN b.scope_id END`,
+      entity: sql`b.entity_id`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         b.name            AS "Budget Name",
@@ -321,15 +462,27 @@ export class ReportsService {
         p.name            AS "Project",
         b.created_at      AS "Created At"
       FROM budgets b
-      LEFT JOIN departments d ON d.id = b.department_id
-      LEFT JOIN projects    p ON p.id = b.project_id
+      LEFT JOIN departments d
+        ON b.budget_type = 'department'
+       AND d.id = b.scope_id
+       AND d.organization_id = b.organization_id
+      LEFT JOIN projects p
+        ON b.budget_type = 'project'
+       AND p.id = b.scope_id
+       AND p.organization_id = b.organization_id
       WHERE b.organization_id = ${organizationId}
+        AND ${rowScope}
       ORDER BY b.fiscal_year DESC, "Utilization %" DESC
     `);
     return toCsv(rows as Record<string, unknown>[]);
   }
 
-  async exportDepartmentSpend(organizationId: string): Promise<string> {
+  async exportDepartmentSpend(organizationId: string, scope?: ResourceScope): Promise<string> {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`po.entity_id`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         COALESCE(d.name, 'Unassigned')             AS "Department",
@@ -341,14 +494,20 @@ export class ReportsService {
       FULL OUTER JOIN requisitions r ON r.department_id = d.id AND r.organization_id = ${organizationId}
       LEFT JOIN purchase_orders po ON po.requisition_id = r.id
         AND po.status NOT IN ('draft', 'cancelled')
-      WHERE d.organization_id = ${organizationId} OR r.organization_id = ${organizationId}
+      WHERE (d.organization_id = ${organizationId} OR r.organization_id = ${organizationId})
+        AND ${rowScope}
       GROUP BY d.name
       ORDER BY "PO Total" DESC NULLS LAST
     `);
     return toCsv(rows as Record<string, unknown>[]);
   }
 
-  async exportApAging(organizationId: string): Promise<string> {
+  async exportApAging(organizationId: string, scope?: ResourceScope): Promise<string> {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         i.internal_number      AS "Invoice Number",
@@ -367,15 +526,23 @@ export class ReportsService {
         EXTRACT(EPOCH FROM (NOW() - i.due_date))::int / 86400 AS "Days Overdue"
       FROM invoices i
       LEFT JOIN vendors v ON v.id = i.vendor_id
+      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${organizationId}
         AND i.status NOT IN ('approved', 'paid', 'cancelled')
         AND (i.due_date IS NULL OR i.due_date < NOW())
+        AND ${rowScope}
       ORDER BY i.due_date ASC NULLS LAST
     `);
     return toCsv(rows as Record<string, unknown>[]);
   }
 
-  async exportGrnSummary(organizationId: string): Promise<string> {
+  async exportGrnSummary(organizationId: string, scope?: ResourceScope): Promise<string> {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`po.entity_id`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         gr.grn_number                 AS "GRN Number",
@@ -388,10 +555,12 @@ export class ReportsService {
         SUM(grl.quantity_received)::numeric AS "Total Qty Received"
       FROM goods_receipts gr
       JOIN purchase_orders po ON po.id = gr.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       LEFT JOIN vendors v ON v.id = po.vendor_id
       LEFT JOIN users u ON u.id = gr.received_by
       LEFT JOIN goods_receipt_lines grl ON grl.goods_receipt_id = gr.id
       WHERE gr.organization_id = ${organizationId}
+        AND ${rowScope}
       GROUP BY gr.id, gr.grn_number, po.internal_number, v.name, gr.status, gr.received_at, u.name
       ORDER BY gr.received_at DESC
     `);

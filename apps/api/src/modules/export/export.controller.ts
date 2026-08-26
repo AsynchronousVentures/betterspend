@@ -3,9 +3,13 @@ import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger'
 import { Response } from 'express';
 import { ExportService } from './export.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
+import { CurrentAccess } from '../auth/current-access.decorator';
+import type { AccessPolicy } from '../auth/access-policy';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('export')
 @ApiBearerAuth()
+@Permissions('reports:export', 'reports:view')
 @Controller('export')
 export class ExportController {
   constructor(private readonly exportService: ExportService) {}
@@ -41,8 +45,13 @@ export class ExportController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Res() res?: Response,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    const rows = await this.exportService.getPurchaseOrders(orgId, { from, to });
+    const rows = await this.exportService.getPurchaseOrders(
+      orgId,
+      { from, to },
+      access?.scopeFor('report', 'reports:view'),
+    );
     if (format === 'csv') {
       return this.handleExport(res!, 'purchase-orders', rows, format);
     }
@@ -66,8 +75,13 @@ export class ExportController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Res() res?: Response,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    const rows = await this.exportService.getInvoices(orgId, { from, to });
+    const rows = await this.exportService.getInvoices(
+      orgId,
+      { from, to },
+      access?.scopeFor('report', 'reports:view'),
+    );
     if (format === 'csv') {
       return this.handleExport(res!, 'invoices', rows, format);
     }
@@ -91,8 +105,13 @@ export class ExportController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Res() res?: Response,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    const rows = await this.exportService.getBudgets(orgId, { from, to });
+    const rows = await this.exportService.getBudgets(
+      orgId,
+      { from, to },
+      access?.scopeFor('report', 'reports:view'),
+    );
     if (format === 'csv') {
       return this.handleExport(res!, 'budgets', rows, format);
     }
@@ -116,8 +135,13 @@ export class ExportController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Res() res?: Response,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    const rows = await this.exportService.getAuditLog(orgId, { from, to });
+    const rows = await this.exportService.getAuditLog(
+      orgId,
+      { from, to },
+      access?.scopeFor('report', 'reports:view'),
+    );
     if (format === 'csv') {
       return this.handleExport(res!, 'audit-log', rows, format);
     }
@@ -141,8 +165,13 @@ export class ExportController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Res() res?: Response,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    const rows = await this.exportService.getSpendByVendor(orgId, { from, to });
+    const rows = await this.exportService.getSpendByVendor(
+      orgId,
+      { from, to },
+      access?.scopeFor('report', 'reports:view'),
+    );
     if (format === 'csv') {
       return this.handleExport(res!, 'spend-by-vendor', rows, format);
     }
@@ -166,8 +195,13 @@ export class ExportController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Res() res?: Response,
+    @CurrentAccess() access?: AccessPolicy,
   ) {
-    const rows = await this.exportService.getSpendByCategory(orgId, { from, to });
+    const rows = await this.exportService.getSpendByCategory(
+      orgId,
+      { from, to },
+      access?.scopeFor('report', 'reports:view'),
+    );
     if (format === 'csv') {
       return this.handleExport(res!, 'spend-by-category', rows, format);
     }

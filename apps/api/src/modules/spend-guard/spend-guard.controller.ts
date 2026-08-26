@@ -3,6 +3,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { SpendGuardService } from './spend-guard.service';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('spend-guard')
 @Controller('spend-guard')
@@ -10,6 +11,7 @@ export class SpendGuardController {
   constructor(private readonly spendGuardService: SpendGuardService) {}
 
   @Get('alerts')
+  @Permissions('reports:view')
   @ApiOperation({ summary: 'List spend guard alerts' })
   list(
     @CurrentOrgId() orgId: string,
@@ -19,6 +21,7 @@ export class SpendGuardController {
   }
 
   @Patch('alerts/:id')
+  @Permissions('reports:view')
   @ApiOperation({ summary: 'Dismiss or escalate a spend guard alert' })
   update(
     @Param('id') id: string,

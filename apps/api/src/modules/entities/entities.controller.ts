@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseBoolPipe, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CreateLegalEntityInput, EntitiesService, UpdateLegalEntityInput } from './entities.service';
 
 @ApiTags('entities')
@@ -10,6 +10,7 @@ export class EntitiesController {
   constructor(private readonly entitiesService: EntitiesService) {}
 
   @Get()
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'List legal entities for the organization' })
   @ApiQuery({ name: 'includeInactive', required: false, type: Boolean })
   findAll(
@@ -20,20 +21,21 @@ export class EntitiesController {
   }
 
   @Get(':id')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Get a legal entity by ID' })
   findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() organizationId: string) {
     return this.entitiesService.findOne(id, organizationId);
   }
 
   @Post()
-  @Roles('admin')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Create a legal entity' })
   create(@Body() body: CreateLegalEntityInput, @CurrentOrgId() organizationId: string) {
     return this.entitiesService.create(organizationId, body);
   }
 
   @Patch(':id')
-  @Roles('admin')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Update a legal entity' })
   update(
     @Param('id', ParseUUIDPipe) id: string,
@@ -44,7 +46,7 @@ export class EntitiesController {
   }
 
   @Delete(':id')
-  @Roles('admin')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Deactivate a legal entity' })
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() organizationId: string) {
     return this.entitiesService.remove(id, organizationId);

@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { TaxCodesService } from './tax-codes.service';
 
 const createTaxCodeSchema = z.object({
@@ -21,30 +22,35 @@ export class TaxCodesController {
   constructor(private readonly taxCodesService: TaxCodesService) {}
 
   @Get()
+  @Permissions('reports:view')
   @ApiOperation({ summary: 'List organization tax codes' })
   findAll(@CurrentOrgId() orgId: string) {
     return this.taxCodesService.findAll(orgId);
   }
 
   @Get(':id')
+  @Permissions('reports:view')
   @ApiOperation({ summary: 'Get tax code detail' })
   findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
     return this.taxCodesService.findOne(id, orgId);
   }
 
   @Post()
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Create tax code' })
   create(@Body() body: unknown, @CurrentOrgId() orgId: string) {
     return this.taxCodesService.create(orgId, createTaxCodeSchema.parse(body));
   }
 
   @Patch(':id')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Update tax code' })
   update(@Param('id', ParseUUIDPipe) id: string, @Body() body: unknown, @CurrentOrgId() orgId: string) {
     return this.taxCodesService.update(id, orgId, updateTaxCodeSchema.parse(body));
   }
 
   @Delete(':id')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Delete tax code' })
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
     return this.taxCodesService.remove(id, orgId);

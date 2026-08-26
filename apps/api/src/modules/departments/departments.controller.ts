@@ -4,7 +4,7 @@ import {
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { DepartmentsService, CreateDepartmentInput, UpdateDepartmentInput } from './departments.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('departments')
 @Controller('departments')
@@ -12,26 +12,28 @@ export class DepartmentsController {
   constructor(private readonly departmentsService: DepartmentsService) {}
 
   @Get()
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'List all departments' })
   findAll(@CurrentOrgId() orgId: string) {
     return this.departmentsService.findAll(orgId);
   }
 
   @Get(':id')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Get a department' })
   findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
     return this.departmentsService.findOne(id, orgId);
   }
 
   @Post()
-  @Roles('admin')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Create a department' })
   create(@Body() body: CreateDepartmentInput, @CurrentOrgId() orgId: string) {
     return this.departmentsService.create(orgId, body);
   }
 
   @Patch(':id')
-  @Roles('admin')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Update a department' })
   update(
     @Param('id', ParseUUIDPipe) id: string,
@@ -42,7 +44,7 @@ export class DepartmentsController {
   }
 
   @Delete(':id')
-  @Roles('admin')
+  @Permissions('settings:manage')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a department' })
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
