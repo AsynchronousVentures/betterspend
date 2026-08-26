@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { CheckCircle2, CreditCard, FileCheck2, RefreshCw, Send, XCircle } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -69,13 +69,16 @@ function statusTone(status: string) {
   return status;
 }
 
-export default function PaymentRunsPage() {
+function PaymentRunsContent() {
   const searchParams = useSearchParams();
   const selectedRunId = searchParams.get('run');
+  const selectedInvoiceId = searchParams.get('invoiceId');
   const [eligibleInvoices, setEligibleInvoices] = useState<Invoice[]>([]);
   const [runs, setRuns] = useState<PaymentRun[]>([]);
   const [summary, setSummary] = useState<any>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(selectedInvoiceId ? [selectedInvoiceId] : []),
+  );
   const [paymentMethod, setPaymentMethod] = useState('manual');
   const [scheduledDate, setScheduledDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
@@ -112,6 +115,12 @@ export default function PaymentRunsPage() {
     if (!selectedRunId || loading) return;
     document.getElementById(`payment-run-${selectedRunId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [loading, selectedRunId, runs]);
+
+  useEffect(() => {
+    if (!selectedInvoiceId || loading || !eligibleInvoices.some((invoice) => invoice.id === selectedInvoiceId)) return;
+    setSelected((current) => (current.has(selectedInvoiceId) ? current : new Set(current).add(selectedInvoiceId)));
+    document.getElementById(`payment-invoice-${selectedInvoiceId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [eligibleInvoices, loading, selectedInvoiceId]);
 
   const selectedInvoices = useMemo(
     () => eligibleInvoices.filter((invoice) => selected.has(invoice.id)),
@@ -307,7 +316,12 @@ export default function PaymentRunsPage() {
                   </TableRow>
                 ) : (
                   eligibleInvoices.map((invoice) => (
-                    <TableRow key={invoice.id}>
+                    <TableRow
+                      key={invoice.id}
+                      id={`payment-invoice-${invoice.id}`}
+                      aria-current={invoice.id === selectedInvoiceId ? 'true' : undefined}
+                      className={invoice.id === selectedInvoiceId ? 'bg-muted/50' : undefined}
+                    >
                       <TableCell>
                         <input
                           type="checkbox"
@@ -440,5 +454,13 @@ export default function PaymentRunsPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function PaymentRunsPage() {
+  return (
+    <Suspense fallback={<div className="p-4 text-sm text-muted-foreground lg:p-8">Loading payment runs...</div>}>
+      <PaymentRunsContent />
+    </Suspense>
   );
 }

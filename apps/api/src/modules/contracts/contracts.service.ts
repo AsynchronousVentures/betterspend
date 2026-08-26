@@ -27,6 +27,7 @@ import {
   hasUnrestrictedOperationalAccess,
   scopedVendorPredicate,
 } from '../auth/operational-access';
+import { canViewRelatedRecord } from '../auth/related-record-access';
 
 type RiskLevel = 'low' | 'medium' | 'high';
 type ContractTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -126,13 +127,23 @@ export class ContractsService {
           orderBy: (obligation, { asc }) => asc(obligation.dueDate),
         },
         softwareLicenses: {
-          columns: { id: true, productName: true, status: true },
+          columns: { id: true, productName: true, status: true, vendorId: true },
+          with: { vendor: { columns: { entityId: true } } },
         },
       },
     });
     if (!contract) throw new NotFoundException(`Contract ${id} not found`);
+    const softwareLicenses = (contract.softwareLicenses ?? [])
+      .filter((license) =>
+        canViewRelatedRecord(access, 'software_license', ['software_licenses:view'], {
+          entityId: license.vendor?.entityId,
+        }),
+      )
+      .map(({ vendorId: _vendorId, vendor: _vendor, ...license }) => license);
+    const { softwareLicenses: _softwareLicenses, ...contractRecord } = contract;
     return {
-      ...contract,
+      ...contractRecord,
+      softwareLicenses,
       intelligenceSummary: this.summarizeContractIntelligence(contract),
     };
   }

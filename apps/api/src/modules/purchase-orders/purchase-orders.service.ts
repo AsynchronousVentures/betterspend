@@ -20,6 +20,7 @@ import { BudgetsService } from '../budgets/budgets.service';
 import { ApprovalEngineService } from '../approvals/approval-engine.service';
 import type { AccessPolicy } from '../auth/access-policy';
 import { permissionScopePredicate, requirePermission } from '../auth/access-scope';
+import { canViewRelatedRecord } from '../auth/related-record-access';
 import type { Db } from '@betterspend/db';
 import {
   auditLog,
@@ -286,7 +287,15 @@ export class PurchaseOrdersService {
         ),
       with: {
         vendor: true,
-        lines: { with: { taxCode: true, matchedContract: true } },
+        lines: {
+          with: {
+            taxCode: true,
+            matchedContract: {
+              columns: { id: true, contractNumber: true, title: true, vendorId: true },
+              with: { vendor: { columns: { entityId: true } } },
+            },
+          },
+        },
         versions: true,
         entity: true,
         requisition: true,
@@ -294,16 +303,81 @@ export class PurchaseOrdersService {
           columns: { id: true, number: true, status: true },
         },
         invoices: {
-          columns: { id: true, internalNumber: true, invoiceNumber: true, status: true },
+          columns: {
+            id: true,
+            internalNumber: true,
+            invoiceNumber: true,
+            status: true,
+            createdBy: true,
+          },
         },
         commitmentEvents: {
           columns: { id: true, budgetId: true },
-          with: { budget: { columns: { id: true, name: true } } },
+          with: {
+            budget: {
+              columns: { id: true, name: true, budgetType: true, scopeId: true, entityId: true },
+            },
+          },
         },
       },
     });
     if (!po) throw new NotFoundException(`Purchase Order ${id} not found`);
-    return po;
+    const recordScope = {
+      ownerIds: [po.issuedBy, po.requisition?.requesterId],
+      departmentId: po.requisition?.departmentId,
+      projectId: po.requisition?.projectId,
+      entityId: po.entityId,
+    };
+    const lines = (po.lines ?? []).map(({ matchedContract, ...line }) => ({
+      ...line,
+      matchedContract:
+        matchedContract &&
+        canViewRelatedRecord(access, 'contract', ['contracts:view'], {
+          entityId: matchedContract.vendor?.entityId,
+        })
+          ? {
+              id: matchedContract.id,
+              contractNumber: matchedContract.contractNumber,
+              title: matchedContract.title,
+            }
+          : null,
+    }));
+    const goodsReceipts = (po.goodsReceipts ?? []).filter(() =>
+      canViewRelatedRecord(access, 'receiving', ['receiving:view', 'receiving:manage'], recordScope),
+    );
+    const invoices = (po.invoices ?? [])
+      .filter((invoice) =>
+        canViewRelatedRecord(
+          access,
+          'invoice',
+          ['invoices:view_all', 'invoices:manage', 'invoices:approve'],
+          { ...recordScope, ownerIds: [invoice.createdBy, po.requisition?.requesterId] },
+        ),
+      )
+      .map(({ createdBy: _createdBy, ...invoice }) => invoice);
+    const commitmentEvents = (po.commitmentEvents ?? []).flatMap((event) => {
+      const budget = event.budget;
+      if (
+        !budget ||
+        !canViewRelatedRecord(access, 'budget', ['budgets:view'], {
+          departmentId: budget.budgetType === 'department' ? budget.scopeId : null,
+          projectId: budget.budgetType === 'project' ? budget.scopeId : null,
+          entityId: budget.entityId,
+        })
+      ) {
+        return [];
+      }
+
+      return [{ id: event.id, budgetId: event.budgetId, budget: { id: budget.id, name: budget.name } }];
+    });
+    const {
+      lines: _lines,
+      goodsReceipts: _goodsReceipts,
+      invoices: _invoices,
+      commitmentEvents: _commitmentEvents,
+      ...purchaseOrder
+    } = po;
+    return { ...purchaseOrder, lines, goodsReceipts, invoices, commitmentEvents };
   }
 
   async create(

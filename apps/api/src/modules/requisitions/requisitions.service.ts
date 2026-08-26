@@ -18,6 +18,7 @@ import { approvalRequests, requisitions, requisitionLines } from '@betterspend/d
 import type { CreateRequisitionInput } from '@betterspend/shared';
 import type { AccessPolicy } from '../auth/access-policy';
 import { permissionScopePredicate, requirePermission } from '../auth/access-scope';
+import { canViewRelatedRecord } from '../auth/related-record-access';
 
 @Injectable()
 export class RequisitionsService {
@@ -79,16 +80,25 @@ export class RequisitionsService {
         ),
       with: {
         lines: true,
-        purchaseOrders: { columns: { id: true, number: true, status: true } },
+        purchaseOrders: {
+          columns: { id: true, number: true, status: true, entityId: true, issuedBy: true },
+        },
         commitmentEvents: {
           columns: { id: true, budgetId: true },
-          with: { budget: { columns: { id: true, name: true } } },
+          with: {
+            budget: {
+              columns: { id: true, name: true, budgetType: true, scopeId: true, entityId: true },
+            },
+          },
         },
       },
     });
     if (!req) throw new NotFoundException(`Requisition ${id} not found`);
     const activeApproval =
-      !access || access.can('approvals:view') || access.can('approvals:act')
+      canViewRelatedRecord(access, 'approval', ['approvals:view', 'approvals:act'], {
+        departmentId: req.departmentId,
+        projectId: req.projectId,
+      })
         ? await this.db.query.approvalRequests.findFirst({
             where: (approval, { and, eq }) =>
               and(
@@ -100,7 +110,47 @@ export class RequisitionsService {
             columns: { id: true, currentStep: true, status: true },
           })
         : null;
-    return { ...req, activeApproval };
+    const purchaseOrders = (req.purchaseOrders ?? [])
+      .filter((purchaseOrder) =>
+        canViewRelatedRecord(
+          access,
+          'purchase_order',
+          [
+            'purchase_orders:view_all',
+            'purchase_orders:view_own',
+            'purchase_orders:manage',
+            'purchase_orders:issue',
+          ],
+          {
+            ownerIds: [purchaseOrder.issuedBy, req.requesterId],
+            departmentId: req.departmentId,
+            projectId: req.projectId,
+            entityId: purchaseOrder.entityId,
+          },
+        ),
+      )
+      .map(({ id: purchaseOrderId, number, status }) => ({
+        id: purchaseOrderId,
+        number,
+        status,
+      }));
+    const commitmentEvents = (req.commitmentEvents ?? []).flatMap((event) => {
+      const budget = event.budget;
+      if (
+        !budget ||
+        !canViewRelatedRecord(access, 'budget', ['budgets:view'], {
+          departmentId: budget.budgetType === 'department' ? budget.scopeId : null,
+          projectId: budget.budgetType === 'project' ? budget.scopeId : null,
+          entityId: budget.entityId,
+        })
+      ) {
+        return [];
+      }
+
+      return [{ id: event.id, budgetId: event.budgetId, budget: { id: budget.id, name: budget.name } }];
+    });
+    const { purchaseOrders: _purchaseOrders, commitmentEvents: _commitmentEvents, ...requisition } = req;
+    return { ...requisition, purchaseOrders, commitmentEvents, activeApproval };
   }
 
   private async findOneForMutation(

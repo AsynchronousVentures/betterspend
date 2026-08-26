@@ -63,6 +63,7 @@ function GlMappingsContent() {
       setMappings(data as GlMapping[]);
       setLoadError('');
     } catch (err) {
+      setMappings([]);
       setLoadError(err instanceof Error ? err.message : 'Failed to load GL mappings');
     }
   }

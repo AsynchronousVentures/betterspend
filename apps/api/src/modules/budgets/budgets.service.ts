@@ -64,6 +64,8 @@ import {
   type PurchaseOrderCommitmentBalance,
 } from './budget-commitments';
 import { scopePredicate } from '../auth/scope-sql';
+import type { AccessPolicy } from '../auth/access-policy';
+import { canViewRelatedRecord } from '../auth/related-record-access';
 
 export interface CreateBudgetInput {
   name: string;
@@ -193,7 +195,12 @@ export class BudgetsService {
     });
   }
 
-  async findOne(id: string, organizationId: string, scope?: ResourceScope) {
+  async findOne(
+    id: string,
+    organizationId: string,
+    scope?: ResourceScope,
+    relatedAccess?: AccessPolicy,
+  ) {
     const scopeCondition = budgetScopeCondition(scope);
     const budget = await this.db.query.budgets.findFirst({
       where: (b, { and, eq }) =>
@@ -202,17 +209,110 @@ export class BudgetsService {
         periods: true,
         entity: true,
         commitmentEvents: {
+          columns: {
+            id: true,
+            eventType: true,
+            reason: true,
+            baseReservedDelta: true,
+            baseCommittedDelta: true,
+            baseExpendedDelta: true,
+            createdAt: true,
+          },
           with: {
-            requisition: { columns: { id: true, number: true } },
-            purchaseOrder: { columns: { id: true, number: true } },
-            invoice: { columns: { id: true, internalNumber: true, invoiceNumber: true } },
+            requisition: {
+              columns: {
+                id: true,
+                number: true,
+                requesterId: true,
+                departmentId: true,
+                projectId: true,
+              },
+            },
+            purchaseOrder: {
+              columns: { id: true, number: true, issuedBy: true, entityId: true },
+              with: {
+                requisition: {
+                  columns: { requesterId: true, departmentId: true, projectId: true },
+                },
+              },
+            },
+            invoice: {
+              columns: { id: true, internalNumber: true, invoiceNumber: true, createdBy: true, entityId: true },
+              with: {
+                purchaseOrder: {
+                  columns: { entityId: true },
+                  with: {
+                    requisition: {
+                      columns: { requesterId: true, departmentId: true, projectId: true },
+                    },
+                  },
+                },
+              },
+            },
           },
           orderBy: (event, { desc }) => desc(event.createdAt),
         },
       },
     });
     if (!budget) throw new NotFoundException(`Budget ${id} not found`);
-    return budget;
+    const commitmentEvents = (budget.commitmentEvents ?? []).map((event) => {
+      const requisition =
+        event.requisition &&
+        canViewRelatedRecord(
+          relatedAccess,
+          'requisition',
+          ['requisitions:view_all', 'requisitions:view_own', 'requisitions:manage'],
+          {
+            ownerIds: [event.requisition.requesterId],
+            departmentId: event.requisition.departmentId,
+            projectId: event.requisition.projectId,
+          },
+        )
+          ? { id: event.requisition.id, number: event.requisition.number }
+          : null;
+      const purchaseOrder =
+        event.purchaseOrder &&
+        canViewRelatedRecord(
+          relatedAccess,
+          'purchase_order',
+          [
+            'purchase_orders:view_all',
+            'purchase_orders:view_own',
+            'purchase_orders:manage',
+            'purchase_orders:issue',
+          ],
+          {
+            ownerIds: [event.purchaseOrder.issuedBy, event.purchaseOrder.requisition?.requesterId],
+            departmentId: event.purchaseOrder.requisition?.departmentId,
+            projectId: event.purchaseOrder.requisition?.projectId,
+            entityId: event.purchaseOrder.entityId,
+          },
+        )
+          ? { id: event.purchaseOrder.id, number: event.purchaseOrder.number }
+          : null;
+      const invoice =
+        event.invoice &&
+        canViewRelatedRecord(
+          relatedAccess,
+          'invoice',
+          ['invoices:view_all', 'invoices:manage', 'invoices:approve'],
+          {
+            ownerIds: [event.invoice.createdBy, event.invoice.purchaseOrder?.requisition?.requesterId],
+            departmentId: event.invoice.purchaseOrder?.requisition?.departmentId,
+            projectId: event.invoice.purchaseOrder?.requisition?.projectId,
+            entityId: event.invoice.entityId,
+          },
+        )
+          ? {
+              id: event.invoice.id,
+              internalNumber: event.invoice.internalNumber,
+              invoiceNumber: event.invoice.invoiceNumber,
+            }
+          : null;
+
+      return { ...event, requisition, purchaseOrder, invoice };
+    });
+    return { ...budget, commitmentEvents };
   }
 
   async create(
@@ -220,6 +320,7 @@ export class BudgetsService {
     actorId: string,
     input: CreateBudgetInput,
     scope?: ResourceScope,
+    relatedAccess?: AccessPolicy,
   ) {
     this.assertPolicyOverrides(input);
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
@@ -307,7 +408,7 @@ export class BudgetsService {
       return budget.id;
     });
 
-    return this.findOne(budgetId, organizationId, scope);
+    return this.findOne(budgetId, organizationId, scope, relatedAccess);
   }
 
   async checkBudget(
@@ -370,6 +471,7 @@ export class BudgetsService {
       pendingRequisitionPolicy?: PendingRequisitionPolicy | null;
     },
     scope?: ResourceScope,
+    relatedAccess?: AccessPolicy,
   ) {
     this.assertPolicyOverrides(input);
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
@@ -481,7 +583,7 @@ export class BudgetsService {
         },
       });
     });
-    return this.findOne(id, organizationId, scope);
+    return this.findOne(id, organizationId, scope, relatedAccess);
   }
 
   /**
@@ -700,6 +802,7 @@ export class BudgetsService {
     input: { periodStart: string; periodEnd: string; allocatedAmount: number },
     actorId: string,
     scope?: ResourceScope,
+    relatedAccess?: AccessPolicy,
   ) {
     await this.db.transaction(async (tx) => {
       const [budget] = await tx
@@ -740,7 +843,7 @@ export class BudgetsService {
         },
       });
     });
-    return this.findOne(id, organizationId, scope);
+    return this.findOne(id, organizationId, scope, relatedAccess);
   }
 
   async removePeriod(
@@ -749,6 +852,7 @@ export class BudgetsService {
     organizationId: string,
     actorId: string,
     scope?: ResourceScope,
+    relatedAccess?: AccessPolicy,
   ) {
     await this.db.transaction(async (tx) => {
       const [budget] = await tx
@@ -789,7 +893,7 @@ export class BudgetsService {
         },
       });
     });
-    return this.findOne(budgetId, organizationId, scope);
+    return this.findOne(budgetId, organizationId, scope, relatedAccess);
   }
 
   // ---------------------------------------------------------------------------
