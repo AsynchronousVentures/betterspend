@@ -1,5 +1,11 @@
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, and, sql } from 'drizzle-orm';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { eq, and, inArray, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import {
@@ -9,10 +15,13 @@ import {
   contractLines,
   contractObligations,
   contracts,
+  vendors,
 } from '@betterspend/db';
 import { AuditService } from '../audit/audit.service';
 import { DocumentsService } from '../documents/documents.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import type { AccessPolicy } from '../auth/access-policy';
+import { operationalScope } from '../auth/operational-access';
 
 type RiskLevel = 'low' | 'medium' | 'high';
 
@@ -47,13 +56,23 @@ export class ContractsService {
     private readonly documentsService: DocumentsService,
   ) {}
 
-  async findAll(organizationId: string, filters?: { status?: string; vendorId?: string; type?: string }) {
+  async findAll(
+    organizationId: string,
+    filters?: { status?: string; vendorId?: string; type?: string },
+    access?: AccessPolicy,
+  ) {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'contracts:view');
     const rows = await this.db.query.contracts.findMany({
       where: (c, { and, eq }) => {
         const conditions = [eq(c.organizationId, organizationId)];
         if (filters?.status) conditions.push(eq(c.status, filters.status));
         if (filters?.vendorId) conditions.push(eq(c.vendorId, filters.vendorId));
         if (filters?.type) conditions.push(eq(c.type, filters.type));
+        if (scopedVendorIds) {
+          conditions.push(
+            scopedVendorIds.length > 0 ? inArray(c.vendorId, scopedVendorIds) : sql`false`,
+          );
+        }
         return and(...conditions);
       },
       with: {
@@ -65,9 +84,24 @@ export class ContractsService {
     return this.withIntelligenceSummaries(rows);
   }
 
-  async findOne(id: string, organizationId: string) {
+  async findOne(
+    id: string,
+    organizationId: string,
+    access?: AccessPolicy,
+    permission = 'contracts:view',
+  ) {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, permission);
     const contract = await this.db.query.contracts.findFirst({
-      where: (c, { and, eq }) => and(eq(c.id, id), eq(c.organizationId, organizationId)),
+      where: (c, { and, eq }) =>
+        and(
+          eq(c.id, id),
+          eq(c.organizationId, organizationId),
+          scopedVendorIds
+            ? scopedVendorIds.length > 0
+              ? inArray(c.vendorId, scopedVendorIds)
+              : sql`false`
+            : undefined,
+        ),
       with: {
         vendor: true,
         owner: true,
@@ -89,7 +123,8 @@ export class ContractsService {
     };
   }
 
-  async create(data: typeof contracts.$inferInsert) {
+  async create(data: typeof contracts.$inferInsert, access?: AccessPolicy) {
+    await this.assertVendorScope(data.organizationId, access, 'contracts:manage', data.vendorId);
     // Auto-generate contract number
     const [{ count }] = await this.db
       .select({ count: sql<number>`count(*)` })
@@ -105,13 +140,24 @@ export class ContractsService {
       .values({ ...data, contractNumber })
       .returning();
 
-    this.auditService.log(data.organizationId, data.createdBy, 'contract', contract.id, 'created').catch(() => {});
+    this.auditService
+      .log(data.organizationId, data.createdBy, 'contract', contract.id, 'created')
+      .catch(() => {});
 
-    return this.findOne(contract.id, data.organizationId);
+    return this.findOne(contract.id, data.organizationId, access, 'contracts:manage');
   }
 
-  async update(id: string, organizationId: string, userId: string, data: Partial<typeof contracts.$inferInsert>) {
-    const existing = await this.findOne(id, organizationId);
+  async update(
+    id: string,
+    organizationId: string,
+    userId: string,
+    data: Partial<typeof contracts.$inferInsert>,
+    access?: AccessPolicy,
+  ) {
+    await this.findOne(id, organizationId, access, 'contracts:manage');
+    if (data.vendorId !== undefined) {
+      await this.assertVendorScope(organizationId, access, 'contracts:manage', data.vendorId);
+    }
 
     const [updated] = await this.db
       .update(contracts)
@@ -123,42 +169,80 @@ export class ContractsService {
 
     this.auditService.log(organizationId, userId, 'contract', id, 'updated').catch(() => {});
 
-    return this.findOne(id, organizationId);
+    return this.findOne(id, organizationId, access, 'contracts:manage');
   }
 
-  async activate(id: string, organizationId: string, userId: string) {
-    const contract = await this.findOne(id, organizationId);
+  async activate(id: string, organizationId: string, userId: string, access?: AccessPolicy) {
+    const contract = await this.findOne(id, organizationId, access, 'contracts:manage');
     if (!['draft', 'pending_approval'].includes(contract.status)) {
       throw new BadRequestException(`Cannot activate a contract in status: ${contract.status}`);
     }
-    return this.update(id, organizationId, userId, {
-      status: 'active',
-      approvedBy: userId,
-      approvedAt: new Date(),
-    });
+    return this.update(
+      id,
+      organizationId,
+      userId,
+      {
+        status: 'active',
+        approvedBy: userId,
+        approvedAt: new Date(),
+      },
+      access,
+    );
   }
 
-  async terminate(id: string, organizationId: string, userId: string, reason: string) {
-    const contract = await this.findOne(id, organizationId);
+  async terminate(
+    id: string,
+    organizationId: string,
+    userId: string,
+    reason: string,
+    access?: AccessPolicy,
+  ) {
+    const contract = await this.findOne(id, organizationId, access, 'contracts:manage');
     if (!['active', 'expiring_soon'].includes(contract.status)) {
       throw new BadRequestException(`Cannot terminate a contract in status: ${contract.status}`);
     }
-    return this.update(id, organizationId, userId, {
-      status: 'terminated',
-      terminatedBy: userId,
-      terminatedAt: new Date(),
-      terminationReason: reason,
-    });
+    return this.update(
+      id,
+      organizationId,
+      userId,
+      {
+        status: 'terminated',
+        terminatedBy: userId,
+        terminatedAt: new Date(),
+        terminationReason: reason,
+      },
+      access,
+    );
   }
 
-  async addLine(contractId: string, organizationId: string, data: typeof contractLines.$inferInsert) {
-    await this.findOne(contractId, organizationId); // verify ownership
-    const [line] = await this.db.insert(contractLines).values({ ...data, contractId }).returning();
+  async addLine(
+    contractId: string,
+    organizationId: string,
+    data: typeof contractLines.$inferInsert,
+    access?: AccessPolicy,
+  ) {
+    await this.findOne(contractId, organizationId, access, 'contracts:manage'); // verify ownership
+    const [line] = await this.db
+      .insert(contractLines)
+      .values({ ...data, contractId })
+      .returning();
     return line;
   }
 
-  async addAmendment(contractId: string, organizationId: string, userId: string, data: { title: string; description?: string | null; effectiveDate?: Date | null; valueChange?: string | null; newEndDate?: Date | null }) {
-    await this.findOne(contractId, organizationId);
+  async addAmendment(
+    contractId: string,
+    organizationId: string,
+    userId: string,
+    data: {
+      title: string;
+      description?: string | null;
+      effectiveDate?: Date | null;
+      valueChange?: string | null;
+      newEndDate?: Date | null;
+    },
+    access?: AccessPolicy,
+  ) {
+    await this.findOne(contractId, organizationId, access, 'contracts:manage');
 
     // get next amendment number
     const [{ maxNum }] = await this.db
@@ -173,7 +257,7 @@ export class ContractsService {
 
     // If there's a value change, update contract total
     if (data.valueChange) {
-      const contract = await this.findOne(contractId, organizationId);
+      const contract = await this.findOne(contractId, organizationId, access, 'contracts:manage');
       const currentValue = parseFloat(contract.totalValue ?? '0');
       const delta = parseFloat(String(data.valueChange));
       await this.db
@@ -193,7 +277,8 @@ export class ContractsService {
     return amendment;
   }
 
-  async getExpiringContracts(organizationId: string, daysAhead = 30) {
+  async getExpiringContracts(organizationId: string, daysAhead = 30, access?: AccessPolicy) {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'contracts:view');
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() + daysAhead);
     const now = new Date();
@@ -205,13 +290,21 @@ export class ContractsService {
           eq(c.status, 'active'),
           lte(c.endDate, cutoff),
           gt(c.endDate, now),
+          scopedVendorIds
+            ? scopedVendorIds.length > 0
+              ? inArray(c.vendorId, scopedVendorIds)
+              : sql`false`
+            : undefined,
         ),
       with: { vendor: true },
       orderBy: (c, { asc }) => asc(c.endDate),
     });
   }
 
-  async syncExpiringStatus(organizationId: string) {
+  async syncExpiringStatus(organizationId: string, access?: AccessPolicy) {
+    if (access && !this.isGlobal(access, 'contracts:manage')) {
+      throw new ForbiddenException('Contract status synchronization requires a global grant');
+    }
     const now = new Date();
     const cutoff30 = new Date();
     cutoff30.setDate(cutoff30.getDate() + 30);
@@ -247,8 +340,9 @@ export class ContractsService {
     organizationId: string,
     userId: string,
     input: { documentId?: string; documentText?: string; sourceName?: string },
+    access?: AccessPolicy,
   ) {
-    const contract = await this.findOne(contractId, organizationId);
+    const contract = await this.findOne(contractId, organizationId, access, 'contracts:manage');
     let sourceName = input.sourceName?.trim() || 'Contract terms';
     let sourceType = 'terms';
 
@@ -262,17 +356,28 @@ export class ContractsService {
             eq(doc.entityId, contractId),
           ),
       });
-      if (!document) throw new NotFoundException(`Document ${input.documentId} not found for this contract`);
+      if (!document)
+        throw new NotFoundException(`Document ${input.documentId} not found for this contract`);
       sourceName = document.filename;
       sourceType = 'document';
     }
 
-    const uploadedText = input.documentId && !input.documentText
-      ? await this.documentsService.getTextContent(organizationId, input.documentId)
-      : null;
-    const extractedText = (input.documentText?.trim() || uploadedText || contract.terms || contract.internalNotes || contract.description || '').trim();
+    const uploadedText =
+      input.documentId && !input.documentText
+        ? await this.documentsService.getTextContent(organizationId, input.documentId)
+        : null;
+    const extractedText = (
+      input.documentText?.trim() ||
+      uploadedText ||
+      contract.terms ||
+      contract.internalNotes ||
+      contract.description ||
+      ''
+    ).trim();
     if (!extractedText) {
-      throw new BadRequestException('Provide documentText or add contract terms before running extraction');
+      throw new BadRequestException(
+        'Provide documentText or add contract terms before running extraction',
+      );
     }
 
     const extracted = this.extractContractIntelligence(extractedText, contract);
@@ -322,7 +427,9 @@ export class ContractsService {
             extracted.obligations.map((obligation) => ({
               organizationId,
               contractId,
-              clauseId: obligation.sourceClauseType ? clauseByType.get(obligation.sourceClauseType) : undefined,
+              clauseId: obligation.sourceClauseType
+                ? clauseByType.get(obligation.sourceClauseType)
+                : undefined,
               ownerId: contract.ownerId ?? contract.createdBy,
               obligationType: obligation.obligationType,
               title: obligation.title,
@@ -347,7 +454,7 @@ export class ContractsService {
       })
       .catch(() => {});
 
-    return this.findOne(contractId, organizationId);
+    return this.findOne(contractId, organizationId, access, 'contracts:manage');
   }
 
   async reviewExtraction(
@@ -356,11 +463,16 @@ export class ContractsService {
     userId: string,
     extractionId: string,
     input: { decision: 'approved' | 'rejected'; fields?: Record<string, unknown> },
+    access?: AccessPolicy,
   ) {
-    await this.findOne(contractId, organizationId);
+    await this.findOne(contractId, organizationId, access, 'contracts:manage');
     const extraction = await this.db.query.contractExtractions.findFirst({
       where: (record, { and, eq }) =>
-        and(eq(record.id, extractionId), eq(record.contractId, contractId), eq(record.organizationId, organizationId)),
+        and(
+          eq(record.id, extractionId),
+          eq(record.contractId, contractId),
+          eq(record.organizationId, organizationId),
+        ),
     });
     if (!extraction) throw new NotFoundException(`Contract extraction ${extractionId} not found`);
 
@@ -379,7 +491,12 @@ export class ContractsService {
     await this.db
       .update(contractClauses)
       .set({ status: input.decision, reviewedBy: userId, reviewedAt, updatedAt: reviewedAt })
-      .where(and(eq(contractClauses.extractionId, extractionId), eq(contractClauses.organizationId, organizationId)));
+      .where(
+        and(
+          eq(contractClauses.extractionId, extractionId),
+          eq(contractClauses.organizationId, organizationId),
+        ),
+      );
 
     if (input.decision === 'approved') {
       const fields = { ...(extraction.extractedFields ?? {}), ...(input.fields ?? {}) };
@@ -399,7 +516,7 @@ export class ContractsService {
       })
       .catch(() => {});
 
-    return this.findOne(contractId, organizationId);
+    return this.findOne(contractId, organizationId, access, 'contracts:manage');
   }
 
   async updateClause(
@@ -414,8 +531,9 @@ export class ContractsService {
       normalizedSummary?: string;
       extractedText?: string;
     },
+    access?: AccessPolicy,
   ) {
-    await this.findOne(contractId, organizationId);
+    await this.findOne(contractId, organizationId, access, 'contracts:manage');
     const [updated] = await this.db
       .update(contractClauses)
       .set({
@@ -428,7 +546,13 @@ export class ContractsService {
         reviewedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(and(eq(contractClauses.id, clauseId), eq(contractClauses.contractId, contractId), eq(contractClauses.organizationId, organizationId)))
+      .where(
+        and(
+          eq(contractClauses.id, clauseId),
+          eq(contractClauses.contractId, contractId),
+          eq(contractClauses.organizationId, organizationId),
+        ),
+      )
       .returning();
 
     if (!updated) throw new NotFoundException(`Contract clause ${clauseId} not found`);
@@ -439,7 +563,7 @@ export class ContractsService {
         status: updated.status,
       })
       .catch(() => {});
-    return this.findOne(contractId, organizationId);
+    return this.findOne(contractId, organizationId, access, 'contracts:manage');
   }
 
   async updateObligation(
@@ -455,20 +579,31 @@ export class ContractsService {
       description?: string;
       notificationLeadDays?: number;
     },
+    access?: AccessPolicy,
   ) {
-    await this.findOne(contractId, organizationId);
+    await this.findOne(contractId, organizationId, access, 'contracts:manage');
     const [updated] = await this.db
       .update(contractObligations)
       .set({
         status: input.status,
         ownerId: input.ownerId === null ? null : input.ownerId,
-        dueDate: input.dueDate ? new Date(input.dueDate) : input.dueDate === null ? null : undefined,
+        dueDate: input.dueDate
+          ? new Date(input.dueDate)
+          : input.dueDate === null
+            ? null
+            : undefined,
         title: input.title,
         description: input.description,
         notificationLeadDays: input.notificationLeadDays,
         updatedAt: new Date(),
       })
-      .where(and(eq(contractObligations.id, obligationId), eq(contractObligations.contractId, contractId), eq(contractObligations.organizationId, organizationId)))
+      .where(
+        and(
+          eq(contractObligations.id, obligationId),
+          eq(contractObligations.contractId, contractId),
+          eq(contractObligations.organizationId, organizationId),
+        ),
+      )
       .returning();
 
     if (!updated) throw new NotFoundException(`Contract obligation ${obligationId} not found`);
@@ -478,7 +613,7 @@ export class ContractsService {
         status: updated.status,
       })
       .catch(() => {});
-    return this.findOne(contractId, organizationId);
+    return this.findOne(contractId, organizationId, access, 'contracts:manage');
   }
 
   private async withIntelligenceSummaries(rows: any[]) {
@@ -513,20 +648,36 @@ export class ContractsService {
     const obligations = contract.obligations ?? [];
     const extractions = contract.extractions ?? [];
     const openObligations = obligations.filter((obligation: any) => obligation.status === 'open');
-    const highRisk = clauses.filter((clause: any) => clause.riskLevel === 'high' && clause.status !== 'rejected');
-    const mediumRisk = clauses.filter((clause: any) => clause.riskLevel === 'medium' && clause.status !== 'rejected');
+    const highRisk = clauses.filter(
+      (clause: any) => clause.riskLevel === 'high' && clause.status !== 'rejected',
+    );
+    const mediumRisk = clauses.filter(
+      (clause: any) => clause.riskLevel === 'medium' && clause.status !== 'rejected',
+    );
 
     return {
       extractionCount: extractions.length,
-      pendingReviewCount: extractions.filter((extraction: any) => extraction.status === 'pending_review').length,
+      pendingReviewCount: extractions.filter(
+        (extraction: any) => extraction.status === 'pending_review',
+      ).length,
       clauseCount: clauses.length,
       highRiskCount: highRisk.length,
       mediumRiskCount: mediumRisk.length,
       openObligationCount: openObligations.length,
-      nextObligationDueAt: openObligations
-        .filter((obligation: any) => obligation.dueDate)
-        .sort((a: any, b: any) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())[0]?.dueDate ?? null,
-      riskLevel: highRisk.length > 0 ? 'high' : mediumRisk.length > 0 ? 'medium' : clauses.length > 0 ? 'low' : 'none',
+      nextObligationDueAt:
+        openObligations
+          .filter((obligation: any) => obligation.dueDate)
+          .sort(
+            (a: any, b: any) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime(),
+          )[0]?.dueDate ?? null,
+      riskLevel:
+        highRisk.length > 0
+          ? 'high'
+          : mediumRisk.length > 0
+            ? 'medium'
+            : clauses.length > 0
+              ? 'low'
+              : 'none',
     };
   }
 
@@ -534,17 +685,29 @@ export class ContractsService {
     const fields = this.extractFields(text);
     const clauses = this.extractClauses(text, contract, fields);
     const obligations = this.extractObligations(text, contract, fields, clauses);
-    const riskScore = clauses.reduce((score, clause) => score + (clause.riskLevel === 'high' ? 3 : clause.riskLevel === 'medium' ? 1 : 0), 0);
+    const riskScore = clauses.reduce(
+      (score, clause) =>
+        score + (clause.riskLevel === 'high' ? 3 : clause.riskLevel === 'medium' ? 1 : 0),
+      0,
+    );
     const confidence = clauses.length > 0 ? Math.min(0.95, 0.55 + clauses.length * 0.05) : 0.4;
     return { fields, clauses, obligations, riskScore, confidence };
   }
 
   private extractFields(text: string) {
-    const paymentTermsMatch = text.match(/\b(?:payment terms?|invoice terms?)[:\s-]*(net\s*\d+|\d+\s*days?)/i) ?? text.match(/\bnet\s*(\d{1,3})\b/i);
+    const paymentTermsMatch =
+      text.match(/\b(?:payment terms?|invoice terms?)[:\s-]*(net\s*\d+|\d+\s*days?)/i) ??
+      text.match(/\bnet\s*(\d{1,3})\b/i);
     const noticeMatch = text.match(/\b(\d{1,3})\s+days?\s+(?:prior\s+)?(?:written\s+)?notice\b/i);
-    const governingLawMatch = text.match(/\bgoverned by (?:the )?laws? of ([A-Za-z ,]+?)(?:\.|,|;|\n|$)/i);
-    const liabilityCapMatch = text.match(/\bliability[^.]{0,120}?(?:cap|limited to|shall not exceed)\s+([^.;\n]+)/i);
-    const priceEscalationMatch = text.match(/\b(?:price|fee)[^.]{0,80}?(?:increase|escalation|uplift)[^.]{0,80}?(\d{1,2}(?:\.\d+)?)\s*%/i);
+    const governingLawMatch = text.match(
+      /\bgoverned by (?:the )?laws? of ([A-Za-z ,]+?)(?:\.|,|;|\n|$)/i,
+    );
+    const liabilityCapMatch = text.match(
+      /\bliability[^.]{0,120}?(?:cap|limited to|shall not exceed)\s+([^.;\n]+)/i,
+    );
+    const priceEscalationMatch = text.match(
+      /\b(?:price|fee)[^.]{0,80}?(?:increase|escalation|uplift)[^.]{0,80}?(\d{1,2}(?:\.\d+)?)\s*%/i,
+    );
 
     return {
       paymentTerms: paymentTermsMatch
@@ -560,18 +723,30 @@ export class ContractsService {
     };
   }
 
-  private extractClauses(text: string, contract: any, fields: Record<string, any>): ExtractedClause[] {
+  private extractClauses(
+    text: string,
+    contract: any,
+    fields: Record<string, any>,
+  ): ExtractedClause[] {
     const clauses: ExtractedClause[] = [];
-    const autoRenewal = this.findSection(text, /auto(?:matically)?[-\s]?renew|renew(?:s|al)\s+automatically|renewal/i);
+    const autoRenewal = this.findSection(
+      text,
+      /auto(?:matically)?[-\s]?renew|renew(?:s|al)\s+automatically|renewal/i,
+    );
     if (autoRenewal) {
       const noticeDays = Number(fields.renewalNoticeDays ?? contract.renewalNoticeDays ?? 0);
       clauses.push({
         clauseType: 'auto_renewal',
         title: 'Auto-renewal',
         extractedText: autoRenewal,
-        normalizedSummary: noticeDays ? `Auto-renewal detected with ${noticeDays} days notice.` : 'Auto-renewal detected; notice period needs review.',
+        normalizedSummary: noticeDays
+          ? `Auto-renewal detected with ${noticeDays} days notice.`
+          : 'Auto-renewal detected; notice period needs review.',
         riskLevel: noticeDays > 0 && noticeDays < 60 ? 'high' : 'medium',
-        riskReason: noticeDays > 0 && noticeDays < 60 ? 'Notice window is shorter than 60 days.' : 'Auto-renewal should be reviewed for notice obligations.',
+        riskReason:
+          noticeDays > 0 && noticeDays < 60
+            ? 'Notice window is shorter than 60 days.'
+            : 'Auto-renewal should be reviewed for notice obligations.',
         confidence: 0.82,
         sourceReference: 'terms:auto_renewal',
       });
@@ -584,9 +759,15 @@ export class ContractsService {
         clauseType: 'liability',
         title: 'Liability and indemnity',
         extractedText: liability,
-        normalizedSummary: fields.liabilityCap ? `Liability cap appears to be ${fields.liabilityCap}.` : 'Liability clause found without a clear cap.',
+        normalizedSummary: fields.liabilityCap
+          ? `Liability cap appears to be ${fields.liabilityCap}.`
+          : 'Liability clause found without a clear cap.',
         riskLevel: uncapped || !fields.liabilityCap ? 'high' : 'medium',
-        riskReason: uncapped ? 'Clause appears to allow uncapped or unlimited liability.' : !fields.liabilityCap ? 'No clear liability cap was extracted.' : 'Liability cap should be confirmed.',
+        riskReason: uncapped
+          ? 'Clause appears to allow uncapped or unlimited liability.'
+          : !fields.liabilityCap
+            ? 'No clear liability cap was extracted.'
+            : 'Liability cap should be confirmed.',
         confidence: 0.78,
         sourceReference: 'terms:liability',
       });
@@ -598,9 +779,14 @@ export class ContractsService {
         clauseType: 'price_escalation',
         title: 'Price escalation',
         extractedText: priceEscalation,
-        normalizedSummary: fields.priceEscalationPercent ? `Price escalation up to ${fields.priceEscalationPercent}% detected.` : 'Price increase rights detected.',
+        normalizedSummary: fields.priceEscalationPercent
+          ? `Price escalation up to ${fields.priceEscalationPercent}% detected.`
+          : 'Price increase rights detected.',
         riskLevel: Number(fields.priceEscalationPercent ?? 0) > 5 ? 'high' : 'medium',
-        riskReason: Number(fields.priceEscalationPercent ?? 0) > 5 ? 'Escalation exceeds 5%.' : 'Price increase rights should be reviewed before renewal or PO issuance.',
+        riskReason:
+          Number(fields.priceEscalationPercent ?? 0) > 5
+            ? 'Escalation exceeds 5%.'
+            : 'Price increase rights should be reviewed before renewal or PO issuance.',
         confidence: 0.73,
         sourceReference: 'terms:price_escalation',
       });
@@ -613,15 +799,22 @@ export class ContractsService {
         clauseType: 'termination',
         title: 'Termination rights',
         extractedText: termination,
-        normalizedSummary: hasConvenience ? 'Termination for convenience language detected.' : 'Termination language found without clear convenience rights.',
+        normalizedSummary: hasConvenience
+          ? 'Termination for convenience language detected.'
+          : 'Termination language found without clear convenience rights.',
         riskLevel: hasConvenience ? 'low' : 'medium',
-        riskReason: hasConvenience ? undefined : 'Missing or unclear termination-for-convenience language.',
+        riskReason: hasConvenience
+          ? undefined
+          : 'Missing or unclear termination-for-convenience language.',
         confidence: 0.76,
         sourceReference: 'terms:termination',
       });
     }
 
-    const security = this.findSection(text, /data security|privacy|gdpr|soc\s*2|security|confidential/i);
+    const security = this.findSection(
+      text,
+      /data security|privacy|gdpr|soc\s*2|security|confidential/i,
+    );
     if (security) {
       clauses.push({
         clauseType: 'data_security',
@@ -632,7 +825,10 @@ export class ContractsService {
         confidence: 0.7,
         sourceReference: 'terms:data_security',
       });
-    } else if (contract.type === 'software' || /software|saas|subscription/i.test(`${contract.title} ${contract.description ?? ''}`)) {
+    } else if (
+      contract.type === 'software' ||
+      /software|saas|subscription/i.test(`${contract.title} ${contract.description ?? ''}`)
+    ) {
       clauses.push({
         clauseType: 'data_security',
         title: 'Data security and privacy',
@@ -652,7 +848,9 @@ export class ContractsService {
         clauseType: 'payment_terms',
         title: 'Payment terms',
         extractedText: payment,
-        normalizedSummary: fields.paymentTerms ? `Payment terms extracted as ${fields.paymentTerms}.` : 'Payment terms detected.',
+        normalizedSummary: fields.paymentTerms
+          ? `Payment terms extracted as ${fields.paymentTerms}.`
+          : 'Payment terms detected.',
         riskLevel: netDays && netDays > 60 ? 'medium' : 'low',
         riskReason: netDays && netDays > 60 ? 'Payment term is longer than Net 60.' : undefined,
         confidence: 0.74,
@@ -758,7 +956,11 @@ export class ContractsService {
     return updates;
   }
 
-  private async createObligationNotifications(organizationId: string, contract: any, obligations: Array<typeof contractObligations.$inferSelect>) {
+  private async createObligationNotifications(
+    organizationId: string,
+    contract: any,
+    obligations: Array<typeof contractObligations.$inferSelect>,
+  ) {
     for (const obligation of obligations) {
       const ownerId = obligation.ownerId ?? contract.ownerId ?? contract.createdBy;
       if (!ownerId || !obligation.dueDate) continue;
@@ -776,6 +978,40 @@ export class ContractsService {
           contract.id,
         )
         .catch(() => {});
+    }
+  }
+
+  private isGlobal(access: AccessPolicy, permission: string) {
+    return operationalScope(access, 'contract', permission)?.unrestricted === true;
+  }
+
+  private async scopedVendorIds(
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: string,
+  ): Promise<string[] | undefined> {
+    const scope = operationalScope(access, 'contract', permission);
+    if (!scope || scope.unrestricted) return undefined;
+    if (scope.entityIds.length === 0) return [];
+
+    const rows = await this.db
+      .select({ id: vendors.id })
+      .from(vendors)
+      .where(
+        and(eq(vendors.organizationId, organizationId), inArray(vendors.entityId, scope.entityIds)),
+      );
+    return rows.map((row) => row.id);
+  }
+
+  private async assertVendorScope(
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: string,
+    vendorId: string | null | undefined,
+  ) {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, permission);
+    if (scopedVendorIds && (!vendorId || !scopedVendorIds.includes(vendorId))) {
+      throw new ForbiddenException('The contract vendor is outside your assigned scope');
     }
   }
 }

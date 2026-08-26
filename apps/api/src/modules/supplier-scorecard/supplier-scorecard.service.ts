@@ -1,8 +1,12 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type * as schema from '@betterspend/db';
+import type { AccessPolicy } from '../auth/access-policy';
+import { operationalScope } from '../auth/operational-access';
+import { vendors } from '@betterspend/db';
+import type { PermissionKey } from '@betterspend/shared';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -65,10 +69,7 @@ function computeOverallScore(
   qualityScore: number,
 ): number {
   return Math.round(
-    deliveryScore * 0.3 +
-    invoiceAccuracyScore * 0.3 +
-    priceScore * 0.25 +
-    qualityScore * 0.15,
+    deliveryScore * 0.3 + invoiceAccuracyScore * 0.3 + priceScore * 0.25 + qualityScore * 0.15,
   );
 }
 
@@ -76,19 +77,32 @@ function computeOverallScore(
 export class SupplierScorecardService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  async listScores(organizationId: string, limit = 50): Promise<ScorecardSummary[]> {
+  async listScores(
+    organizationId: string,
+    limit = 50,
+    access?: AccessPolicy,
+  ): Promise<ScorecardSummary[]> {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'vendors:view');
+    if (scopedVendorIds?.length === 0) return [];
+    const vendorScope = scopedVendorIds
+      ? sql`AND v.id IN (${sql.join(
+          scopedVendorIds.map((id) => sql`${id}`),
+          sql`, `,
+        )})`
+      : sql``;
     const rows = await this.db.execute(sql`
       WITH vendor_pos AS (
         SELECT
           v.id                         AS vendor_id,
           v.name                       AS vendor_name,
           COUNT(DISTINCT po.id)::int   AS total_pos
-        FROM vendors v
+      FROM vendors v
         LEFT JOIN purchase_orders po
           ON po.vendor_id = v.id
           AND po.organization_id = ${organizationId}
-        WHERE v.organization_id = ${organizationId}
-          AND v.status = 'active'
+      WHERE v.organization_id = ${organizationId}
+        AND v.status = 'active'
+        ${vendorScope}
         GROUP BY v.id, v.name
       ),
       vendor_invoices AS (
@@ -175,7 +189,15 @@ export class SupplierScorecardService {
     }));
   }
 
-  async getDetail(organizationId: string, vendorId: string): Promise<ScorecardDetail> {
+  async getDetail(
+    organizationId: string,
+    vendorId: string,
+    access?: AccessPolicy,
+  ): Promise<ScorecardDetail> {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'vendors:view');
+    if (scopedVendorIds && !scopedVendorIds.includes(vendorId)) {
+      throw new NotFoundException(`Vendor ${vendorId} not found`);
+    }
     // Vendor info
     const vendorRows = await this.db.execute(sql`
       SELECT id, name, email, phone, status
@@ -191,9 +213,10 @@ export class SupplierScorecardService {
     const vendor = (vendorRows as any[])[0];
 
     // Scores
-    const [invoiceRows, deliveryRows, priceRows, poCountRows, invoiceCountRows] = await Promise.all([
-      // Invoice accuracy
-      this.db.execute(sql`
+    const [invoiceRows, deliveryRows, priceRows, poCountRows, invoiceCountRows] = await Promise.all(
+      [
+        // Invoice accuracy
+        this.db.execute(sql`
         SELECT
           COUNT(DISTINCT i.id)::int AS total_invoices,
           COALESCE(
@@ -206,8 +229,8 @@ export class SupplierScorecardService {
         WHERE i.organization_id = ${organizationId}
           AND i.vendor_id = ${vendorId}
       `),
-      // Delivery score
-      this.db.execute(sql`
+        // Delivery score
+        this.db.execute(sql`
         SELECT
           COALESCE(
             ROUND(
@@ -221,8 +244,8 @@ export class SupplierScorecardService {
           AND gr.vendor_id = ${vendorId}
           AND po.expected_delivery_date IS NOT NULL
       `),
-      // Price score
-      this.db.execute(sql`
+        // Price score
+        this.db.execute(sql`
         SELECT
           COALESCE(
             GREATEST(
@@ -235,21 +258,22 @@ export class SupplierScorecardService {
           AND vendor_id = ${vendorId}
           AND price_variance_pct IS NOT NULL
       `),
-      // PO count
-      this.db.execute(sql`
+        // PO count
+        this.db.execute(sql`
         SELECT COUNT(*)::int AS total_pos
         FROM purchase_orders
         WHERE organization_id = ${organizationId}
           AND vendor_id = ${vendorId}
       `),
-      // Invoice count (redundant but cleaner)
-      this.db.execute(sql`
+        // Invoice count (redundant but cleaner)
+        this.db.execute(sql`
         SELECT COUNT(*)::int AS total_invoices
         FROM invoices
         WHERE organization_id = ${organizationId}
           AND vendor_id = ${vendorId}
       `),
-    ]);
+      ],
+    );
 
     const deliveryScore = Number((deliveryRows as any[])[0]?.delivery_score ?? 100);
     const invoiceAccuracyScore = Number((invoiceRows as any[])[0]?.invoice_accuracy_score ?? 0);
@@ -257,7 +281,12 @@ export class SupplierScorecardService {
     const qualityScore = 85;
     const totalPos = Number((poCountRows as any[])[0]?.total_pos ?? 0);
     const totalInvoices = Number((invoiceCountRows as any[])[0]?.total_invoices ?? 0);
-    const overallScore = computeOverallScore(deliveryScore, invoiceAccuracyScore, priceScore, qualityScore);
+    const overallScore = computeOverallScore(
+      deliveryScore,
+      invoiceAccuracyScore,
+      priceScore,
+      qualityScore,
+    );
 
     // 6-month trend (invoice accuracy + price score by month)
     const trendRows = await this.db.execute(sql`
@@ -357,5 +386,23 @@ export class SupplierScorecardService {
         invoiceDate: String(r.invoiceDate),
       })),
     };
+  }
+
+  private async scopedVendorIds(
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: string,
+  ): Promise<string[] | undefined> {
+    const scope = access?.scopeFor('vendor', permission as PermissionKey);
+    if (!scope || scope.unrestricted) return undefined;
+    if (scope.entityIds.length === 0) return [];
+
+    const rows = await this.db
+      .select({ id: vendors.id })
+      .from(vendors)
+      .where(
+        and(eq(vendors.organizationId, organizationId), inArray(vendors.entityId, scope.entityIds)),
+      );
+    return rows.map((row) => row.id);
   }
 }

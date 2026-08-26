@@ -1,11 +1,19 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, desc, eq, lte, sql } from 'drizzle-orm';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { and, asc, desc, eq, inArray, lte, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { softwareLicenses } from '@betterspend/db';
+import { softwareLicenses, vendors } from '@betterspend/db';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RequisitionsService } from '../requisitions/requisitions.service';
 import { RfqService } from '../rfq/rfq.service';
+import type { AccessPolicy } from '../auth/access-policy';
+import { operationalScope } from '../auth/operational-access';
 
 export interface RenewalRef {
   action: 'renew' | 'renegotiate' | 'cancel';
@@ -29,7 +37,13 @@ export class SoftwareLicensesService {
   async findAll(
     organizationId: string,
     filters?: { status?: string; vendorId?: string; renewingWithinDays?: number },
+    access?: AccessPolicy,
   ) {
+    const scopedVendorIds = await this.scopedVendorIds(
+      organizationId,
+      access,
+      'software_licenses:view',
+    );
     const renewalCutoff =
       filters?.renewingWithinDays != null
         ? new Date(Date.now() + filters.renewingWithinDays * 24 * 60 * 60 * 1000)
@@ -42,6 +56,11 @@ export class SoftwareLicensesService {
           filters?.status ? eq(sl.status, filters.status) : undefined,
           filters?.vendorId ? eq(sl.vendorId, filters.vendorId) : undefined,
           renewalCutoff ? lte(sl.renewalDate, renewalCutoff) : undefined,
+          scopedVendorIds
+            ? scopedVendorIds.length > 0
+              ? inArray(sl.vendorId, scopedVendorIds)
+              : sql`false`
+            : undefined,
         ),
       with: {
         vendor: true,
@@ -52,9 +71,24 @@ export class SoftwareLicensesService {
     });
   }
 
-  async findOne(id: string, organizationId: string) {
+  async findOne(
+    id: string,
+    organizationId: string,
+    access?: AccessPolicy,
+    permission = 'software_licenses:view',
+  ) {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, permission);
     const license = await this.db.query.softwareLicenses.findFirst({
-      where: (sl, { and, eq }) => and(eq(sl.id, id), eq(sl.organizationId, organizationId)),
+      where: (sl, { and, eq }) =>
+        and(
+          eq(sl.id, id),
+          eq(sl.organizationId, organizationId),
+          scopedVendorIds
+            ? scopedVendorIds.length > 0
+              ? inArray(sl.vendorId, scopedVendorIds)
+              : sql`false`
+            : undefined,
+        ),
       with: {
         vendor: true,
         contract: true,
@@ -66,18 +100,38 @@ export class SoftwareLicensesService {
     return license;
   }
 
-  async create(data: typeof softwareLicenses.$inferInsert) {
+  async create(data: typeof softwareLicenses.$inferInsert, access?: AccessPolicy) {
+    await this.assertVendorScope(
+      data.organizationId,
+      access,
+      'software_licenses:manage',
+      data.vendorId,
+    );
     const [license] = await this.db.insert(softwareLicenses).values(data).returning();
     await this.notifyIfRenewalDueSoon(license);
-    return this.findOne(license.id, data.organizationId);
+    return this.findOne(
+      license.id,
+      data.organizationId,
+      access,
+      'software_licenses:manage',
+    );
   }
 
   async update(
     id: string,
     organizationId: string,
     data: Partial<typeof softwareLicenses.$inferInsert>,
+    access?: AccessPolicy,
   ) {
-    await this.findOne(id, organizationId);
+    await this.findOne(id, organizationId, access, 'software_licenses:manage');
+    if (data.vendorId !== undefined) {
+      await this.assertVendorScope(
+        organizationId,
+        access,
+        'software_licenses:manage',
+        data.vendorId,
+      );
+    }
 
     const [license] = await this.db
       .update(softwareLicenses)
@@ -87,10 +141,15 @@ export class SoftwareLicensesService {
 
     if (!license) throw new NotFoundException(`Software license ${id} not found`);
     await this.notifyIfRenewalDueSoon(license);
-    return this.findOne(id, organizationId);
+    return this.findOne(id, organizationId, access, 'software_licenses:manage');
   }
 
-  async renewalCalendar(organizationId: string, daysAhead = 90) {
+  async renewalCalendar(organizationId: string, daysAhead = 90, access?: AccessPolicy) {
+    const scopedVendorIds = await this.scopedVendorIds(
+      organizationId,
+      access,
+      'software_licenses:view',
+    );
     const cutoff = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000);
     return this.db.query.softwareLicenses.findMany({
       where: (sl, { and, eq, lte }) =>
@@ -98,6 +157,11 @@ export class SoftwareLicensesService {
           eq(sl.organizationId, organizationId),
           eq(sl.status, 'active'),
           lte(sl.renewalDate, cutoff),
+          scopedVendorIds
+            ? scopedVendorIds.length > 0
+              ? inArray(sl.vendorId, scopedVendorIds)
+              : sql`false`
+            : undefined,
         ),
       with: {
         vendor: true,
@@ -107,7 +171,19 @@ export class SoftwareLicensesService {
     });
   }
 
-  async utilization(organizationId: string) {
+  async utilization(organizationId: string, access?: AccessPolicy) {
+    const scopedVendorIds = await this.scopedVendorIds(
+      organizationId,
+      access,
+      'software_licenses:view',
+    );
+    if (scopedVendorIds?.length === 0) return [];
+    const vendorScope = scopedVendorIds
+      ? sql`AND sl.vendor_id IN (${sql.join(
+          scopedVendorIds.map((id) => sql`${id}`),
+          sql`, `,
+        )})`
+      : sql``;
     const rows = await this.db.execute(sql`
       SELECT
         sl.id,
@@ -121,15 +197,21 @@ export class SoftwareLicensesService {
         (sl.seat_count * sl.price_per_seat)::numeric AS "contractValue",
         v.name AS "vendorName"
       FROM software_licenses sl
-      JOIN vendors v ON v.id = sl.vendor_id
+      JOIN vendors v ON v.id = sl.vendor_id AND v.organization_id = ${organizationId}
       WHERE sl.organization_id = ${organizationId}
         AND sl.status IN ('active', 'renewal_due')
+        ${vendorScope}
       ORDER BY "utilizationPct" DESC NULLS LAST, sl.product_name ASC
     `);
     return rows;
   }
 
-  async upcomingRenewalCount(organizationId: string, daysAhead = 30) {
+  async upcomingRenewalCount(organizationId: string, daysAhead = 30, access?: AccessPolicy) {
+    const scopedVendorIds = await this.scopedVendorIds(
+      organizationId,
+      access,
+      'software_licenses:view',
+    );
     const cutoff = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000);
     const rows = await this.db
       .select({ count: sql<number>`COUNT(*)::int` })
@@ -139,6 +221,11 @@ export class SoftwareLicensesService {
           eq(softwareLicenses.organizationId, organizationId),
           eq(softwareLicenses.status, 'active'),
           lte(softwareLicenses.renewalDate, cutoff),
+          scopedVendorIds
+            ? scopedVendorIds.length > 0
+              ? inArray(softwareLicenses.vendorId, scopedVendorIds)
+              : sql`false`
+            : undefined,
         ),
       );
     return Number(rows[0]?.count ?? 0);
@@ -150,8 +237,9 @@ export class SoftwareLicensesService {
     userId: string,
     action: 'renew' | 'renegotiate' | 'cancel',
     note?: string,
+    access?: AccessPolicy,
   ) {
-    const license = await this.findOne(id, organizationId);
+    const license = await this.findOne(id, organizationId, access, 'software_licenses:manage');
     const renewalRefs = license.renewalRefs as RenewalRef[];
     if (
       action !== 'cancel' &&
@@ -225,7 +313,7 @@ export class SoftwareLicensesService {
       );
     }
 
-    return this.findOne(id, organizationId);
+    return this.findOne(id, organizationId, access, 'software_licenses:manage');
   }
 
   /** Draft a requisition covering the next billing term so the renewal goes through normal approval. */
@@ -336,6 +424,36 @@ export class SoftwareLicensesService {
         .update(softwareLicenses)
         .set({ status: 'renewal_due', updatedAt: new Date() })
         .where(eq(softwareLicenses.id, license.id));
+    }
+  }
+
+  private async scopedVendorIds(
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: string,
+  ): Promise<string[] | undefined> {
+    const scope = operationalScope(access, 'software_license', permission);
+    if (!scope || scope.unrestricted) return undefined;
+    if (scope.entityIds.length === 0) return [];
+
+    const rows = await this.db
+      .select({ id: vendors.id })
+      .from(vendors)
+      .where(
+        and(eq(vendors.organizationId, organizationId), inArray(vendors.entityId, scope.entityIds)),
+      );
+    return rows.map((row) => row.id);
+  }
+
+  private async assertVendorScope(
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: string,
+    vendorId: string | null | undefined,
+  ) {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, permission);
+    if (scopedVendorIds && (!vendorId || !scopedVendorIds.includes(vendorId))) {
+      throw new ForbiddenException('The software license vendor is outside your assigned scope');
     }
   }
 }

@@ -1,8 +1,15 @@
-import { BadRequestException, Inject, Injectable, NotFoundException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  Logger,
+  ForbiddenException,
+} from '@nestjs/common';
 import { lookup } from 'node:dns/promises';
 import { request } from 'node:https';
 import ipaddr from 'ipaddr.js';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, sql, inArray } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import {
@@ -14,6 +21,8 @@ import {
 } from '@betterspend/db';
 import { sanctionsImportRowSchema } from '@betterspend/shared';
 import { SettingsService } from '../settings/settings.service';
+import type { AccessPolicy } from '../auth/access-policy';
+import { operationalScope } from '../auth/operational-access';
 
 export interface SanctionMatch {
   entryId: string;
@@ -57,7 +66,14 @@ export class RiskScreeningService {
     organizationId: string,
     userId: string,
     source = 'ofac_sdn',
+    access?: AccessPolicy,
   ): Promise<{ count: number; source: string }> {
+    if (
+      access &&
+      operationalScope(access, 'supplier_risk', 'supplier_risk:manage')?.unrestricted !== true
+    ) {
+      throw new ForbiddenException('Sanctions registry ingestion requires a global grant');
+    }
     const listUrl =
       process.env['SANCTIONS_LIST_URL'] ?? RiskScreeningService.INGEST_SOURCES[source] ?? '';
     if (!listUrl) {
@@ -126,11 +142,22 @@ export class RiskScreeningService {
   }
 
   /** Fuzzy-match one vendor against local sanctions entries and persist the outcome. */
-  async screenVendor(organizationId: string, vendorId: string, screenedBy?: string) {
+  async screenVendor(
+    organizationId: string,
+    vendorId: string,
+    screenedBy?: string,
+    access?: AccessPolicy,
+  ) {
+    await this.assertVendorScope(organizationId, vendorId, access, 'supplier_risk:manage');
     return this.screenVendorWithEntries(organizationId, vendorId, screenedBy);
   }
 
-  async screenAllVendors(organizationId: string, screenedBy?: string) {
+  async screenAllVendors(organizationId: string, screenedBy?: string, access?: AccessPolicy) {
+    const scopedVendorIds = await this.scopedVendorIds(
+      organizationId,
+      access,
+      'supplier_risk:manage',
+    );
     return this.db.transaction(async (tx) => {
       // Hold a shared registry-version lock for the whole batch. Ingestion's
       // version update waits until every result from this snapshot commits.
@@ -139,7 +166,17 @@ export class RiskScreeningService {
       const orgVendors = await tx
         .select({ id: vendors.id })
         .from(vendors)
-        .where(and(eq(vendors.organizationId, organizationId), eq(vendors.status, 'active')));
+        .where(
+          and(
+            eq(vendors.organizationId, organizationId),
+            eq(vendors.status, 'active'),
+            scopedVendorIds
+              ? scopedVendorIds.length > 0
+                ? inArray(vendors.id, scopedVendorIds)
+                : sql`false`
+              : undefined,
+          ),
+        );
       let flagged = 0;
       for (const vendor of orgVendors) {
         const result = await this.screenVendorInTransaction(
@@ -240,7 +277,14 @@ export class RiskScreeningService {
   }
 
   /** Admin override after human review of a flagged (or clear) vendor. */
-  async manualReview(organizationId: string, vendorId: string, userId: string, note: string) {
+  async manualReview(
+    organizationId: string,
+    vendorId: string,
+    userId: string,
+    note: string,
+    access?: AccessPolicy,
+  ) {
+    await this.assertVendorScope(organizationId, vendorId, access, 'supplier_risk:manage');
     const trimmedNote = note.trim();
     if (!trimmedNote) {
       throw new BadRequestException('A justification note is required for manual review');
@@ -264,7 +308,7 @@ export class RiskScreeningService {
           sanctionsCheckedAt: new Date(),
           updatedAt: new Date(),
         })
-        .where(eq(vendors.id, vendorId));
+        .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)));
       await tx.insert(auditLog).values({
         organizationId,
         userId,
@@ -275,12 +319,27 @@ export class RiskScreeningService {
       });
     });
 
-    return this.db.query.vendors.findFirst({ where: (v, { eq }) => eq(v.id, vendorId) });
+    return this.db.query.vendors.findFirst({
+      where: (v, { and, eq }) => and(eq(v.id, vendorId), eq(v.organizationId, organizationId)),
+    });
   }
 
-  async listStatus(organizationId: string) {
+  async listStatus(organizationId: string, access?: AccessPolicy) {
+    const scopedVendorIds = await this.scopedVendorIds(
+      organizationId,
+      access,
+      'supplier_risk:view',
+    );
     return this.db.query.vendors.findMany({
-      where: (v, { eq }) => eq(v.organizationId, organizationId),
+      where: (v, { and, eq }) =>
+        and(
+          eq(v.organizationId, organizationId),
+          scopedVendorIds
+            ? scopedVendorIds.length > 0
+              ? inArray(v.id, scopedVendorIds)
+              : sql`false`
+            : undefined,
+        ),
       columns: {
         id: true,
         name: true,
@@ -308,7 +367,7 @@ export class RiskScreeningService {
     const [current] = await this.db
       .select({ sanctionsStatus: vendors.sanctionsStatus })
       .from(vendors)
-      .where(eq(vendors.id, vendor.id));
+      .where(and(eq(vendors.id, vendor.id), eq(vendors.organizationId, organizationId)));
     return this.checkVendorStatusForPo(organizationId, {
       name: vendor.name,
       sanctionsStatus: current?.sanctionsStatus,
@@ -328,6 +387,36 @@ export class RiskScreeningService {
       );
     }
     return `Vendor "${vendor.name}" is flagged by sanctions screening; review before issuing this PO`;
+  }
+
+  private async scopedVendorIds(
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: string,
+  ): Promise<string[] | undefined> {
+    const scope = operationalScope(access, 'supplier_risk', permission);
+    if (!scope || scope.unrestricted) return undefined;
+    if (scope.entityIds.length === 0) return [];
+
+    const rows = await this.db
+      .select({ id: vendors.id })
+      .from(vendors)
+      .where(
+        and(eq(vendors.organizationId, organizationId), inArray(vendors.entityId, scope.entityIds)),
+      );
+    return rows.map((row) => row.id);
+  }
+
+  private async assertVendorScope(
+    organizationId: string,
+    vendorId: string,
+    access: AccessPolicy | undefined,
+    permission: string,
+  ) {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, permission);
+    if (scopedVendorIds && !scopedVendorIds.includes(vendorId)) {
+      throw new ForbiddenException('The vendor is outside your assigned risk scope');
+    }
   }
 
   private async matchVendorName(

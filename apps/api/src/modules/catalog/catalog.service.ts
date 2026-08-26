@@ -1,11 +1,20 @@
-import { Injectable, Inject, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
-import { eq, and, ilike, or, desc, isNull } from 'drizzle-orm';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  BadRequestException,
+  Logger,
+  ForbiddenException,
+} from '@nestjs/common';
+import { eq, and, ilike, or, desc, isNull, inArray, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { auditLog, catalogItems, catalogPriceProposals } from '@betterspend/db';
+import { auditLog, catalogItems, catalogPriceProposals, vendors } from '@betterspend/db';
 import { z } from 'zod';
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
+import type { AccessPolicy } from '../auth/access-policy';
+import { operationalScope } from '../auth/operational-access';
 
 export interface CreateCatalogItemInput {
   vendorId?: string;
@@ -42,7 +51,12 @@ export class CatalogService {
     private readonly settingsService: SettingsService,
   ) {}
 
-  async findAll(organizationId: string, filters?: { vendorId?: string; category?: string; activeOnly?: boolean }) {
+  async findAll(
+    organizationId: string,
+    filters?: { vendorId?: string; category?: string; activeOnly?: boolean },
+    access?: AccessPolicy,
+  ) {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'catalog:view');
     await this.applyDueApprovedProposals(organizationId);
     return this.db.query.catalogItems.findMany({
       where: (c, { and, eq }) => {
@@ -50,6 +64,11 @@ export class CatalogService {
         if (filters?.vendorId) conditions.push(eq(c.vendorId, filters.vendorId));
         if (filters?.category) conditions.push(eq(c.category, filters.category));
         if (filters?.activeOnly) conditions.push(eq(c.isActive, true));
+        if (scopedVendorIds) {
+          conditions.push(
+            scopedVendorIds.length > 0 ? inArray(c.vendorId, scopedVendorIds) : sql`false`,
+          );
+        }
         return and(...conditions);
       },
       with: { vendor: true },
@@ -57,7 +76,8 @@ export class CatalogService {
     });
   }
 
-  async search(organizationId: string, q: string) {
+  async search(organizationId: string, q: string, access?: AccessPolicy) {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'catalog:view');
     await this.applyDueApprovedProposals(organizationId);
     const term = `%${q}%`;
     return this.db.query.catalogItems.findMany({
@@ -66,6 +86,11 @@ export class CatalogService {
           eq(c.organizationId, organizationId),
           eq(c.isActive, true),
           or(ilike(c.name, term), ilike(c.sku, term), ilike(c.description, term)),
+          scopedVendorIds
+            ? scopedVendorIds.length > 0
+              ? inArray(c.vendorId, scopedVendorIds)
+              : sql`false`
+            : undefined,
         ),
       with: { vendor: true },
       orderBy: (c, { asc }) => asc(c.name),
@@ -73,10 +98,25 @@ export class CatalogService {
     });
   }
 
-  async findOne(id: string, organizationId: string) {
+  async findOne(
+    id: string,
+    organizationId: string,
+    access?: AccessPolicy,
+    permission = 'catalog:view',
+  ) {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, permission);
     await this.applyDueApprovedProposals(organizationId);
     const item = await this.db.query.catalogItems.findFirst({
-      where: (c, { and, eq }) => and(eq(c.id, id), eq(c.organizationId, organizationId)),
+      where: (c, { and, eq }) =>
+        and(
+          eq(c.id, id),
+          eq(c.organizationId, organizationId),
+          scopedVendorIds
+            ? scopedVendorIds.length > 0
+              ? inArray(c.vendorId, scopedVendorIds)
+              : sql`false`
+            : undefined,
+        ),
       with: { vendor: true },
     });
     if (!item) throw new NotFoundException(`Catalog item ${id} not found`);
@@ -95,7 +135,8 @@ export class CatalogService {
     };
   }
 
-  async create(organizationId: string, input: CreateCatalogItemInput) {
+  async create(organizationId: string, input: CreateCatalogItemInput, access?: AccessPolicy) {
+    await this.assertVendorScope(organizationId, access, 'catalog:manage', input.vendorId);
     const [item] = await this.db
       .insert(catalogItems)
       .values({
@@ -111,11 +152,19 @@ export class CatalogService {
         metadata: input.metadata ?? {},
       })
       .returning();
-    return this.findOne(item.id, organizationId);
+    return this.findOne(item.id, organizationId, access, 'catalog:manage');
   }
 
-  async update(id: string, organizationId: string, input: UpdateCatalogItemInput) {
-    await this.findOne(id, organizationId);
+  async update(
+    id: string,
+    organizationId: string,
+    input: UpdateCatalogItemInput,
+    access?: AccessPolicy,
+  ) {
+    await this.findOne(id, organizationId, access, 'catalog:manage');
+    if (input.vendorId !== undefined) {
+      await this.assertVendorScope(organizationId, access, 'catalog:manage', input.vendorId);
+    }
     await this.db
       .update(catalogItems)
       .set({
@@ -124,32 +173,47 @@ export class CatalogService {
         updatedAt: new Date(),
       })
       .where(and(eq(catalogItems.id, id), eq(catalogItems.organizationId, organizationId)));
-    return this.findOne(id, organizationId);
+    return this.findOne(id, organizationId, access, 'catalog:manage');
   }
 
-  async remove(id: string, organizationId: string) {
-    await this.findOne(id, organizationId);
+  async remove(id: string, organizationId: string, access?: AccessPolicy) {
+    await this.findOne(id, organizationId, access, 'catalog:manage');
     await this.db
       .delete(catalogItems)
       .where(and(eq(catalogItems.id, id), eq(catalogItems.organizationId, organizationId)));
   }
 
-  async getCategories(organizationId: string): Promise<string[]> {
+  async getCategories(organizationId: string, access?: AccessPolicy): Promise<string[]> {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'catalog:view');
     const items = await this.db.query.catalogItems.findMany({
-      where: (c, { eq }) => eq(c.organizationId, organizationId),
+      where: (c, { and, eq }) =>
+        and(
+          eq(c.organizationId, organizationId),
+          scopedVendorIds
+            ? scopedVendorIds.length > 0
+              ? inArray(c.vendorId, scopedVendorIds)
+              : sql`false`
+            : undefined,
+        ),
       columns: { category: true },
     });
     const cats = [...new Set(items.map((i) => i.category).filter(Boolean))] as string[];
     return cats.sort();
   }
 
-  async listPriceProposals(organizationId: string, status?: string) {
+  async listPriceProposals(organizationId: string, status?: string, access?: AccessPolicy) {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'catalog:view');
     await this.applyDueApprovedProposals(organizationId);
     return this.db.query.catalogPriceProposals.findMany({
       where: (p, { and, eq }) =>
         and(
           eq(p.organizationId, organizationId),
           status ? eq(p.status, status) : undefined,
+          scopedVendorIds
+            ? scopedVendorIds.length > 0
+              ? inArray(p.vendorId, scopedVendorIds)
+              : sql`false`
+            : undefined,
         ),
       with: {
         item: { with: { vendor: true } },
@@ -165,15 +229,16 @@ export class CatalogService {
     organizationId: string,
     reviewerId: string,
     input: { status: 'approved' | 'rejected'; reviewNote?: string },
+    access?: AccessPolicy,
   ) {
     const proposal = await this.db.query.catalogPriceProposals.findFirst({
-      where: (p, { and, eq }) =>
-        and(eq(p.id, proposalId), eq(p.organizationId, organizationId)),
+      where: (p, { and, eq }) => and(eq(p.id, proposalId), eq(p.organizationId, organizationId)),
       with: {
         item: true,
       },
     });
     if (!proposal) throw new NotFoundException(`Catalog price proposal ${proposalId} not found`);
+    await this.assertVendorScope(organizationId, access, 'catalog:manage', proposal.vendorId);
 
     // Guard on pending state so a second review cannot re-apply an old price
     // or clobber the original application metadata.
@@ -206,7 +271,8 @@ export class CatalogService {
     await this.notifyVendorOfDecision(updated, input.status, input.reviewNote);
 
     return this.db.query.catalogPriceProposals.findFirst({
-      where: (p, { eq }) => eq(p.id, proposalId),
+      where: (p, { and, eq }) =>
+        and(eq(p.id, proposalId), eq(p.organizationId, organizationId)),
       with: {
         item: { with: { vendor: true } },
         vendor: true,
@@ -240,9 +306,7 @@ export class CatalogService {
     if (currentCents == null || proposedCents == null || currentCents <= 0n) return false;
 
     const differenceCents =
-      proposedCents >= currentCents
-        ? proposedCents - currentCents
-        : currentCents - proposedCents;
+      proposedCents >= currentCents ? proposedCents - currentCents : currentCents - proposedCents;
     if (differenceCents * 10_000n > currentCents * thresholdBasisPoints) return false;
 
     const changeBasisPoints = (differenceCents * 10_000n + currentCents / 2n) / currentCents;
@@ -295,12 +359,11 @@ export class CatalogService {
         ),
       // Apply in effective-date order so the chronologically latest due
       // proposal ends up as the item's final price.
-      orderBy: (p, { asc, sql: orderBySql }) =>
-        [
-          orderBySql`${p.effectiveDate} asc nulls first`,
-          asc(p.reviewedAt),
-          asc(p.id),
-        ],
+      orderBy: (p, { asc, sql: orderBySql }) => [
+        orderBySql`${p.effectiveDate} asc nulls first`,
+        asc(p.reviewedAt),
+        asc(p.id),
+      ],
       limit: 50,
     });
 
@@ -308,13 +371,17 @@ export class CatalogService {
       try {
         await this.applyProposalIfDue(proposal);
       } catch (error) {
-        this.logger.warn(`Failed to apply price proposal ${proposal.id}: ${error instanceof Error ? error.message : error}`);
+        this.logger.warn(
+          `Failed to apply price proposal ${proposal.id}: ${error instanceof Error ? error.message : error}`,
+        );
       }
     }
   }
 
   /** Write the proposed price to the catalog item once its effective date has arrived. */
-  private async applyProposalIfDue(proposal: typeof catalogPriceProposals.$inferSelect): Promise<boolean> {
+  private async applyProposalIfDue(
+    proposal: typeof catalogPriceProposals.$inferSelect,
+  ): Promise<boolean> {
     const due = !proposal.effectiveDate || proposal.effectiveDate.getTime() <= Date.now();
     if (!due) return false;
 
@@ -383,7 +450,9 @@ export class CatalogService {
       const settings = await this.settingsService.getAll(proposal.organizationId);
       const smtpHost = settings['smtp_host'] || '';
       if (!smtpHost) {
-        this.logger.log(`SMTP not configured; skipping vendor notification for proposal ${proposal.id}`);
+        this.logger.log(
+          `SMTP not configured; skipping vendor notification for proposal ${proposal.id}`,
+        );
         return;
       }
       const appName = escapeHtml(settings['app_name'] || 'BetterSpend');
@@ -422,7 +491,39 @@ export class CatalogService {
           .where(eq(catalogPriceProposals.id, proposal.id));
       }
     } catch (error) {
-      this.logger.warn(`Failed to notify vendor for proposal ${proposal.id}: ${error instanceof Error ? error.message : error}`);
+      this.logger.warn(
+        `Failed to notify vendor for proposal ${proposal.id}: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+
+  private async scopedVendorIds(
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: string,
+  ): Promise<string[] | undefined> {
+    const scope = operationalScope(access, 'catalog', permission);
+    if (!scope || scope.unrestricted) return undefined;
+    if (scope.entityIds.length === 0) return [];
+
+    const rows = await this.db
+      .select({ id: vendors.id })
+      .from(vendors)
+      .where(
+        and(eq(vendors.organizationId, organizationId), inArray(vendors.entityId, scope.entityIds)),
+      );
+    return rows.map((row) => row.id);
+  }
+
+  private async assertVendorScope(
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: string,
+    vendorId: string | null | undefined,
+  ) {
+    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, permission);
+    if (scopedVendorIds && (!vendorId || !scopedVendorIds.includes(vendorId))) {
+      throw new ForbiddenException('The catalog vendor is outside your assigned scope');
     }
   }
 }
@@ -444,7 +545,9 @@ function decimalToScaledInteger(value: string, scale: number): bigint | null {
 
 function formatBasisPoints(value: bigint): string {
   const whole = value / 100n;
-  const fraction = String(value % 100n).padStart(2, '0').replace(/0+$/, '');
+  const fraction = String(value % 100n)
+    .padStart(2, '0')
+    .replace(/0+$/, '');
   return fraction ? `${whole}.${fraction}` : String(whole);
 }
 

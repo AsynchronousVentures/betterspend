@@ -23,6 +23,7 @@ import {
 import { MessagesService, parseThreadType } from '../messages/messages.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import {
   PORTAL_SESSION_COOKIE,
   portalSessionCookieOptions,
@@ -39,6 +40,7 @@ export class VendorPortalController {
 
   /** Admin: send portal access link to a vendor (requires auth). */
   @Post('access')
+  @Permissions('vendors:edit')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send portal access link email to a vendor (admin use)' })
   @HttpCode(HttpStatus.OK)
