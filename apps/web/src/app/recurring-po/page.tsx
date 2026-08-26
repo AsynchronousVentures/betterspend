@@ -3,6 +3,11 @@
 import Link from 'next/link';
 import { Fragment, type ReactNode, useEffect, useMemo, useState } from 'react';
 import {
+  calculateRecurringPoAmounts,
+  createRecurringPoSchema,
+  recurringPoLinesSchema,
+} from '@betterspend/shared';
+import {
   CalendarClock,
   ChevronDown,
   ChevronUp,
@@ -42,8 +47,15 @@ import { Textarea } from '../../components/ui/textarea';
 
 interface RecurringPoLine {
   description: string;
-  quantity: number;
-  unitPrice: number;
+  quantity: string | number;
+  unitPrice: string | number;
+  unitOfMeasure: string;
+}
+
+interface RecurringPoFormLine {
+  description: string;
+  quantity: string;
+  unitPrice: string;
   unitOfMeasure: string;
 }
 
@@ -89,7 +101,12 @@ const FREQ_LABELS: Record<string, string> = {
   annually: 'Annually',
 };
 
-const EMPTY_LINE: RecurringPoLine = { description: '', quantity: 1, unitPrice: 0, unitOfMeasure: 'each' };
+const EMPTY_LINE: RecurringPoFormLine = {
+  description: '',
+  quantity: '1',
+  unitPrice: '0',
+  unitOfMeasure: 'each',
+};
 
 function fmtDate(iso?: string | null) {
   if (!iso) return '—';
@@ -198,7 +215,7 @@ export default function RecurringPoPage() {
     maxRuns: '',
     startDate: '',
   });
-  const [lines, setLines] = useState<RecurringPoLine[]>([{ ...EMPTY_LINE }]);
+  const [lines, setLines] = useState<RecurringPoFormLine[]>([{ ...EMPTY_LINE }]);
 
   useEffect(() => {
     void loadSchedules();
@@ -253,27 +270,30 @@ export default function RecurringPoPage() {
       return;
     }
 
+    const parsed = createRecurringPoSchema.safeParse({
+      title: form.title,
+      description: form.description || undefined,
+      vendorId: form.vendorId || undefined,
+      frequency: form.frequency,
+      dayOfMonth: ['monthly', 'quarterly', 'annually'].includes(form.frequency)
+        ? form.dayOfMonth
+        : undefined,
+      currency: form.currency,
+      lines,
+      glAccount: form.glAccount || undefined,
+      notes: form.notes || undefined,
+      maxRuns: form.maxRuns ? Number(form.maxRuns) : undefined,
+      startDate: form.startDate || undefined,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? 'Enter valid recurring PO details.');
+      return;
+    }
+
     setSaving(true);
     setError('');
     try {
-      await api.recurringPo.create({
-        title: form.title,
-        description: form.description || undefined,
-        vendorId: form.vendorId || undefined,
-        frequency: form.frequency,
-        dayOfMonth: ['monthly', 'quarterly', 'annually'].includes(form.frequency) ? form.dayOfMonth : undefined,
-        currency: form.currency,
-        lines: lines.map((line) => ({
-          description: line.description,
-          quantity: line.quantity.toFixed(2),
-          unitPrice: line.unitPrice.toFixed(2),
-          unitOfMeasure: line.unitOfMeasure,
-        })),
-        glAccount: form.glAccount || undefined,
-        notes: form.notes || undefined,
-        maxRuns: form.maxRuns ? Number(form.maxRuns) : undefined,
-        startDate: form.startDate || undefined,
-      });
+      await api.recurringPo.create(parsed.data);
       closeModal();
       await loadSchedules();
       showSuccess('Recurring PO schedule created.');
@@ -376,7 +396,7 @@ export default function RecurringPoPage() {
     setLines((current) => current.filter((_, lineIndex) => lineIndex !== index));
   }
 
-  function updateLine(index: number, field: keyof RecurringPoLine, value: string | number) {
+  function updateLine(index: number, field: keyof RecurringPoFormLine, value: string) {
     setLines((current) => {
       const next = [...current];
       next[index] = { ...next[index], [field]: value };
@@ -384,10 +404,10 @@ export default function RecurringPoPage() {
     });
   }
 
-  const computedTotal = useMemo(
-    () => lines.reduce((sum, line) => sum + (line.quantity || 0) * (line.unitPrice || 0), 0),
-    [lines],
-  );
+  const computedTotal = useMemo(() => {
+    const parsed = recurringPoLinesSchema.safeParse(lines);
+    return parsed.success ? calculateRecurringPoAmounts(parsed.data).subtotal : null;
+  }, [lines]);
 
   const activeSchedules = schedules.filter((schedule) => schedule.active).length;
   const pausedSchedules = schedules.length - activeSchedules;
@@ -857,20 +877,18 @@ export default function RecurringPoPage() {
                       </Field>
                       <Field label="Qty">
                         <Input
-                          type="number"
-                          min={0.01}
-                          step={0.01}
+                          type="text"
+                          inputMode="decimal"
                           value={line.quantity}
-                          onChange={(event) => updateLine(index, 'quantity', Number(event.target.value))}
+                          onChange={(event) => updateLine(index, 'quantity', event.target.value)}
                         />
                       </Field>
                       <Field label="Unit Price">
                         <Input
-                          type="number"
-                          min={0}
-                          step={0.01}
+                          type="text"
+                          inputMode="decimal"
                           value={line.unitPrice}
-                          onChange={(event) => updateLine(index, 'unitPrice', Number(event.target.value))}
+                          onChange={(event) => updateLine(index, 'unitPrice', event.target.value)}
                         />
                       </Field>
                       <Field label="UOM">
@@ -894,7 +912,12 @@ export default function RecurringPoPage() {
                     </div>
                   ))}
                   <div className="flex items-center justify-end rounded-lg bg-muted/35 px-4 py-3 text-sm">
-                    <span className="font-semibold text-foreground">Total: {fmtCurrency(computedTotal, form.currency)}</span>
+                    <span className="font-semibold text-foreground">
+                      Total:{' '}
+                      {computedTotal
+                        ? fmtCurrency(computedTotal, form.currency)
+                        : 'Enter valid line amounts'}
+                    </span>
                   </div>
                 </CardContent>
               </Card>
