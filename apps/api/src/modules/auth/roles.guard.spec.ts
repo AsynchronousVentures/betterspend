@@ -2,6 +2,7 @@ import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import { Public } from '../../common/decorators/public.decorator';
+import { RecurringPoController } from '../recurring-po/recurring-po.controller';
 import { RolesGuard } from './roles.guard';
 
 class PublicController {
@@ -95,6 +96,21 @@ describe('RolesGuard', () => {
         contextFor(PermissionController, PermissionController.prototype.handler, request) as never,
       ),
     ).toBe(true);
+  });
+
+  it('requires purchase-order management before triggering a recurring schedule', () => {
+    const guard = new RolesGuard();
+    const request = {
+      authUser: { id: 'user-1' },
+      authAccess: { can: jest.fn(() => false) },
+    };
+
+    expect(() =>
+      guard.canActivate(
+        contextFor(RecurringPoController, RecurringPoController.prototype.run, request) as never,
+      ),
+    ).toThrow(ForbiddenException);
+    expect(request.authAccess.can).toHaveBeenCalledWith('purchase_orders:manage');
   });
 
   it('fails closed for a route without an explicit classification', () => {

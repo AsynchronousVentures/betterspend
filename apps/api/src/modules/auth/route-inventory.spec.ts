@@ -13,6 +13,7 @@ import { PERMISSION_RESOURCES } from './access-policy';
 import { AuthModule } from './auth.module';
 import { RolesGuard } from './roles.guard';
 import { SessionGuard } from './session.guard';
+import { RecurringPoController } from '../recurring-po/recurring-po.controller';
 
 interface ControllerConstructor {
   readonly prototype: object;
@@ -36,11 +37,8 @@ const RESERVED_CATALOG_PERMISSIONS = [
   'requisitions:view_all',
   'requisitions:approve',
   'requisitions:manage',
-  'purchase_orders:create',
   'purchase_orders:view_own',
-  'purchase_orders:view_all',
   'purchase_orders:issue',
-  'purchase_orders:manage',
   'receiving:view',
   'receiving:create',
   'receiving:manage',
@@ -150,6 +148,27 @@ describe('route access inventory', () => {
 
   it('keeps every route permission in the shared catalog', () => {
     expect(unknownRoutePermissions(operations)).toEqual([]);
+  });
+
+  it('protects recurring schedules with procurement permissions', () => {
+    const expected: Record<string, readonly PermissionKey[]> = {
+      list: ['purchase_orders:view_all'],
+      findOne: ['purchase_orders:view_all'],
+      create: ['purchase_orders:create'],
+      update: ['purchase_orders:manage'],
+      remove: ['purchase_orders:manage'],
+      run: ['purchase_orders:manage'],
+      skipNext: ['purchase_orders:manage'],
+    };
+
+    for (const [handlerName, permissions] of Object.entries(expected)) {
+      const handler: object = Reflect.get(RecurringPoController.prototype, handlerName);
+      const resolution = resolveRouteAccess(handler, RecurringPoController);
+      expect(resolution).toEqual({
+        status: 'resolved',
+        access: { kind: 'permissions', permissions },
+      });
+    }
   });
 
   it('does not leave catalog permissions orphaned from HTTP access', () => {
