@@ -107,6 +107,11 @@ const BUDGET_PERMISSIONS = ['budgets:view'] as const satisfies readonly Permissi
 
 const PAYMENT_PERMISSIONS = ['payments:view'] as const satisfies readonly PermissionKey[];
 
+const AP_AGING_PERMISSIONS = [
+  'invoices:view_all',
+  'payments:view',
+] as const satisfies readonly PermissionKey[];
+
 export const PRODUCT_ROUTES: readonly ProductRoute[] = [
   {
     key: 'dashboard',
@@ -368,7 +373,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'finance',
     icon: 'ApAging',
     aliases: ['accounts payable aging', 'invoice aging'],
-    requiredPermissions: ['reports:view'],
+    requiredPermissions: AP_AGING_PERMISSIONS,
     placements: ['primary', 'search'],
   },
   {

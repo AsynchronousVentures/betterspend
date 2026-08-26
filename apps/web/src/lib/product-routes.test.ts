@@ -105,6 +105,21 @@ test('product search only returns permitted destinations and common actions', ()
   assert.equal(productSearchResults('Payment Runs', BUILT_IN_ROLE_PERMISSIONS.requester).length, 0);
 });
 
+test('AP aging uses the permissions required by its backing invoice APIs', () => {
+  const apAging = PRODUCT_ROUTES.find((route) => route.key === 'ap-aging');
+  assert.ok(apAging);
+
+  assert.equal(canAccessProductRoute(apAging, ['invoices:view_all']), true);
+  assert.equal(canAccessProductRoute(apAging, ['payments:view']), true);
+  assert.equal(canAccessProductRoute(apAging, ['reports:view']), false);
+  assert.equal(
+    productSearchResults('AP Aging', ['reports:view']).some(
+      (result) => result.key === 'route:ap-aging',
+    ),
+    false,
+  );
+});
+
 test('exact action aliases rank ahead of matching destinations', () => {
   assert.equal(
     productSearchResults('receive PO', BUILT_IN_ROLE_PERMISSIONS.receiver)[0]?.key,
