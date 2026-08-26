@@ -1,0 +1,190 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { ForbiddenException } from '@nestjs/common';
+import type { Db } from '@betterspend/db';
+import type { AccessPolicy } from './auth/access-policy';
+import type { AuditService } from './audit/audit.service';
+import type { DocumentsService } from './documents/documents.service';
+import type { NotificationsService } from './notifications/notifications.service';
+import type { EntitiesService } from './entities/entities.service';
+import type { RequisitionsService } from './requisitions/requisitions.service';
+import type { RfqService } from './rfq/rfq.service';
+import { ContractsService } from './contracts/contracts.service';
+import { SoftwareLicensesService } from './software-licenses/software-licenses.service';
+import { VendorsService } from './vendors/vendors.service';
+
+const organizationId = 'organization-1';
+
+function globalAccess(): AccessPolicy {
+  return {
+    can: () => true,
+    scopeFor: () => ({
+      organizationId,
+      userId: 'user-1',
+      unrestricted: true,
+      ownOnly: false,
+      departmentIds: [],
+      projectIds: [],
+      entityIds: [],
+    }),
+    isGlobalBuiltInAdmin: () => true,
+    toDocument: () => ({ permissions: [], scopes: {} }),
+  };
+}
+
+describe('supplier operational authorization regressions', () => {
+  it('passes the scoped access policy to onboarding questionnaire lookup', async () => {
+    const access = globalAccess();
+    const db = {
+      query: {
+        vendors: {
+          findFirst: async () => ({
+            id: 'vendor-1',
+            organizationId,
+            name: 'Supplier One',
+            entityId: 'entity-1',
+          }),
+        },
+        vendorOnboardingSubmissions: {
+          findMany: async () => [],
+        },
+      },
+    } as unknown as Db;
+    const service = new VendorsService(db, undefined as unknown as EntitiesService);
+    let receivedAccess: AccessPolicy | undefined;
+    service.listOnboardingQuestionnaires = async (_organizationId, passedAccess) => {
+      receivedAccess = passedAccess;
+      return [];
+    };
+
+    await service.getOnboardingDetail('vendor-1', organizationId, access);
+
+    assert.equal(receivedAccess, access);
+  });
+
+  it('rejects a contract create when its vendor belongs to another organization', async () => {
+    let insertCalled = false;
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: async () => [],
+        }),
+      }),
+      insert: () => {
+        insertCalled = true;
+        return undefined;
+      },
+    } as unknown as Db;
+    const service = new ContractsService(
+      db,
+      undefined as unknown as AuditService,
+      undefined as unknown as NotificationsService,
+      undefined as unknown as DocumentsService,
+    );
+
+    await assert.rejects(
+      service.create({
+        organizationId,
+        vendorId: 'vendor-from-another-organization',
+        title: 'Cross-tenant contract',
+        contractNumber: 'CTR-2026-0001',
+        createdBy: 'user-1',
+      }),
+      (error: unknown) => error instanceof ForbiddenException,
+    );
+    assert.equal(insertCalled, false);
+  });
+
+  it('locks a license before checking both the current and replacement vendors', async () => {
+    const events: string[] = [];
+    let vendorChecks = 0;
+    const existing = {
+      id: 'license-1',
+      organizationId,
+      vendorId: 'vendor-old',
+      productName: 'Supplier platform',
+      renewalDate: null,
+      status: 'active',
+    };
+    const updated = { ...existing, vendorId: 'vendor-new' };
+    const transaction = {
+      select(selection?: unknown) {
+        if (selection === undefined) {
+          return {
+            from: () => ({
+              where: () => ({
+                for: async () => {
+                  events.push('lock-license');
+                  return [existing];
+                },
+              }),
+            }),
+          };
+        }
+
+        return {
+          from: () => ({
+            where: async () => {
+              vendorChecks += 1;
+              events.push(vendorChecks === 1 ? 'check-current-vendor' : 'check-new-vendor');
+              return [
+                {
+                  id: vendorChecks === 1 ? 'vendor-old' : 'vendor-new',
+                  entityId: 'entity-1',
+                },
+              ];
+            },
+          }),
+        };
+      },
+      update: () => ({
+        set: () => ({
+          where: () => ({
+            returning: async () => {
+              events.push('update-license');
+              return [updated];
+            },
+          }),
+        }),
+      }),
+    };
+    const db = {
+      transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) =>
+        callback(transaction),
+      query: {
+        softwareLicenses: {
+          findFirst: async () => {
+            events.push('read-updated-license');
+            return updated;
+          },
+        },
+      },
+      select: () => {
+        events.push('outside-transaction-select');
+        throw new Error('vendor validation escaped the transaction');
+      },
+    } as unknown as Db;
+    const service = new SoftwareLicensesService(
+      db,
+      undefined as unknown as NotificationsService,
+      undefined as unknown as RequisitionsService,
+      undefined as unknown as RfqService,
+    );
+
+    const result = await service.update(
+      'license-1',
+      organizationId,
+      { vendorId: 'vendor-new' },
+      globalAccess(),
+    );
+
+    assert.equal(result.vendorId, 'vendor-new');
+    assert.deepEqual(events, [
+      'lock-license',
+      'check-current-vendor',
+      'check-new-vendor',
+      'update-license',
+      'read-updated-license',
+    ]);
+  });
+});
