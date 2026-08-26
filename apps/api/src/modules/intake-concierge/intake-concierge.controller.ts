@@ -1,11 +1,13 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import { IntakeConciergeService } from './intake-concierge.service';
 
 @ApiTags('intake-concierge')
+@Authenticated()
 @Controller('intake/concierge')
 export class IntakeConciergeController {
   constructor(private readonly conciergeService: IntakeConciergeService) {}

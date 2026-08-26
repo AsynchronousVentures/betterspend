@@ -1,9 +1,11 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { SearchService } from './search.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 
 @ApiTags('search')
+@Authenticated()
 @Controller('search')
 export class SearchController {
   constructor(private readonly searchService: SearchService) {}

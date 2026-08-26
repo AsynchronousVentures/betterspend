@@ -4,10 +4,12 @@ import {
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { RequisitionTemplatesService } from './requisition-templates.service';
 import { createRequisitionTemplateSchema, createTemplateFromRequisitionSchema } from '@betterspend/shared';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 
 @ApiTags('requisition-templates')
+@Authenticated()
 @Controller('requisition-templates')
 export class RequisitionTemplatesController {
   constructor(private readonly service: RequisitionTemplatesService) {}

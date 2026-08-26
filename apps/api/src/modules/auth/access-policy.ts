@@ -64,22 +64,54 @@ function scopeKey(scope: AccessScopeDescriptor): string {
   return `${scope.scopeType}:${scope.scopeId ?? ''}`;
 }
 
-const PERMISSION_RESOURCES: Record<string, AccessResource> = {
-  requisitions: 'requisition',
-  purchase_orders: 'purchase_order',
-  receiving: 'receiving',
-  approvals: 'approval',
-  invoices: 'invoice',
-  payments: 'payment',
-  vendors: 'vendor',
-  budgets: 'budget',
-  reports: 'report',
-  settings: 'settings',
-  users: 'user',
-};
+/** Every catalog permission must have a scoped resource policy. */
+export const PERMISSION_RESOURCES = {
+  'requisitions:create': 'requisition',
+  'requisitions:view_own': 'requisition',
+  'requisitions:view_all': 'requisition',
+  'requisitions:approve': 'requisition',
+  'requisitions:manage': 'requisition',
+  'purchase_orders:create': 'purchase_order',
+  'purchase_orders:view_own': 'purchase_order',
+  'purchase_orders:view_all': 'purchase_order',
+  'purchase_orders:issue': 'purchase_order',
+  'purchase_orders:manage': 'purchase_order',
+  'receiving:view': 'receiving',
+  'receiving:create': 'receiving',
+  'receiving:manage': 'receiving',
+  'approvals:view': 'approval',
+  'approvals:act': 'approval',
+  'invoices:create': 'invoice',
+  'invoices:approve': 'invoice',
+  'invoices:view_all': 'invoice',
+  'invoices:manage': 'invoice',
+  'payments:view': 'payment',
+  'payments:manage': 'payment',
+  'vendors:create': 'vendor',
+  'vendors:edit': 'vendor',
+  'vendors:view': 'vendor',
+  'rfqs:view': 'rfq',
+  'rfqs:manage': 'rfq',
+  'contracts:view': 'contract',
+  'contracts:manage': 'contract',
+  'catalog:view': 'catalog',
+  'catalog:manage': 'catalog',
+  'inventory:view': 'inventory',
+  'inventory:manage': 'inventory',
+  'supplier_risk:view': 'supplier_risk',
+  'supplier_risk:manage': 'supplier_risk',
+  'software_licenses:view': 'software_license',
+  'software_licenses:manage': 'software_license',
+  'budgets:view': 'budget',
+  'budgets:manage': 'budget',
+  'reports:view': 'report',
+  'reports:export': 'report',
+  'settings:manage': 'settings',
+  'users:manage': 'user',
+} as const satisfies Record<PermissionKey, AccessResource>;
 
-function resourceForPermission(permission: PermissionKey): AccessResource | undefined {
-  return PERMISSION_RESOURCES[permission.slice(0, permission.indexOf(':'))];
+function resourceForPermission(permission: PermissionKey): AccessResource {
+  return PERMISSION_RESOURCES[permission];
 }
 
 /**
@@ -122,10 +154,7 @@ export function createAccessPolicy(
       const resource = resourceForPermission(permission);
       if (
         assignment.scopeType !== 'global' &&
-        (!resource ||
-          !(ACCESS_RESOURCE_SCOPE_TYPES[resource] as readonly string[]).includes(
-            assignment.scopeType,
-          ))
+        !(ACCESS_RESOURCE_SCOPE_TYPES[resource] as readonly string[]).includes(assignment.scopeType)
       ) {
         continue;
       }

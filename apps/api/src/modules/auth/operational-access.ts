@@ -19,24 +19,19 @@ export type OperationalResource =
 
 export type ScopedVendorResource = OperationalResource | 'vendor';
 
-/**
- * Keep resource-specific scope calls in one seam while the shared catalog is
- * extended with these resource families. The runtime values are validated by
- * AccessPolicy, and the casts disappear once the shared union contains them.
- */
 export function operationalScope(
   access: AccessPolicy | undefined,
   resource: ScopedVendorResource,
-  permission: string,
+  permission: PermissionKey,
 ) {
-  return access?.scopeFor(resource as AccessResource, permission as PermissionKey);
+  return access?.scopeFor(resource, permission);
 }
 
 /** Apply entity scope to a column, preserving the global and empty-scope rules. */
 export function scopedEntityPredicate(
   access: AccessPolicy | undefined,
   resource: ScopedVendorResource,
-  permission: string,
+  permission: PermissionKey,
   entityId: SQLWrapper,
 ): SQL | undefined {
   const scope = operationalScope(access, resource, permission);
@@ -54,7 +49,7 @@ export function scopedVendorPredicate(
   organizationId: string,
   access: AccessPolicy | undefined,
   resource: ScopedVendorResource,
-  permission: string,
+  permission: PermissionKey,
   vendorId: AnyColumn,
 ): SQL | undefined {
   const scope = operationalScope(access, resource, permission);
@@ -79,7 +74,7 @@ export function scopedVendorPredicate(
 export function hasUnrestrictedOperationalAccess(
   access: AccessPolicy | undefined,
   resource: OperationalResource,
-  permission: string,
+  permission: PermissionKey,
 ) {
   return !access || operationalScope(access, resource, permission)?.unrestricted === true;
 }

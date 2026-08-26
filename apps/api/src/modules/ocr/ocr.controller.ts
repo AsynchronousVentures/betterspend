@@ -2,6 +2,7 @@ import {
   Controller, Get, Post, Param, Body, HttpCode, HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiConsumes } from '@nestjs/swagger';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { OcrService } from './ocr.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
@@ -16,6 +17,7 @@ interface SubmitOcrJobDto {
 }
 
 @ApiTags('ocr')
+@Authenticated()
 @Controller('ocr')
 export class OcrController {
   constructor(private readonly ocrService: OcrService) {}

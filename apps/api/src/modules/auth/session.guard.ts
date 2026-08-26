@@ -5,9 +5,8 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
-import { IS_PUBLIC_KEY } from '../../common/decorators/public.decorator';
+import { resolveRouteAccess } from '../../common/decorators/route-access.decorator';
 import { AUTH_INSTANCE } from './auth.tokens';
 import type { AuthInstance, AuthSession, AuthUser } from '../../auth/auth.instance';
 import { DB_TOKEN } from '../../database/database.module';
@@ -31,7 +30,6 @@ declare global {
 @Injectable()
 export class SessionGuard implements CanActivate {
   constructor(
-    private readonly reflector: Reflector,
     @Inject(AUTH_INSTANCE) private readonly auth: AuthInstance,
     @Inject(DB_TOKEN)
     private readonly db: ReturnType<typeof import('drizzle-orm/postgres-js').drizzle>,
@@ -39,11 +37,8 @@ export class SessionGuard implements CanActivate {
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
-    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
-      ctx.getHandler(),
-      ctx.getClass(),
-    ]);
-    if (isPublic) return true;
+    const routeAccess = resolveRouteAccess(ctx.getHandler(), ctx.getClass());
+    if (routeAccess.status === 'resolved' && routeAccess.access.kind === 'public') return true;
 
     const req = ctx.switchToHttp().getRequest<Request>();
     const token = this.extractToken(req);

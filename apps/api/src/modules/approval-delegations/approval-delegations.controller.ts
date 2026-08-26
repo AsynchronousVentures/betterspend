@@ -6,8 +6,10 @@ import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { ApprovalDelegationsService } from './approval-delegations.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 
 @ApiTags('approval-delegations')
+@Authenticated()
 @Controller('approval-delegations')
 export class ApprovalDelegationsController {
   constructor(private readonly service: ApprovalDelegationsService) {}

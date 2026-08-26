@@ -1,10 +1,12 @@
 import { Controller, Get, Post, Patch, Delete, Param, Body } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { RecurringPoService } from './recurring-po.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 
 @ApiTags('recurring-po')
+@Authenticated()
 @Controller('recurring-po')
 export class RecurringPoController {
   constructor(private readonly recurringPoService: RecurringPoService) {}

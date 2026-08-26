@@ -14,6 +14,7 @@ import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { RequisitionsService } from './requisitions.service';
 import { AiRequisitionService } from './ai-requisition.service';
 import { createRequisitionSchema } from '@betterspend/shared';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { CurrentAccess } from '../auth/current-access.decorator';
@@ -21,6 +22,7 @@ import type { AccessPolicy } from '../auth/access-policy';
 import { requirePermission } from '../auth/access-scope';
 
 @ApiTags('requisitions')
+@Authenticated()
 @Controller('requisitions')
 export class RequisitionsController {
   constructor(

@@ -21,12 +21,14 @@ import {
   changeOrderSchema,
 } from './purchase-orders.service';
 import { PdfService } from './pdf.service';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { CurrentAccess } from '../auth/current-access.decorator';
 import type { AccessPolicy } from '../auth/access-policy';
 
 @ApiTags('purchase-orders')
+@Authenticated()
 @Controller('purchase-orders')
 export class PurchaseOrdersController {
   constructor(

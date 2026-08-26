@@ -1,12 +1,14 @@
 import { Controller, Get, UnauthorizedException } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { EffectiveAccessDocument } from '@betterspend/shared';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUser } from '../../auth/auth.instance';
 import type { AccessPolicy } from './access-policy';
 import { CurrentAccess } from './current-access.decorator';
 
 @ApiTags('auth')
+@Authenticated()
 @Controller('me')
 export class AccessController {
   @Get('access')

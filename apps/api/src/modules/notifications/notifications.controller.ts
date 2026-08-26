@@ -1,10 +1,12 @@
 import { Controller, Get, Post, Param, Query, Body, Put } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { NotificationPreferencesInput, NotificationsService } from './notifications.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 
 @ApiTags('notifications')
+@Authenticated()
 @Controller('notifications')
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}

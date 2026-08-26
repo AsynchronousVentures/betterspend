@@ -20,9 +20,9 @@ export { AUTH_INSTANCE } from './auth.tokens';
     RolesGuard,
     AccessPolicyService,
     // SessionGuard runs first: validates the Bearer token and populates req.authUser.
-    // RolesGuard runs second: enforces @Roles() metadata on the resolved user.
-    { provide: APP_GUARD, useClass: SessionGuard },
-    { provide: APP_GUARD, useClass: RolesGuard },
+    // RolesGuard runs second: enforces the explicit route access classification.
+    { provide: APP_GUARD, useExisting: SessionGuard },
+    { provide: APP_GUARD, useExisting: RolesGuard },
   ],
   controllers: [AccessController],
   exports: [AUTH_INSTANCE, SessionGuard, RolesGuard, AccessPolicyService],
