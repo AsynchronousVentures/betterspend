@@ -235,4 +235,55 @@ describe('IntakeConciergeService workflow links', () => {
     ).rejects.toThrow('Routing answers are invalid.');
     expect(requisitionsService.create).not.toHaveBeenCalled();
   });
+
+  it('uses an accepted estimated price for zero-priced generated lines', async () => {
+    const update = jest.fn(() => ({
+      set: jest.fn(() => ({ where: jest.fn(async () => undefined) })),
+    }));
+    const db = {
+      query: {
+        intakeConciergeSessions: {
+          findFirst: jest.fn(async () => ({
+            id: 'session-1',
+            status: 'draft',
+            draft: {
+              title: 'Office chairs',
+              neededBy: '2026-10-01',
+              suggestedVendor: 'Acme Office',
+              lines: [{ description: 'Office chair', quantity: 2, unitPrice: 0 }],
+            },
+            plan: {
+              route: { workflow: 'requisition', label: 'Requisition', reason: 'Default route.' },
+              estimatedAmount: 0,
+              missingFields: ['estimatedPrice', 'departmentOrProject'],
+              questions: [],
+            },
+          })),
+        },
+      },
+      update,
+    };
+    const requisitionsService = { create: jest.fn(async () => ({ id: 'req-1' })) };
+    const audit = { log: jest.fn(async () => undefined) };
+    const service = new IntakeConciergeService(
+      db as never,
+      {} as never,
+      requisitionsService as never,
+      {} as never,
+      audit as never,
+    );
+
+    await service.convertSession('session-1', 'organization-1', 'requester-1', {
+      acceptedValues: {
+        departmentId: '00000000-0000-4000-8000-000000000001',
+        estimatedPrice: 125,
+      },
+    });
+
+    expect(requisitionsService.create).toHaveBeenCalledWith(
+      'organization-1',
+      'requester-1',
+      expect.objectContaining({ lines: [expect.objectContaining({ unitPrice: 125 })] }),
+    );
+  });
 });

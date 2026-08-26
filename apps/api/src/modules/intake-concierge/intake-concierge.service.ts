@@ -904,10 +904,10 @@ export class IntakeConciergeService {
 
   private toRequisitionInput(
     draft: AiParsedRequisition,
-    acceptedValues: Record<string, unknown>,
+    acceptedValues: IntakeConciergeAcceptedValues,
   ): CreateRequisitionInput {
     const merged = { ...draft, ...acceptedValues } as AiParsedRequisition & Record<string, unknown>;
-    const lines = this.normalizedLines(merged);
+    const lines = this.normalizedLines(merged, acceptedValues.estimatedPrice);
     const neededBy = this.isoDate(merged.neededBy as string | undefined);
 
     return createRequisitionSchema.parse({
@@ -935,7 +935,7 @@ export class IntakeConciergeService {
       description: typeof merged.description === 'string' ? merged.description : undefined,
       currency: typeof merged.currency === 'string' && merged.currency.length === 3 ? merged.currency : 'USD',
       notes: `Created from AI concierge. ${plan.route.reason}`,
-      lines: this.normalizedLines(merged).map((line) => ({
+      lines: this.normalizedLines(merged, acceptedValues.estimatedPrice).map((line) => ({
         description: line.description,
         quantity: line.quantity,
         unitOfMeasure: line.unitOfMeasure,
@@ -950,20 +950,29 @@ export class IntakeConciergeService {
     };
   }
 
-  private normalizedLines(draft: AiParsedRequisition & Record<string, unknown>) {
+  private normalizedLines(
+    draft: AiParsedRequisition & Record<string, unknown>,
+    fallbackUnitPrice?: number,
+  ) {
     const sourceLines = Array.isArray(draft.lines) && draft.lines.length
       ? draft.lines
       : [{ description: String(draft.title || 'Requested item'), quantity: 1, unitOfMeasure: 'each', unitPrice: 0 }];
 
-    return sourceLines.map((line) => ({
-      description: String(line.description || draft.title || 'Requested item').slice(0, 500),
-      quantity: Math.max(0.01, Number(line.quantity) || 1),
-      unitOfMeasure: String(line.unitOfMeasure || 'each').slice(0, 50),
-      unitPrice: Math.max(0, Number(line.unitPrice) || 0),
-      vendorId: typeof (line as any).vendorId === 'string' ? (line as any).vendorId : undefined,
-      catalogItemId: typeof (line as any).catalogItemId === 'string' ? (line as any).catalogItemId : undefined,
-      glAccount: typeof line.glAccount === 'string' ? line.glAccount.slice(0, 50) : undefined,
-    }));
+    return sourceLines.map((line) => {
+      const parsedUnitPrice = Number(line.unitPrice);
+      return {
+        description: String(line.description || draft.title || 'Requested item').slice(0, 500),
+        quantity: Math.max(0.01, Number(line.quantity) || 1),
+        unitOfMeasure: String(line.unitOfMeasure || 'each').slice(0, 50),
+        unitPrice:
+          Number.isFinite(parsedUnitPrice) && parsedUnitPrice > 0
+            ? parsedUnitPrice
+            : (fallbackUnitPrice ?? 0),
+        vendorId: typeof (line as any).vendorId === 'string' ? (line as any).vendorId : undefined,
+        catalogItemId: typeof (line as any).catalogItemId === 'string' ? (line as any).catalogItemId : undefined,
+        glAccount: typeof line.glAccount === 'string' ? line.glAccount.slice(0, 50) : undefined,
+      };
+    });
   }
 
   private async markConverted(

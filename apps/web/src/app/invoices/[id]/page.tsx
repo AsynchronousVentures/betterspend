@@ -139,6 +139,10 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       setInvoice(null);
       setGlJobs([]);
       setGlJobsError(null);
+      setShowExternalPayment(false);
+      setPaymentDate(localDateInputValue());
+      setPaymentMethod('ach');
+      setPaymentReference('');
       setLoading(true);
       api.invoices
         .get(pid)
