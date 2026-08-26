@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { once } from 'node:events';
+import { createServer, type Server } from 'node:http';
 import type { WebhookDnsAddress } from './webhook-url-policy';
-import { resolveSafeWebhookTarget, WebhookUrlPolicyError } from './webhook-url-policy';
+import {
+  MAX_RESPONSE_BYTES,
+  requestPinnedWebhook,
+  resolveSafeWebhookTarget,
+  WebhookUrlPolicyError,
+} from './webhook-url-policy';
 
 const publicAddresses: WebhookDnsAddress[] = [
   { address: '93.184.216.34', family: 4 },
@@ -62,3 +69,68 @@ test('rejects DNS answers that include a non-public address', async () => {
     (error: unknown) => error instanceof WebhookUrlPolicyError,
   );
 });
+
+test('caps streamed webhook responses before buffering them', async () => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/plain' });
+    response.end(Buffer.alloc(MAX_RESPONSE_BYTES + 1, 'x'));
+  });
+
+  await once(server.listen(0, '127.0.0.1'), 'listening');
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    await assert.rejects(
+      requestPinnedWebhook(
+        {
+          protocol: 'http:',
+          hostname: 'public.example',
+          hostHeader: 'public.example',
+          address: '127.0.0.1',
+          family: 4,
+          port: address.port,
+          path: '/',
+        },
+        { method: 'POST', headers: {}, body: 'payload' },
+      ),
+      /exceeded/,
+    );
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('enforces an absolute deadline while the peer keeps streaming', async () => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/plain' });
+    const interval = setInterval(() => response.write('x'), 5);
+    response.on('close', () => clearInterval(interval));
+  });
+
+  await once(server.listen(0, '127.0.0.1'), 'listening');
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    await assert.rejects(
+      requestPinnedWebhook(
+        {
+          protocol: 'http:',
+          hostname: 'public.example',
+          hostHeader: 'public.example',
+          address: '127.0.0.1',
+          family: 4,
+          port: address.port,
+          path: '/',
+        },
+        { method: 'POST', headers: {}, body: 'payload', timeoutMs: 50 },
+      ),
+      /timed out/,
+    );
+  } finally {
+    await closeServer(server);
+  }
+});
+
+async function closeServer(server: Server): Promise<void> {
+  if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+}

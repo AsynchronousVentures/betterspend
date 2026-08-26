@@ -10,6 +10,7 @@ import { isIP, type LookupFunction } from 'node:net';
 import ipaddr from 'ipaddr.js';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+export const MAX_RESPONSE_BYTES = 1_048_576;
 
 export class WebhookUrlPolicyError extends Error {
   constructor(message: string) {
@@ -128,7 +129,12 @@ export function requestPinnedWebhook(
   },
 ): Promise<WebhookRequestResponse> {
   const requestFn = target.protocol === 'https:' ? httpsRequest : httpRequest;
-  const pinnedLookup: LookupFunction = (_hostname, _options, callback) => {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const pinnedLookup: LookupFunction = (_hostname, lookupOptions, callback) => {
+    if (lookupOptions.all) {
+      callback(null, [{ address: target.address, family: target.family }]);
+      return;
+    }
     callback(null, target.address, target.family);
   };
   const requestOptions: RequestOptions = {
@@ -147,9 +153,11 @@ export function requestPinnedWebhook(
 
   return new Promise((resolve, reject) => {
     let settled = false;
+    const deadlineTimer: { id?: ReturnType<typeof setTimeout> } = {};
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
+      if (deadlineTimer.id) clearTimeout(deadlineTimer.id);
       callback();
     };
 
@@ -157,7 +165,17 @@ export function requestPinnedWebhook(
       requestOptions,
       (response: IncomingMessage) => {
         const chunks: Buffer[] = [];
-        response.on('data', (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
+        let responseBytes = 0;
+        response.on('data', (chunk: Buffer | string) => {
+          responseBytes += Buffer.byteLength(chunk);
+          if (responseBytes > MAX_RESPONSE_BYTES) {
+            const error = new Error(`Webhook response exceeded ${MAX_RESPONSE_BYTES} bytes`);
+            finish(() => reject(error));
+            response.destroy(error);
+            return;
+          }
+          chunks.push(Buffer.from(chunk));
+        });
         response.on('end', () => {
           const status = response.statusCode ?? 0;
           finish(() =>
@@ -172,8 +190,15 @@ export function requestPinnedWebhook(
       },
     );
 
-    req.setTimeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, () => {
-      req.destroy(new Error('Webhook delivery timed out'));
+    deadlineTimer.id = setTimeout(() => {
+      const error = new Error('Webhook delivery timed out');
+      finish(() => reject(error));
+      req.destroy(error);
+    }, timeoutMs);
+    req.setTimeout(timeoutMs, () => {
+      const error = new Error('Webhook delivery timed out');
+      finish(() => reject(error));
+      req.destroy(error);
     });
     req.on('error', (error) => finish(() => reject(error)));
     req.end(options.body);
