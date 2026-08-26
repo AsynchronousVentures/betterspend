@@ -11,6 +11,7 @@ import ipaddr from 'ipaddr.js';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 export const MAX_RESPONSE_BYTES = 1_048_576;
+const IPV6_GLOBAL_UNICAST = ipaddr.parseCIDR('2000::/3');
 
 export class WebhookUrlPolicyError extends Error {
   constructor(message: string) {
@@ -212,5 +213,8 @@ function isGlobalIp(address: string): boolean {
     parsed.kind() === 'ipv6' && parsed.range() === 'ipv4Mapped'
       ? (parsed as ipaddr.IPv6).toIPv4Address()
       : parsed;
+  if (normalized.kind() === 'ipv6') {
+    return normalized.range() === 'unicast' && normalized.match(IPV6_GLOBAL_UNICAST);
+  }
   return normalized.range() === 'unicast';
 }

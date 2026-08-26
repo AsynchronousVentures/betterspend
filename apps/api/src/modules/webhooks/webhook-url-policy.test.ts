@@ -52,7 +52,14 @@ test('rejects unsafe schemes, credentials, fragments, and non-default ports', as
 });
 
 test('rejects literal loopback, private, link-local, and metadata addresses', async () => {
-  for (const address of ['127.0.0.1', '10.0.0.1', '169.254.169.254', '::1', 'fd00:ec2::254']) {
+  for (const address of [
+    '127.0.0.1',
+    '10.0.0.1',
+    '169.254.169.254',
+    '::1',
+    'fd00:ec2::254',
+    '[4000::1]',
+  ]) {
     await assert.rejects(
       resolveSafeWebhookTarget(`http://${address}`),
       (error: unknown) => error instanceof WebhookUrlPolicyError,
