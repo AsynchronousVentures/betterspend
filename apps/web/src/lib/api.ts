@@ -3,6 +3,7 @@ import {
   sanctionsIngestResultSchema,
   screenAllVendorsResultSchema,
   type MessageThreadType,
+  type EffectiveAccessDocument,
   vendorScreeningResultSchema,
   vendorScreeningStatusSchema,
 } from '@betterspend/shared';
@@ -198,6 +199,9 @@ export interface VendorDiversitySummary {
 }
 
 export const api = {
+  me: {
+    access: () => apiFetch<EffectiveAccessDocument>('/me/access'),
+  },
   account: {
     me: () =>
       apiFetch<{

@@ -12,6 +12,7 @@ import { createAuthForDatabase, type AuthInstance } from './auth.instance';
 import { hashCredentialPassword } from './credential-password';
 import { BootstrapService } from '../modules/bootstrap/bootstrap.service';
 import { UsersService } from '../modules/users/users.service';
+import { AuditService } from '../modules/audit/audit.service';
 
 async function authRequest(
   auth: AuthInstance,
@@ -204,7 +205,7 @@ async function main(): Promise<void> {
     assert.equal(firstSignIn.status, 200);
     assert.equal(typeof ((await firstSignIn.json()) as { token?: unknown }).token, 'string');
 
-    const usersService = new UsersService(db);
+    const usersService = new UsersService(db, new AuditService(db));
     const invitedPassword = testPassword();
     const invited = await usersService.create(initialized.organization.id, {
       name: 'Invited User',
@@ -217,6 +218,29 @@ async function main(): Promise<void> {
       password: invitedPassword,
     });
     assert.equal(invitedSignIn.status, 200);
+    const invitedUserAudits = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.entityId, invited.id));
+    assert.ok(
+      invitedUserAudits.some(
+        (entry) => entry.entityType === 'user' && entry.action === 'created',
+      ),
+    );
+    const [invitedRole] = await db
+      .select()
+      .from(schema.userRoles)
+      .where(eq(schema.userRoles.userId, invited.id));
+    assert.ok(invitedRole);
+    const invitedRoleAudits = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.entityId, invitedRole.id));
+    assert.ok(
+      invitedRoleAudits.some(
+        (entry) => entry.entityType === 'user_role' && entry.action === 'assigned',
+      ),
+    );
 
     await assert.rejects(
       usersService.create(initialized.organization.id, {

@@ -22,6 +22,7 @@ export const DEMO_USER_ROLE_FIXTURES: DemoUserRoleFixture[] = [
   {
     id: '00000000-0000-0000-0000-000000000040',
     userId: DEMO_ADMIN_ID,
+    organizationId: DEMO_ORG_ID,
     role: 'admin',
     customRoleId: null,
     scopeType: 'global',
@@ -30,6 +31,7 @@ export const DEMO_USER_ROLE_FIXTURES: DemoUserRoleFixture[] = [
   {
     id: '00000000-0000-0000-0000-000000000041',
     userId: DEMO_REQUESTER_ID,
+    organizationId: DEMO_ORG_ID,
     role: 'requester',
     customRoleId: null,
     scopeType: 'global',
@@ -38,6 +40,7 @@ export const DEMO_USER_ROLE_FIXTURES: DemoUserRoleFixture[] = [
   {
     id: '00000000-0000-0000-0000-000000000042',
     userId: DEMO_APPROVER_ID,
+    organizationId: DEMO_ORG_ID,
     role: 'approver',
     customRoleId: null,
     scopeType: 'global',
@@ -146,6 +149,7 @@ async function reconcileLegacyDemoUserRoles(tx: DbTransaction): Promise<void> {
         .set({
           id: fixture.id,
           userId: fixture.userId,
+          organizationId: fixture.organizationId,
           role: fixture.role,
           customRoleId: fixture.customRoleId,
           scopeType: fixture.scopeType,
@@ -399,6 +403,7 @@ export async function upsertDemoFixtures(tx: DbTransaction): Promise<void> {
       target: userRoles.id,
       set: {
         userId: sql`excluded.user_id`,
+        organizationId: sql`excluded.organization_id`,
         role: sql`excluded.role`,
         customRoleId: sql`excluded.custom_role_id`,
         scopeType: sql`excluded.scope_type`,

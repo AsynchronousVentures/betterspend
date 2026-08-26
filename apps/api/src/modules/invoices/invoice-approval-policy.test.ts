@@ -13,11 +13,13 @@ function candidate(
     role?: string;
     scopeType?: string;
     permissions?: string[];
+    customRoleOrganizationId?: string;
     isActive?: boolean;
   } = {},
 ): InvoiceApprovalCandidate {
   return {
     id,
+    organizationId: 'org-1',
     name: options.name ?? id,
     departmentId: options.departmentId ?? null,
     isActive: options.isActive ?? true,
@@ -25,7 +27,12 @@ function candidate(
       {
         role: options.role ?? 'approver',
         scopeType: options.scopeType ?? 'global',
-        customRole: options.permissions ? { permissions: options.permissions } : null,
+        customRole: options.permissions
+          ? {
+              organizationId: options.customRoleOrganizationId ?? 'org-1',
+              permissions: options.permissions,
+            }
+          : null,
       },
     ],
   };
@@ -52,6 +59,19 @@ describe('resolveIndependentInvoiceApprover', () => {
     ]);
 
     assert.equal(fallback?.id, 'custom-approver');
+  });
+
+  it('ignores a custom role owned by another organization', () => {
+    const fallback = resolveIndependentInvoiceApprover('maker', null, [
+      candidate('maker', { role: 'finance' }),
+      candidate('cross-org-custom', {
+        role: 'custom',
+        permissions: ['invoices:approve'],
+        customRoleOrganizationId: 'org-2',
+      }),
+    ]);
+
+    assert.equal(fallback, null);
   });
 
   it('fails closed when no independent global approver exists', () => {

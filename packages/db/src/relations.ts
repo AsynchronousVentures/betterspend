@@ -233,8 +233,14 @@ export const intakeConciergeSessionsRelations = relations(intakeConciergeSession
 }));
 
 export const userRolesRelations = relations(userRoles, ({ one }) => ({
-  user: one(users, { fields: [userRoles.userId], references: [users.id] }),
-  customRole: one(customRoles, { fields: [userRoles.customRoleId], references: [customRoles.id] }),
+  user: one(users, {
+    fields: [userRoles.userId, userRoles.organizationId],
+    references: [users.id, users.organizationId],
+  }),
+  customRole: one(customRoles, {
+    fields: [userRoles.customRoleId, userRoles.organizationId],
+    references: [customRoles.id, customRoles.organizationId],
+  }),
 }));
 
 export const customRolesRelations = relations(customRoles, ({ one, many }) => ({

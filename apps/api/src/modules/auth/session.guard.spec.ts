@@ -11,6 +11,7 @@ describe('SessionGuard', () => {
       { getAllAndOverride: jest.fn(() => false) } as never,
       { api: { getSession: jest.fn(async () => null) } } as never,
       {} as never,
+      {} as never,
     );
     const request = { headers: {} };
     const context = {
@@ -28,6 +29,7 @@ describe('SessionGuard', () => {
       { getAllAndOverride: jest.fn(() => false) } as never,
       { api: { getSession: jest.fn(async () => null) } } as never,
       {} as never,
+      {} as never,
     );
     const context = {
       getHandler: jest.fn(),
@@ -36,5 +38,47 @@ describe('SessionGuard', () => {
     };
 
     await expect(guard.canActivate(context as never)).resolves.toBe(true);
+  });
+
+  it('rejects an inactive user for an otherwise valid bearer session', async () => {
+    const session = {
+      id: 'session-1',
+      userId: 'user-1',
+      token: 'token-1',
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+    const inactiveUser = {
+      id: 'user-1',
+      organizationId: 'org-1',
+      email: 'inactive@example.test',
+      name: 'Inactive',
+      emailVerified: true,
+      isActive: false,
+    };
+    const limit = jest.fn().mockResolvedValueOnce([session]).mockResolvedValueOnce([inactiveUser]);
+    const db = {
+      select: jest.fn(() => ({
+        from: jest.fn(() => ({
+          where: jest.fn(() => ({ limit })),
+        })),
+      })),
+    };
+    const accessPolicy = { resolve: jest.fn() };
+    const guard = new SessionGuard(
+      { getAllAndOverride: jest.fn(() => false) } as never,
+      { api: { getSession: jest.fn() } } as never,
+      db as never,
+      accessPolicy as never,
+    );
+    const context = {
+      getHandler: jest.fn(),
+      getClass: jest.fn(),
+      switchToHttp: jest.fn(() => ({
+        getRequest: () => ({ headers: { authorization: 'Bearer token-1' } }),
+      })),
+    };
+
+    await expect(guard.canActivate(context as never)).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(accessPolicy.resolve).not.toHaveBeenCalled();
   });
 });

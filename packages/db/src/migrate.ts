@@ -65,6 +65,26 @@ type EmailIntakeIndexState = {
   indexIsValid: boolean;
 };
 
+type UserRoleAssignmentIndexState = {
+  userRolesTableExists: boolean;
+  indexExists: boolean;
+  indexIsValid: boolean;
+};
+
+type CustomRoleOrganizationIndexState = {
+  customRolesTableExists: boolean;
+  indexExists: boolean;
+  indexIsValid: boolean;
+};
+
+type UserRoleOrganizationContractState = {
+  columnIsNotNull: boolean;
+  userOrganizationForeignKeyExists: boolean;
+  customRoleOrganizationForeignKeyExists: boolean;
+};
+
+const USER_ROLE_BACKFILL_BATCH_SIZE = 500;
+
 /** Build the parent key without blocking writes before transactional migrations add its FK. */
 async function prepareVendorOrganizationIndex(client: postgres.Sql): Promise<void> {
   const [state] = await client<IndexState[]>`
@@ -181,6 +201,276 @@ async function prepareEmailIntakeItemOrganizationIndex(client: postgres.Sql): Pr
   `;
 }
 
+/** Build the custom-role parent key concurrently before adding the tenant-scoped FK. */
+async function prepareCustomRoleOrganizationIndex(client: postgres.Sql): Promise<void> {
+  const [state] = await client<CustomRoleOrganizationIndexState[]>`
+    SELECT
+      to_regclass('public.custom_roles') IS NOT NULL AS "customRolesTableExists",
+      index_class.oid IS NOT NULL AS "indexExists",
+      COALESCE(index_state.indisvalid, false) AS "indexIsValid"
+    FROM (VALUES (1)) AS singleton(value)
+    LEFT JOIN pg_class AS index_class
+      ON index_class.oid = to_regclass('public.custom_roles_id_organization_id_unique')
+    LEFT JOIN pg_index AS index_state ON index_state.indexrelid = index_class.oid
+  `;
+
+  if (!state?.customRolesTableExists || state.indexIsValid) return;
+
+  await client`SET lock_timeout = '5s'`;
+  await client`SET statement_timeout = '5min'`;
+  try {
+    if (state.indexExists) {
+      await client`DROP INDEX CONCURRENTLY "custom_roles_id_organization_id_unique"`;
+    }
+    await client`
+      CREATE UNIQUE INDEX CONCURRENTLY "custom_roles_id_organization_id_unique"
+      ON "custom_roles" ("id", "organization_id")
+    `;
+  } finally {
+    await client`RESET statement_timeout`;
+    await client`RESET lock_timeout`;
+  }
+}
+
+/** Backfill tenant ownership in small commits so large role tables stay writable. */
+async function backfillUserRoleOrganizations(client: postgres.Sql): Promise<void> {
+  await client`SET lock_timeout = '5s'`;
+  await client`SET statement_timeout = '30s'`;
+  try {
+    while (true) {
+      const updated = await client<{ id: string }[]>`
+        WITH batch AS (
+          SELECT assignments.id, assigned_users.organization_id
+          FROM "user_roles" AS assignments
+          JOIN "users" AS assigned_users ON assigned_users.id = assignments.user_id
+          WHERE assignments.organization_id IS NULL
+          ORDER BY assignments.id
+          LIMIT ${USER_ROLE_BACKFILL_BATCH_SIZE}
+          FOR UPDATE OF assignments SKIP LOCKED
+        )
+        UPDATE "user_roles" AS assignments
+        SET organization_id = batch.organization_id
+        FROM batch
+        WHERE assignments.id = batch.id
+        RETURNING assignments.id
+      `;
+      if (updated.length < USER_ROLE_BACKFILL_BATCH_SIZE) break;
+    }
+  } finally {
+    await client`RESET statement_timeout`;
+    await client`RESET lock_timeout`;
+  }
+}
+
+/** Contract the expanded role shape while preventing old writers from adding null tenants. */
+async function ensureUserRoleOrganizationContract(client: postgres.Sql): Promise<void> {
+  await client.begin(async (transaction) => {
+    await transaction`SET LOCAL lock_timeout = '5s'`;
+    await transaction`SET LOCAL statement_timeout = '5min'`;
+    await transaction`LOCK TABLE "user_roles" IN SHARE ROW EXCLUSIVE MODE`;
+
+    while (true) {
+      const updated = await transaction<{ id: string }[]>`
+        WITH batch AS (
+          SELECT assignments.id, assigned_users.organization_id
+          FROM "user_roles" AS assignments
+          JOIN "users" AS assigned_users ON assigned_users.id = assignments.user_id
+          WHERE assignments.organization_id IS NULL
+          ORDER BY assignments.id
+          LIMIT ${USER_ROLE_BACKFILL_BATCH_SIZE}
+        )
+        UPDATE "user_roles" AS assignments
+        SET organization_id = batch.organization_id
+        FROM batch
+        WHERE assignments.id = batch.id
+        RETURNING assignments.id
+      `;
+      if (updated.length < USER_ROLE_BACKFILL_BATCH_SIZE) break;
+    }
+
+    const [remaining] = await transaction`
+      SELECT 1
+      FROM "user_roles"
+      WHERE organization_id IS NULL
+      LIMIT 1
+    `;
+    if (remaining) {
+      throw new Error(
+        'user_roles contains assignments without an organization; repair them before migrating',
+      );
+    }
+
+    const [state] = await transaction<UserRoleOrganizationContractState[]>`
+      SELECT
+        column_definition.attnotnull AS "columnIsNotNull",
+        EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conrelid = 'public.user_roles'::regclass
+            AND conname = 'user_roles_user_org_fk'
+        ) AS "userOrganizationForeignKeyExists",
+        EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conrelid = 'public.user_roles'::regclass
+            AND conname = 'user_roles_custom_role_org_fk'
+        ) AS "customRoleOrganizationForeignKeyExists"
+      FROM pg_attribute AS column_definition
+      WHERE column_definition.attrelid = 'public.user_roles'::regclass
+        AND column_definition.attname = 'organization_id'
+        AND NOT column_definition.attisdropped
+    `;
+    if (!state) return;
+
+    if (!state.columnIsNotNull) {
+      await transaction`
+        ALTER TABLE "user_roles"
+        ALTER COLUMN "organization_id" SET NOT NULL
+      `;
+    }
+    if (!state.userOrganizationForeignKeyExists) {
+      await transaction`
+        ALTER TABLE "user_roles"
+        ADD CONSTRAINT "user_roles_user_org_fk"
+        FOREIGN KEY ("user_id", "organization_id")
+        REFERENCES "public"."users"("id", "organization_id")
+        ON DELETE no action ON UPDATE no action
+        NOT VALID
+      `;
+    }
+    if (!state.customRoleOrganizationForeignKeyExists) {
+      await transaction`
+        ALTER TABLE "user_roles"
+        ADD CONSTRAINT "user_roles_custom_role_org_fk"
+        FOREIGN KEY ("custom_role_id", "organization_id")
+        REFERENCES "public"."custom_roles"("id", "organization_id")
+        ON DELETE no action ON UPDATE no action
+        NOT VALID
+      `;
+    }
+  });
+}
+
+/** Build the role-assignment natural key without blocking writes on a table scan. */
+async function prepareUserRoleAssignmentIndex(client: postgres.Sql): Promise<void> {
+  const [state] = await client<UserRoleAssignmentIndexState[]>`
+    SELECT
+      to_regclass('public.user_roles') IS NOT NULL AS "userRolesTableExists",
+      index_class.oid IS NOT NULL AS "indexExists",
+      COALESCE(index_state.indisvalid, false) AS "indexIsValid"
+    FROM (VALUES (1)) AS singleton(value)
+    LEFT JOIN pg_class AS index_class
+      ON index_class.oid = to_regclass('public.user_roles_assignment_natural_key')
+    LEFT JOIN pg_index AS index_state ON index_state.indexrelid = index_class.oid
+  `;
+
+  if (!state?.userRolesTableExists) return;
+
+  const [invalid] = await client<{ count: string }[]>`
+    SELECT count(*)::text AS count
+    FROM "user_roles"
+    WHERE NOT (
+      (("role" in ('admin', 'approver', 'requester', 'receiver', 'finance') AND "custom_role_id" IS NULL)
+        OR ("role" = 'custom' AND "custom_role_id" IS NOT NULL))
+      AND (("scope_type" = 'global' AND "scope_id" IS NULL)
+        OR ("scope_type" IN ('department', 'project', 'entity') AND "scope_id" IS NOT NULL))
+    )
+  `;
+  if (Number(invalid?.count ?? 0) > 0) {
+    throw new Error(
+      'user_roles contains invalid role or scope assignments; repair them before migrating',
+    );
+  }
+
+  const [duplicate] = await client`
+    SELECT 1
+    FROM "user_roles"
+    GROUP BY
+      "user_id",
+      "role",
+      "scope_type",
+      coalesce("custom_role_id", '00000000-0000-0000-0000-000000000000'::uuid),
+      coalesce("scope_id", '00000000-0000-0000-0000-000000000000'::uuid)
+    HAVING count(*) > 1
+    LIMIT 1
+  `;
+  if (duplicate) {
+    throw new Error('user_roles contains duplicate assignments; repair them before migrating');
+  }
+
+  if (state.indexIsValid) return;
+
+  if (state.indexExists) {
+    await client`DROP INDEX CONCURRENTLY "user_roles_assignment_natural_key"`;
+  }
+  await client`
+    CREATE UNIQUE INDEX CONCURRENTLY "user_roles_assignment_natural_key"
+    ON "user_roles" (
+      "user_id",
+      "role",
+      "scope_type",
+      coalesce("custom_role_id", '00000000-0000-0000-0000-000000000000'::uuid),
+      coalesce("scope_id", '00000000-0000-0000-0000-000000000000'::uuid)
+    )
+  `;
+}
+
+/** Fail before the migration transaction when legacy role rows cross tenant boundaries. */
+async function validateLegacyUserRoleOrganizations(client: postgres.Sql): Promise<void> {
+  const [state] = await client<
+    { userRolesTableExists: boolean; customRolesTableExists: boolean }[]
+  >`
+    SELECT
+      to_regclass('public.user_roles') IS NOT NULL AS "userRolesTableExists",
+      to_regclass('public.custom_roles') IS NOT NULL AS "customRolesTableExists"
+  `;
+  if (!state?.userRolesTableExists || !state.customRolesTableExists) return;
+
+  const [invalid] = await client`
+    SELECT 1
+    FROM "user_roles" AS assignments
+    JOIN "users" AS assigned_users ON assigned_users."id" = assignments."user_id"
+    JOIN "custom_roles" AS roles ON roles."id" = assignments."custom_role_id"
+    WHERE assigned_users."organization_id" <> roles."organization_id"
+    LIMIT 1
+  `;
+  if (invalid) {
+    throw new Error(
+      'user_roles contains custom-role assignments across organizations; repair them before migrating',
+    );
+  }
+}
+
+/** Validate NOT VALID role checks after the migration transaction commits. */
+async function validateUserRoleAssignmentConstraints(client: postgres.Sql): Promise<void> {
+  const constraints = [
+    'user_roles_role_source_check',
+    'user_roles_scope_shape_check',
+    'user_roles_user_org_fk',
+    'user_roles_custom_role_org_fk',
+  ];
+  await client`SET lock_timeout = '5s'`;
+  await client`SET statement_timeout = '5min'`;
+  try {
+    for (const constraint of constraints) {
+      const [state] = await client<{ exists: boolean; validated: boolean }[]>`
+        SELECT
+          constraint_row.oid IS NOT NULL AS "exists",
+          COALESCE(constraint_row.convalidated, false) AS "validated"
+        FROM (VALUES (1)) AS singleton(value)
+        LEFT JOIN pg_constraint AS constraint_row
+          ON constraint_row.conrelid = to_regclass('public.user_roles')
+          AND constraint_row.conname = ${constraint}
+      `;
+      if (!state?.exists || state.validated) continue;
+      await client.unsafe(`ALTER TABLE "user_roles" VALIDATE CONSTRAINT "${constraint}"`);
+    }
+  } finally {
+    await client`RESET statement_timeout`;
+    await client`RESET lock_timeout`;
+  }
+}
+
 function expiryDate(value: string | undefined): Date | null {
   const milliseconds = Number(value);
   return Number.isFinite(milliseconds) && milliseconds > 0 ? new Date(milliseconds) : null;
@@ -290,8 +580,14 @@ async function main(): Promise<void> {
     await prepareLegalEntityOrganizationIndex(client);
     await prepareBudgetEventTypeConstraint(client);
     await prepareEmailIntakeItemOrganizationIndex(client);
+    await validateLegacyUserRoleOrganizations(client);
     const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
+    await prepareUserRoleAssignmentIndex(client);
+    await prepareCustomRoleOrganizationIndex(client);
+    await backfillUserRoleOrganizations(client);
+    await ensureUserRoleOrganizationContract(client);
+    await validateUserRoleAssignmentConstraints(client);
     await migrateBetterAuthAccounts(client);
     await migrateLegacyConnections(client);
   } finally {

@@ -56,7 +56,55 @@ describe('RolesGuard', () => {
         getRequest: () => ({
           authUser: {
             id: '00000000-0000-0000-0000-000000000002',
-            roles: [],
+          },
+          authAccess: {
+            can: jest.fn(() => true),
+            scopeFor: jest.fn(() => ({ unrestricted: false })),
+            isGlobalBuiltInAdmin: jest.fn(() => false),
+          },
+        }),
+      })),
+    };
+
+    expect(() => guard.canActivate(context as never)).toThrow(ForbiddenException);
+  });
+
+  it('does not treat a department-scoped admin grant as the global admin bypass', () => {
+    const guard = new RolesGuard({
+      getAllAndOverride: jest.fn().mockReturnValueOnce(['admin']).mockReturnValueOnce(undefined),
+    } as never);
+    const context = {
+      getHandler: jest.fn(),
+      getClass: jest.fn(),
+      switchToHttp: jest.fn(() => ({
+        getRequest: () => ({
+          authUser: { id: 'user-1' },
+          authAccess: {
+            can: jest.fn(() => true),
+            scopeFor: jest.fn(() => ({ unrestricted: false })),
+            isGlobalBuiltInAdmin: jest.fn(() => false),
+          },
+        }),
+      })),
+    };
+
+    expect(() => guard.canActivate(context as never)).toThrow(ForbiddenException);
+  });
+
+  it('requires global built-in admin provenance for legacy admin metadata', () => {
+    const guard = new RolesGuard({
+      getAllAndOverride: jest.fn().mockReturnValueOnce(['admin']).mockReturnValueOnce(undefined),
+    } as never);
+    const context = {
+      getHandler: jest.fn(),
+      getClass: jest.fn(),
+      switchToHttp: jest.fn(() => ({
+        getRequest: () => ({
+          authUser: { id: 'user-1' },
+          authAccess: {
+            can: jest.fn(() => true),
+            scopeFor: jest.fn(() => ({ unrestricted: true })),
+            isGlobalBuiltInAdmin: jest.fn(() => false),
           },
         }),
       })),

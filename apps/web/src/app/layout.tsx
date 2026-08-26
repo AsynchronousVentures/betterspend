@@ -4,6 +4,7 @@ import AppShell from '../components/app-shell';
 import { ToastProvider } from '../components/toast';
 import { PwaRegister } from '../components/pwa-register';
 import { ReleaseVersionProvider } from '../components/release-version-provider';
+import { AccessProvider } from '../components/access-provider';
 import './globals.css';
 
 const sans = Plus_Jakarta_Sans({
@@ -43,7 +44,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <PwaRegister />
         <ToastProvider>
           <ReleaseVersionProvider>
-            <AppShell>{children}</AppShell>
+            <AccessProvider>
+              <AppShell>{children}</AppShell>
+            </AccessProvider>
           </ReleaseVersionProvider>
         </ToastProvider>
       </body>
