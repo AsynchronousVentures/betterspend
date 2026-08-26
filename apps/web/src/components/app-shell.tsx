@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import * as React from 'react';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { isRecordKind, recordHref } from '@betterspend/shared';
+import { isRecordKind, recordHref, type PermissionKey } from '@betterspend/shared';
 import {
   Bell,
   ChevronRight,
@@ -89,6 +90,7 @@ const SHORTCUTS_DISABLED_KEY = 'betterspend:shortcuts-disabled';
 const SIDEBAR_COLLAPSED_KEY = 'betterspend:sidebar-collapsed';
 const RECENT_SEARCHES_KEY = 'betterspend:recent-searches';
 const NOTIFICATION_LAST_VIEWED_KEY = 'betterspend:notification-last-viewed-at';
+const NO_PERMISSIONS: readonly PermissionKey[] = [];
 
 const TYPE_LABELS: Record<string, string> = {
   requisition: 'Req',
@@ -176,9 +178,17 @@ function timeAgo(dateStr: string): string {
   return `${days}d ago`;
 }
 
-function GlobalSearch({ isMobile }: { isMobile: boolean }) {
-  const router = useRouter();
-  const { access } = useAccess();
+export function GlobalSearch({
+  isMobile,
+  onNavigate,
+  search = api.search.query,
+  permissions = NO_PERMISSIONS,
+}: {
+  isMobile: boolean;
+  onNavigate: (href: string) => void;
+  search?: (query: string) => Promise<unknown>;
+  permissions?: readonly PermissionKey[];
+}) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [totalResults, setTotalResults] = useState(0);
@@ -192,8 +202,8 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRequestController = useRef(createSearchRequestController()).current;
   const visibleProductResults = useMemo(
-    () => productSearchResults(query, access?.permissions ?? []),
-    [access?.permissions, query],
+    () => productSearchResults(query, permissions),
+    [permissions, query],
   );
 
   useEffect(() => {
@@ -224,8 +234,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
     setSearchAnnouncement(`Searching for ${query}`);
     debounceRef.current = setTimeout(() => {
       setLoading(true);
-      api.search
-        .query(query)
+      search(query)
         .then((data: unknown) => {
           if (!searchRequestController.isCurrent(requestId)) return;
           const all = [
@@ -266,7 +275,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
       }
       searchRequestController.invalidate();
     };
-  }, [query, searchRequestController, visibleProductResults]);
+  }, [query, search, searchRequestController, visibleProductResults]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -294,7 +303,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
       }
     }
     setActiveIndex(-1);
-    router.push(href);
+    onNavigate(href);
   }
 
   function applyRecentSearch(searchValue: string) {
@@ -496,6 +505,19 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function CapabilityAwareGlobalSearch({ isMobile }: { isMobile: boolean }) {
+  const router = useRouter();
+  const { access } = useAccess();
+
+  return (
+    <GlobalSearch
+      isMobile={isMobile}
+      onNavigate={(href) => router.push(href)}
+      permissions={access?.permissions ?? NO_PERMISSIONS}
+    />
   );
 }
 
@@ -833,7 +855,78 @@ function NotificationBell() {
   );
 }
 
-function ShortcutsModal({
+export function MobileSidebar({
+  open,
+  onOpenChange,
+  triggerRef,
+  appName,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  triggerRef: React.RefObject<HTMLElement | null>;
+  appName: string;
+  children?: React.ReactNode;
+}) {
+  const sidebarRef = useRef<HTMLElement>(null);
+  const wasOpenRef = useRef(false);
+
+  useEffect(() => {
+    if (open) {
+      wasOpenRef.current = true;
+      const firstFocusable =
+        sidebarRef.current?.querySelector<HTMLElement>('[data-mobile-sidebar-close]') ??
+        getFocusableElements(sidebarRef.current ?? document.createElement('aside'))[0];
+      firstFocusable?.focus();
+      return;
+    }
+
+    if (wasOpenRef.current) {
+      wasOpenRef.current = false;
+      restoreFocus(triggerRef.current);
+    }
+  }, [open, triggerRef]);
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onOpenChange(false);
+      return;
+    }
+
+    if (event.key !== 'Tab' || !sidebarRef.current) return;
+    const focusable = getFocusableElements(sidebarRef.current);
+    const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
+    const nextIndex = getFocusTrapIndex(focusable.length, currentIndex, event.shiftKey);
+    if (nextIndex === null) return;
+    event.preventDefault();
+    focusable[nextIndex]?.focus();
+  }
+
+  if (!open) return null;
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-50 bg-[rgba(19,18,21,0.48)]"
+        aria-hidden="true"
+        onClick={() => onOpenChange(false)}
+      />
+      <aside
+        ref={sidebarRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${appName} navigation`}
+        onKeyDown={handleKeyDown}
+        className="fixed left-0 top-0 z-[60] flex h-screen w-[280px] shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200"
+      >
+        {children}
+      </aside>
+    </>
+  );
+}
+
+export function ShortcutsModal({
   open,
   shortcutsDisabled,
   onClose,
@@ -916,10 +1009,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [shortcutsDisabled, setShortcutsDisabled] = useState(false);
   const shortcutsReturnFocusRef = useRef<HTMLElement | null>(null);
-  const mobileSidebarRef = useRef<HTMLElement>(null);
-  const mobileSidebarCloseRef = useRef<HTMLButtonElement>(null);
   const sidebarTriggerRef = useRef<HTMLButtonElement>(null);
-  const wasSidebarOpenRef = useRef(false);
   const isAuthPage = AUTH_PATHS.some(
     (path) => pathname === path || pathname.startsWith(path + '/'),
   );
@@ -934,37 +1024,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setSidebarOpen(false);
   }, [pathname]);
-
-  useEffect(() => {
-    if (!isMobile) return;
-
-    if (sidebarOpen) {
-      wasSidebarOpenRef.current = true;
-      mobileSidebarCloseRef.current?.focus();
-      return;
-    }
-
-    if (wasSidebarOpenRef.current) {
-      wasSidebarOpenRef.current = false;
-      restoreFocus(sidebarTriggerRef.current);
-    }
-  }, [isMobile, sidebarOpen]);
-
-  function handleMobileSidebarKeyDown(event: React.KeyboardEvent<HTMLElement>) {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      setSidebarOpen(false);
-      return;
-    }
-
-    if (event.key !== 'Tab' || !mobileSidebarRef.current) return;
-    const focusable = getFocusableElements(mobileSidebarRef.current);
-    const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
-    const nextIndex = getFocusTrapIndex(focusable.length, currentIndex, event.shiftKey);
-    if (nextIndex === null) return;
-    event.preventDefault();
-    focusable[nextIndex]?.focus();
-  }
 
   useEffect(() => {
     if (shortcutsDisabled) return;
@@ -1072,19 +1131,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   }
 
-  const sidebar = (
-    <aside
-      ref={isMobile ? mobileSidebarRef : undefined}
-      role={isMobile ? 'dialog' : undefined}
-      aria-modal={isMobile ? true : undefined}
-      aria-label={isMobile ? `${branding.app_name} navigation` : undefined}
-      onKeyDown={isMobile ? handleMobileSidebarKeyDown : undefined}
-      className={cn(
-        'flex h-screen shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200',
-        isMobile ? 'fixed left-0 top-0 z-[60]' : 'sticky top-0',
-      )}
-      style={{ width: `${sidebarWidth}px` }}
-    >
+  const sidebarBody = (
+    <>
       <div className="flex items-center justify-between border-b border-sidebar-border px-4 py-4">
         {branding.app_logo_url ? (
           <img
@@ -1127,7 +1175,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               variant="ghost"
               size="icon"
               onClick={() => setSidebarOpen(false)}
-              ref={mobileSidebarCloseRef}
+              data-mobile-sidebar-close="true"
               className="size-8 rounded-lg text-sidebar-muted hover:bg-white/8 hover:text-sidebar-foreground"
               aria-label="Close sidebar"
             >
@@ -1137,6 +1185,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </div>
       <SidebarNav onClose={() => setSidebarOpen(false)} collapsed={!isMobile && sidebarCollapsed} />
+    </>
+  );
+
+  const sidebar = (
+    <aside
+      className="sticky top-0 flex h-screen shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200"
+      style={{ width: `${sidebarWidth}px` }}
+    >
+      {sidebarBody}
     </aside>
   );
 
@@ -1152,15 +1209,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       {!isMobile ? sidebar : null}
 
-      {isMobile && sidebarOpen ? (
-        <>
-          <div
-            className="fixed inset-0 z-50 bg-[rgba(19,18,21,0.48)]"
-            aria-hidden="true"
-            onClick={() => setSidebarOpen(false)}
-          />
-          {sidebar}
-        </>
+      {isMobile ? (
+        <MobileSidebar
+          open={sidebarOpen}
+          onOpenChange={setSidebarOpen}
+          triggerRef={sidebarTriggerRef}
+          appName={branding.app_name}
+        >
+          {sidebarBody}
+        </MobileSidebar>
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -1180,7 +1237,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 <Menu className="size-4" />
               </Button>
             ) : null}
-            <GlobalSearch isMobile={isMobile} />
+            <CapabilityAwareGlobalSearch isMobile={isMobile} />
             <div className="hidden min-[520px]:block">
               <EntitySwitcher />
             </div>
