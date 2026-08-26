@@ -4,7 +4,7 @@ import {
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ApprovalRulesService, CreateApprovalRuleInput, UpdateApprovalRuleInput, ApprovalRuleSimulationInput } from './approval-rules.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 
 @ApiTags('approval-rules')
 @Controller('approval-rules')
@@ -12,33 +12,35 @@ export class ApprovalRulesController {
   constructor(private readonly approvalRulesService: ApprovalRulesService) {}
 
   @Get()
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'List all approval rules' })
   findAll(@CurrentOrgId() orgId: string, @Query('entityId') entityId?: string) {
     return this.approvalRulesService.findAll(orgId, entityId);
   }
 
   @Get(':id')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Get approval rule detail' })
   findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
     return this.approvalRulesService.findOne(id, orgId);
   }
 
   @Post()
-  @Roles('admin')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Create an approval rule with steps' })
   create(@Body() body: CreateApprovalRuleInput, @CurrentOrgId() orgId: string) {
     return this.approvalRulesService.create(orgId, body);
   }
 
   @Post('simulate')
-  @Roles('admin')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Simulate approval rule matching for a hypothetical request' })
   simulate(@Body() body: ApprovalRuleSimulationInput, @CurrentOrgId() orgId: string) {
     return this.approvalRulesService.simulate(orgId, body);
   }
 
   @Patch(':id')
-  @Roles('admin')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Update approval rule metadata' })
   update(
     @Param('id', ParseUUIDPipe) id: string,
@@ -49,7 +51,7 @@ export class ApprovalRulesController {
   }
 
   @Delete(':id')
-  @Roles('admin')
+  @Permissions('settings:manage')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Deactivate an approval rule' })
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {

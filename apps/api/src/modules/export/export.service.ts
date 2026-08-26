@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type * as schema from '@betterspend/db';
+import { globalOnlyPredicate, scopePredicate, type ScopeConstraint } from '../auth/scope-sql';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -41,8 +42,17 @@ function paginate<T>(items: T[], page: number, limit: number): { data: T[]; tota
 export class ExportService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  async getPurchaseOrders(organizationId: string, query: ExportQuery) {
+  async getPurchaseOrders(
+    organizationId: string,
+    query: ExportQuery,
+    scope?: ScopeConstraint,
+  ) {
     const { from, to } = query;
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`po.entity_id`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         po.id,
@@ -64,13 +74,19 @@ export class ExportService {
       WHERE po.organization_id = ${organizationId}
         ${from ? sql`AND po.created_at >= ${new Date(from)}` : sql``}
         ${to ? sql`AND po.created_at <= ${new Date(to + 'T23:59:59Z')}` : sql``}
+        AND ${rowScope}
       ORDER BY po.created_at DESC
     `);
     return rows as Record<string, unknown>[];
   }
 
-  async getInvoices(organizationId: string, query: ExportQuery) {
+  async getInvoices(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         i.id,
@@ -91,16 +107,23 @@ export class ExportService {
       FROM invoices i
       LEFT JOIN vendors        v   ON v.id = i.vendor_id
       LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${organizationId}
         ${from ? sql`AND i.created_at >= ${new Date(from)}` : sql``}
         ${to ? sql`AND i.created_at <= ${new Date(to + 'T23:59:59Z')}` : sql``}
+        AND ${rowScope}
       ORDER BY i.created_at DESC
     `);
     return rows as Record<string, unknown>[];
   }
 
-  async getBudgets(organizationId: string, query: ExportQuery) {
+  async getBudgets(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
+    const rowScope = scopePredicate(scope, {
+      department: sql`CASE WHEN b.budget_type = 'department' THEN b.scope_id END`,
+      project: sql`CASE WHEN b.budget_type = 'project' THEN b.scope_id END`,
+      entity: sql`b.entity_id`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         b.id,
@@ -114,18 +137,26 @@ export class ExportService {
         d.name                AS "departmentName",
         p.name                AS "projectName"
       FROM budgets b
-      LEFT JOIN departments d ON d.id = b.department_id
-      LEFT JOIN projects    p ON p.id = b.project_id
+      LEFT JOIN departments d
+        ON b.budget_type = 'department'
+       AND d.id = b.scope_id
+       AND d.organization_id = b.organization_id
+      LEFT JOIN projects p
+        ON b.budget_type = 'project'
+       AND p.id = b.scope_id
+       AND p.organization_id = b.organization_id
       WHERE b.organization_id = ${organizationId}
         ${from ? sql`AND b.created_at >= ${new Date(from)}` : sql``}
         ${to ? sql`AND b.created_at <= ${new Date(to + 'T23:59:59Z')}` : sql``}
+        AND ${rowScope}
       ORDER BY b.fiscal_year DESC, b.name ASC
     `);
     return rows as Record<string, unknown>[];
   }
 
-  async getAuditLog(organizationId: string, query: ExportQuery) {
+  async getAuditLog(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
+    const rowScope = globalOnlyPredicate(scope);
     const rows = await this.db.execute(sql`
       SELECT
         al.id,
@@ -133,19 +164,24 @@ export class ExportService {
         al.entity_id          AS "entityId",
         al.action,
         al.user_id            AS "userId",
-        al.ip_address         AS "ipAddress",
         al.created_at         AS "createdAt"
       FROM audit_log al
       WHERE al.organization_id = ${organizationId}
         ${from ? sql`AND al.created_at >= ${new Date(from)}` : sql``}
         ${to ? sql`AND al.created_at <= ${new Date(to + 'T23:59:59Z')}` : sql``}
+        AND ${rowScope}
       ORDER BY al.created_at DESC
     `);
     return rows as Record<string, unknown>[];
   }
 
-  async getSpendByVendor(organizationId: string, query: ExportQuery) {
+  async getSpendByVendor(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         v.id                              AS "vendorId",
@@ -157,18 +193,26 @@ export class ExportService {
         MAX(i.invoice_date)               AS "lastInvoiceDate"
       FROM invoices i
       JOIN vendors v ON v.id = i.vendor_id
+      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${organizationId}
         AND i.status IN ('approved', 'paid')
         ${from ? sql`AND i.invoice_date >= ${new Date(from)}` : sql``}
         ${to ? sql`AND i.invoice_date <= ${new Date(to + 'T23:59:59Z')}` : sql``}
+        AND ${rowScope}
       GROUP BY v.id, v.name, v.email
       ORDER BY "totalSpend" DESC
     `);
     return rows as Record<string, unknown>[];
   }
 
-  async getSpendByCategory(organizationId: string, query: ExportQuery) {
+  async getSpendByCategory(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         COALESCE(il.gl_account, 'Uncategorized')   AS "glAccount",
@@ -176,10 +220,14 @@ export class ExportService {
         SUM(il.total_price)::numeric               AS "totalSpend"
       FROM invoice_lines il
       JOIN invoices i ON i.id = il.invoice_id
+      LEFT JOIN po_lines pl ON pl.id = il.po_line_id
+      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${organizationId}
         AND i.status IN ('approved', 'paid')
         ${from ? sql`AND i.invoice_date >= ${new Date(from)}` : sql``}
         ${to ? sql`AND i.invoice_date <= ${new Date(to + 'T23:59:59Z')}` : sql``}
+        AND ${rowScope}
       GROUP BY il.gl_account
       ORDER BY "totalSpend" DESC
     `);
@@ -191,7 +239,7 @@ export class ExportService {
       'purchase-orders': ['id', 'number', 'status', 'poType', 'currency', 'totalAmount', 'version', 'issuedAt', 'createdAt', 'vendorName', 'vendorEmail', 'departmentName'],
       'invoices': ['id', 'internalNumber', 'invoiceNumber', 'status', 'matchStatus', 'currency', 'subtotal', 'taxAmount', 'totalAmount', 'invoiceDate', 'dueDate', 'approvedAt', 'createdAt', 'vendorName', 'poNumber'],
       'budgets': ['id', 'name', 'budgetType', 'fiscalYear', 'totalAmount', 'spentAmount', 'currency', 'createdAt', 'departmentName', 'projectName'],
-      'audit-log': ['id', 'entityType', 'entityId', 'action', 'userId', 'ipAddress', 'createdAt'],
+      'audit-log': ['id', 'entityType', 'entityId', 'action', 'userId', 'createdAt'],
       'spend-by-vendor': ['vendorId', 'vendorName', 'vendorEmail', 'invoiceCount', 'totalSpend', 'firstInvoiceDate', 'lastInvoiceDate'],
       'spend-by-category': ['glAccount', 'invoiceCount', 'totalSpend'],
     };

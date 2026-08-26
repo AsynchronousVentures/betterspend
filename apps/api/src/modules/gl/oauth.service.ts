@@ -71,8 +71,8 @@ export class OAuthService {
     state: string,
     code: string,
     realmId: string,
-    userId: string,
-    sessionId: string,
+    userId?: string,
+    sessionId?: string,
   ): Promise<void> {
     const binding = await this.consumeState('qbo', state, userId, sessionId);
     if (!code || !realmId) throw new BadRequestException('QBO callback is missing code or realmId');
@@ -85,8 +85,8 @@ export class OAuthService {
   async completeXeroOAuth(
     state: string,
     code: string,
-    userId: string,
-    sessionId: string,
+    userId?: string,
+    sessionId?: string,
   ): Promise<void> {
     const binding = await this.consumeState('xero', state, userId, sessionId);
     if (!code) throw new BadRequestException('Xero callback is missing code');
@@ -201,15 +201,16 @@ export class OAuthService {
   private async consumeState(
     provider: OAuthProvider,
     state: string,
-    userId: string,
-    sessionId: string,
+    userId?: string,
+    sessionId?: string,
   ): Promise<OAuthStateBinding> {
     const binding = await this.oauthRedis.consumeState(state);
     if (
       !binding ||
       binding.provider !== provider ||
-      binding.userId !== userId ||
-      binding.sessionId !== sessionId
+      (userId !== undefined && binding.userId !== userId) ||
+      (sessionId !== undefined && binding.sessionId !== sessionId) ||
+      (userId === undefined) !== (sessionId === undefined)
     ) {
       throw new BadRequestException('Invalid or expired OAuth state');
     }

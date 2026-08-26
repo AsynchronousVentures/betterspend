@@ -1,8 +1,10 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
+import type { ResourceScope } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type * as schema from '@betterspend/db';
+import { globalOnlyPredicate, scopePredicate } from '../auth/scope-sql';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -11,7 +13,12 @@ export class AnalyticsService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
   /** Spend by vendor (from approved invoices) */
-  async spendByVendor(organizationId: string) {
+  async spendByVendor(organizationId: string, scope?: ResourceScope) {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         v.id          AS "vendorId",
@@ -20,8 +27,11 @@ export class AnalyticsService {
         COUNT(DISTINCT i.id)::int                  AS "invoiceCount"
       FROM invoices i
       JOIN vendors v ON v.id = i.vendor_id
+      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${organizationId}
         AND i.status = 'approved'
+        AND ${rowScope}
       GROUP BY v.id, v.name
       ORDER BY total DESC
       LIMIT 20
@@ -30,7 +40,12 @@ export class AnalyticsService {
   }
 
   /** Spend by department (from active POs, via requisition link) */
-  async spendByDepartment(organizationId: string) {
+  async spendByDepartment(organizationId: string, scope?: ResourceScope) {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`po.entity_id`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         COALESCE(d.name, 'Unassigned')             AS department,
@@ -41,6 +56,7 @@ export class AnalyticsService {
       LEFT JOIN departments  d  ON d.id = r.department_id
       WHERE po.organization_id = ${organizationId}
         AND po.status NOT IN ('draft', 'cancelled')
+        AND ${rowScope}
       GROUP BY d.name
       ORDER BY total DESC
     `);
@@ -48,16 +64,24 @@ export class AnalyticsService {
   }
 
   /** Monthly spend trend (last 12 months, from approved invoices) */
-  async monthlySpend(organizationId: string) {
+  async monthlySpend(organizationId: string, scope?: ResourceScope) {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         TO_CHAR(DATE_TRUNC('month', i.invoice_date), 'YYYY-MM') AS month,
         SUM(i.total_amount)::numeric                             AS total,
         COUNT(DISTINCT i.id)::int                                AS "invoiceCount"
       FROM invoices i
+      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${organizationId}
         AND i.status = 'approved'
         AND i.invoice_date >= NOW() - INTERVAL '12 months'
+        AND ${rowScope}
       GROUP BY DATE_TRUNC('month', i.invoice_date)
       ORDER BY month ASC
     `);
@@ -65,7 +89,12 @@ export class AnalyticsService {
   }
 
   /** Invoice aging (unpaid invoices grouped by age bucket) */
-  async invoiceAging(organizationId: string) {
+  async invoiceAging(organizationId: string, scope?: ResourceScope) {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     const rows = await this.db.execute(sql`
       WITH aging AS (
         SELECT
@@ -78,9 +107,12 @@ export class AnalyticsService {
           COUNT(*)::int AS count,
           COALESCE(SUM(i.total_amount), 0)::numeric AS total
         FROM invoices i
+        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+        LEFT JOIN requisitions r ON r.id = po.requisition_id
         WHERE i.organization_id = ${organizationId}
           AND i.status NOT IN ('approved', 'cancelled')
           AND i.due_date IS NOT NULL
+          AND ${rowScope}
         GROUP BY 1
       )
       SELECT bucket, count, total
@@ -97,7 +129,12 @@ export class AnalyticsService {
   }
 
   /** PO cycle time: avg days from draft to issued */
-  async poCycleTime(organizationId: string) {
+  async poCycleTime(organizationId: string, scope?: ResourceScope) {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`po.entity_id`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         AVG(EXTRACT(EPOCH FROM (po.issued_at - po.created_at)) / 86400)::numeric AS "avgDays",
@@ -105,39 +142,68 @@ export class AnalyticsService {
         MAX(EXTRACT(EPOCH FROM (po.issued_at - po.created_at)) / 86400)::numeric AS "maxDays",
         COUNT(*)::int AS "poCount"
       FROM purchase_orders po
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE po.organization_id = ${organizationId}
         AND po.issued_at IS NOT NULL
+        AND ${rowScope}
     `);
     return rows[0] ?? { avgDays: null, minDays: null, maxDays: null, poCount: 0 };
   }
 
   /** High-level KPIs */
-  async kpis(organizationId: string) {
+  async kpis(organizationId: string, scope?: ResourceScope) {
+    const poScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`po.entity_id`,
+    });
+    const requisitionScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+    });
+    const invoiceScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
+    const budgetScope = scopePredicate(scope, {
+      department: sql`CASE WHEN b.budget_type = 'department' THEN b.scope_id END`,
+      project: sql`CASE WHEN b.budget_type = 'project' THEN b.scope_id END`,
+      entity: sql`b.entity_id`,
+    });
     const [poRow, reqRow, invoiceRow, budgetRow] = await Promise.all([
       this.db.execute(sql`
         SELECT
           COUNT(*)::int                                                             AS total,
-          SUM(CASE WHEN status NOT IN ('draft','cancelled') THEN 1 ELSE 0 END)::int AS active,
-          COALESCE(SUM(total_amount), 0)::numeric                                   AS "totalValue"
-        FROM purchase_orders
-        WHERE organization_id = ${organizationId}
+          SUM(CASE WHEN po.status NOT IN ('draft','cancelled') THEN 1 ELSE 0 END)::int AS active,
+          COALESCE(SUM(po.total_amount), 0)::numeric                                   AS "totalValue"
+        FROM purchase_orders po
+        LEFT JOIN requisitions r ON r.id = po.requisition_id
+        WHERE po.organization_id = ${organizationId}
+          AND ${poScope}
       `),
       this.db.execute(sql`
-        SELECT COUNT(*)::int AS total FROM requisitions
-        WHERE organization_id = ${organizationId}
-          AND status NOT IN ('draft','cancelled')
+        SELECT COUNT(*)::int AS total FROM requisitions r
+        WHERE r.organization_id = ${organizationId}
+          AND r.status NOT IN ('draft','cancelled')
+          AND ${requisitionScope}
       `),
       this.db.execute(sql`
         SELECT
           COUNT(*)::int                                                                     AS total,
-          COALESCE(SUM(CASE WHEN status = 'approved' THEN total_amount::numeric ELSE 0 END), 0) AS paid,
-          COALESCE(SUM(CASE WHEN status != 'approved' THEN total_amount::numeric ELSE 0 END), 0) AS pending
-        FROM invoices WHERE organization_id = ${organizationId}
+          COALESCE(SUM(CASE WHEN i.status = 'approved' THEN i.total_amount::numeric ELSE 0 END), 0) AS paid,
+          COALESCE(SUM(CASE WHEN i.status != 'approved' THEN i.total_amount::numeric ELSE 0 END), 0) AS pending
+        FROM invoices i
+        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+        LEFT JOIN requisitions r ON r.id = po.requisition_id
+        WHERE i.organization_id = ${organizationId}
+          AND ${invoiceScope}
       `),
       this.db.execute(sql`
-        SELECT COALESCE(SUM(total_amount), 0)::numeric AS "totalBudget"
-        FROM budgets WHERE organization_id = ${organizationId}
-          AND fiscal_year = EXTRACT(YEAR FROM NOW())::int
+        SELECT COALESCE(SUM(b.total_amount), 0)::numeric AS "totalBudget"
+        FROM budgets b WHERE b.organization_id = ${organizationId}
+          AND b.fiscal_year = EXTRACT(YEAR FROM NOW())::int
+          AND ${budgetScope}
       `),
     ]);
 
@@ -150,50 +216,78 @@ export class AnalyticsService {
   }
 
   /** Items requiring action */
-  async pendingItems(organizationId: string) {
+  async pendingItems(organizationId: string, scope?: ResourceScope) {
+    const requisitionScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+    });
+    const poScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`po.entity_id`,
+    });
+    const invoiceScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
+    const globalOnly = globalOnlyPredicate(scope);
     const [approvalRow, invoiceRow, reqRow, grnRow, overdueRow, spendGuardRow, renewalRow] = await Promise.all([
       this.db.execute(sql`
         SELECT COUNT(ar.id)::int AS count
         FROM approval_requests ar
         JOIN requisitions r ON r.id = ar.approvable_id AND ar.approvable_type = 'requisition'
         WHERE r.organization_id = ${organizationId} AND ar.status = 'pending'
+          AND ${requisitionScope}
         UNION ALL
         SELECT COUNT(ar.id)::int AS count
         FROM approval_requests ar
         JOIN purchase_orders po ON po.id = ar.approvable_id AND ar.approvable_type = 'purchase_order'
+        LEFT JOIN requisitions r ON r.id = po.requisition_id
         WHERE po.organization_id = ${organizationId} AND ar.status = 'pending'
+          AND ${poScope}
       `),
       this.db.execute(sql`
-        SELECT COUNT(*)::int AS count FROM invoices
-        WHERE organization_id = ${organizationId}
-          AND status IN ('exception', 'partial_match')
+        SELECT COUNT(*)::int AS count FROM invoices i
+        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+        LEFT JOIN requisitions r ON r.id = po.requisition_id
+        WHERE i.organization_id = ${organizationId}
+          AND i.status IN ('exception', 'partial_match')
+          AND ${invoiceScope}
       `),
       this.db.execute(sql`
-        SELECT COUNT(*)::int AS count FROM requisitions
-        WHERE organization_id = ${organizationId}
-          AND status = 'pending_approval'
+        SELECT COUNT(*)::int AS count FROM requisitions r
+        WHERE r.organization_id = ${organizationId}
+          AND r.status = 'pending_approval'
+          AND ${requisitionScope}
       `),
       this.db.execute(sql`
         SELECT COUNT(DISTINCT po.id)::int AS count
         FROM purchase_orders po
+        LEFT JOIN requisitions r ON r.id = po.requisition_id
         WHERE po.organization_id = ${organizationId}
           AND po.status = 'issued'
+          AND ${poScope}
           AND NOT EXISTS (
             SELECT 1 FROM goods_receipts gr
             WHERE gr.purchase_order_id = po.id
           )
       `),
       this.db.execute(sql`
-        SELECT COUNT(*)::int AS count FROM invoices
-        WHERE organization_id = ${organizationId}
-          AND status NOT IN ('approved', 'paid', 'cancelled')
-          AND due_date IS NOT NULL
-          AND due_date < NOW()
+        SELECT COUNT(*)::int AS count FROM invoices i
+        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+        LEFT JOIN requisitions r ON r.id = po.requisition_id
+        WHERE i.organization_id = ${organizationId}
+          AND i.status NOT IN ('approved', 'paid', 'cancelled')
+          AND i.due_date IS NOT NULL
+          AND i.due_date < NOW()
+          AND ${invoiceScope}
       `),
       this.db.execute(sql`
         SELECT COUNT(*)::int AS count FROM spend_guard_alerts
         WHERE org_id = ${organizationId}
           AND status = 'open'
+          AND ${globalOnly}
       `),
       this.db.execute(sql`
         SELECT COUNT(*)::int AS count FROM software_licenses
@@ -201,6 +295,7 @@ export class AnalyticsService {
           AND status IN ('active', 'renewal_due')
           AND renewal_date IS NOT NULL
           AND renewal_date <= NOW() + INTERVAL '30 days'
+          AND ${globalOnly}
       `),
     ]);
 
@@ -221,8 +316,32 @@ export class AnalyticsService {
   }
 
   /** Vendor performance metrics */
-  async vendorPerformance(organizationId: string) {
+  async vendorPerformance(organizationId: string, scope?: ResourceScope) {
+    const poScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`po.entity_id`,
+    });
     const rows = await this.db.execute(sql`
+      WITH scoped_invoices AS (
+        SELECT i.*
+        FROM invoices i
+        LEFT JOIN purchase_orders ipo ON ipo.id = i.purchase_order_id
+        LEFT JOIN requisitions ir ON ir.id = ipo.requisition_id
+        WHERE i.organization_id = ${organizationId}
+          AND ${scopePredicate(scope, {
+            department: sql`ir.department_id`,
+            project: sql`ir.project_id`,
+            entity: sql`COALESCE(i.entity_id, ipo.entity_id)`,
+          })}
+      ),
+      scoped_purchase_orders AS (
+        SELECT po.*
+        FROM purchase_orders po
+        LEFT JOIN requisitions r ON r.id = po.requisition_id
+        WHERE po.organization_id = ${organizationId}
+          AND ${poScope}
+      )
       SELECT
         v.id                                                                   AS "vendorId",
         v.name                                                                 AS "vendorName",
@@ -240,8 +359,8 @@ export class AnalyticsService {
         COALESCE(SUM(CASE WHEN i.status = 'approved' THEN i.total_amount END), 0)::numeric AS "totalApproved",
         COUNT(DISTINCT po.id)::int                                             AS "poCount"
       FROM vendors v
-      LEFT JOIN invoices i  ON i.vendor_id = v.id AND i.organization_id = ${organizationId}
-      LEFT JOIN purchase_orders po ON po.vendor_id = v.id AND po.organization_id = ${organizationId}
+      LEFT JOIN scoped_invoices i ON i.vendor_id = v.id
+      LEFT JOIN scoped_purchase_orders po ON po.vendor_id = v.id
       WHERE v.organization_id = ${organizationId}
       GROUP BY v.id, v.name
       HAVING COUNT(DISTINCT i.id) > 0 OR COUNT(DISTINCT po.id) > 0
@@ -252,7 +371,12 @@ export class AnalyticsService {
   }
 
   /** Budget utilization across all active budgets */
-  async budgetUtilization(organizationId: string) {
+  async budgetUtilization(organizationId: string, scope?: ResourceScope) {
+    const rowScope = scopePredicate(scope, {
+      department: sql`CASE WHEN b.budget_type = 'department' THEN b.scope_id END`,
+      project: sql`CASE WHEN b.budget_type = 'project' THEN b.scope_id END`,
+      entity: sql`b.entity_id`,
+    });
     const rows = await this.db.execute(sql`
       SELECT
         b.id                                                   AS "budgetId",
@@ -270,13 +394,19 @@ export class AnalyticsService {
       LEFT JOIN projects p ON b.budget_type = 'project' AND p.id = b.scope_id
       WHERE b.organization_id = ${organizationId}
         AND b.fiscal_year = EXTRACT(YEAR FROM NOW())::int
+        AND ${rowScope}
       ORDER BY "utilizationPct" DESC NULLS LAST
     `);
     return rows;
   }
 
   /** Spend by GL/catalog category (from approved invoices via invoice lines → PO lines → catalog items) */
-  async spendByCategory(organizationId: string) {
+  async spendByCategory(organizationId: string, scope?: ResourceScope) {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     return this.db.execute(sql`
       SELECT
         COALESCE(ci.category, 'Uncategorized') AS category,
@@ -287,8 +417,11 @@ export class AnalyticsService {
       JOIN invoices i ON i.id = il.invoice_id
       LEFT JOIN po_lines pl ON pl.id = il.po_line_id
       LEFT JOIN catalog_items ci ON ci.id = pl.catalog_item_id
+      LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${organizationId}
         AND i.status IN ('approved', 'paid')
+        AND ${rowScope}
       GROUP BY ci.category
       ORDER BY total DESC
       LIMIT 20
@@ -296,7 +429,12 @@ export class AnalyticsService {
   }
 
   /** Spend anomaly detection: vendors with invoice amount > 2x their rolling 3-month average */
-  async spendAnomalies(organizationId: string) {
+  async spendAnomalies(organizationId: string, scope?: ResourceScope) {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     return this.db.execute(sql`
       WITH monthly_vendor_spend AS (
         SELECT
@@ -306,9 +444,12 @@ export class AnalyticsService {
           SUM(i.total_amount::numeric)        AS monthly_total
         FROM invoices i
         JOIN vendors v ON v.id = i.vendor_id
+        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+        LEFT JOIN requisitions r ON r.id = po.requisition_id
         WHERE i.organization_id = ${organizationId}
           AND i.status IN ('approved', 'paid')
           AND i.invoice_date >= NOW() - INTERVAL '6 months'
+          AND ${rowScope}
         GROUP BY v.id, v.name, DATE_TRUNC('month', i.invoice_date)
       ),
       vendor_stats AS (
@@ -340,7 +481,12 @@ export class AnalyticsService {
   }
 
   /** Top spending categories for current quarter vs previous quarter */
-  async categoryTrend(organizationId: string) {
+  async categoryTrend(organizationId: string, scope?: ResourceScope) {
+    const rowScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`COALESCE(i.entity_id, po.entity_id)`,
+    });
     return this.db.execute(sql`
       WITH quarterly AS (
         SELECT
@@ -354,9 +500,12 @@ export class AnalyticsService {
         JOIN invoices i ON i.id = il.invoice_id
         LEFT JOIN po_lines pl ON pl.id = il.po_line_id
         LEFT JOIN catalog_items ci ON ci.id = pl.catalog_item_id
+        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
+        LEFT JOIN requisitions r ON r.id = po.requisition_id
         WHERE i.organization_id = ${organizationId}
           AND i.status IN ('approved', 'paid')
           AND i.invoice_date >= DATE_TRUNC('quarter', NOW()) - INTERVAL '3 months'
+          AND ${rowScope}
         GROUP BY ci.category, period
       )
       SELECT
@@ -372,7 +521,8 @@ export class AnalyticsService {
   }
 
   /** Recent activity from audit log */
-  async recentActivity(organizationId: string, limit = 20) {
+  async recentActivity(organizationId: string, limit = 20, scope?: ResourceScope) {
+    const globalOnly = globalOnlyPredicate(scope);
     return this.db.execute(sql`
       SELECT
         al.id,
@@ -385,6 +535,7 @@ export class AnalyticsService {
       FROM audit_log al
       LEFT JOIN users u ON u.id = al.user_id
       WHERE al.organization_id = ${organizationId}
+        AND ${globalOnly}
       ORDER BY al.created_at DESC
       LIMIT ${limit}
     `);

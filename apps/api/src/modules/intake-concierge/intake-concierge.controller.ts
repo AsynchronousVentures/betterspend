@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestj
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { IntakeConciergeService } from './intake-concierge.service';
 
 @ApiTags('intake-concierge')
@@ -11,13 +11,14 @@ export class IntakeConciergeController {
   constructor(private readonly conciergeService: IntakeConciergeService) {}
 
   @Get('policies')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'List admin-managed procurement concierge policies' })
   listPolicies(@CurrentOrgId() orgId: string) {
     return this.conciergeService.listPolicies(orgId);
   }
 
   @Post('policies')
-  @Roles('admin', 'finance')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Create an admin-managed procurement concierge policy' })
   createPolicy(
     @CurrentOrgId() orgId: string,
@@ -28,7 +29,7 @@ export class IntakeConciergeController {
   }
 
   @Patch('policies/:id')
-  @Roles('admin', 'finance')
+  @Permissions('settings:manage')
   @ApiOperation({ summary: 'Update an admin-managed procurement concierge policy' })
   updatePolicy(
     @Param('id', ParseUUIDPipe) id: string,

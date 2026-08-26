@@ -3,6 +3,8 @@ import { and, eq } from 'drizzle-orm';
 import type { Db } from '@betterspend/db';
 import { legalEntities } from '@betterspend/db';
 import { DB_TOKEN } from '../../database/database.module';
+import type { ResourceScope } from '@betterspend/shared';
+import { scopePredicate } from '../auth/scope-sql';
 
 export interface CreateLegalEntityInput {
   name: string;
@@ -27,19 +29,30 @@ export interface UpdateLegalEntityInput {
 export class EntitiesService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  async findAll(organizationId: string, includeInactive = false) {
+  async findAll(
+    organizationId: string,
+    includeInactive = false,
+    scope?: ResourceScope,
+  ) {
+    const scopeCondition = scopePredicate(scope, { entity: legalEntities.id });
     return this.db.query.legalEntities.findMany({
       where: (entity, { and, eq }) =>
         includeInactive
-          ? eq(entity.organizationId, organizationId)
-          : and(eq(entity.organizationId, organizationId), eq(entity.isActive, true)),
+          ? and(eq(entity.organizationId, organizationId), scopeCondition)
+          : and(
+              eq(entity.organizationId, organizationId),
+              eq(entity.isActive, true),
+              scopeCondition,
+            ),
       orderBy: (entity, { asc }) => [asc(entity.isActive), asc(entity.name)],
     });
   }
 
-  async findOne(id: string, organizationId: string) {
+  async findOne(id: string, organizationId: string, scope?: ResourceScope) {
+    const scopeCondition = scopePredicate(scope, { entity: legalEntities.id });
     const entity = await this.db.query.legalEntities.findFirst({
-      where: (record, { and, eq }) => and(eq(record.id, id), eq(record.organizationId, organizationId)),
+      where: (record, { and, eq }) =>
+        and(eq(record.id, id), eq(record.organizationId, organizationId), scopeCondition),
     });
 
     if (!entity) throw new NotFoundException(`Legal entity ${id} not found`);

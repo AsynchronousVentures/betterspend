@@ -14,11 +14,11 @@ import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { ComplianceService, ComplianceFramework } from './compliance.service';
 
 @ApiTags('compliance')
-@Roles('admin')
+@Permissions('settings:manage')
 @Controller('compliance')
 export class ComplianceController {
   constructor(private readonly complianceService: ComplianceService) {}

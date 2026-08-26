@@ -5,7 +5,20 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { asc, eq, and, sql, gte, inArray, isNotNull, isNull, lt, ne, or } from 'drizzle-orm';
+import {
+  asc,
+  eq,
+  and,
+  sql,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  ne,
+  or,
+  type SQL,
+} from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
 import {
@@ -23,6 +36,7 @@ import { SettingsService } from '../settings/settings.service';
 import {
   BUDGET_COMMITMENT_EVENT_TYPE,
   budgetCommitmentEventKey,
+  type ResourceScope,
   type BudgetCommitmentEventType,
 } from '@betterspend/shared';
 import {
@@ -49,6 +63,7 @@ import {
   type CommitmentBalance,
   type PurchaseOrderCommitmentBalance,
 } from './budget-commitments';
+import { scopePredicate } from '../auth/scope-sql';
 
 export interface CreateBudgetInput {
   name: string;
@@ -93,6 +108,49 @@ const departmentBudgetOrder = (record: Pick<typeof budgets, 'entityId' | 'create
   asc(record.id),
 ];
 
+/**
+ * Budget rows encode department and project assignments as a type/id pair,
+ * while entity is a first-class column. Keep the translation in this module
+ * so every budget read applies the same organization-plus-scope predicate.
+ */
+function budgetScopeCondition(scope: ResourceScope | undefined): SQL | undefined {
+  if (!scope || scope.unrestricted) return undefined;
+
+  const clauses = [
+    ...scope.departmentIds.map((id) =>
+      and(eq(budgets.budgetType, 'department'), eq(budgets.scopeId, id)),
+    ),
+    ...scope.projectIds.map((id) =>
+      and(eq(budgets.budgetType, 'project'), eq(budgets.scopeId, id)),
+    ),
+    ...scope.entityIds.map((id) => eq(budgets.entityId, id)),
+  ].filter((clause): clause is SQL => clause !== undefined);
+
+  return clauses.length > 0 ? or(...clauses) : sql`false`;
+}
+
+type BudgetScopeRow = Pick<typeof budgets.$inferSelect, 'budgetType' | 'scopeId' | 'entityId'>;
+
+function budgetRowMatchesScope(row: BudgetScopeRow, scope: ResourceScope | undefined): boolean {
+  if (!scope || scope.unrestricted) return true;
+  return Boolean(
+    (row.budgetType === 'department' && scope.departmentIds.includes(row.scopeId)) ||
+      (row.budgetType === 'project' && scope.projectIds.includes(row.scopeId)) ||
+      (row.entityId && scope.entityIds.includes(row.entityId)),
+  );
+}
+
+function budgetUpdateMatchesScope(
+  row: BudgetScopeRow,
+  input: { entityId?: string | null },
+  scope: ResourceScope | undefined,
+): boolean {
+  return budgetRowMatchesScope(
+    { ...row, entityId: input.entityId !== undefined ? input.entityId : row.entityId },
+    scope,
+  );
+}
+
 @Injectable()
 export class BudgetsService {
   constructor(
@@ -121,25 +179,37 @@ export class BudgetsService {
     }
   }
 
-  async findAll(organizationId: string, entityId?: string) {
+  async findAll(organizationId: string, entityId?: string, scope?: ResourceScope) {
+    const scopeCondition = budgetScopeCondition(scope);
     return this.db.query.budgets.findMany({
       where: (b, { and, eq }) =>
-        and(eq(b.organizationId, organizationId), entityId ? eq(b.entityId, entityId) : undefined),
+        and(
+          eq(b.organizationId, organizationId),
+          entityId ? eq(b.entityId, entityId) : undefined,
+          scopeCondition,
+        ),
       with: { periods: true, entity: true },
       orderBy: (b, { desc }) => desc(b.createdAt),
     });
   }
 
-  async findOne(id: string, organizationId: string) {
+  async findOne(id: string, organizationId: string, scope?: ResourceScope) {
+    const scopeCondition = budgetScopeCondition(scope);
     const budget = await this.db.query.budgets.findFirst({
-      where: (b, { and, eq }) => and(eq(b.id, id), eq(b.organizationId, organizationId)),
+      where: (b, { and, eq }) =>
+        and(eq(b.id, id), eq(b.organizationId, organizationId), scopeCondition),
       with: { periods: true, entity: true },
     });
     if (!budget) throw new NotFoundException(`Budget ${id} not found`);
     return budget;
   }
 
-  async create(organizationId: string, actorId: string, input: CreateBudgetInput) {
+  async create(
+    organizationId: string,
+    actorId: string,
+    input: CreateBudgetInput,
+    scope?: ResourceScope,
+  ) {
     this.assertPolicyOverrides(input);
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
     const currency = input.currency ?? 'USD';
@@ -169,6 +239,10 @@ export class BudgetsService {
     } else {
       budgetType = 'department';
       scopeId = '00000000-0000-0000-0000-000000000000';
+    }
+
+    if (!budgetRowMatchesScope({ budgetType, scopeId, entityId: input.entityId ?? null }, scope)) {
+      throw new NotFoundException('Budget scope is outside your access');
     }
 
     const budgetId = await this.db.transaction(async (tx) => {
@@ -222,7 +296,7 @@ export class BudgetsService {
       return budget.id;
     });
 
-    return this.findOne(budgetId, organizationId);
+    return this.findOne(budgetId, organizationId, scope);
   }
 
   async checkBudget(
@@ -230,6 +304,7 @@ export class BudgetsService {
     departmentId: string,
     amount: number,
     fiscalYear: number,
+    scope?: ResourceScope,
   ): Promise<{
     withinBudget: boolean;
     budgetName?: string;
@@ -238,6 +313,10 @@ export class BudgetsService {
     remaining?: number;
     message?: string;
   }> {
+    if (scope && !scope.unrestricted && !scope.departmentIds.includes(departmentId)) {
+      throw new NotFoundException('Budget scope is outside your access');
+    }
+    const scopeCondition = budgetScopeCondition(scope);
     const budget = await this.db.query.budgets.findFirst({
       where: (b, { and, eq }) =>
         and(
@@ -245,6 +324,7 @@ export class BudgetsService {
           eq(b.budgetType, 'department'),
           eq(b.scopeId, departmentId),
           eq(b.fiscalYear, fiscalYear),
+          scopeCondition,
         ),
       orderBy: (record) => departmentBudgetOrder(record),
     });
@@ -278,6 +358,7 @@ export class BudgetsService {
       enforcementMode?: BudgetEnforcementMode | null;
       pendingRequisitionPolicy?: PendingRequisitionPolicy | null;
     },
+    scope?: ResourceScope,
   ) {
     this.assertPolicyOverrides(input);
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
@@ -287,9 +368,18 @@ export class BudgetsService {
       const [locked] = await tx
         .select()
         .from(budgets)
-        .where(and(eq(budgets.id, id), eq(budgets.organizationId, organizationId)))
-        .for('update');
+        .where(
+          and(
+            eq(budgets.id, id),
+            eq(budgets.organizationId, organizationId),
+            budgetScopeCondition(scope),
+          ),
+        )
+      .for('update');
       if (!locked) throw new NotFoundException(`Budget ${id} not found`);
+      if (!budgetUpdateMatchesScope(locked, input, scope)) {
+        throw new NotFoundException('Budget scope is outside your access');
+      }
       const nextCurrency = input.currency ?? locked.currency;
       const baseCurrency = moneyChanged
         ? await this.exchangeRatesService.getOrganizationBaseCurrency(organizationId, tx)
@@ -338,7 +428,13 @@ export class BudgetsService {
             : {}),
           updatedAt: new Date(),
         })
-        .where(and(eq(budgets.id, id), eq(budgets.organizationId, organizationId)));
+        .where(
+          and(
+            eq(budgets.id, id),
+            eq(budgets.organizationId, organizationId),
+            budgetScopeCondition(scope),
+          ),
+        );
 
       await tx.insert(auditLog).values({
         organizationId,
@@ -374,7 +470,7 @@ export class BudgetsService {
         },
       });
     });
-    return this.findOne(id, organizationId);
+    return this.findOne(id, organizationId, scope);
   }
 
   /**
@@ -591,24 +687,98 @@ export class BudgetsService {
     id: string,
     organizationId: string,
     input: { periodStart: string; periodEnd: string; allocatedAmount: number },
+    actorId: string,
+    scope?: ResourceScope,
   ) {
-    await this.findOne(id, organizationId);
-    await this.db.insert(budgetPeriods).values({
-      budgetId: id,
-      periodStart: new Date(input.periodStart),
-      periodEnd: new Date(input.periodEnd),
-      amount: String(input.allocatedAmount),
-      allocatedAmount: String(input.allocatedAmount),
+    await this.db.transaction(async (tx) => {
+      const [budget] = await tx
+        .select()
+        .from(budgets)
+        .where(
+          and(
+            eq(budgets.id, id),
+            eq(budgets.organizationId, organizationId),
+            budgetScopeCondition(scope),
+          ),
+        )
+        .for('update');
+      if (!budget) throw new NotFoundException(`Budget ${id} not found`);
+
+      const [period] = await tx
+        .insert(budgetPeriods)
+        .values({
+          budgetId: id,
+          periodStart: new Date(input.periodStart),
+          periodEnd: new Date(input.periodEnd),
+          amount: String(input.allocatedAmount),
+          allocatedAmount: String(input.allocatedAmount),
+        })
+        .returning();
+
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: actorId,
+        entityType: 'budget_period',
+        entityId: period.id,
+        action: 'created',
+        changes: {
+          budgetId: id,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          allocatedAmount: String(input.allocatedAmount),
+        },
+      });
     });
-    return this.findOne(id, organizationId);
+    return this.findOne(id, organizationId, scope);
   }
 
-  async removePeriod(budgetId: string, periodId: string, organizationId: string) {
-    await this.findOne(budgetId, organizationId);
-    await this.db
-      .delete(budgetPeriods)
-      .where(and(eq(budgetPeriods.id, periodId), eq(budgetPeriods.budgetId, budgetId)));
-    return this.findOne(budgetId, organizationId);
+  async removePeriod(
+    budgetId: string,
+    periodId: string,
+    organizationId: string,
+    actorId: string,
+    scope?: ResourceScope,
+  ) {
+    await this.db.transaction(async (tx) => {
+      const [budget] = await tx
+        .select()
+        .from(budgets)
+        .where(
+          and(
+            eq(budgets.id, budgetId),
+            eq(budgets.organizationId, organizationId),
+            budgetScopeCondition(scope),
+          ),
+        )
+        .for('update');
+      if (!budget) throw new NotFoundException(`Budget ${budgetId} not found`);
+
+      const [period] = await tx
+        .select()
+        .from(budgetPeriods)
+        .where(and(eq(budgetPeriods.id, periodId), eq(budgetPeriods.budgetId, budgetId)))
+        .for('update');
+      if (!period) throw new NotFoundException(`Budget period ${periodId} not found`);
+
+      await tx
+        .delete(budgetPeriods)
+        .where(and(eq(budgetPeriods.id, periodId), eq(budgetPeriods.budgetId, budgetId)));
+
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: actorId,
+        entityType: 'budget_period',
+        entityId: periodId,
+        action: 'deleted',
+        changes: {
+          budgetId,
+          periodStart: period.periodStart,
+          periodEnd: period.periodEnd,
+          allocatedAmount: period.allocatedAmount,
+        },
+      });
+    });
+    return this.findOne(budgetId, organizationId, scope);
   }
 
   // ---------------------------------------------------------------------------
@@ -660,11 +830,12 @@ export class BudgetsService {
   /**
    * GET /budgets/forecast  — per-budget consumption forecast
    */
-  async getForecast(organizationId: string, fiscalYear: number) {
+  async getForecast(organizationId: string, fiscalYear: number, scope?: ResourceScope) {
+    const budgetCondition = budgetScopeCondition(scope);
     // 1. Load all budgets for this org + fiscal year
     const allBudgets = await this.db.query.budgets.findMany({
       where: (b, { and: a, eq: e }) =>
-        a(e(b.organizationId, organizationId), e(b.fiscalYear, fiscalYear)),
+        a(e(b.organizationId, organizationId), e(b.fiscalYear, fiscalYear), budgetCondition),
     });
 
     if (allBudgets.length === 0) return [];
@@ -680,14 +851,21 @@ export class BudgetsService {
     const monthsRemaining = 12 - monthsElapsed;
 
     // Monthly PO spend for the fiscal year (org-wide, issued POs only)
+    const poScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+      entity: sql`po.entity_id`,
+    });
     const monthlyRows = await this.db.execute(sql`
       SELECT
         EXTRACT(MONTH FROM po.issued_at)::int AS month,
         SUM(po.total_amount)::float8          AS total
       FROM purchase_orders po
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE po.organization_id = ${organizationId}
         AND po.status NOT IN ('draft', 'cancelled')
         AND EXTRACT(YEAR FROM po.issued_at) = ${fiscalYear}
+        ${poScope ? sql`AND ${poScope}` : sql``}
       GROUP BY EXTRACT(MONTH FROM po.issued_at)
       ORDER BY month ASC
     `);
@@ -713,21 +891,28 @@ export class BudgetsService {
     const orgUtilizedRow = await this.db.execute(sql`
       SELECT COALESCE(SUM(po.total_amount),0)::float8 AS total
       FROM purchase_orders po
+      LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE po.organization_id = ${organizationId}
         AND po.status NOT IN ('draft', 'cancelled')
         AND EXTRACT(YEAR FROM po.issued_at) = ${fiscalYear}
+        ${poScope ? sql`AND ${poScope}` : sql``}
     `);
     const orgUtilizedTotal = Number(
       (orgUtilizedRow as unknown as Array<{ total: number }>)[0]?.total ?? 0,
     );
 
     // Committed: pending/draft requisitions total (org-wide)
+    const requisitionScope = scopePredicate(scope, {
+      department: sql`r.department_id`,
+      project: sql`r.project_id`,
+    });
     const committedRow = await this.db.execute(sql`
       SELECT COALESCE(SUM(r.total_amount),0)::float8 AS total
       FROM requisitions r
       WHERE r.organization_id = ${organizationId}
         AND r.status IN ('draft', 'submitted', 'pending_approval')
         AND EXTRACT(YEAR FROM r.created_at) = ${fiscalYear}
+        ${requisitionScope ? sql`AND ${requisitionScope}` : sql``}
     `);
     const orgCommittedTotal = Number(
       (committedRow as unknown as Array<{ total: number }>)[0]?.total ?? 0,
@@ -794,8 +979,12 @@ export class BudgetsService {
   /**
    * GET /budgets/forecast/summary — org-level budget forecast summary
    */
-  async getForecastSummary(organizationId: string, fiscalYear: number) {
-    const forecasts = await this.getForecast(organizationId, fiscalYear);
+  async getForecastSummary(
+    organizationId: string,
+    fiscalYear: number,
+    scope?: ResourceScope,
+  ) {
+    const forecasts = await this.getForecast(organizationId, fiscalYear, scope);
 
     const totalBudgeted = forecasts.reduce((s, f) => s + f.totalAmount, 0);
     const totalUtilized = forecasts.reduce((s, f) => s + f.utilized, 0);
