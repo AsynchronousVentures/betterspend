@@ -303,6 +303,9 @@ export class ReceivingService {
       .update(goodsReceipts)
       .set({ status: 'cancelled', updatedAt: new Date() })
       .where(eq(goodsReceipts.id, id));
+    if (grn.purchaseOrder?.id) {
+      await this.updatePoReceiptStatus(grn.purchaseOrder.id, organizationId);
+    }
     return this.findOne(id, organizationId, access, ['receiving:manage']);
   }
 
@@ -314,7 +317,9 @@ export class ReceivingService {
     });
     if (!po) return;
 
-    const allGrnLines = (po.goodsReceipts as any[]).flatMap((g: any) => g.lines ?? []);
+    const allGrnLines = (po.goodsReceipts as any[])
+      .filter((g: any) => g.status !== 'cancelled')
+      .flatMap((g: any) => g.lines ?? []);
 
     const allFullyReceived = (po.lines as any[]).every((poLine: any) => {
       const received = allGrnLines
@@ -328,7 +333,11 @@ export class ReceivingService {
       ? 'received'
       : anyReceived
         ? 'partially_received'
-        : po.status;
+        : ['received', 'partially_received'].includes(po.status)
+          ? po.issuedAt
+            ? 'issued'
+            : 'approved'
+          : po.status;
 
     await this.db
       .update(purchaseOrders)

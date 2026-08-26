@@ -34,37 +34,47 @@ import {
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 import { z } from 'zod';
 
-const createPoSchema = z.object({
-  entityId: z.string().uuid().optional(),
-  vendorId: z.string().uuid(),
-  requisitionId: z.string().uuid().optional(),
-  paymentTerms: z.string().optional(),
-  currency: z.string().length(3).default('USD'),
-  exchangeRate: z.number().positive().optional(),
-  notes: z.string().optional(),
-  poType: z.enum(['standard', 'blanket']).default('standard'),
-  shippingAddress: z.record(z.string(), z.unknown()).optional(),
-  billingAddress: z.record(z.string(), z.unknown()).optional(),
-  // Blanket PO fields
-  blanketStartDate: z.string().datetime().optional(),
-  blanketEndDate: z.string().datetime().optional(),
-  blanketTotalLimit: z.number().optional(),
-  lines: z
-    .array(
-      z.object({
-        description: z.string().min(1),
-        quantity: z.number().positive(),
-        unitOfMeasure: z.string().default('each'),
-        unitPrice: z.number().nonnegative(),
-        glAccount: z.string().optional(),
-        taxCodeId: z.string().uuid().optional(),
-        taxInclusive: z.boolean().optional(),
-        catalogItemId: z.string().uuid().optional(),
-        requisitionLineId: z.string().uuid().optional(),
-      }),
-    )
-    .min(1),
-});
+const createPoSchema = z
+  .object({
+    entityId: z.string().uuid().optional(),
+    vendorId: z.string().uuid(),
+    requisitionId: z.string().uuid().optional(),
+    paymentTerms: z.string().optional(),
+    currency: z.string().length(3).default('USD'),
+    exchangeRate: z.number().positive().optional(),
+    notes: z.string().optional(),
+    poType: z.enum(['standard', 'blanket']).default('standard'),
+    shippingAddress: z.record(z.string(), z.unknown()).optional(),
+    billingAddress: z.record(z.string(), z.unknown()).optional(),
+    // Blanket PO fields
+    blanketStartDate: z.string().datetime().optional(),
+    blanketEndDate: z.string().datetime().optional(),
+    blanketTotalLimit: z.number().optional(),
+    lines: z
+      .array(
+        z.object({
+          description: z.string().min(1),
+          quantity: z.number().positive(),
+          unitOfMeasure: z.string().default('each'),
+          unitPrice: z.number().nonnegative(),
+          glAccount: z.string().optional(),
+          taxCodeId: z.string().uuid().optional(),
+          taxInclusive: z.boolean().optional(),
+          catalogItemId: z.string().uuid().optional(),
+          requisitionLineId: z.string().uuid().optional(),
+        }),
+      )
+      .min(1),
+  })
+  .superRefine((input, context) => {
+    if (!input.requisitionId && !input.entityId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['entityId'],
+        message: 'entityId is required for standalone purchase orders',
+      });
+    }
+  });
 
 const changeOrderSchema = z.object({
   changeReason: z.string().min(1),
@@ -278,6 +288,9 @@ export class PurchaseOrdersService {
     access?: AccessPolicy,
   ) {
     requirePermission(access, 'purchase_orders:create');
+    if (!input.requisitionId && !input.entityId) {
+      throw new BadRequestException('entityId is required for standalone purchase orders');
+    }
     await this.entitiesService.assertBelongsToOrg(organizationId, input.entityId);
     const vendor = await this.db.query.vendors.findFirst({
       where: (record, { and, eq }) =>
@@ -782,9 +795,9 @@ export class PurchaseOrdersService {
     return this.findOne(id, organizationId);
   }
 
-  async cancel(id: string, organizationId: string, actorId?: string, access?: AccessPolicy) {
+  async cancel(id: string, organizationId: string, actorId: string, access?: AccessPolicy) {
     const po = await this.findOne(id, organizationId, access);
-    assertPurchaseOrderScope(access, 'purchase_orders:manage', po, actorId ?? po.issuedBy ?? '');
+    assertPurchaseOrderScope(access, 'purchase_orders:manage', po, actorId);
     if (['closed', 'cancelled', 'received', 'invoiced'].includes(po.status)) {
       throw new BadRequestException(`Cannot cancel a ${po.status} PO`);
     }
@@ -875,16 +888,11 @@ export class PurchaseOrdersService {
     blanketPoId: string,
     releaseId: string,
     organizationId: string,
-    actorId?: string,
+    actorId: string,
     access?: AccessPolicy,
   ) {
     const blanketPo = await this.findOne(blanketPoId, organizationId, access);
-    assertPurchaseOrderScope(
-      access,
-      'purchase_orders:manage',
-      blanketPo,
-      actorId ?? blanketPo.issuedBy ?? '',
-    );
+    assertPurchaseOrderScope(access, 'purchase_orders:manage', blanketPo, actorId);
     const release = await this.db.query.blanketReleases.findFirst({
       where: (r, { and, eq }) => and(eq(r.id, releaseId), eq(r.blanketPoId, blanketPoId)),
     });

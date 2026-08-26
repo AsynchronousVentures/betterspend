@@ -59,6 +59,16 @@ function scopeAllowsApproval(
   return false;
 }
 
+function scopeAllowsApprovalForAnyReadPermission(
+  access: AccessPolicy | undefined,
+  scope: ApprovalScope,
+): boolean {
+  return (
+    scopeAllowsApproval(access, scope, 'approvals:view') ||
+    scopeAllowsApproval(access, scope, 'approvals:act')
+  );
+}
+
 function roleAssignmentMatchesApprovalScope(
   assignment: { scopeType: string; scopeId: string | null },
   scope: ApprovalScope,
@@ -879,7 +889,7 @@ export class ApprovalEngineService {
     organizationId: string,
     _actorId?: string,
     access?: AccessPolicy,
-    requiredPermission: 'approvals:view' | 'approvals:act' = 'approvals:view',
+    requiredPermission?: 'approvals:view' | 'approvals:act',
   ) {
     requireAnyPermission(access, ['approvals:view', 'approvals:act']);
     const req = await this.db.query.approvalRequests.findFirst({
@@ -891,7 +901,10 @@ export class ApprovalEngineService {
     });
     if (!req) throw new NotFoundException(`Approval request ${id} not found`);
     const [enriched] = await this.enrichWithEntityInfo([req]);
-    if (!scopeAllowsApproval(access, enriched.entitySummary ?? {}, requiredPermission)) {
+    const inScope = requiredPermission
+      ? scopeAllowsApproval(access, enriched.entitySummary ?? {}, requiredPermission)
+      : scopeAllowsApprovalForAnyReadPermission(access, enriched.entitySummary ?? {});
+    if (!inScope) {
       throw new NotFoundException(`Approval request ${id} not found`);
     }
     return enriched;
@@ -900,6 +913,7 @@ export class ApprovalEngineService {
   // List all pending requests for an organization.
   async listPending(organizationId: string, actorId?: string, access?: AccessPolicy) {
     requirePermission(access, 'approvals:view');
+    if (!actorId) return [];
     const rows = await this.db.query.approvalRequests.findMany({
       where: (record, { and, eq }) =>
         and(eq(record.organizationId, organizationId), eq(record.status, 'pending')),
@@ -953,7 +967,6 @@ export class ApprovalEngineService {
             )
           ).includes(actorId);
         const actorAssigned =
-          !actorId ||
           row.requiredApproverId === actorId ||
           currentStep?.approverId === actorId ||
           delegatedToActor ||

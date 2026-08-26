@@ -110,4 +110,56 @@ describe('ReceivingService response context', () => {
       { id: 'grn-1', purchaseOrder: { id: 'po-1', vendor: null } },
     ]);
   });
+
+  it('recomputes PO receipt status after cancelling and excludes cancelled quantities', async () => {
+    const findReceipt = jest
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'grn-1',
+        organizationId,
+        status: 'confirmed',
+        purchaseOrder: { id: 'po-1', number: 'PO-2026-0001', organizationId, vendor: null },
+        lines: [],
+      })
+      .mockResolvedValueOnce({
+        id: 'grn-1',
+        organizationId,
+        status: 'cancelled',
+        purchaseOrder: { id: 'po-1', number: 'PO-2026-0001', organizationId, vendor: null },
+        lines: [],
+      });
+    const findPurchaseOrder = jest.fn().mockResolvedValue({
+      id: 'po-1',
+      status: 'received',
+      issuedAt: new Date('2026-01-01T00:00:00.000Z'),
+      lines: [{ id: 'po-line-1', quantity: '10' }],
+      goodsReceipts: [
+        {
+          status: 'cancelled',
+          lines: [{ poLineId: 'po-line-1', quantityReceived: '10' }],
+        },
+      ],
+    });
+    const updateWhere = jest.fn().mockResolvedValue([]);
+    const updateSet = jest.fn(() => ({ where: updateWhere }));
+    const db = {
+      query: {
+        goodsReceipts: { findFirst: findReceipt },
+        purchaseOrders: { findFirst: findPurchaseOrder },
+      },
+      update: jest.fn(() => ({ set: updateSet })),
+    };
+    const service = new ReceivingService(
+      db as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    await service.cancelGrn('grn-1', organizationId);
+
+    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ status: 'cancelled' }));
+    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ status: 'issued' }));
+  });
 });
