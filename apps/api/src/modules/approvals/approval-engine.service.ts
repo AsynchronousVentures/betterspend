@@ -831,7 +831,7 @@ export class ApprovalEngineService {
         ? this.db
             .execute(
               sql`
-        SELECT id, number, title, total_amount AS amount, status,
+        SELECT id, number, title, total_amount AS amount, currency, status,
           department_id AS "departmentId", project_id AS "projectId", NULL::uuid AS "entityId"
         FROM requisitions
         WHERE id = ANY(${uuidArray(reqIds)})
@@ -843,7 +843,7 @@ export class ApprovalEngineService {
         ? this.db
             .execute(
               sql`
-        SELECT po.id, po.number, v.name AS "vendorName", po.total_amount AS amount, po.status,
+        SELECT po.id, po.number, v.name AS "vendorName", po.total_amount AS amount, po.currency, po.status,
           r.department_id AS "departmentId", r.project_id AS "projectId", po.entity_id AS "entityId"
         FROM purchase_orders po
         LEFT JOIN requisitions r ON r.id = po.requisition_id

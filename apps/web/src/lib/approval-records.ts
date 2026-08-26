@@ -7,7 +7,7 @@ export interface ApprovalEntitySummary {
   invoiceNumber?: string | null;
   vendorName?: string | null;
   amount?: string | number | null;
-  currency?: string | null;
+  currency: string;
   matchStatus?: string | null;
   dueDate?: string | Date | null;
 }
@@ -36,17 +36,17 @@ export function approvalEntityLabel(
 
 export function formatApprovalAmount(
   amount: string | number | null | undefined,
-  currency: string | null | undefined = 'USD',
+  currency: string,
 ): string {
   if (amount == null || Number.isNaN(Number(amount))) return 'Not available';
   try {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: currency || 'USD',
+      currency,
       maximumFractionDigits: 2,
     }).format(Number(amount));
   } catch {
-    return `${Number(amount).toFixed(2)} ${currency || 'USD'}`;
+    return `${Number(amount).toFixed(2)} ${currency}`;
   }
 }
 

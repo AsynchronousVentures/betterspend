@@ -118,7 +118,7 @@ export default function ApprovalsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="font-medium text-foreground">
-                        {formatApprovalAmount(entity?.amount, entity?.currency)}
+                        {entity ? formatApprovalAmount(entity.amount, entity.currency) : 'Not available'}
                       </TableCell>
                       <TableCell className="text-muted-foreground">{approval.rule?.name ?? '—'}</TableCell>
                       <TableCell className="text-muted-foreground">Step {approval.currentStep}</TableCell>
