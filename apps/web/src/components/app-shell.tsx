@@ -21,6 +21,7 @@ import { useIsMobile, useMediaQuery } from '../lib/use-media-query';
 import { useBranding } from '../lib/branding';
 import {
   canAccessProductRoute,
+  canAccessProductAction,
   productActionForPathname,
   productRouteForPathname,
   productSearchResults,
@@ -453,7 +454,7 @@ function ProductRouteAccessBoundary({ children }: { children: React.ReactNode })
     return <AccessDeniedState />;
   }
 
-  if (action && action.href !== route?.href && !canAccessProductRoute(action, access.permissions)) {
+  if (action && action.href !== route?.href && !canAccessProductAction(action, access.permissions)) {
     return <AccessDeniedState routeLabel={action.label} />;
   }
 

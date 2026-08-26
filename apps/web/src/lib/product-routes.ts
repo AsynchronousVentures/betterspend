@@ -76,54 +76,36 @@ export interface ProductRoute {
 }
 
 const REQUISITION_PERMISSIONS = [
-  'requisitions:create',
   'requisitions:view_own',
   'requisitions:view_all',
-  'requisitions:approve',
   'requisitions:manage',
 ] as const satisfies readonly PermissionKey[];
 
 const PURCHASE_ORDER_PERMISSIONS = [
-  'purchase_orders:create',
   'purchase_orders:view_own',
   'purchase_orders:view_all',
-  'purchase_orders:issue',
   'purchase_orders:manage',
+  'purchase_orders:issue',
 ] as const satisfies readonly PermissionKey[];
 
 const RECEIVING_PERMISSIONS = [
   'receiving:view',
-  'receiving:create',
   'receiving:manage',
 ] as const satisfies readonly PermissionKey[];
 
 const INVOICE_PERMISSIONS = [
-  'invoices:create',
   'invoices:approve',
   'invoices:view_all',
   'invoices:manage',
 ] as const satisfies readonly PermissionKey[];
 
-const VENDOR_PERMISSIONS = [
-  'vendors:create',
-  'vendors:edit',
-  'vendors:view',
-] as const satisfies readonly PermissionKey[];
+const VENDOR_PERMISSIONS = ['vendors:view'] as const satisfies readonly PermissionKey[];
 
-const REPORT_PERMISSIONS = [
-  'reports:view',
-  'reports:export',
-] as const satisfies readonly PermissionKey[];
+const REPORT_PERMISSIONS = ['reports:view'] as const satisfies readonly PermissionKey[];
 
-const BUDGET_PERMISSIONS = [
-  'budgets:view',
-  'budgets:manage',
-] as const satisfies readonly PermissionKey[];
+const BUDGET_PERMISSIONS = ['budgets:view'] as const satisfies readonly PermissionKey[];
 
-const PAYMENT_PERMISSIONS = [
-  'payments:view',
-  'payments:manage',
-] as const satisfies readonly PermissionKey[];
+const PAYMENT_PERMISSIONS = ['payments:view'] as const satisfies readonly PermissionKey[];
 
 export const PRODUCT_ROUTES: readonly ProductRoute[] = [
   {
@@ -155,6 +137,15 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     aliases: ['requests', 'purchase requests'],
     requiredPermissions: REQUISITION_PERMISSIONS,
     placements: ['primary', 'search'],
+    actions: [
+      {
+        key: 'create-requisition',
+        label: 'Create requisition',
+        href: '/requisitions/new',
+        aliases: ['new request', 'new requisition'],
+        requiredPermissions: ['requisitions:create'],
+      },
+    ],
   },
   {
     key: 'purchase-orders',
@@ -182,7 +173,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'procurement',
     icon: 'Rfq',
     aliases: ['RFQ', 'request for quote', 'sourcing'],
-    requiredPermissions: ['rfqs:view', 'rfqs:manage'],
+    requiredPermissions: ['rfqs:view'],
     placements: ['primary', 'search'],
   },
   {
@@ -192,11 +183,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'procurement',
     icon: 'RecurringPos',
     aliases: ['recurring purchase orders', 'scheduled PO'],
-    requiredPermissions: [
-      'purchase_orders:view_all',
-      'purchase_orders:create',
-      'purchase_orders:manage',
-    ],
+    requiredPermissions: ['purchase_orders:view_all'],
     placements: ['primary', 'search'],
   },
   {
@@ -206,7 +193,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'procurement',
     icon: 'Catalog',
     aliases: ['items', 'punchout'],
-    requiredPermissions: ['catalog:view', 'catalog:manage'],
+    requiredPermissions: ['catalog:view'],
     placements: ['primary', 'search'],
   },
   {
@@ -235,8 +222,17 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'operations',
     icon: 'Inventory',
     aliases: ['stock', 'warehouse'],
-    requiredPermissions: ['inventory:view', 'inventory:manage'],
+    requiredPermissions: ['inventory:view'],
     placements: ['primary', 'search'],
+    actions: [
+      {
+        key: 'create-inventory-item',
+        label: 'Create inventory item',
+        href: '/inventory/new',
+        aliases: ['new inventory item', 'new stock item'],
+        requiredPermissions: ['inventory:manage'],
+      },
+    ],
   },
   {
     key: 'invoices',
@@ -247,6 +243,15 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     aliases: ['bills', 'AP invoices'],
     requiredPermissions: INVOICE_PERMISSIONS,
     placements: ['primary', 'search'],
+    actions: [
+      {
+        key: 'create-invoice',
+        label: 'Create invoice',
+        href: '/invoices/new',
+        aliases: ['new invoice', 'new bill'],
+        requiredPermissions: ['invoices:create'],
+      },
+    ],
   },
   {
     key: 'intake-queue',
@@ -284,7 +289,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'approvals',
     icon: 'Approvals',
     aliases: ['approvals', 'approval inbox'],
-    requiredPermissions: ['approvals:view', 'approvals:act'],
+    requiredPermissions: ['approvals:view'],
     placements: ['primary', 'search'],
   },
   {
@@ -316,6 +321,15 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     aliases: ['budget management'],
     requiredPermissions: BUDGET_PERMISSIONS,
     placements: ['primary', 'search'],
+    actions: [
+      {
+        key: 'create-budget',
+        label: 'Create budget',
+        href: '/budgets/new',
+        aliases: ['new budget'],
+        requiredPermissions: ['budgets:manage'],
+      },
+    ],
   },
   {
     key: 'spend-guard',
@@ -334,7 +348,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'finance',
     icon: 'TaxCodes',
     aliases: ['tax settings'],
-    requiredPermissions: ['reports:view', 'settings:manage'],
+    requiredPermissions: ['reports:view'],
     placements: ['primary', 'search'],
   },
   {
@@ -344,7 +358,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'finance',
     icon: 'Currencies',
     aliases: ['currency settings', 'exchange rates'],
-    requiredPermissions: ['settings:manage'],
+    requiredPermissions: ['reports:view'],
     placements: ['primary', 'search'],
   },
   {
@@ -383,7 +397,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'finance',
     icon: 'GlIntegration',
     aliases: ['GL mappings', 'general ledger', 'accounting integration'],
-    requiredPermissions: ['reports:export'],
+    requiredPermissions: ['reports:view'],
     placements: ['primary', 'search'],
   },
   {
@@ -416,6 +430,15 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     requiredPermissions: VENDOR_PERMISSIONS,
     placements: ['primary', 'search', 'supplier-hub'],
     supplierHubLabel: 'All suppliers',
+    actions: [
+      {
+        key: 'create-vendor',
+        label: 'Create vendor',
+        href: '/vendors/new',
+        aliases: ['new vendor', 'new supplier'],
+        requiredPermissions: ['vendors:create'],
+      },
+    ],
   },
   {
     key: 'supplier-onboarding',
@@ -424,7 +447,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'supplier-operations',
     icon: 'Suppliers',
     aliases: ['vendor onboarding', 'onboarding queue'],
-    requiredPermissions: ['vendors:edit'],
+    requiredPermissions: ['vendors:view'],
     placements: ['search', 'supplier-hub'],
     supplierHubLabel: 'Onboarding',
   },
@@ -435,7 +458,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'supplier-operations',
     icon: 'SpendGuard',
     aliases: ['supplier risk', 'vendor risk', 'risk flags', 'sanctions screening'],
-    requiredPermissions: ['supplier_risk:view', 'supplier_risk:manage'],
+    requiredPermissions: ['supplier_risk:view'],
     placements: ['search', 'supplier-hub'],
     supplierHubLabel: 'Risk flags',
   },
@@ -457,7 +480,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'supplier-operations',
     icon: 'Compliance',
     aliases: ['vendor diversity', 'ESG', 'sustainability'],
-    requiredPermissions: ['vendors:view', 'vendors:edit'],
+    requiredPermissions: ['vendors:view'],
     placements: ['search', 'supplier-hub'],
     supplierHubLabel: 'Diversity',
   },
@@ -468,9 +491,18 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'supplier-operations',
     icon: 'Contracts',
     aliases: ['supplier contracts'],
-    requiredPermissions: ['contracts:view', 'contracts:manage'],
+    requiredPermissions: ['contracts:view'],
     placements: ['primary', 'search', 'supplier-hub'],
     supplierHubLabel: 'Contracts',
+    actions: [
+      {
+        key: 'create-contract',
+        label: 'Create contract',
+        href: '/contracts/new',
+        aliases: ['new contract'],
+        requiredPermissions: ['contracts:manage'],
+      },
+    ],
   },
   {
     key: 'software-licenses',
@@ -479,7 +511,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'supplier-operations',
     icon: 'SoftwareLicenses',
     aliases: ['software renewals', 'license management'],
-    requiredPermissions: ['software_licenses:view', 'software_licenses:manage'],
+    requiredPermissions: ['software_licenses:view'],
     placements: ['primary', 'search', 'supplier-hub'],
     supplierHubLabel: 'Software licenses',
   },
@@ -500,7 +532,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'organization',
     icon: 'Departments',
     aliases: ['department settings'],
-    requiredPermissions: ['settings:manage'],
+    requiredPermissions: ['reports:view'],
     placements: ['primary', 'search'],
   },
   {
@@ -510,7 +542,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'organization',
     icon: 'Projects',
     aliases: ['project settings'],
-    requiredPermissions: ['settings:manage'],
+    requiredPermissions: ['reports:view'],
     placements: ['primary', 'search'],
   },
   {
@@ -520,7 +552,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'organization',
     icon: 'Entities',
     aliases: ['legal entities', 'business entities'],
-    requiredPermissions: ['settings:manage'],
+    requiredPermissions: ['reports:view'],
     placements: ['primary', 'search'],
   },
   {
@@ -580,7 +612,7 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
     section: 'finance',
     icon: 'GlIntegration',
     aliases: ['export jobs', 'general ledger exports'],
-    requiredPermissions: ['reports:export'],
+    requiredPermissions: ['reports:view'],
     placements: ['search'],
   },
   {
@@ -647,9 +679,16 @@ function normalizedSearchText(value: string): string {
     .trim();
 }
 
-function matchesSearch(query: string, label: string, aliases: readonly string[]): boolean {
+function searchMatchRank(
+  query: string,
+  label: string,
+  aliases: readonly string[],
+): number | undefined {
   const terms = [label, ...aliases].map(normalizedSearchText);
-  return terms.some((term) => term.includes(query) || query.includes(term));
+  if (terms.some((term) => term === query)) return 0;
+  if (terms.some((term) => term.startsWith(query) || query.startsWith(term))) return 1;
+  if (terms.some((term) => term.includes(query) || query.includes(term))) return 2;
+  return undefined;
 }
 
 function grantedPermissionSet(permissions: readonly PermissionKey[]): ReadonlySet<PermissionKey> {
@@ -661,6 +700,21 @@ export function canAccessProductRoute(
   permissions: readonly PermissionKey[],
 ): boolean {
   return hasGrantedPermission(route.requiredPermissions, grantedPermissionSet(permissions));
+}
+
+export function canAccessProductAction(
+  action: Pick<ProductRouteAction, 'requiredPermissions'>,
+  permissions: readonly PermissionKey[],
+): boolean {
+  return hasGrantedPermission(action.requiredPermissions, grantedPermissionSet(permissions));
+}
+
+export function canAccessProductActionForPathname(
+  pathname: string,
+  permissions: readonly PermissionKey[],
+): boolean {
+  const action = productActionForPathname(pathname);
+  return action ? canAccessProductAction(action, permissions) : false;
 }
 
 export function visibleProductRoutes(
@@ -698,25 +752,30 @@ export function productSearchResults(
   if (!normalizedQuery) return [];
 
   const grantedPermissions = grantedPermissionSet(permissions);
-  const destinations = PRODUCT_ROUTES.filter(
-    (route) =>
-      route.placements.includes('search') &&
-      hasGrantedPermission(route.requiredPermissions, grantedPermissions) &&
-      matchesSearch(normalizedQuery, route.label, route.aliases),
-  ).map((route) => ({
-    key: `route:${route.key}`,
-    label: route.label,
-    href: route.href,
-    resultType: 'Destination' as const,
-    section: route.section,
-  }));
+  const destinations = PRODUCT_ROUTES.flatMap((route) => {
+    if (!route.placements.includes('search')) return [];
+    if (!hasGrantedPermission(route.requiredPermissions, grantedPermissions)) return [];
+    const rank = searchMatchRank(normalizedQuery, route.label, route.aliases);
+    if (rank === undefined) return [];
+    return [
+      {
+        key: `route:${route.key}`,
+        label: route.label,
+        href: route.href,
+        resultType: 'Destination' as const,
+        section: route.section,
+        rank,
+      },
+    ];
+  });
 
   const actions = PRODUCT_ROUTES.flatMap((route) =>
     route.placements.includes('search') &&
     hasGrantedPermission(route.requiredPermissions, grantedPermissions)
       ? (route.actions ?? []).flatMap((action) => {
           if (!hasGrantedPermission(action.requiredPermissions, grantedPermissions)) return [];
-          if (!matchesSearch(normalizedQuery, action.label, action.aliases)) return [];
+          const rank = searchMatchRank(normalizedQuery, action.label, action.aliases);
+          if (rank === undefined) return [];
           return [
             {
               key: `action:${action.key}`,
@@ -724,13 +783,20 @@ export function productSearchResults(
               href: action.href,
               resultType: 'Action' as const,
               section: route.section,
+              rank,
             },
           ];
         })
       : [],
   );
 
-  return [...destinations, ...actions];
+  return [...destinations, ...actions]
+    .sort(
+      (left, right) =>
+        left.rank - right.rank ||
+        Number(right.resultType === 'Action') - Number(left.resultType === 'Action'),
+    )
+    .map(({ rank: _rank, ...result }) => result);
 }
 
 export function productActionForPathname(pathname: string): ProductRouteAction | undefined {

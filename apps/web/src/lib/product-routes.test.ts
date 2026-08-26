@@ -3,6 +3,8 @@ import test from 'node:test';
 import { BUILT_IN_ROLE_PERMISSIONS } from '@betterspend/shared';
 import {
   PRODUCT_ROUTES,
+  canAccessProductAction,
+  canAccessProductActionForPathname,
   canAccessProductRoute,
   productNavigationSections,
   productActionForPathname,
@@ -103,6 +105,21 @@ test('product search only returns permitted destinations and common actions', ()
   assert.equal(productSearchResults('Payment Runs', BUILT_IN_ROLE_PERMISSIONS.requester).length, 0);
 });
 
+test('exact action aliases rank ahead of matching destinations', () => {
+  assert.equal(
+    productSearchResults('receive PO', BUILT_IN_ROLE_PERMISSIONS.receiver)[0]?.key,
+    'action:receive-purchase-order',
+  );
+  assert.equal(
+    productSearchResults('pay bills', BUILT_IN_ROLE_PERMISSIONS.finance)[0]?.key,
+    'action:pay-bills',
+  );
+  assert.equal(
+    productSearchResults('email invoices', BUILT_IN_ROLE_PERMISSIONS.finance)[0]?.key,
+    'action:email-invoices',
+  );
+});
+
 test('specific product routes win when resolving a saved nested URL', () => {
   assert.equal(productRouteForPathname('/vendors/onboarding')?.key, 'supplier-onboarding');
   assert.equal(productRouteForPathname('/purchase-orders/new')?.key, 'purchase-orders');
@@ -117,9 +134,63 @@ test('direct route access uses the same capability metadata as navigation', () =
 
   assert.equal(canAccessProductRoute(paymentRuns, BUILT_IN_ROLE_PERMISSIONS.finance), true);
   assert.equal(canAccessProductRoute(paymentRuns, BUILT_IN_ROLE_PERMISSIONS.requester), false);
-  assert.equal(canAccessProductRoute(createPurchaseOrder, BUILT_IN_ROLE_PERMISSIONS.finance), true);
+  assert.equal(canAccessProductAction(createPurchaseOrder, ['purchase_orders:create']), true);
   assert.equal(
-    canAccessProductRoute(createPurchaseOrder, BUILT_IN_ROLE_PERMISSIONS.requester),
+    canAccessProductAction(createPurchaseOrder, BUILT_IN_ROLE_PERMISSIONS.requester),
     false,
   );
+});
+
+test('payment-run mutation controls use the action capability, not the read capability', () => {
+  assert.equal(canAccessProductActionForPathname('/payment-runs', ['payments:view']), false);
+  assert.equal(canAccessProductActionForPathname('/payment-runs', ['payments:manage']), true);
+});
+
+test('issue-only purchase-order access can read the destination', () => {
+  const purchaseOrders = PRODUCT_ROUTES.find((route) => route.key === 'purchase-orders');
+  assert.ok(purchaseOrders);
+  assert.equal(canAccessProductRoute(purchaseOrders, ['purchase_orders:issue']), true);
+});
+
+test('direct create URLs require their action permission and a readable destination', () => {
+  const cases = [
+    ['/requisitions/new', 'requisitions:create', 'requisitions:view_own'],
+    ['/purchase-orders/new', 'purchase_orders:create', 'purchase_orders:view_own'],
+    ['/receiving/new', 'receiving:create', 'receiving:view'],
+    ['/invoices/new', 'invoices:create', 'invoices:view_all'],
+    ['/inventory/new', 'inventory:manage', 'inventory:view'],
+    ['/budgets/new', 'budgets:manage', 'budgets:view'],
+    ['/contracts/new', 'contracts:manage', 'contracts:view'],
+    ['/vendors/new', 'vendors:create', 'vendors:view'],
+  ] as const;
+
+  for (const [pathname, actionPermission, readPermission] of cases) {
+    const action = productActionForPathname(pathname);
+    const route = productRouteForPathname(pathname);
+    assert.ok(action, pathname);
+    assert.ok(route, pathname);
+    assert.equal(canAccessProductAction(action, [actionPermission]), true, pathname);
+    assert.equal(canAccessProductRoute(route, [actionPermission]), false, pathname);
+    assert.equal(canAccessProductRoute(route, [readPermission]), true, pathname);
+  }
+});
+
+test('destination read permissions do not accept write-only grants', () => {
+  const cases = [
+    ['rfq', 'rfqs:manage'],
+    ['catalog', 'catalog:manage'],
+    ['inventory', 'inventory:manage'],
+    ['tax-codes', 'settings:manage'],
+    ['currencies', 'settings:manage'],
+    ['suppliers', 'vendors:edit'],
+    ['contracts', 'contracts:manage'],
+    ['software-licenses', 'software_licenses:manage'],
+    ['gl-integration', 'reports:export'],
+  ] as const;
+
+  for (const [key, writePermission] of cases) {
+    const route = PRODUCT_ROUTES.find((candidate) => candidate.key === key);
+    assert.ok(route, key);
+    assert.equal(canAccessProductRoute(route, [writePermission]), false, key);
+  }
 });
