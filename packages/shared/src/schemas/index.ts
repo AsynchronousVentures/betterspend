@@ -6,4 +6,5 @@ export * from './software-licenses';
 export * from './messages';
 export * from './risk-screening';
 export * from './invoices';
+export * from './recurring-po';
 export * from './bootstrap';

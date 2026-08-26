@@ -15,11 +15,13 @@ import {
 import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { AccountService } from './account.service';
 
 @ApiTags('account')
+@Authenticated()
 @Controller('account')
 export class AccountController {
   constructor(private readonly accountService: AccountService) {}

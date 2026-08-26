@@ -108,3 +108,21 @@ test('custom users:manage access is not built-in admin provenance', () => {
   assert.equal(policy.can('users:manage'), true);
   assert.equal(policy.isGlobalBuiltInAdmin(), false);
 });
+
+test('operational permission scopes are resolved from the shared catalog and fail closed when unsupported', () => {
+  const entityId = '00000000-0000-0000-0000-000000000099';
+  const policy = createAccessPolicy(identity, [
+    {
+      role: 'custom',
+      customRoleId: 'catalog-role',
+      customRoleOrganizationId: identity.organizationId,
+      customPermissions: ['catalog:view', 'inventory:view'],
+      scopeType: 'entity',
+      scopeId: entityId,
+    },
+  ]);
+
+  assert.equal(policy.can('catalog:view'), true);
+  assert.deepEqual(policy.scopeFor('catalog', 'catalog:view').entityIds, [entityId]);
+  assert.equal(policy.can('inventory:view'), false);
+});

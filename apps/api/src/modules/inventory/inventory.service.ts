@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { inventoryItems, inventoryMovements } from '@betterspend/db';
+import type { PermissionKey } from '@betterspend/shared';
 import type { AccessPolicy } from '../auth/access-policy';
 import { hasUnrestrictedOperationalAccess } from '../auth/operational-access';
 
@@ -253,7 +254,7 @@ export class InventoryService {
     };
   }
 
-  private assertGlobal(access: AccessPolicy | undefined, permission: string) {
+  private assertGlobal(access: AccessPolicy | undefined, permission: PermissionKey) {
     if (!hasUnrestrictedOperationalAccess(access, 'inventory', permission)) {
       throw new ForbiddenException('Inventory access requires a global grant');
     }

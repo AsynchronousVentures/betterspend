@@ -10,6 +10,7 @@ import { eq, and, ilike, or, desc, isNull, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { auditLog, catalogItems, catalogPriceProposals, vendors } from '@betterspend/db';
+import type { PermissionKey } from '@betterspend/shared';
 import { z } from 'zod';
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
@@ -109,7 +110,7 @@ export class CatalogService {
     id: string,
     organizationId: string,
     access?: AccessPolicy,
-    permission = 'catalog:view',
+    permission: PermissionKey = 'catalog:view',
   ) {
     await this.applyDueApprovedProposals(organizationId, access);
     const item = await this.db.query.catalogItems.findFirst({
@@ -649,7 +650,7 @@ export class CatalogService {
   private async assertVendorScope(
     organizationId: string,
     access: AccessPolicy | undefined,
-    permission: string,
+    permission: PermissionKey,
     vendorId: string | null | undefined,
   ) {
     // Vendorless catalog items are organization-wide internal items. They are
@@ -703,7 +704,7 @@ export class CatalogService {
     tx: CatalogTransaction,
     organizationId: string,
     access: AccessPolicy | undefined,
-    permission: string,
+    permission: PermissionKey,
     vendorId: string | null | undefined,
   ) {
     const scope = operationalScope(access, 'catalog', permission);

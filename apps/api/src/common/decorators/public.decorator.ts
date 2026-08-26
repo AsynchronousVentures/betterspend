@@ -1,4 +1,6 @@
-import { SetMetadata } from '@nestjs/common';
+import { applyDecorators } from '@nestjs/common';
+import { ApiSecurity } from '@nestjs/swagger';
+import { declareRouteAccess } from './route-access.decorator';
 
-export const IS_PUBLIC_KEY = 'isPublic';
-export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
+export const Public = () =>
+  applyDecorators(ApiSecurity({}), declareRouteAccess({ kind: 'public' }));

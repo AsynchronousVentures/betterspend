@@ -9,6 +9,7 @@ import { and, asc, desc, eq, lte, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { softwareLicenses, vendors } from '@betterspend/db';
+import type { PermissionKey } from '@betterspend/shared';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RequisitionsService } from '../requisitions/requisitions.service';
 import { RfqService } from '../rfq/rfq.service';
@@ -74,7 +75,7 @@ export class SoftwareLicensesService {
     id: string,
     organizationId: string,
     access?: AccessPolicy,
-    permission = 'software_licenses:view',
+    permission: PermissionKey = 'software_licenses:view',
   ) {
     const license = await this.db.query.softwareLicenses.findFirst({
       where: (sl, { and, eq }) =>
@@ -439,7 +440,7 @@ export class SoftwareLicensesService {
   private async assertVendorScope(
     organizationId: string,
     access: AccessPolicy | undefined,
-    permission: string,
+    permission: PermissionKey,
     vendorId: string | null | undefined,
   ) {
     if (!vendorId) {
@@ -470,7 +471,7 @@ export class SoftwareLicensesService {
     tx: SoftwareLicenseTransaction,
     organizationId: string,
     access: AccessPolicy | undefined,
-    permission: string,
+    permission: PermissionKey,
     vendorId: string | null | undefined,
   ) {
     const scope = operationalScope(access, 'software_license', permission);

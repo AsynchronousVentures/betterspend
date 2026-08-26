@@ -10,12 +10,14 @@ import {
   Post,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { EmailIntakeService } from './email-intake.service';
 
 @ApiTags('email-intake')
+@Authenticated()
 @Controller('email-intake')
 export class EmailIntakeController {
   constructor(private readonly emailIntakeService: EmailIntakeService) {}

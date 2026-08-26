@@ -2,16 +2,18 @@ import { Injectable, Inject, NotFoundException, BadRequestException } from '@nes
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { recurringPos, purchaseOrders, poLines, sequences, vendors } from '@betterspend/db';
+import { recurringPos, purchaseOrders, poLines, vendors } from '@betterspend/db';
+import { SequenceService } from '../../common/services/sequence.service';
+import { AuditService } from '../audit/audit.service';
+import {
+  calculateRecurringPoAmounts,
+  parseStoredRecurringPoLines,
+  type CreateRecurringPoInput,
+  type RecurringPoFrequency,
+  type UpdateRecurringPoInput,
+} from './recurring-po.input';
 
-type Frequency = 'weekly' | 'monthly' | 'quarterly' | 'annually';
-
-interface RecurringPoLine {
-  description: string;
-  quantity: number;
-  unitPrice: number;
-  unitOfMeasure?: string;
-}
+type Frequency = RecurringPoFrequency;
 
 interface RecurringPoHistoryItem {
   id: string;
@@ -24,7 +26,11 @@ interface RecurringPoHistoryItem {
 
 @Injectable()
 export class RecurringPoService {
-  constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
+  constructor(
+    @Inject(DB_TOKEN) private readonly db: Db,
+    private readonly sequenceService: SequenceService,
+    private readonly audit: AuditService,
+  ) {}
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -133,32 +139,6 @@ export class RecurringPoService {
     };
   }
 
-  private async nextPoNumber(orgId: string): Promise<string> {
-    const year = new Date().getFullYear();
-    const rows = await this.db
-      .update(sequences)
-      .set({ lastValue: sql`${sequences.lastValue} + 1`, updatedAt: new Date() })
-      .where(
-        and(
-          eq(sequences.organizationId, orgId),
-          eq(sequences.entityType, 'purchase_order'),
-          eq(sequences.year, year),
-        ),
-      )
-      .returning();
-
-    if (!rows.length) {
-      await this.db.insert(sequences).values({
-        organizationId: orgId,
-        entityType: 'purchase_order',
-        year,
-        lastValue: 1,
-      });
-      return `PO-${year}-0001`;
-    }
-    return `PO-${year}-${String(rows[0].lastValue).padStart(4, '0')}`;
-  }
-
   // ── CRUD ─────────────────────────────────────────────────────────────────────
 
   async findAll(organizationId: string) {
@@ -189,24 +169,7 @@ export class RecurringPoService {
     return this.projectRecurringPo(row.rpo, row.vendor?.id ? row.vendor : null, organizationId, true);
   }
 
-  async create(
-    organizationId: string,
-    createdById: string,
-    input: {
-      title: string;
-      description?: string;
-      vendorId?: string;
-      frequency: Frequency;
-      dayOfMonth?: number;
-      totalAmount: number;
-      currency?: string;
-      lines: RecurringPoLine[];
-      glAccount?: string;
-      notes?: string;
-      maxRuns?: number;
-      startDate?: string; // ISO string for first nextRunAt; defaults to computed
-    },
-  ) {
+  async create(organizationId: string, createdById: string, input: CreateRecurringPoInput) {
     if (!input.title) throw new BadRequestException('title is required');
     if (!['weekly', 'monthly', 'quarterly', 'annually'].includes(input.frequency)) {
       throw new BadRequestException('frequency must be weekly | monthly | quarterly | annually');
@@ -216,6 +179,10 @@ export class RecurringPoService {
     const nextRunAt = input.startDate
       ? new Date(input.startDate)
       : this.computeNextRunAt(input.frequency, input.dayOfMonth);
+    const { subtotal } = calculateRecurringPoAmounts(input.lines);
+    if (input.totalAmount !== undefined && input.totalAmount !== subtotal) {
+      throw new BadRequestException(`Total amount must equal the line total (${subtotal})`);
+    }
 
     const [rpo] = await this.db
       .insert(recurringPos)
@@ -229,9 +196,9 @@ export class RecurringPoService {
         dayOfMonth: input.dayOfMonth ?? null,
         nextRunAt,
         active: true,
-        totalAmount: String(input.totalAmount),
+        totalAmount: subtotal,
         currency: input.currency ?? 'USD',
-        lines: input.lines as any,
+        lines: input.lines,
         glAccount: input.glAccount ?? null,
         notes: input.notes ?? null,
         runCount: 0,
@@ -242,24 +209,7 @@ export class RecurringPoService {
     return this.findOne(rpo.id, organizationId);
   }
 
-  async update(
-    id: string,
-    organizationId: string,
-    input: {
-      title?: string;
-      description?: string;
-      vendorId?: string;
-      active?: boolean;
-      frequency?: Frequency;
-      dayOfMonth?: number;
-      totalAmount?: number;
-      currency?: string;
-      lines?: RecurringPoLine[];
-      glAccount?: string;
-      notes?: string;
-      maxRuns?: number;
-    },
-  ) {
+  async update(id: string, organizationId: string, input: UpdateRecurringPoInput) {
     const existing = await this.findOne(id, organizationId);
 
     const updates: Record<string, unknown> = { updatedAt: new Date() };
@@ -268,8 +218,17 @@ export class RecurringPoService {
     if (input.vendorId !== undefined) updates.vendorId = input.vendorId;
     if (input.active !== undefined) updates.active = input.active;
     if (input.currency !== undefined) updates.currency = input.currency;
-    if (input.totalAmount !== undefined) updates.totalAmount = String(input.totalAmount);
-    if (input.lines !== undefined) updates.lines = input.lines;
+    if (input.totalAmount !== undefined && input.lines === undefined) {
+      throw new BadRequestException('Update line items to change the recurring PO total');
+    }
+    if (input.lines !== undefined) {
+      updates.lines = input.lines;
+      const { subtotal } = calculateRecurringPoAmounts(input.lines);
+      if (input.totalAmount !== undefined && input.totalAmount !== subtotal) {
+        throw new BadRequestException(`Total amount must equal the line total (${subtotal})`);
+      }
+      updates.totalAmount = subtotal;
+    }
     if (input.glAccount !== undefined) updates.glAccount = input.glAccount;
     if (input.notes !== undefined) updates.notes = input.notes;
     if (input.maxRuns !== undefined) updates.maxRuns = input.maxRuns;
@@ -291,35 +250,52 @@ export class RecurringPoService {
     return this.findOne(id, organizationId);
   }
 
-  async remove(id: string, organizationId: string) {
-    await this.findOne(id, organizationId); // verify existence & ownership
-    await this.db
-      .delete(recurringPos)
-      .where(and(eq(recurringPos.id, id), eq(recurringPos.organizationId, organizationId)));
-    return { success: true };
+  async remove(id: string, organizationId: string, actorId: string) {
+    return this.db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select()
+        .from(recurringPos)
+        .where(and(eq(recurringPos.id, id), eq(recurringPos.organizationId, organizationId)))
+        .for('update');
+      if (!existing) throw new NotFoundException(`Recurring PO ${id} not found`);
+
+      const [deleted] = await tx
+        .delete(recurringPos)
+        .where(and(eq(recurringPos.id, id), eq(recurringPos.organizationId, organizationId)))
+        .returning({ id: recurringPos.id });
+      if (!deleted) throw new NotFoundException(`Recurring PO ${id} not found`);
+
+      await this.audit.log(
+        organizationId,
+        actorId,
+        'recurring_purchase_order',
+        id,
+        'deleted',
+        { title: existing.title, runCount: existing.runCount },
+        undefined,
+        tx,
+      );
+      return { success: true };
+    });
   }
 
   async triggerRun(id: string, organizationId: string, triggeredBy: string) {
-    const rpo = await this.findOne(id, organizationId);
+    return this.db.transaction(async (tx) => {
+      const [rpo] = await tx
+        .select()
+        .from(recurringPos)
+        .where(and(eq(recurringPos.id, id), eq(recurringPos.organizationId, organizationId)))
+        .for('update');
+      if (!rpo) throw new NotFoundException(`Recurring PO ${id} not found`);
+      if (!rpo.active) throw new BadRequestException('Recurring PO is paused');
+      if (!rpo.vendorId) throw new BadRequestException('A vendor must be set before running');
+      if (rpo.maxRuns !== null && rpo.maxRuns !== undefined && rpo.runCount >= rpo.maxRuns) {
+        throw new BadRequestException(`Max runs (${rpo.maxRuns}) already reached`);
+      }
 
-    if (!rpo.active) throw new BadRequestException('Recurring PO is paused');
-    if (!rpo.vendorId) throw new BadRequestException('A vendor must be set before running');
-
-    const lines = (rpo.lines as RecurringPoLine[]) ?? [];
-    if (!lines.length) throw new BadRequestException('No line items configured');
-
-    // Check maxRuns
-    if (rpo.maxRuns !== null && rpo.maxRuns !== undefined && rpo.runCount >= rpo.maxRuns) {
-      throw new BadRequestException(`Max runs (${rpo.maxRuns}) already reached`);
-    }
-
-    const poNumber = await this.nextPoNumber(organizationId);
-
-    const subtotal = lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
-
-    let createdPoId: string;
-
-    await this.db.transaction(async (tx) => {
+      const lines = parseStoredRecurringPoLines(rpo.lines);
+      const { subtotal, lineTotals } = calculateRecurringPoAmounts(lines);
+      const poNumber = await this.sequenceService.next(organizationId, 'purchase_order', tx);
       const [po] = await tx
         .insert(purchaseOrders)
         .values({
@@ -333,54 +309,50 @@ export class RecurringPoService {
           issuedBy: triggeredBy,
           currency: rpo.currency,
           notes: rpo.notes ?? undefined,
-          subtotal: String(subtotal),
+          subtotal,
           taxAmount: '0',
-          totalAmount: String(subtotal),
+          totalAmount: subtotal,
           shippingAddress: {},
           billingAddress: {},
         })
         .returning();
-
-      createdPoId = po.id;
 
       await tx.insert(poLines).values(
         lines.map((l, i) => ({
           purchaseOrderId: po.id,
           lineNumber: i + 1,
           description: l.description,
-          quantity: String(l.quantity),
+          quantity: l.quantity,
           unitOfMeasure: l.unitOfMeasure ?? 'each',
-          unitPrice: String(l.unitPrice),
-          totalPrice: String(l.quantity * l.unitPrice),
+          unitPrice: l.unitPrice,
+          totalPrice: lineTotals[i],
           glAccount: rpo.glAccount ?? undefined,
         })),
       );
-    });
+      const newRunCount = rpo.runCount + 1;
+      const reachedMax = rpo.maxRuns !== null && newRunCount >= rpo.maxRuns;
+      const nextRunAt = reachedMax
+        ? rpo.nextRunAt
+        : this.computeNextRunAt(rpo.frequency as Frequency, rpo.dayOfMonth);
 
-    // Compute new runCount and check if we should deactivate
-    const newRunCount = rpo.runCount + 1;
-    const reachedMax = rpo.maxRuns !== null && rpo.maxRuns !== undefined && newRunCount >= rpo.maxRuns;
-    const nextRunAt = reachedMax
-      ? rpo.nextRunAt
-      : this.computeNextRunAt(rpo.frequency as Frequency, rpo.dayOfMonth);
+      await tx
+        .update(recurringPos)
+        .set({
+          runCount: newRunCount,
+          lastRunAt: new Date(),
+          nextRunAt,
+          active: reachedMax ? false : true,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(recurringPos.id, id), eq(recurringPos.organizationId, organizationId)));
 
-    await this.db
-      .update(recurringPos)
-      .set({
+      return {
+        purchaseOrderId: po.id,
+        purchaseOrderNumber: poNumber,
         runCount: newRunCount,
-        lastRunAt: new Date(),
-        nextRunAt,
-        active: reachedMax ? false : true,
-        updatedAt: new Date(),
-      })
-      .where(eq(recurringPos.id, id));
-
-    return {
-      purchaseOrderId: createdPoId!,
-      purchaseOrderNumber: poNumber,
-      runCount: newRunCount,
-      reachedMax,
-    };
+        reachedMax,
+      };
+    });
   }
 
   async skipNext(id: string, organizationId: string) {

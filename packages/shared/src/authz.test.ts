@@ -78,11 +78,32 @@ test('core lifecycle permissions are catalogued and assigned to the intended bui
     'invoices:manage',
     'payments:view',
     'payments:manage',
-  ]) {
+  ] as const) {
     assert.equal(keys.has(key), true, `missing catalog key ${key}`);
   }
   assert.equal(BUILT_IN_ROLE_PERMISSIONS.requester.includes('requisitions:create'), true);
   assert.equal(BUILT_IN_ROLE_PERMISSIONS.receiver.includes('receiving:create'), true);
   assert.equal(BUILT_IN_ROLE_PERMISSIONS.approver.includes('approvals:act'), true);
   assert.equal(BUILT_IN_ROLE_PERMISSIONS.finance.includes('payments:manage'), true);
+});
+
+test('operational permissions are catalogued instead of living in a second key list', () => {
+  const keys = new Set(PERMISSION_CATALOG.map((permission) => permission.key));
+
+  for (const key of [
+    'rfqs:view',
+    'contracts:view',
+    'catalog:view',
+    'inventory:view',
+    'inventory:manage',
+    'supplier_risk:view',
+    'software_licenses:view',
+    'contracts:manage',
+  ] as const) {
+    assert.equal(keys.has(key), true, `missing catalog key ${key}`);
+  }
+
+  assert.equal(BUILT_IN_ROLE_PERMISSIONS.requester.includes('catalog:view'), true);
+  assert.equal(BUILT_IN_ROLE_PERMISSIONS.receiver.includes('inventory:manage'), true);
+  assert.equal(BUILT_IN_ROLE_PERMISSIONS.finance.includes('contracts:manage'), true);
 });

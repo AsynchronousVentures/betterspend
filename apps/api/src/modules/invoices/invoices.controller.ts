@@ -12,6 +12,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { InvoicesService, CreateInvoiceInput, MarkPaidInput } from './invoices.service';
 import { updateInvoiceSchema } from '@betterspend/shared';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
@@ -20,6 +21,7 @@ import type { AccessPolicy } from '../auth/access-policy';
 
 @ApiTags('invoices')
 @ApiBearerAuth()
+@Authenticated()
 @Controller('invoices')
 export class InvoicesController {
   constructor(private readonly invoicesService: InvoicesService) {}

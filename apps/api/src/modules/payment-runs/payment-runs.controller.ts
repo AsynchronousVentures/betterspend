@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import {
@@ -13,6 +14,7 @@ import type { AccessPolicy } from '../auth/access-policy';
 
 @ApiTags('payment-runs')
 @ApiBearerAuth()
+@Authenticated()
 @Controller('payment-runs')
 export class PaymentRunsController {
   constructor(private readonly paymentRunsService: PaymentRunsService) {}

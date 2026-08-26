@@ -1,0 +1,49 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import { parseRecurringPoCreateInput, parseStoredRecurringPoLines } from './recurring-po.input';
+
+test('recurring PO API input maps shared validation failures to HTTP 400', () => {
+  const body = {
+    title: 'Monthly office supplies',
+    frequency: 'monthly',
+    lines: [{ description: 'Paper clips', quantity: '1.00', unitPrice: '0.10' }],
+  };
+
+  assert.throws(
+    () =>
+      parseRecurringPoCreateInput({
+        ...body,
+        lines: [{ description: 'Paper clips', quantity: '1.005', unitPrice: '0.10' }],
+      }),
+    BadRequestException,
+  );
+  assert.throws(
+    () => parseRecurringPoCreateInput({ ...body, startDate: '2026-02-30' }),
+    BadRequestException,
+  );
+  assert.throws(
+    () =>
+      parseRecurringPoCreateInput({
+        ...body,
+        lines: [
+          {
+            description: 'Oversized line',
+            quantity: '99999999.99',
+            unitPrice: '9999999999.99',
+          },
+        ],
+      }),
+    BadRequestException,
+  );
+});
+
+test('recurring PO stored lines map validation failures to HTTP 500', () => {
+  assert.throws(
+    () =>
+      parseStoredRecurringPoLines([
+        { description: 'Paper clips', quantity: '1.005', unitPrice: '0.10' },
+      ]),
+    InternalServerErrorException,
+  );
+});

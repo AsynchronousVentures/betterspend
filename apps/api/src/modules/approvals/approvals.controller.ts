@@ -10,14 +10,16 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ApprovalEngineService } from './approval-engine.service';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { WorkflowExecutionService } from '../workflow-execution/workflow-execution.service';
 import { CurrentAccess } from '../auth/current-access.decorator';
 import type { AccessPolicy } from '../auth/access-policy';
 
 @ApiTags('approvals')
+@Authenticated()
 @Controller('approvals')
 export class ApprovalsController {
   constructor(
@@ -93,7 +95,7 @@ export class ApprovalsController {
   }
 
   @Post(':id/restart-on-latest')
-  @Roles('admin')
+  @Permissions('settings:manage')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Cancel a versioned workflow instance and restart it on latest' })
   restartOnLatest(

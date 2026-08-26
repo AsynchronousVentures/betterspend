@@ -11,10 +11,12 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { postMessageSchema } from '@betterspend/shared';
 import type { Request } from 'express';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { MessagesService, parseThreadType } from './messages.service';
 
 @ApiTags('messages')
+@Authenticated()
 @Controller('messages')
 export class MessagesController {
   constructor(private readonly messagesService: MessagesService) {}

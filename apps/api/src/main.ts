@@ -5,8 +5,6 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { createAuthInstance } from './auth/auth.instance';
-import { SessionGuard } from './modules/auth/session.guard';
-import { RolesGuard } from './modules/auth/roles.guard';
 import { assertDemoModeIsSafe } from './common/demo-mode';
 
 async function bootstrap() {
@@ -34,11 +32,6 @@ async function bootstrap() {
   const auth = await createAuthInstance();
   const { toNodeHandler } = await import('better-auth/node');
   app.use('/api/auth', toNodeHandler(auth.handler));
-
-  // Global guards: SessionGuard (authentication) + RolesGuard (authorization)
-  const sessionGuard = app.get(SessionGuard);
-  const rolesGuard = app.get(RolesGuard);
-  app.useGlobalGuards(sessionGuard, rolesGuard);
 
   const config = new DocumentBuilder()
     .setTitle('BetterSpend API')
