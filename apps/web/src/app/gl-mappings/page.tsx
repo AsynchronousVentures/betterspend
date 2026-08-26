@@ -75,6 +75,8 @@ function GlMappingsContent() {
     }
     if (filterSystem) {
       params.set('targetSystem', filterSystem);
+    } else {
+      params.delete('targetSystem');
     }
     const query = params.toString();
     router.replace(`/gl-mappings${query ? `?${query}` : ''}`);
