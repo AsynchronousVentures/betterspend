@@ -9,6 +9,7 @@ import {
   UserRound,
   Users,
 } from 'lucide-react';
+import { recordHref, type WorkflowRecordReference } from '@betterspend/shared';
 import { api } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { PageHeader } from '../../../components/page-header';
@@ -126,7 +127,7 @@ export default function SoftwareLicenseDetailPage({
       )
     : '—';
   const renewalRefs = Array.isArray(license.renewalRefs)
-    ? (license.renewalRefs as Array<{ action: string; kind: string; id: string; number: string; at: string }>)
+    ? (license.renewalRefs as WorkflowRecordReference[])
     : [];
 
   return (
@@ -309,7 +310,7 @@ export default function SoftwareLicenseDetailPage({
                 {renewalRefs.map((ref, index) => (
                   <div key={`${ref.id}-${index}`} className="flex items-center justify-between gap-3 text-sm">
                     <Link
-                      href={ref.kind === 'requisition' ? `/requisitions/${ref.id}` : `/rfq/${ref.id}`}
+                      href={recordHref(ref)}
                       className="font-medium text-primary underline-offset-4 hover:underline"
                     >
                       {ref.number}

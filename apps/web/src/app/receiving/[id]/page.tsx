@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { ClipboardCheck, PackageCheck, XCircle } from 'lucide-react';
 import { api } from '../../../lib/api';
+import { relatedRecordLink, type ReceivingDetail, type RelatedRecordLink } from '../../../lib/receiving';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { PageHeader } from '../../../components/page-header';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
@@ -25,27 +27,6 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 
-interface GRNLine {
-  id: string;
-  poLineId: string;
-  quantityReceived: string;
-  quantityRejected: string;
-  rejectionReason: string | null;
-  storageLocation: string | null;
-  poLine: { lineNumber: string; description: string; quantity: string } | null;
-}
-
-interface GRN {
-  id: string;
-  number: string;
-  status: string;
-  receivedDate: string;
-  notes: string | null;
-  purchaseOrder: { id: string; number: string; vendor: { name: string } | null } | null;
-  lines: GRNLine[];
-  createdAt: string;
-}
-
 function statusVariant(status: string) {
   if (status === 'confirmed') return 'success';
   if (status === 'cancelled') return 'destructive';
@@ -54,7 +35,7 @@ function statusVariant(status: string) {
 
 export default function GRNDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const [id, setId] = useState('');
-  const [grn, setGrn] = useState<GRN | null>(null);
+  const [grn, setGrn] = useState<ReceivingDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
@@ -123,6 +104,16 @@ export default function GRNDetailPage({ params }: { params: Promise<{ id: string
 
   const totalReceived = grn.lines.reduce((sum, line) => sum + parseFloat(line.quantityReceived), 0);
   const totalRejected = grn.lines.reduce((sum, line) => sum + parseFloat(line.quantityRejected), 0);
+  const purchaseOrderLink = relatedRecordLink(
+    grn.purchaseOrder ? { id: grn.purchaseOrder.id, label: grn.purchaseOrder.number } : null,
+    'purchase-orders',
+  );
+  const vendorLink = relatedRecordLink(
+    grn.purchaseOrder?.vendor
+      ? { id: grn.purchaseOrder.vendor.id, label: grn.purchaseOrder.vendor.name }
+      : null,
+    'vendors',
+  );
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -130,7 +121,7 @@ export default function GRNDetailPage({ params }: { params: Promise<{ id: string
 
       <PageHeader
         title={grn.number}
-        description={`Goods receipt for PO ${grn.purchaseOrder?.number ?? '—'} from ${grn.purchaseOrder?.vendor?.name ?? 'Unknown vendor'}.`}
+        description={`Goods receipt for PO ${purchaseOrderLink.label} from ${vendorLink.label}.`}
         actions={
           <div className="flex flex-wrap gap-3">
             <Badge variant={statusVariant(grn.status) as any} className="capitalize">
@@ -139,6 +130,11 @@ export default function GRNDetailPage({ params }: { params: Promise<{ id: string
             <Button asChild variant="outline">
               <Link href="/receiving">Back to Receiving</Link>
             </Button>
+            {purchaseOrderLink.href ? (
+              <Button asChild variant="outline">
+                <Link href={purchaseOrderLink.href}>Open PO</Link>
+              </Button>
+            ) : null}
           </div>
         }
       />
@@ -162,8 +158,8 @@ export default function GRNDetailPage({ params }: { params: Promise<{ id: string
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <DetailField label="GRN Number" value={grn.number} />
-          <DetailField label="Purchase Order" value={grn.purchaseOrder?.number ?? '—'} />
-          <DetailField label="Vendor" value={grn.purchaseOrder?.vendor?.name ?? '—'} />
+          <DetailField label="Purchase Order" value={<RelatedLink link={purchaseOrderLink} />} />
+          <DetailField label="Vendor" value={<RelatedLink link={vendorLink} />} />
           <DetailField label="Created" value={new Date(grn.createdAt).toLocaleString()} />
           <DetailField label="Status" value={grn.status.replace(/_/g, ' ')} />
           <DetailField label="Received Date" value={new Date(grn.receivedDate).toLocaleDateString()} />
@@ -226,7 +222,16 @@ export default function GRNDetailPage({ params }: { params: Promise<{ id: string
   );
 }
 
-function DetailField({ label, value }: { label: string; value: string }) {
+function RelatedLink({ link }: { link: RelatedRecordLink }) {
+  if (!link.href) return <span>{link.label}</span>;
+  return (
+    <Link href={link.href} className="text-primary hover:underline">
+      {link.label}
+    </Link>
+  );
+}
+
+function DetailField({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-lg border border-border/70 bg-background/70 p-4">
       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>

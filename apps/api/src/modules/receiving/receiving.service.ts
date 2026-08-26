@@ -22,6 +22,33 @@ export interface CreateGrnInput {
   }>;
 }
 
+export type ReceivingPurchaseOrderSummary = {
+  id: string;
+  number: string;
+  vendor: { id: string; name: string } | null;
+};
+
+export type ReceivingListItem = typeof goodsReceipts.$inferSelect & {
+  purchaseOrder: ReceivingPurchaseOrderSummary | null;
+  lines: (typeof goodsReceiptLines.$inferSelect)[];
+};
+
+export type ReceivingDetail = typeof goodsReceipts.$inferSelect & {
+  purchaseOrder: ReceivingPurchaseOrderSummary | null;
+  lines: Array<
+    (typeof goodsReceiptLines.$inferSelect) & {
+      poLine: (typeof poLines.$inferSelect) | null;
+    }
+  >;
+};
+
+type PurchaseOrderRelation = {
+  id: string;
+  number: string;
+  organizationId?: string;
+  vendor?: { id: string; name: string; organizationId?: string } | null;
+};
+
 @Injectable()
 export class ReceivingService {
   constructor(
@@ -32,24 +59,56 @@ export class ReceivingService {
     private readonly inventoryService: InventoryService,
   ) {}
 
-  async findAll(organizationId: string) {
-    return this.db.query.goodsReceipts.findMany({
+  async findAll(organizationId: string): Promise<ReceivingListItem[]> {
+    const rows = await this.db.query.goodsReceipts.findMany({
       where: (g, { eq }) => eq(g.organizationId, organizationId),
-      with: { lines: true },
+      with: {
+        lines: true,
+        purchaseOrder: {
+          columns: { id: true, number: true, organizationId: true },
+          with: { vendor: { columns: { id: true, name: true, organizationId: true } } },
+        },
+      },
       orderBy: (g, { desc }) => desc(g.createdAt),
     });
+
+    return rows.map((row) => ({
+      ...row,
+      purchaseOrder: this.toPurchaseOrderSummary(row.purchaseOrder, organizationId),
+    }));
   }
 
-  async findOne(id: string, organizationId: string) {
+  async findOne(id: string, organizationId: string): Promise<ReceivingDetail> {
     const grn = await this.db.query.goodsReceipts.findFirst({
       where: (g, { and, eq }) => and(eq(g.id, id), eq(g.organizationId, organizationId)),
       with: {
         lines: { with: { poLine: true } },
-        purchaseOrder: { with: { vendor: true, lines: true } },
+        purchaseOrder: {
+          columns: { id: true, number: true, organizationId: true },
+          with: { vendor: { columns: { id: true, name: true, organizationId: true } } },
+        },
       },
     });
     if (!grn) throw new NotFoundException(`GRN ${id} not found`);
-    return grn;
+    return {
+      ...grn,
+      purchaseOrder: this.toPurchaseOrderSummary(grn.purchaseOrder, organizationId),
+    };
+  }
+
+  private toPurchaseOrderSummary(
+    purchaseOrder: PurchaseOrderRelation | null | undefined,
+    organizationId: string,
+  ): ReceivingPurchaseOrderSummary | null {
+    if (!purchaseOrder || purchaseOrder.organizationId !== organizationId) return null;
+
+    return {
+      id: purchaseOrder.id,
+      number: purchaseOrder.number,
+      vendor: purchaseOrder.vendor?.organizationId === organizationId
+        ? { id: purchaseOrder.vendor.id, name: purchaseOrder.vendor.name }
+        : null,
+    };
   }
 
   async create(organizationId: string, input: CreateGrnInput) {

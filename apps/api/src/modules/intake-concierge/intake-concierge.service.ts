@@ -1,6 +1,6 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
-import { createRequisitionSchema, type CreateRequisitionInput } from '@betterspend/shared';
+import { recordHref, createRequisitionSchema, type CreateRequisitionInput } from '@betterspend/shared';
 import {
   intakeConciergeSessions,
   procurementPolicies,
@@ -24,7 +24,6 @@ interface PolicyLike {
   rules: Record<string, unknown>;
   source: 'default' | 'admin';
 }
-
 interface Citation {
   sourceType: 'policy' | 'approval_rule' | 'budget' | 'catalog' | 'contract' | 'software_license' | 'vendor';
   sourceId: string;
@@ -359,7 +358,7 @@ export class IntakeConciergeService {
 
       return {
         workflow,
-        url: '/rfq',
+        url: recordHref({ kind: 'rfq', id: created.id }),
         draftType: 'rfq',
         draftId: created.id,
         rfq: created,

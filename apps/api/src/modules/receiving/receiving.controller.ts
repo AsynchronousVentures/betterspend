@@ -1,6 +1,11 @@
 import { Controller, Get, Post, Patch, Body, Param } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { ReceivingService, CreateGrnInput } from './receiving.service';
+import {
+  ReceivingService,
+  CreateGrnInput,
+  ReceivingDetail,
+  ReceivingListItem,
+} from './receiving.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 
@@ -12,13 +17,13 @@ export class ReceivingController {
 
   @Get()
   @ApiOperation({ summary: 'List all goods receipts' })
-  findAll(@CurrentOrgId() orgId: string) {
+  findAll(@CurrentOrgId() orgId: string): Promise<ReceivingListItem[]> {
     return this.receivingService.findAll(orgId);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a GRN by ID' })
-  findOne(@Param('id') id: string, @CurrentOrgId() orgId: string) {
+  findOne(@Param('id') id: string, @CurrentOrgId() orgId: string): Promise<ReceivingDetail> {
     return this.receivingService.findOne(id, orgId);
   }
 

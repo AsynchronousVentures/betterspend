@@ -1,7 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
+import { recordHref } from '@betterspend/shared';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
 import { MessageThread } from '../../components/message-thread';
@@ -50,12 +52,19 @@ function formatMoney(amount: string | number, currency = 'USD') {
   return Number(amount).toLocaleString('en-US', { style: 'currency', currency });
 }
 
-export default function RfqPage() {
+export interface RfqPageProps {
+  initialSelectedId?: string;
+}
+
+export default function RfqPage({ initialSelectedId }: RfqPageProps = {}) {
+  const router = useRouter();
   const [rfqs, setRfqs] = useState<RfqSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
   const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initialSelectedId ?? null);
+  const [selectedNotFound, setSelectedNotFound] = useState(false);
+  const detailRequestId = useRef(0);
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'responses' | 'messages'>('overview');
@@ -87,6 +96,19 @@ export default function RfqPage() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (!initialSelectedId) {
+      detailRequestId.current += 1;
+      setSelected(null);
+      setDetail(null);
+      setSelectedNotFound(false);
+      return;
+    }
+
+    setSelected(initialSelectedId);
+    void loadDetail(initialSelectedId);
+  }, [initialSelectedId]);
+
   async function loadRfqs() {
     setLoading(true);
     try {
@@ -100,18 +122,31 @@ export default function RfqPage() {
   }
 
   async function loadDetail(id: string) {
+    const requestId = ++detailRequestId.current;
     setSelected(id);
+    setSelectedNotFound(false);
     setMessageRecipientVendorId('');
     setDetailLoading(true);
     setDetailTab('overview');
     try {
       const data = await (api as any).rfq.get(id);
+      if (requestId !== detailRequestId.current) return;
       setDetail(data);
-    } catch {
+    } catch (loadError) {
+      if (requestId !== detailRequestId.current) return;
       setDetail(null);
+      if (loadError instanceof Error && /not found/i.test(loadError.message)) {
+        setSelectedNotFound(true);
+      } else {
+        setError('Failed to load RFQ');
+      }
     } finally {
-      setDetailLoading(false);
+      if (requestId === detailRequestId.current) setDetailLoading(false);
     }
+  }
+
+  function selectRfq(id: string) {
+    router.push(recordHref({ kind: 'rfq', id }));
   }
 
   function showSuccess(message: string) {
@@ -278,7 +313,7 @@ export default function RfqPage() {
                   className={`cursor-pointer rounded-lg transition-colors ${
                     selected === rfq.id ? 'border-primary shadow-lg' : ''
                   }`}
-                  onClick={() => void loadDetail(rfq.id)}
+                  onClick={() => selectRfq(rfq.id)}
                 >
                   <CardContent className="space-y-3 p-5">
                     <div className="flex flex-wrap items-center gap-3">
@@ -327,8 +362,7 @@ export default function RfqPage() {
                       type="button"
                       variant="ghost"
                       onClick={() => {
-                        setSelected(null);
-                        setDetail(null);
+                        router.replace('/rfq');
                       }}
                     >
                       Close
@@ -630,6 +664,15 @@ export default function RfqPage() {
                     </div>
                   ) : null}
                 </>
+              ) : selectedNotFound ? (
+                <Alert variant="destructive">
+                  <AlertDescription>
+                    RFQ not found.{' '}
+                    <Link href="/rfq" className="underline underline-offset-4">
+                      Back to RFQs
+                    </Link>
+                  </AlertDescription>
+                </Alert>
               ) : null}
             </CardContent>
           </Card>
