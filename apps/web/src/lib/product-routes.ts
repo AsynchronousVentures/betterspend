@@ -700,6 +700,7 @@ export function productSearchResults(
   const grantedPermissions = grantedPermissionSet(permissions);
   const destinations = PRODUCT_ROUTES.filter(
     (route) =>
+      route.placements.includes('search') &&
       hasGrantedPermission(route.requiredPermissions, grantedPermissions) &&
       matchesSearch(normalizedQuery, route.label, route.aliases),
   ).map((route) => ({
@@ -711,22 +712,34 @@ export function productSearchResults(
   }));
 
   const actions = PRODUCT_ROUTES.flatMap((route) =>
-    (route.actions ?? []).flatMap((action) => {
-      if (!hasGrantedPermission(action.requiredPermissions, grantedPermissions)) return [];
-      if (!matchesSearch(normalizedQuery, action.label, action.aliases)) return [];
-      return [
-        {
-          key: `action:${action.key}`,
-          label: action.label,
-          href: action.href,
-          resultType: 'Action' as const,
-          section: route.section,
-        },
-      ];
-    }),
+    route.placements.includes('search') &&
+    hasGrantedPermission(route.requiredPermissions, grantedPermissions)
+      ? (route.actions ?? []).flatMap((action) => {
+          if (!hasGrantedPermission(action.requiredPermissions, grantedPermissions)) return [];
+          if (!matchesSearch(normalizedQuery, action.label, action.aliases)) return [];
+          return [
+            {
+              key: `action:${action.key}`,
+              label: action.label,
+              href: action.href,
+              resultType: 'Action' as const,
+              section: route.section,
+            },
+          ];
+        })
+      : [],
   );
 
   return [...destinations, ...actions];
+}
+
+export function productActionForPathname(pathname: string): ProductRouteAction | undefined {
+  return PRODUCT_ROUTES.flatMap((route) => route.actions ?? [])
+    .filter(
+      (action) =>
+        action.href === pathname || (action.href !== '/' && pathname.startsWith(`${action.href}/`)),
+    )
+    .sort((left, right) => right.href.length - left.href.length)[0];
 }
 
 export function productRouteForPathname(pathname: string): ProductRoute | undefined {

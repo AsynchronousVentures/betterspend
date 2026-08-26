@@ -3,7 +3,9 @@ import test from 'node:test';
 import { BUILT_IN_ROLE_PERMISSIONS } from '@betterspend/shared';
 import {
   PRODUCT_ROUTES,
+  canAccessProductRoute,
   productNavigationSections,
+  productActionForPathname,
   productRouteForPathname,
   productSearchResults,
   visibleProductRoutes,
@@ -104,4 +106,20 @@ test('product search only returns permitted destinations and common actions', ()
 test('specific product routes win when resolving a saved nested URL', () => {
   assert.equal(productRouteForPathname('/vendors/onboarding')?.key, 'supplier-onboarding');
   assert.equal(productRouteForPathname('/purchase-orders/new')?.key, 'purchase-orders');
+  assert.equal(productActionForPathname('/purchase-orders/new')?.key, 'create-purchase-order');
+});
+
+test('direct route access uses the same capability metadata as navigation', () => {
+  const paymentRuns = PRODUCT_ROUTES.find((route) => route.key === 'payment-runs');
+  assert.ok(paymentRuns);
+  const createPurchaseOrder = productActionForPathname('/purchase-orders/new');
+  assert.ok(createPurchaseOrder);
+
+  assert.equal(canAccessProductRoute(paymentRuns, BUILT_IN_ROLE_PERMISSIONS.finance), true);
+  assert.equal(canAccessProductRoute(paymentRuns, BUILT_IN_ROLE_PERMISSIONS.requester), false);
+  assert.equal(canAccessProductRoute(createPurchaseOrder, BUILT_IN_ROLE_PERMISSIONS.finance), true);
+  assert.equal(
+    canAccessProductRoute(createPurchaseOrder, BUILT_IN_ROLE_PERMISSIONS.requester),
+    false,
+  );
 });

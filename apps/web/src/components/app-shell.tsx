@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { isRecordKind, recordHref } from '@betterspend/shared';
 import {
   Bell,
   ChevronRight,
   Command,
+  LockKeyhole,
   Menu,
   Search,
   Settings2,
@@ -15,15 +16,23 @@ import {
   X,
 } from 'lucide-react';
 import SidebarNav from './sidebar-nav';
-import { api } from '../lib/api';
+import { api, loadFailureState } from '../lib/api';
 import { useIsMobile, useMediaQuery } from '../lib/use-media-query';
 import { useBranding } from '../lib/branding';
+import {
+  canAccessProductRoute,
+  productActionForPathname,
+  productRouteForPathname,
+  productSearchResults,
+  type ProductSearchResult,
+} from '../lib/product-routes';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Separator } from './ui/separator';
 import { cn } from '../lib/utils';
+import { useAccess } from './access-provider';
 
 function OfflineIndicator() {
   const [isOffline, setIsOffline] = useState(false);
@@ -61,6 +70,8 @@ const TYPE_LABELS: Record<string, string> = {
   invoice: 'Inv',
   vendor: 'Vendor',
   catalog_item: 'Catalog',
+  product_destination: 'Destination',
+  product_action: 'Action',
 };
 
 const TYPE_TONE: Record<string, string> = {
@@ -69,7 +80,64 @@ const TYPE_TONE: Record<string, string> = {
   invoice: 'bg-amber-100 text-amber-800',
   vendor: 'bg-violet-100 text-violet-800',
   catalog_item: 'bg-sky-100 text-sky-800',
+  product_destination: 'bg-primary/12 text-primary',
+  product_action: 'bg-amber-100 text-amber-800',
 };
+
+interface SearchResult {
+  readonly id: string;
+  readonly _type: string;
+  readonly _href: string;
+  readonly _label: string;
+  readonly status?: string;
+}
+
+function displayProductSearchResult(result: ProductSearchResult): SearchResult {
+  return {
+    id: result.key,
+    _type: result.resultType === 'Destination' ? 'product_destination' : 'product_action',
+    _href: result.href,
+    _label: result.label,
+  };
+}
+
+function recordSearchResults(data: unknown): SearchResult[] {
+  if (!data || typeof data !== 'object') return [];
+
+  const response = data as Record<string, unknown>;
+  const resultGroups = [
+    ['requisitions', 'requisition'],
+    ['purchaseOrders', 'purchase_order'],
+    ['invoices', 'invoice'],
+    ['vendors', 'vendor'],
+    ['catalogItems', 'catalog_item'],
+  ] as const;
+
+  return resultGroups.flatMap(([group, type]) => {
+    const records = response[group];
+    if (!Array.isArray(records)) return [];
+    return records.flatMap((record): SearchResult[] => {
+      if (!record || typeof record !== 'object') return [];
+      const item = record as Record<string, unknown>;
+      if (
+        typeof item.id !== 'string' ||
+        typeof item._href !== 'string' ||
+        typeof item._label !== 'string'
+      ) {
+        return [];
+      }
+      return [
+        {
+          id: item.id,
+          _type: type,
+          _href: item._href,
+          _label: item._label,
+          ...(typeof item.status === 'string' ? { status: item.status } : {}),
+        },
+      ];
+    });
+  });
+}
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -84,8 +152,9 @@ function timeAgo(dateStr: string): string {
 
 function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   const router = useRouter();
+  const { access } = useAccess();
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = useState<SearchResult[]>([]);
   const [totalResults, setTotalResults] = useState(0);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -94,6 +163,10 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visibleProductResults = useMemo(
+    () => productSearchResults(query, access?.permissions ?? []),
+    [access?.permissions, query],
+  );
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -118,13 +191,10 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
       setLoading(true);
       api.search
         .query(query)
-        .then((data: any) => {
-          const all: any[] = [
-            ...data.requisitions,
-            ...data.purchaseOrders,
-            ...data.invoices,
-            ...data.vendors,
-            ...data.catalogItems,
+        .then((data: unknown) => {
+          const all = [
+            ...visibleProductResults.map(displayProductSearchResult),
+            ...recordSearchResults(data),
           ];
           setTotalResults(all.length);
           setResults(all.slice(0, 10));
@@ -132,13 +202,15 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
           setOpen(true);
         })
         .catch(() => {
-          setResults([]);
-          setTotalResults(0);
-          setActiveIndex(-1);
+          const fallback = visibleProductResults.map(displayProductSearchResult);
+          setResults(fallback.slice(0, 10));
+          setTotalResults(fallback.length);
+          setActiveIndex(fallback.length > 0 ? 0 : -1);
+          setOpen(fallback.length > 0);
         })
         .finally(() => setLoading(false));
     }, 300);
-  }, [query]);
+  }, [query, visibleProductResults]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -231,7 +303,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
             if (results.length > 0 || recentSearches.length > 0) setOpen(true);
           }}
           onKeyDown={handleKeyDown}
-          placeholder="Search requisitions, POs, invoices..."
+          placeholder="Search records, destinations, actions..."
           className="h-9 rounded-md border-border/70 bg-background/85 pl-10 pr-10 shadow-none backdrop-blur"
         />
         {loading ? (
@@ -317,6 +389,79 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
       ) : null}
     </div>
   );
+}
+
+function AccessDeniedState({ routeLabel }: { routeLabel?: string }) {
+  return (
+    <div
+      role="alert"
+      className="flex min-h-[300px] flex-col items-center justify-center gap-4 px-6 text-center"
+    >
+      <LockKeyhole className="h-6 w-6 text-destructive" aria-hidden="true" />
+      <div>
+        <h1 className="text-base font-semibold text-foreground">Access denied</h1>
+        <p className="mt-1 max-w-md text-sm text-muted-foreground">
+          {routeLabel
+            ? `You do not have permission to open ${routeLabel}. Return to your work or ask an administrator for access.`
+            : 'You do not have access to this section. Return to your work or ask an administrator for access.'}
+        </p>
+      </div>
+      <Link
+        href="/"
+        className="text-sm font-semibold text-primary transition-colors hover:text-primary/80"
+      >
+        Return to dashboard
+      </Link>
+    </div>
+  );
+}
+
+function ProductRouteAccessBoundary({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const { access, error, loading, resolved, refresh } = useAccess();
+  const route = productRouteForPathname(pathname);
+  const action = productActionForPathname(pathname);
+
+  if (!resolved || loading) {
+    return (
+      <div role="status" aria-live="polite" className="p-8 text-sm text-muted-foreground">
+        Checking access...
+      </div>
+    );
+  }
+
+  if (error) {
+    if (loadFailureState(error) === 'denied') return <AccessDeniedState />;
+
+    return (
+      <div
+        role="alert"
+        className="flex min-h-[300px] flex-col items-center justify-center gap-4 px-6 text-center"
+      >
+        <p className="text-base font-semibold text-foreground">Unable to verify access</p>
+        <p className="max-w-md text-sm text-muted-foreground">
+          Try again. If this keeps happening, contact your administrator.
+        </p>
+        <Button type="button" variant="outline" onClick={() => void refresh()}>
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
+  if (!access) {
+    return <AccessDeniedState />;
+  }
+
+  if (action && action.href !== route?.href && !canAccessProductRoute(action, access.permissions)) {
+    return <AccessDeniedState routeLabel={action.label} />;
+  }
+
+  if (route && !canAccessProductRoute(route, access.permissions)) {
+    return <AccessDeniedState routeLabel={route.label} />;
+  }
+
+  return <>{children}</>;
 }
 
 function EntitySwitcher() {
@@ -856,7 +1001,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
         <main className="flex-1 overflow-x-auto">
           <div className="mx-auto min-h-[calc(100vh-4.5rem)] w-full max-w-[1440px]">
-            {children}
+            <ProductRouteAccessBoundary>{children}</ProductRouteAccessBoundary>
           </div>
         </main>
       </div>
