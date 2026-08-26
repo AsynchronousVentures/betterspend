@@ -175,7 +175,10 @@ test('deploys the validated release tag and runs the shared preflight in fast CI
       .length,
     1,
   );
-  assert.match(workflow, /name: Run local CI preflight\n        run: pnpm ci:preflight/);
+  assert.match(
+    workflow,
+    /name: Run local CI preflight\n        if: needs\.change-scope\.outputs\.runtime == 'true'\n        run: pnpm ci:preflight/,
+  );
 });
 
 test('avoids duplicate Blacksmith work for promoted PRs and validated commits', () => {
@@ -193,7 +196,7 @@ test('avoids duplicate Blacksmith work for promoted PRs and validated commits', 
   assert.match(workflow, /check\.app\?\.slug === 'github-actions'/);
   assert.match(
     workflow,
-    /needs\.full-ci-proof\.outputs\.available != 'true'[\s\S]*?runs-on: blacksmith-2vcpu-ubuntu-2404[\s\S]*?timeout-minutes: 30/,
+    /needs\.change-scope\.outputs\.runtime == 'true'[\s\S]*?needs\.full-ci-proof\.outputs\.available != 'true'[\s\S]*?runs-on: blacksmith-2vcpu-ubuntu-2404[\s\S]*?timeout-minutes: 30/,
   );
   assert.match(
     workflow,
@@ -214,7 +217,24 @@ test('avoids duplicate Blacksmith work for promoted PRs and validated commits', 
   );
   assert.match(
     workflow,
-    /validate:\n    name: Validate\n    if: always\(\)\n    needs: \[fast-ci, full-ci-proof, full-ci\]/,
+    /validate:\n    name: Validate\n    if: always\(\)\n    needs: \[change-scope, fast-ci, full-ci-proof, full-ci\]/,
   );
   assert.match(workflow, /deploy:[\s\S]*?runs-on: ubuntu-latest[\s\S]*?timeout-minutes: 15/);
+});
+
+test('keeps the required Validate check while skipping expensive non-runtime validation', () => {
+  assert.match(workflow, /change-scope:\n    name: Classify Changes/);
+  assert.match(workflow, /merge_group\) base_sha="\$MERGE_GROUP_BASE_SHA"/);
+  assert.match(workflow, /git diff --name-only -z "\$base_sha" "\$GITHUB_SHA"/);
+  assert.match(workflow, /node \.github\/scripts\/ci-change-policy\.mjs --force-runtime/);
+  assert.match(
+    workflow,
+    /name: Fast CI[\s\S]*?Accept non-runtime changes[\s\S]*?needs\.change-scope\.outputs\.runtime != 'true'/,
+  );
+  assert.match(workflow, /full-ci:[\s\S]*?needs\.change-scope\.outputs\.runtime == 'true'/);
+  assert.match(
+    workflow,
+    /elif \[ "\$RUNTIME_VALIDATION" = "false" \]; then[\s\S]*?test "\$FULL_CI_RESULT" = "skipped"/,
+  );
+  assert.doesNotMatch(workflow, /paths-ignore:/);
 });

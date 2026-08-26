@@ -36,6 +36,11 @@ test('keeps CodeRabbit manual', () => {
 
 test('waits for Fast CI before Macroscope evaluates approvability', () => {
   assert.match(approvabilityConfig, /^---\nwaitsFor:\n  - "Fast CI"\nconclusion: neutral\n---\n/);
+  assert.match(
+    approvabilityConfig,
+    /Auto-approve only after the Fast CI check for the pull request's current head has completed successfully\./,
+  );
+  assert.match(approvabilityConfig, /skipped, cancelled, neutral, or failed Fast CI check/);
 });
 
 test('records the supported reviewer feedback mechanisms', () => {

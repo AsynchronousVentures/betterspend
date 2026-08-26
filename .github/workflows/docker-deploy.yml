@@ -1,9 +1,9 @@
 name: Docker CI/CD
 
 # Flow:
-#   draft PR          -> fast CI -> agent marks ready -> Macroscope or human approval
-#   merge group       -> full CI -> validate result
-#   push to main      -> reuse exact-SHA CI proof (or full CI) -> publish immutable images
+#   draft PR          -> classify -> fast CI or non-runtime pass -> agent marks ready
+#   merge group       -> classify -> full CI or non-runtime pass -> validate result
+#   push to main      -> reuse proof, full CI, or non-runtime pass -> publish images
 #   push v* tag       -> reuse exact-SHA CI proof (or full CI) -> promote -> deploy
 #   workflow_dispatch -> full CI -> validate result (manual re-check / republish)
 #
@@ -39,35 +39,101 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  fast-ci:
-    name: Fast CI
-    if: github.event_name == 'pull_request'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 15
+  change-scope:
+    name: Classify Changes
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    outputs:
+      runtime: ${{ steps.scope.outputs.runtime }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed files
+        id: scope
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request) base_sha="$PR_BASE_SHA" ;;
+            merge_group) base_sha="$MERGE_GROUP_BASE_SHA" ;;
+            push)
+              if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+                node .github/scripts/ci-change-policy.mjs --force-runtime
+                exit
+              fi
+              base_sha="$BEFORE_SHA"
+              ;;
+            workflow_dispatch)
+              node .github/scripts/ci-change-policy.mjs --force-runtime
+              exit
+              ;;
+            *)
+              echo "Unsupported event: $EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+
+          if ! [[ "$base_sha" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] ||
+            ! git cat-file -e "$base_sha^{commit}"; then
+            echo "Unable to resolve a safe comparison base; requiring runtime validation."
+            node .github/scripts/ci-change-policy.mjs --force-runtime
+            exit
+          fi
+
+          git diff --name-only -z "$base_sha" "$GITHUB_SHA" |
+            node .github/scripts/ci-change-policy.mjs --stdin0
+
+  fast-ci:
+    name: Fast CI
+    needs: change-scope
+    if: >-
+      !cancelled()
+      && github.event_name == 'pull_request'
+      && needs.change-scope.result == 'success'
+    runs-on: ${{ needs.change-scope.outputs.runtime == 'true' && 'blacksmith-2vcpu-ubuntu-2404' || 'ubuntu-slim' }}
+    timeout-minutes: 15
+    steps:
+      - name: Accept non-runtime changes
+        if: needs.change-scope.outputs.runtime != 'true'
+        run: echo "Runtime validation is not required for this change set."
+
+      - name: Check out repository
+        if: needs.change-scope.outputs.runtime == 'true'
+        uses: actions/checkout@v7
 
       - name: Set up pnpm
+        if: needs.change-scope.outputs.runtime == 'true'
         uses: pnpm/action-setup@v6
         with:
           version: 10.15.1
 
       - name: Set up Node.js
+        if: needs.change-scope.outputs.runtime == 'true'
         uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
 
       - name: Install dependencies
+        if: needs.change-scope.outputs.runtime == 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Run local CI preflight
+        if: needs.change-scope.outputs.runtime == 'true'
         run: pnpm ci:preflight
 
   full-ci-proof:
     name: Full CI Proof
-    if: github.event_name == 'push'
+    needs: change-scope
+    if: >-
+      github.event_name == 'push'
+      && needs.change-scope.outputs.runtime == 'true'
     runs-on: ubuntu-slim
     timeout-minutes: 5
     outputs:
@@ -121,9 +187,11 @@ jobs:
     name: Full CI
     # Merge groups validate GitHub's combined queue SHA. A direct push still
     # runs here when that exact commit has no successful Full CI proof.
-    needs: [full-ci-proof]
+    needs: [change-scope, full-ci-proof]
     if: >-
       !cancelled()
+      && needs.change-scope.result == 'success'
+      && needs.change-scope.outputs.runtime == 'true'
       && github.event_name != 'pull_request'
       && needs.full-ci-proof.outputs.available != 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -236,20 +304,29 @@ jobs:
   validate:
     name: Validate
     if: always()
-    needs: [fast-ci, full-ci-proof, full-ci]
+    needs: [change-scope, fast-ci, full-ci-proof, full-ci]
     runs-on: ubuntu-slim
     timeout-minutes: 5
     steps:
       - name: Report validation result
         env:
+          CHANGE_SCOPE_RESULT: ${{ needs.change-scope.result }}
           FAST_CI_RESULT: ${{ needs.fast-ci.result }}
           FULL_CI_PROOF: ${{ needs.full-ci-proof.outputs.available }}
           FULL_CI_PROOF_RESULT: ${{ needs.full-ci-proof.result }}
           FULL_CI_RESULT: ${{ needs.full-ci.result }}
           EVENT_NAME: ${{ github.event_name }}
+          RUNTIME_VALIDATION: ${{ needs.change-scope.outputs.runtime }}
         run: |
+          test "$CHANGE_SCOPE_RESULT" = "success"
+          case "$RUNTIME_VALIDATION" in true|false) ;; *) exit 1 ;; esac
+
           if [ "$EVENT_NAME" = "pull_request" ]; then
             test "$FAST_CI_RESULT" = "success"
+            test "$FULL_CI_RESULT" = "skipped"
+          elif [ "$RUNTIME_VALIDATION" = "false" ]; then
+            test "$FAST_CI_RESULT" = "skipped"
+            test "$FULL_CI_PROOF_RESULT" = "skipped"
             test "$FULL_CI_RESULT" = "skipped"
           else
             test "$FAST_CI_RESULT" = "skipped"
