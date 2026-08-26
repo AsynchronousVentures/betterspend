@@ -37,7 +37,14 @@ test('keeps every record type on the shared canonical route map', () => {
 
 test('encodes record identifiers before constructing a route', () => {
   assert.equal(recordHref({ kind: 'rfq', id: 'rfq/with spaces' }), '/rfq/rfq%2Fwith%20spaces');
-  assert.equal(recordHref({ kind: 'payment_run', id: 'run/with spaces' }), '/payment-runs?run=run%2Fwith%20spaces');
+  assert.equal(
+    recordHref({ kind: 'payment_run', id: 'run/with spaces' }),
+    '/payment-runs?run=run%2Fwith%20spaces',
+  );
+  assert.equal(
+    recordHref({ kind: 'gl_export_job', id: 'job/with spaces' }),
+    '/gl-mappings?view=export-history&job=job%2Fwith%20spaces',
+  );
 });
 
 test('fails explicitly when a caller tries to link a record without an id', () => {

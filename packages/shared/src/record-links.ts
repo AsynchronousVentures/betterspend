@@ -49,8 +49,10 @@ export function recordHref(record: { kind: RecordKind; id: string }): string {
   }
 
   const id = encodeURIComponent(record.id);
-  if (record.kind === 'payment_run') return `/payment-runs?run=${id}`;
-  if (record.kind === 'gl_export_job') return `/gl-mappings?view=export-history&job=${id}`;
+  if (record.kind === 'payment_run') return `/${RECORD_ROUTES[record.kind]}?run=${id}`;
+  if (record.kind === 'gl_export_job') {
+    return `/${RECORD_ROUTES[record.kind]}?view=export-history&job=${id}`;
+  }
 
   return `/${RECORD_ROUTES[record.kind]}/${id}`;
 }

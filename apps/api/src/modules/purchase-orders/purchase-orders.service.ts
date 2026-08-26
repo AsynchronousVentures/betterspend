@@ -116,6 +116,29 @@ export function purchaseOrderScopeEntityId(
   return linkedRequisition ? null : (input.entityId ?? null);
 }
 
+/** Keeps version history independent from the caller's related-record access. */
+export function createChangeOrderSnapshot<
+  T extends {
+    lines: readonly { matchedContract?: unknown }[];
+    goodsReceipts?: unknown;
+    invoices?: unknown;
+    commitmentEvents?: unknown;
+  },
+>(po: T) {
+  const {
+    lines,
+    goodsReceipts: _goodsReceipts,
+    invoices: _invoices,
+    commitmentEvents: _commitmentEvents,
+    ...purchaseOrder
+  } = po;
+
+  return {
+    po: purchaseOrder,
+    lines: lines.map(({ matchedContract: _matchedContract, ...line }) => line),
+  };
+}
+
 function purchaseOrderScopePredicates(organizationId: string) {
   return {
     own: (userId: string) =>
@@ -763,6 +786,7 @@ export class PurchaseOrdersService {
   ) {
     const po = await this.findOne(id, organizationId, access);
     assertPurchaseOrderScope(access, 'purchase_orders:manage', po, changedBy);
+    const snapshot = createChangeOrderSnapshot(po);
 
     if (['closed', 'cancelled'].includes(po.status)) {
       throw new BadRequestException(`Cannot create change order for ${po.status} PO`);
@@ -775,7 +799,7 @@ export class PurchaseOrdersService {
         version: po.version,
         changeReason: input.changeReason,
         changedBy,
-        snapshot: { po, lines: po.lines } as any,
+        snapshot: snapshot as any,
         diffSummary: {
           previousVersion: po.version,
           notes: input.notes,
