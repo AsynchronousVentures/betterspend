@@ -15,3 +15,17 @@ test('rounds decimal values half away from zero for the display currency', () =>
   assert.equal(total, '101');
   assert.equal(formatCurrencyMinorUnits(total, 'USD'), '$1.01');
 });
+
+test('rounds after aggregating amounts at a finer scale than the currency', () => {
+  const total = sumCurrencyAmounts(['0.4', '0.4'], 'JPY');
+
+  assert.equal(total, '1');
+  assert.equal(formatCurrencyMinorUnits(total, 'JPY'), '¥1');
+});
+
+test('preserves signed invoice amounts in the total preview', () => {
+  const total = sumCurrencyAmounts(['-10.00', '3.25'], 'USD');
+
+  assert.equal(total, '-675');
+  assert.equal(formatCurrencyMinorUnits(total, 'USD'), '-$6.75');
+});
