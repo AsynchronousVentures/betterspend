@@ -123,11 +123,15 @@ describe('supplier operational authorization regressions', () => {
 
   it('keeps vendorless catalog items global-only under an entity-scoped grant', async () => {
     let insertCalled = false;
-    const db = {
+    const transaction = {
       insert: () => {
         insertCalled = true;
         throw new Error('vendorless item escaped scope validation');
       },
+    };
+    const db = {
+      transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) =>
+        callback(transaction),
     } as unknown as Db;
     const service = new CatalogService(
       db,
@@ -148,25 +152,21 @@ describe('supplier operational authorization regressions', () => {
 
   it('does not update a catalog item after its vendor leaves scope', async () => {
     let updateCalled = false;
-    const db = {
-      select: () => ({
+    const existing = {
+      id: 'item-1',
+      organizationId,
+      vendorId: 'vendor-1',
+      name: 'Scoped item',
+    };
+    const transaction = {
+      select: (selection?: unknown) => ({
         from: () => ({
-          where: () => ({}),
+          where: () => ({
+            for: async () =>
+              selection === undefined ? [existing] : [{ id: 'vendor-1', entityId: 'entity-1' }],
+          }),
         }),
       }),
-      query: {
-        catalogItems: {
-          findFirst: async () => ({
-            id: 'item-1',
-            organizationId,
-            vendorId: 'vendor-1',
-            name: 'Scoped item',
-          }),
-        },
-        catalogPriceProposals: {
-          findMany: async () => [],
-        },
-      },
       update: () => ({
         set: () => ({
           where: () => ({
@@ -177,6 +177,15 @@ describe('supplier operational authorization regressions', () => {
           }),
         }),
       }),
+    };
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: () => ({}),
+        }),
+      }),
+      transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) =>
+        callback(transaction),
     } as unknown as Db;
     const service = new CatalogService(
       db,

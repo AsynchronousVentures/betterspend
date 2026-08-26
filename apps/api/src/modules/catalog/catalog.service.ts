@@ -16,6 +16,8 @@ import { SettingsService } from '../settings/settings.service';
 import type { AccessPolicy } from '../auth/access-policy';
 import { operationalScope, scopedVendorPredicate } from '../auth/operational-access';
 
+type CatalogTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
+
 export interface CreateCatalogItemInput {
   vendorId?: string;
   sku?: string;
@@ -148,22 +150,45 @@ export class CatalogService {
   }
 
   async create(organizationId: string, input: CreateCatalogItemInput, access?: AccessPolicy) {
-    await this.assertVendorScope(organizationId, access, 'catalog:manage', input.vendorId);
-    const [item] = await this.db
-      .insert(catalogItems)
-      .values({
+    const item = await this.db.transaction(async (tx) => {
+      await this.assertVendorScopeInTransaction(
+        tx,
         organizationId,
-        vendorId: input.vendorId ?? null,
-        sku: input.sku ?? null,
-        name: input.name,
-        description: input.description ?? null,
-        category: input.category ?? null,
-        unitOfMeasure: input.unitOfMeasure ?? 'each',
-        unitPrice: String(input.unitPrice),
-        currency: input.currency ?? 'USD',
-        metadata: input.metadata ?? {},
-      })
-      .returning();
+        access,
+        'catalog:manage',
+        input.vendorId,
+      );
+      const [created] = await tx
+        .insert(catalogItems)
+        .values({
+          organizationId,
+          vendorId: input.vendorId ?? null,
+          sku: input.sku ?? null,
+          name: input.name,
+          description: input.description ?? null,
+          category: input.category ?? null,
+          unitOfMeasure: input.unitOfMeasure ?? 'each',
+          unitPrice: String(input.unitPrice),
+          currency: input.currency ?? 'USD',
+          metadata: input.metadata ?? {},
+        })
+        .returning();
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: null,
+        entityType: 'catalog_item',
+        entityId: created.id,
+        action: 'created',
+        changes: {
+          vendorId: created.vendorId,
+          sku: created.sku,
+          name: created.name,
+          unitPrice: created.unitPrice,
+          currency: created.currency,
+        },
+      });
+      return created;
+    });
     return this.findOne(item.id, organizationId, access, 'catalog:manage');
   }
 
@@ -173,56 +198,90 @@ export class CatalogService {
     input: UpdateCatalogItemInput,
     access?: AccessPolicy,
   ) {
-    await this.findOne(id, organizationId, access, 'catalog:manage');
-    if (input.vendorId !== undefined) {
-      await this.assertVendorScope(organizationId, access, 'catalog:manage', input.vendorId);
-    }
-    const [updated] = await this.db
-      .update(catalogItems)
-      .set({
-        ...input,
-        unitPrice: input.unitPrice !== undefined ? String(input.unitPrice) : undefined,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(catalogItems.id, id),
-          eq(catalogItems.organizationId, organizationId),
-          scopedVendorPredicate(
-            this.db,
-            organizationId,
-            access,
-            'catalog',
-            'catalog:manage',
-            catalogItems.vendorId,
+    const updated = await this.db.transaction(async (tx) => {
+      const existing = await this.lockManagedCatalogItem(tx, id, organizationId, access);
+      if (input.vendorId !== undefined) {
+        await this.assertVendorScopeInTransaction(
+          tx,
+          organizationId,
+          access,
+          'catalog:manage',
+          input.vendorId,
+        );
+      }
+      const [changed] = await tx
+        .update(catalogItems)
+        .set({
+          ...input,
+          unitPrice: input.unitPrice !== undefined ? String(input.unitPrice) : undefined,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(catalogItems.id, id),
+            eq(catalogItems.organizationId, organizationId),
+            scopedVendorPredicate(
+              this.db,
+              organizationId,
+              access,
+              'catalog',
+              'catalog:manage',
+              catalogItems.vendorId,
+            ),
           ),
-        ),
-      )
-      .returning();
-    if (!updated) throw new NotFoundException(`Catalog item ${id} not found`);
+        )
+        .returning();
+      if (!changed) throw new NotFoundException(`Catalog item ${id} not found`);
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: null,
+        entityType: 'catalog_item',
+        entityId: id,
+        action: 'updated',
+        changes: {
+          before: {
+            vendorId: existing.vendorId,
+            name: existing.name,
+            unitPrice: existing.unitPrice,
+          },
+          after: input,
+        },
+      });
+      return changed;
+    });
     return this.findOne(id, organizationId, access, 'catalog:manage');
   }
 
   async remove(id: string, organizationId: string, access?: AccessPolicy) {
-    await this.findOne(id, organizationId, access, 'catalog:manage');
-    const [deleted] = await this.db
-      .delete(catalogItems)
-      .where(
-        and(
-          eq(catalogItems.id, id),
-          eq(catalogItems.organizationId, organizationId),
-          scopedVendorPredicate(
-            this.db,
-            organizationId,
-            access,
-            'catalog',
-            'catalog:manage',
-            catalogItems.vendorId,
+    await this.db.transaction(async (tx) => {
+      const existing = await this.lockManagedCatalogItem(tx, id, organizationId, access);
+      const [deleted] = await tx
+        .delete(catalogItems)
+        .where(
+          and(
+            eq(catalogItems.id, id),
+            eq(catalogItems.organizationId, organizationId),
+            scopedVendorPredicate(
+              this.db,
+              organizationId,
+              access,
+              'catalog',
+              'catalog:manage',
+              catalogItems.vendorId,
+            ),
           ),
-        ),
-      )
-      .returning({ id: catalogItems.id });
-    if (!deleted) throw new NotFoundException(`Catalog item ${id} not found`);
+        )
+        .returning({ id: catalogItems.id });
+      if (!deleted) throw new NotFoundException(`Catalog item ${id} not found`);
+      await tx.insert(auditLog).values({
+        organizationId,
+        userId: null,
+        entityType: 'catalog_item',
+        entityId: id,
+        action: 'deleted',
+        changes: { vendorId: existing.vendorId, name: existing.name },
+      });
+    });
   }
 
   async getCategories(organizationId: string, access?: AccessPolicy): Promise<string[]> {
@@ -605,6 +664,56 @@ export class CatalogService {
     }
 
     const scope = operationalScope(access, 'catalog', permission);
+    if (scope && !scope.unrestricted && !scope.entityIds.includes(vendor.entityId ?? '')) {
+      throw new ForbiddenException('The catalog vendor is outside your assigned scope');
+    }
+  }
+
+  private async lockManagedCatalogItem(
+    tx: CatalogTransaction,
+    id: string,
+    organizationId: string,
+    access?: AccessPolicy,
+  ) {
+    const [item] = await tx
+      .select()
+      .from(catalogItems)
+      .where(and(eq(catalogItems.id, id), eq(catalogItems.organizationId, organizationId)))
+      .for('update');
+    if (!item) throw new NotFoundException(`Catalog item ${id} not found`);
+    await this.assertVendorScopeInTransaction(
+      tx,
+      organizationId,
+      access,
+      'catalog:manage',
+      item.vendorId,
+    );
+    return item;
+  }
+
+  private async assertVendorScopeInTransaction(
+    tx: CatalogTransaction,
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: string,
+    vendorId: string | null | undefined,
+  ) {
+    const scope = operationalScope(access, 'catalog', permission);
+    if (!vendorId) {
+      if (scope && !scope.unrestricted) {
+        throw new ForbiddenException('The catalog vendor is outside your assigned scope');
+      }
+      return;
+    }
+
+    const [vendor] = await tx
+      .select({ id: vendors.id, entityId: vendors.entityId })
+      .from(vendors)
+      .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
+      .for('share');
+    if (!vendor) {
+      throw new ForbiddenException('The catalog vendor must belong to the current organization');
+    }
     if (scope && !scope.unrestricted && !scope.entityIds.includes(vendor.entityId ?? '')) {
       throw new ForbiddenException('The catalog vendor is outside your assigned scope');
     }
