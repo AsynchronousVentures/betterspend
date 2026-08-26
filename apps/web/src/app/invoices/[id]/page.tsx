@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { RefreshCw } from 'lucide-react';
 import { api, loadFailureState } from '../../../lib/api';
 import { localDateInputValue } from '../../../lib/date-input';
+import { formatDateOnly } from '../../../lib/date-only';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { DetailActionMenu } from '../../../components/detail-action-menu';
 import { DocumentUploader } from '../../../components/document-uploader';
@@ -591,10 +592,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             label="Invoice Date"
             value={new Date(invoice.invoiceDate).toLocaleDateString()}
           />
-          <DetailField
-            label="Due Date"
-            value={invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : '—'}
-          />
+          <DetailField label="Due Date" value={formatDateOnly(invoice.dueDate)} />
           <DetailField label="Currency" value={invoice.currency} />
           <DetailField
             label="Approved At"

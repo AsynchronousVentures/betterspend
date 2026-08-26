@@ -8,6 +8,7 @@ import { PageHeader } from '../../components/page-header';
 import { StatusBadge } from '../../components/status-badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
+import { ApprovalEntityLink } from './approval-entity-link';
 import {
   Table,
   TableBody,
@@ -92,18 +93,11 @@ export default function ApprovalsPage() {
                           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                             {approval.approvableType.replace(/_/g, ' ')}
                           </div>
-                          {entityHref ? (
-                            <Link
-                              href={entityHref}
-                              className="mt-1 block truncate font-medium text-primary hover:underline"
-                            >
-                              {entityLabel}
-                            </Link>
-                          ) : (
-                            <div className="mt-1 truncate font-medium text-foreground">
-                              {entityLabel}
-                            </div>
-                          )}
+                          <ApprovalEntityLink
+                            entity={entity}
+                            href={entityHref}
+                            label={entityLabel}
+                          />
                         </div>
                         <StatusBadge value={approval.status} />
                       </div>

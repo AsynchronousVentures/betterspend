@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
 import { Select } from '../../components/ui/select';
+import { formatDateOnly, isDateOnlyBeforeToday } from '../../lib/date-only';
 import {
   Table,
   TableBody,
@@ -292,9 +293,9 @@ export default function InvoicesPage() {
               <div className="divide-y divide-border/70 md:hidden">
                 {filtered.map((invoice) => {
                   const isOverdue =
-                    invoice.dueDate &&
+                    Boolean(invoice.dueDate) &&
                     !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
-                    new Date(invoice.dueDate) < new Date();
+                    isDateOnlyBeforeToday(invoice.dueDate);
                   const canSelect =
                     !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
                     invoice.matchStatus !== 'exception';
@@ -383,7 +384,7 @@ export default function InvoicesPage() {
                                 : 'mt-1 text-foreground'
                             }
                           >
-                            {invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : '—'}
+                            {formatDateOnly(invoice.dueDate)}
                           </dd>
                         </div>
                       </dl>
@@ -436,9 +437,9 @@ export default function InvoicesPage() {
                   <TableBody>
                     {filtered.map((invoice) => {
                       const isOverdue =
-                        invoice.dueDate &&
+                        Boolean(invoice.dueDate) &&
                         !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
-                        new Date(invoice.dueDate) < new Date();
+                        isDateOnlyBeforeToday(invoice.dueDate);
                       const canSelect =
                         !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
                         invoice.matchStatus !== 'exception';
@@ -498,11 +499,7 @@ export default function InvoicesPage() {
                             }
                           >
                             <div className="flex items-center gap-2">
-                              <span>
-                                {invoice.dueDate
-                                  ? new Date(invoice.dueDate).toLocaleDateString()
-                                  : '—'}
-                              </span>
+                              <span>{formatDateOnly(invoice.dueDate)}</span>
                               {isOverdue ? <AlertTriangle className="h-4 w-4" /> : null}
                             </div>
                           </TableCell>

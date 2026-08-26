@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
@@ -31,6 +30,10 @@ import {
 import { Textarea } from '../../../components/ui/textarea';
 import { MessageThread } from '../../../components/message-thread';
 import { restoreFocus } from '../../../lib/accessibility';
+import {
+  handleBlanketReleaseDialogOpenChange,
+  resetBlanketReleaseDialog,
+} from '../blanket-release-dialog-state';
 import {
   Dialog,
   DialogContent,
@@ -219,9 +222,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
         amount: parseFloat(releaseAmount),
         description: releaseDesc || undefined,
       });
-      setReleaseDialogOpen(false);
-      setReleaseAmount('');
-      setReleaseDesc('');
+      closeReleaseDialog();
       const [updated, updatedReleases] = await Promise.all([
         api.purchaseOrders.get(id),
         api.purchaseOrders.releases(id),
@@ -233,6 +234,15 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
     } finally {
       setReleaseSubmitting(false);
     }
+  }
+
+  function closeReleaseDialog() {
+    resetBlanketReleaseDialog({
+      setOpen: setReleaseDialogOpen,
+      setAmount: setReleaseAmount,
+      setDescription: setReleaseDesc,
+      setError: setReleaseError,
+    });
   }
 
   async function cancelRelease(releaseId: string) {
@@ -960,8 +970,12 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
       <Dialog
         open={releaseDialogOpen}
         onOpenChange={(open) => {
-          setReleaseDialogOpen(open);
-          if (!open) setReleaseError('');
+          handleBlanketReleaseDialogOpenChange(open, {
+            setOpen: setReleaseDialogOpen,
+            setAmount: setReleaseAmount,
+            setDescription: setReleaseDesc,
+            setError: setReleaseError,
+          });
         }}
       >
         <DialogContent
@@ -1006,16 +1020,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
             ) : null}
           </div>
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setReleaseDialogOpen(false);
-                setReleaseAmount('');
-                setReleaseDesc('');
-                setReleaseError('');
-              }}
-            >
+            <Button type="button" variant="outline" onClick={closeReleaseDialog}>
               Cancel
             </Button>
             <Button type="button" onClick={submitRelease} disabled={releaseSubmitting}>
@@ -1054,7 +1059,7 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Field({ id, label, children }: { id: string; label: string; children: React.ReactNode }) {
+function Field({ id, label, children }: { id: string; label: string; children: ReactNode }) {
   return (
     <div className="space-y-2">
       <label
