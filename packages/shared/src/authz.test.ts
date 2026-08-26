@@ -95,8 +95,10 @@ test('operational permissions are catalogued instead of living in a second key l
     'contracts:view',
     'catalog:view',
     'inventory:view',
+    'inventory:manage',
     'supplier_risk:view',
     'software_licenses:view',
+    'contracts:manage',
   ] as const) {
     assert.equal(keys.has(key), true, `missing catalog key ${key}`);
   }

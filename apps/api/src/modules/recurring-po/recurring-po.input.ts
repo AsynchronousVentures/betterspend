@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, InternalServerErrorException } from '@nestjs/common';
 import {
   createRecurringPoSchema,
   recurringPoLinesSchema,
@@ -35,5 +35,11 @@ export function parseRecurringPoUpdateInput(body: unknown): UpdateRecurringPoInp
 }
 
 export function parseStoredRecurringPoLines(body: unknown) {
-  return parseInput(recurringPoLinesSchema, body);
+  const parsed = recurringPoLinesSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new InternalServerErrorException(
+      'Stored recurring PO line items are invalid; the schedule cannot run',
+    );
+  }
+  return parsed.data;
 }
