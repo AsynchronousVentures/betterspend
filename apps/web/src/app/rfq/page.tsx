@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { recordHref } from '@betterspend/shared';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
@@ -64,6 +64,7 @@ export default function RfqPage({ initialSelectedId }: RfqPageProps = {}) {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [selected, setSelected] = useState<string | null>(initialSelectedId ?? null);
   const [selectedNotFound, setSelectedNotFound] = useState(false);
+  const detailRequestId = useRef(0);
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'responses' | 'messages'>('overview');
@@ -97,6 +98,7 @@ export default function RfqPage({ initialSelectedId }: RfqPageProps = {}) {
 
   useEffect(() => {
     if (!initialSelectedId) {
+      detailRequestId.current += 1;
       setSelected(null);
       setDetail(null);
       setSelectedNotFound(false);
@@ -120,6 +122,7 @@ export default function RfqPage({ initialSelectedId }: RfqPageProps = {}) {
   }
 
   async function loadDetail(id: string) {
+    const requestId = ++detailRequestId.current;
     setSelected(id);
     setSelectedNotFound(false);
     setMessageRecipientVendorId('');
@@ -127,8 +130,10 @@ export default function RfqPage({ initialSelectedId }: RfqPageProps = {}) {
     setDetailTab('overview');
     try {
       const data = await (api as any).rfq.get(id);
+      if (requestId !== detailRequestId.current) return;
       setDetail(data);
     } catch (loadError) {
+      if (requestId !== detailRequestId.current) return;
       setDetail(null);
       if (loadError instanceof Error && /not found/i.test(loadError.message)) {
         setSelectedNotFound(true);
@@ -136,7 +141,7 @@ export default function RfqPage({ initialSelectedId }: RfqPageProps = {}) {
         setError('Failed to load RFQ');
       }
     } finally {
-      setDetailLoading(false);
+      if (requestId === detailRequestId.current) setDetailLoading(false);
     }
   }
 
