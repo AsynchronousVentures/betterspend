@@ -24,6 +24,7 @@ export interface RenewalRef {
 }
 
 type LicenseWithRelations = Awaited<ReturnType<SoftwareLicensesService['findOne']>>;
+type SoftwareLicenseTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 @Injectable()
 export class SoftwareLicensesService {
@@ -123,23 +124,40 @@ export class SoftwareLicensesService {
     data: Partial<typeof softwareLicenses.$inferInsert>,
     access?: AccessPolicy,
   ) {
-    await this.findOne(id, organizationId, access, 'software_licenses:manage');
-    if (data.vendorId !== undefined) {
-      await this.assertVendorScope(
+    const license = await this.db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select()
+        .from(softwareLicenses)
+        .where(and(eq(softwareLicenses.id, id), eq(softwareLicenses.organizationId, organizationId)))
+        .for('update');
+      if (!existing) throw new NotFoundException(`Software license ${id} not found`);
+
+      await this.assertVendorScopeInTransaction(
+        tx,
         organizationId,
         access,
         'software_licenses:manage',
-        data.vendorId,
+        existing.vendorId,
       );
-    }
+      await this.assertVendorScopeInTransaction(
+        tx,
+        organizationId,
+        access,
+        'software_licenses:manage',
+        data.vendorId === undefined ? existing.vendorId : data.vendorId,
+      );
 
-    const [license] = await this.db
-      .update(softwareLicenses)
-      .set({ ...data, updatedAt: new Date() })
-      .where(and(eq(softwareLicenses.id, id), eq(softwareLicenses.organizationId, organizationId)))
-      .returning();
+      const [updated] = await tx
+        .update(softwareLicenses)
+        .set({ ...data, updatedAt: new Date() })
+        .where(
+          and(eq(softwareLicenses.id, id), eq(softwareLicenses.organizationId, organizationId)),
+        )
+        .returning();
+      if (!updated) throw new NotFoundException(`Software license ${id} not found`);
+      return updated;
+    });
 
-    if (!license) throw new NotFoundException(`Software license ${id} not found`);
     await this.notifyIfRenewalDueSoon(license);
     return this.findOne(id, organizationId, access, 'software_licenses:manage');
   }
@@ -451,8 +469,55 @@ export class SoftwareLicensesService {
     permission: string,
     vendorId: string | null | undefined,
   ) {
-    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, permission);
-    if (scopedVendorIds && (!vendorId || !scopedVendorIds.includes(vendorId))) {
+    if (!vendorId) {
+      const scope = operationalScope(access, 'software_license', permission);
+      if (scope && !scope.unrestricted) {
+        throw new ForbiddenException('The software license vendor is outside your assigned scope');
+      }
+      return;
+    }
+
+    const [vendor] = await this.db
+      .select({ id: vendors.id, entityId: vendors.entityId })
+      .from(vendors)
+      .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)));
+    if (!vendor) {
+      throw new ForbiddenException(
+        'The software license vendor must belong to the current organization',
+      );
+    }
+
+    const scope = operationalScope(access, 'software_license', permission);
+    if (scope && !scope.unrestricted && !scope.entityIds.includes(vendor.entityId ?? '')) {
+      throw new ForbiddenException('The software license vendor is outside your assigned scope');
+    }
+  }
+
+  private async assertVendorScopeInTransaction(
+    tx: SoftwareLicenseTransaction,
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: string,
+    vendorId: string | null | undefined,
+  ) {
+    const scope = operationalScope(access, 'software_license', permission);
+    if (!vendorId) {
+      if (scope && !scope.unrestricted) {
+        throw new ForbiddenException('The software license vendor is outside your assigned scope');
+      }
+      return;
+    }
+
+    const [vendor] = await tx
+      .select({ id: vendors.id, entityId: vendors.entityId })
+      .from(vendors)
+      .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)));
+    if (!vendor) {
+      throw new ForbiddenException(
+        'The software license vendor must belong to the current organization',
+      );
+    }
+    if (scope && !scope.unrestricted && !scope.entityIds.includes(vendor.entityId ?? '')) {
       throw new ForbiddenException('The software license vendor is outside your assigned scope');
     }
   }

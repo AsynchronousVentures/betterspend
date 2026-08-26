@@ -149,15 +149,11 @@ export class RiskScreeningService {
     access?: AccessPolicy,
   ) {
     await this.assertVendorScope(organizationId, vendorId, access, 'supplier_risk:manage');
-    return this.screenVendorWithEntries(organizationId, vendorId, screenedBy);
+    return this.screenVendorWithEntries(organizationId, vendorId, screenedBy, access);
   }
 
   async screenAllVendors(organizationId: string, screenedBy?: string, access?: AccessPolicy) {
-    const scopedVendorIds = await this.scopedVendorIds(
-      organizationId,
-      access,
-      'supplier_risk:manage',
-    );
+    const scope = operationalScope(access, 'supplier_risk', 'supplier_risk:manage');
     return this.db.transaction(async (tx) => {
       // Hold a shared registry-version lock for the whole batch. Ingestion's
       // version update waits until every result from this snapshot commits.
@@ -170,9 +166,9 @@ export class RiskScreeningService {
           and(
             eq(vendors.organizationId, organizationId),
             eq(vendors.status, 'active'),
-            scopedVendorIds
-              ? scopedVendorIds.length > 0
-                ? inArray(vendors.id, scopedVendorIds)
+            scope && !scope.unrestricted
+              ? scope.entityIds.length > 0
+                ? inArray(vendors.entityId, scope.entityIds)
                 : sql`false`
               : undefined,
           ),
@@ -186,6 +182,7 @@ export class RiskScreeningService {
           screenedBy,
           entries,
           matchBudget,
+          access,
         );
         if (result.status === 'flagged') flagged += 1;
       }
@@ -197,6 +194,7 @@ export class RiskScreeningService {
     organizationId: string,
     vendorId: string,
     screenedBy?: string,
+    access?: AccessPolicy,
   ) {
     return this.db.transaction(async (tx) => {
       const entries = await this.lockAndLoadEntries(tx);
@@ -207,6 +205,7 @@ export class RiskScreeningService {
         screenedBy,
         entries,
         createMatchWorkBudget(),
+        access,
       );
     });
   }
@@ -233,6 +232,7 @@ export class RiskScreeningService {
     screenedBy: string | undefined,
     entries: SanctionEntryRow[],
     matchBudget: MatchWorkBudget,
+    access?: AccessPolicy,
   ) {
     const [vendor] = await tx
       .select()
@@ -240,6 +240,7 @@ export class RiskScreeningService {
       .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
       .for('update');
     if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
+    this.assertLockedVendorScope(access, vendor.entityId);
 
     const vendorMatches = await this.matchVendorName(vendor.name, entries, matchBudget);
     const nextStatus =
@@ -296,6 +297,7 @@ export class RiskScreeningService {
         .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
         .for('update');
       if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
+      this.assertLockedVendorScope(access, vendor.entityId);
       if (vendor.sanctionsStatus === 'untested') {
         throw new BadRequestException('Screen this vendor before recording a manual review');
       }
@@ -325,18 +327,14 @@ export class RiskScreeningService {
   }
 
   async listStatus(organizationId: string, access?: AccessPolicy) {
-    const scopedVendorIds = await this.scopedVendorIds(
-      organizationId,
-      access,
-      'supplier_risk:view',
-    );
+    const scope = operationalScope(access, 'supplier_risk', 'supplier_risk:view');
     return this.db.query.vendors.findMany({
       where: (v, { and, eq }) =>
         and(
           eq(v.organizationId, organizationId),
-          scopedVendorIds
-            ? scopedVendorIds.length > 0
-              ? inArray(v.id, scopedVendorIds)
+          scope && !scope.unrestricted
+            ? scope.entityIds.length > 0
+              ? inArray(v.entityId, scope.entityIds)
               : sql`false`
             : undefined,
         ),
@@ -387,6 +385,13 @@ export class RiskScreeningService {
       );
     }
     return `Vendor "${vendor.name}" is flagged by sanctions screening; review before issuing this PO`;
+  }
+
+  private assertLockedVendorScope(access: AccessPolicy | undefined, entityId: string | null) {
+    const scope = operationalScope(access, 'supplier_risk', 'supplier_risk:manage');
+    if (scope && !scope.unrestricted && (!entityId || !scope.entityIds.includes(entityId))) {
+      throw new ForbiddenException('The vendor is outside your assigned risk scope');
+    }
   }
 
   private async scopedVendorIds(

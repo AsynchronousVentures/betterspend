@@ -1009,8 +1009,24 @@ export class ContractsService {
     permission: string,
     vendorId: string | null | undefined,
   ) {
-    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, permission);
-    if (scopedVendorIds && (!vendorId || !scopedVendorIds.includes(vendorId))) {
+    if (!vendorId) {
+      const scope = operationalScope(access, 'contract', permission);
+      if (scope && !scope.unrestricted) {
+        throw new ForbiddenException('The contract vendor is outside your assigned scope');
+      }
+      return;
+    }
+
+    const [vendor] = await this.db
+      .select({ id: vendors.id, entityId: vendors.entityId })
+      .from(vendors)
+      .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)));
+    if (!vendor) {
+      throw new ForbiddenException('The contract vendor must belong to the current organization');
+    }
+
+    const scope = operationalScope(access, 'contract', permission);
+    if (scope && !scope.unrestricted && !scope.entityIds.includes(vendor.entityId ?? '')) {
       throw new ForbiddenException('The contract vendor is outside your assigned scope');
     }
   }

@@ -260,7 +260,7 @@ export class VendorsService {
         with: { questionnaire: true },
         orderBy: (record, { desc }) => desc(record.createdAt),
       }),
-      this.listOnboardingQuestionnaires(organizationId),
+      this.listOnboardingQuestionnaires(organizationId, access),
     ]);
     return { vendor, submissions, questionnaires };
   }
