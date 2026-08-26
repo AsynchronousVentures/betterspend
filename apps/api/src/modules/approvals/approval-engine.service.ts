@@ -53,6 +53,13 @@ function scopeAllowsApproval(access: AccessPolicy | undefined, scope: ApprovalSc
   return false;
 }
 
+function uuidArray(ids: string[]) {
+  return sql`ARRAY[${sql.join(
+    ids.map((id) => sql`${id}`),
+    sql`, `,
+  )}]::uuid[]`;
+}
+
 const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 // System user ID used for auto-approval actions (must be a valid UUID in users table)
 const SYSTEM_USER_ID = DEMO_ADMIN_USER_ID;
@@ -735,7 +742,7 @@ export class ApprovalEngineService {
         SELECT id, number, title, total_amount AS amount, status,
           department_id AS "departmentId", project_id AS "projectId", NULL::uuid AS "entityId"
         FROM requisitions
-        WHERE id = ANY(${sql.raw(`ARRAY[${reqIds.map((i) => `'${i}'`).join(',')}]::uuid[]`)})
+        WHERE id = ANY(${uuidArray(reqIds)})
       `,
             )
             .then((rows) => Object.fromEntries((rows as any[]).map((r) => [r.id, r])))
@@ -749,7 +756,7 @@ export class ApprovalEngineService {
         FROM purchase_orders po
         LEFT JOIN requisitions r ON r.id = po.requisition_id
         LEFT JOIN vendors v ON v.id = po.vendor_id
-        WHERE po.id = ANY(${sql.raw(`ARRAY[${poIds.map((i) => `'${i}'`).join(',')}]::uuid[]`)})
+        WHERE po.id = ANY(${uuidArray(poIds)})
       `,
             )
             .then((rows) => Object.fromEntries((rows as any[]).map((r) => [r.id, r])))
@@ -766,7 +773,7 @@ export class ApprovalEngineService {
         LEFT JOIN vendors v ON v.id = i.vendor_id
         LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
         LEFT JOIN requisitions r ON r.id = po.requisition_id
-        WHERE i.id = ANY(${sql.raw(`ARRAY[${invoiceIds.map((i) => `'${i}'`).join(',')}]::uuid[]`)})
+        WHERE i.id = ANY(${uuidArray(invoiceIds)})
       `,
             )
             .then((rows) => Object.fromEntries((rows as any[]).map((r) => [r.id, r])))
