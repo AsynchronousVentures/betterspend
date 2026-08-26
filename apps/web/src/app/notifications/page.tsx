@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { ArrowLeft, BellRing } from 'lucide-react';
-import { notificationTypeLabel } from '@betterspend/shared';
+import { isRecordKind, notificationTypeLabel, recordHref } from '@betterspend/shared';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
 import { StatusBadge } from '../../components/status-badge';
@@ -26,10 +26,9 @@ function timeAgo(dateStr: string): string {
 
 function entityHref(notification: any): string | null {
   if (!notification.entityType || !notification.entityId) return null;
-  if (notification.entityType === 'purchase_order') return `/purchase-orders/${notification.entityId}`;
-  if (notification.entityType === 'invoice') return `/invoices/${notification.entityId}`;
-  if (notification.entityType === 'requisition') return `/requisitions/${notification.entityId}`;
-  return null;
+  return isRecordKind(notification.entityType)
+    ? recordHref({ kind: notification.entityType, id: notification.entityId })
+    : null;
 }
 
 export default function NotificationsPage() {

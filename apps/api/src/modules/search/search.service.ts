@@ -3,6 +3,7 @@ import { ilike, or, eq } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { requisitions, purchaseOrders, invoices, vendors, catalogItems } from '@betterspend/db';
+import { recordHref } from '@betterspend/shared';
 
 @Injectable()
 export class SearchService {
@@ -45,11 +46,11 @@ export class SearchService {
     ]);
 
     return {
-      requisitions: reqs.map((r) => ({ ...r, _type: 'requisition', _label: `${r.number} — ${r.title}`, _href: `/requisitions/${r.id}` })),
-      purchaseOrders: pos.map((r) => ({ ...r, _type: 'purchase_order', _label: r.number, _href: `/purchase-orders/${r.id}` })),
-      invoices: invs.map((r) => ({ ...r, _type: 'invoice', _label: `${r.internalNumber} / ${r.invoiceNumber}`, _href: `/invoices/${r.id}` })),
-      vendors: vens.map((r) => ({ ...r, _type: 'vendor', _label: r.name, _href: `/vendors/${r.id}` })),
-      catalogItems: cats.map((r) => ({ ...r, _type: 'catalog_item', _label: r.name, _href: `/catalog/${r.id}` })),
+      requisitions: reqs.map((r) => ({ ...r, _type: 'requisition', _label: `${r.number} — ${r.title}`, _href: recordHref({ kind: 'requisition', id: r.id }) })),
+      purchaseOrders: pos.map((r) => ({ ...r, _type: 'purchase_order', _label: r.number, _href: recordHref({ kind: 'purchase_order', id: r.id }) })),
+      invoices: invs.map((r) => ({ ...r, _type: 'invoice', _label: `${r.internalNumber} / ${r.invoiceNumber}`, _href: recordHref({ kind: 'invoice', id: r.id }) })),
+      vendors: vens.map((r) => ({ ...r, _type: 'vendor', _label: r.name, _href: recordHref({ kind: 'vendor', id: r.id }) })),
+      catalogItems: cats.map((r) => ({ ...r, _type: 'catalog_item', _label: r.name, _href: recordHref({ kind: 'catalog_item', id: r.id }) })),
     };
   }
 }

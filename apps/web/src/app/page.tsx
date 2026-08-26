@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { isRecordKind, recordHref } from '@betterspend/shared';
 import {
   AlertTriangle,
 } from 'lucide-react';
@@ -346,8 +347,14 @@ export default function HomePage() {
               ) : (
                 <div className="divide-y divide-border/50">
                   {activity.slice(0, 12).map((item, index) => {
-                    const baseRoute = ACTIVITY_ENTITY_ROUTES[String(item.entityType ?? '')];
-                    const detailHref = baseRoute && item.entityId ? `${baseRoute}/${item.entityId}` : null;
+                    const entityType = String(item.entityType ?? '');
+                    const baseRoute = ACTIVITY_ENTITY_ROUTES[entityType];
+                    const detailHref =
+                      item.entityId && isRecordKind(entityType)
+                        ? recordHref({ kind: entityType, id: item.entityId })
+                        : baseRoute && item.entityId
+                          ? `${baseRoute}/${item.entityId}`
+                          : null;
                     const row = (
                       <div className="flex items-center gap-3 px-1 py-2.5 transition-colors hover:bg-muted/30">
                         <span className="size-1.5 shrink-0 rounded-full bg-primary/60" />

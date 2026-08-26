@@ -11,6 +11,14 @@ import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../components/ui/table';
 import { Textarea } from '../../../components/ui/textarea';
+import {
+  approvalEntityHref,
+  approvalEntityLabel,
+  formatApprovalAmount,
+  formatApprovalDate,
+  formatApprovalStatus,
+  type ApprovalEntitySummary,
+} from '../../../lib/approval-records';
 
 interface ApprovalAction {
   id: string;
@@ -30,6 +38,7 @@ interface ApprovalRequest {
   createdAt: string;
   rule?: { id: string; name: string };
   actions?: ApprovalAction[];
+  entitySummary?: ApprovalEntitySummary | null;
 }
 
 export default function ApprovalDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -77,6 +86,11 @@ export default function ApprovalDetailPage({ params }: { params: Promise<{ id: s
   }
 
   const actions = approval.actions ?? [];
+  const entity = approval.entitySummary;
+  const entityHref = approvalEntityHref(approval.approvableType, approval.approvableId);
+  const entityLabel = approvalEntityLabel(approval.approvableType, entity);
+  const isInvoice = approval.approvableType === 'invoice';
+  const openLabel = isInvoice ? 'Open invoice' : 'Open record';
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -94,17 +108,27 @@ export default function ApprovalDetailPage({ params }: { params: Promise<{ id: s
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {(approval as any).entitySummary ? (
-            <p className="text-sm text-muted-foreground">
-              <Link
-                href={approval.approvableType === 'requisition' ? `/requisitions/${approval.approvableId}` : `/purchase-orders/${approval.approvableId}`}
-                className="text-primary hover:underline"
-              >
-                {(approval as any).entitySummary.number}
-                {(approval as any).entitySummary.title ? ` — ${(approval as any).entitySummary.title}` : ''}
-                {(approval as any).entitySummary.vendorName ? ` — ${(approval as any).entitySummary.vendorName}` : ''}
-              </Link>
-            </p>
+          {entity ? (
+            <div className="space-y-3">
+              <div className="text-sm text-muted-foreground">
+                {entityHref ? (
+                  <Link href={entityHref} className="text-primary hover:underline">
+                    {openLabel}: {entityLabel}
+                  </Link>
+                ) : (
+                  <span>{entityLabel}</span>
+                )}
+              </div>
+              {isInvoice ? (
+                <div className="grid gap-4 border-y border-border/70 py-4 sm:grid-cols-2 lg:grid-cols-5">
+                  <ContextField label="Supplier" value={entity.vendorName ?? 'Not available'} />
+                  <ContextField label="Gross amount" value={formatApprovalAmount(entity.amount, entity.currency)} />
+                  <ContextField label="Currency" value={entity.currency ?? 'Not available'} />
+                  <ContextField label="Match status" value={formatApprovalStatus(entity.matchStatus)} />
+                  <ContextField label="Due date" value={formatApprovalDate(entity.dueDate)} />
+                </div>
+              ) : null}
+            </div>
           ) : (
             <p className="font-mono text-sm text-muted-foreground">ID: …{approval.approvableId.slice(-8)}</p>
           )}
@@ -176,6 +200,15 @@ export default function ApprovalDetailPage({ params }: { params: Promise<{ id: s
           </CardContent>
         </Card>
       ) : null}
+    </div>
+  );
+}
+
+function ContextField({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <div className="mt-1 text-sm text-foreground">{value}</div>
     </div>
   );
 }

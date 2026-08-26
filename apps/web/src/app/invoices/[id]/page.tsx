@@ -204,6 +204,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   }
 
   const hasExceptions = invoice.matchStatus === 'exception';
+  const workflowApprovalPending = invoice.status === 'pending_approval';
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -234,6 +235,18 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           <AlertDescription>
             3-way match exceptions detected. One or more lines have price or quantity variances
             outside tolerance.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {workflowApprovalPending ? (
+        <Alert>
+          <AlertDescription>
+            This invoice is waiting for an approval decision.{' '}
+            <Link href="/approvals" className="font-semibold underline underline-offset-4">
+              Open the Approvals queue
+            </Link>{' '}
+            to review it.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -406,7 +419,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       </Card>
 
       <div className="flex flex-wrap gap-3">
-        {!['approved', 'paid'].includes(invoice.status) ? (
+        {!['approved', 'paid', 'pending_approval'].includes(invoice.status) ? (
           <>
             <Button
               type="button"

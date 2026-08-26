@@ -23,6 +23,7 @@ function createService(
     makerCheckerEnabled?: boolean;
     submissionSource?: 'internal' | 'legacy' | 'vendor_portal';
     blockedAuditFails?: boolean;
+    activeApprovalRequest?: boolean;
   } = {},
 ) {
   const auditActions: string[] = [];
@@ -43,6 +44,10 @@ function createService(
   const transaction = {
     query: {
       invoices: { findFirst: async () => approved },
+      approvalRequests: {
+        findFirst: async () =>
+          options.activeApprovalRequest ? { id: 'approval-request-1', status: 'pending' } : null,
+      },
       purchaseOrders: {
         findFirst: async () => ({ id: 'po-1', requisitionId: 'requisition-1' }),
       },
@@ -142,6 +147,18 @@ function createService(
 }
 
 describe('InvoicesService approval budget accounting', () => {
+  it('does not bypass an active approval request through direct invoice approval', async () => {
+    const { service } = createService(async () => {}, 'full_match', {
+      makerCheckerEnabled: false,
+      activeApprovalRequest: true,
+    });
+
+    await assert.rejects(
+      service.approve('invoice-1', 'organization-1', 'approver-1'),
+      /active approval request.*Approvals queue/,
+    );
+  });
+
   it('propagates budget accounting failures from the invoice approval transaction', async () => {
     let receivedTransaction: DbTransaction | undefined;
     let receivedAmounts: { expense: string; release: string } | undefined;
