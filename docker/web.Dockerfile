@@ -11,9 +11,11 @@ RUN apk add --no-cache libc6-compat && corepack enable
 
 FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.json ./
+COPY .husky/install.mjs .husky/install.mjs
 COPY apps/web/package.json apps/web/package.json
 COPY packages/shared/package.json packages/shared/package.json
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=betterspend-pnpm-store,target=/pnpm/store,sharing=locked \
+  pnpm install --frozen-lockfile
 
 FROM deps AS build
 ARG NEXT_PUBLIC_API_URL
