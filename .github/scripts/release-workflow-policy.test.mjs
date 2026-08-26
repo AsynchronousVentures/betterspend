@@ -161,7 +161,7 @@ test('promotes all release images to the version and latest aliases', () => {
   assert.match(latest, /if: steps\.release_ref\.outputs\.release_tag != ''/);
 });
 
-test('deploys the validated release tag and runs this policy in fast and full CI', () => {
+test('deploys the validated release tag and runs the shared preflight in fast CI', () => {
   assert.match(workflow, /release_tag: \$\{\{ steps\.release_ref\.outputs\.release_tag \}\}/);
   assert.match(workflow, /RELEASE_TAG: \$\{\{ needs\.publish\.outputs\.release_tag \}\}/);
   assert.match(workflow, /printf '%s\\n' "\$RELEASE_TAG" \|/);
@@ -173,6 +173,51 @@ test('deploys the validated release tag and runs this policy in fast and full CI
   assert.equal(
     (workflow.match(/node --test \.github\/scripts\/release-workflow-policy\.test\.mjs/g) ?? [])
       .length,
-    2,
+    1,
   );
+  assert.match(workflow, /name: Run local CI preflight\n        run: pnpm ci:preflight/);
+});
+
+test('avoids duplicate Blacksmith work for promoted PRs and validated commits', () => {
+  assert.match(workflow, /permissions:\n  checks: read\n  contents: read\n  pull-requests: write/);
+  assert.match(
+    workflow,
+    /pull_request:\n    types:\n      - opened\n      - reopened\n      - synchronize/,
+  );
+  assert.match(
+    workflow,
+    /name: Mark PR Ready for Review[\s\S]*?if: github\.event\.pull_request\.draft == true[\s\S]*?GH_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}[\s\S]*?PR_URL: \$\{\{ github\.event\.pull_request\.html_url \}\}[\s\S]*?gh pr ready "\$PR_URL"/,
+  );
+  assert.match(workflow, /name: Fast CI[\s\S]*?timeout-minutes: 15/);
+  assert.doesNotMatch(workflow, /review-gate|Review Gate|REVIEW_GATE_RESULT/);
+  assert.match(workflow, /name: Full CI Proof/);
+  assert.match(workflow, /check-runs\?filter=all&per_page=100/);
+  assert.match(workflow, /check\.name === 'Full CI'/);
+  assert.match(workflow, /check\.app\?\.slug === 'github-actions'/);
+  assert.match(
+    workflow,
+    /needs\.full-ci-proof\.outputs\.available != 'true'[\s\S]*?runs-on: blacksmith-2vcpu-ubuntu-2404[\s\S]*?timeout-minutes: 30/,
+  );
+  assert.match(
+    workflow,
+    /runs-on: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/v'\) && 'ubuntu-latest' \|\| 'blacksmith-2vcpu-ubuntu-2404' \}\}/,
+  );
+  assert.match(
+    workflow,
+    /- name: Setup Blacksmith Builder\n        if: github\.ref == 'refs\/heads\/main'/,
+  );
+  assert.doesNotMatch(workflow, /blacksmith-4vcpu/);
+  assert.match(
+    workflow,
+    /full-ci-proof:[\s\S]*?runs-on: ubuntu-slim[\s\S]*?validate:[\s\S]*?runs-on: ubuntu-slim/,
+  );
+  assert.match(
+    workflow,
+    /validate:[\s\S]*?runs-on: ubuntu-slim[\s\S]*?deploy-preflight:[\s\S]*?runs-on: ubuntu-slim/,
+  );
+  assert.match(
+    workflow,
+    /validate:\n    name: Validate\n    if: always\(\)\n    needs: \[fast-ci, full-ci-proof, full-ci\]/,
+  );
+  assert.match(workflow, /deploy:[\s\S]*?runs-on: ubuntu-latest[\s\S]*?timeout-minutes: 15/);
 });

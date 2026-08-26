@@ -4,6 +4,7 @@ import {
   BUILT_IN_ROLE_PERMISSIONS,
   normalizePermissions,
   PERMISSION_CATALOG,
+  type PermissionKey,
   userRoleAssignmentSchema,
 } from './authz';
 
@@ -78,7 +79,7 @@ test('core lifecycle permissions are catalogued and assigned to the intended bui
     'invoices:manage',
     'payments:view',
     'payments:manage',
-  ] as const) {
+  ] satisfies readonly PermissionKey[]) {
     assert.equal(keys.has(key), true, `missing catalog key ${key}`);
   }
   assert.equal(BUILT_IN_ROLE_PERMISSIONS.requester.includes('requisitions:create'), true);

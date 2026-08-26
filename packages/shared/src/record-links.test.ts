@@ -3,7 +3,6 @@ import test from 'node:test';
 import {
   APPROVABLE_RECORD_KINDS,
   RECORD_ROUTES,
-  type RecordKind,
   isApprovableRecordKind,
   isRecordKind,
   recordHref,
@@ -16,8 +15,8 @@ test('resolves workflow requisition and RFQ references to canonical routes', () 
 
 test('keeps every record type on the shared canonical route map', () => {
   for (const [kind, route] of Object.entries(RECORD_ROUTES)) {
-    assert.equal(isRecordKind(kind), true);
-    const href = recordHref({ kind: kind as RecordKind, id: `${kind}-1` });
+    assert.ok(isRecordKind(kind));
+    const href = recordHref({ kind, id: `${kind}-1` });
     assert.equal(
       href,
       kind === 'payment_run'

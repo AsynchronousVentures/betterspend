@@ -11,5 +11,6 @@
 
 ## Checklist
 
-- [ ] `pnpm typecheck` and `pnpm lint` pass
+- [ ] `pnpm ci:preflight` passes locally before the first push
+- [ ] The pre-push hook's Docker tier passes when packaging or deployment files changed
 - [ ] Tests cover the changed behavior

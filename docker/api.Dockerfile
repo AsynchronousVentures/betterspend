@@ -10,16 +10,19 @@ RUN corepack enable
 
 FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.json ./
+COPY .husky/install.mjs .husky/install.mjs
 COPY apps/api/package.json apps/api/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/shared/package.json packages/shared/package.json
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=betterspend-pnpm-store,target=/pnpm/store,sharing=locked \
+  pnpm install --frozen-lockfile
 
 FROM deps AS build
 COPY apps/api apps/api
 COPY packages/db packages/db
 COPY packages/shared packages/shared
-RUN pnpm --filter @betterspend/shared build \
+RUN --mount=type=cache,id=betterspend-pnpm-store,target=/pnpm/store,sharing=locked \
+  pnpm --filter @betterspend/shared build \
   && pnpm --filter @betterspend/db build \
   && pnpm --filter @betterspend/api build \
   && pnpm --filter @betterspend/api deploy --legacy --prod /out
