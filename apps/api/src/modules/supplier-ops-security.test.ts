@@ -7,8 +7,11 @@ import type { AuditService } from './audit/audit.service';
 import type { DocumentsService } from './documents/documents.service';
 import type { NotificationsService } from './notifications/notifications.service';
 import type { EntitiesService } from './entities/entities.service';
+import type { SettingsService } from './settings/settings.service';
 import type { RequisitionsService } from './requisitions/requisitions.service';
 import type { RfqService } from './rfq/rfq.service';
+import type { MailService } from '../common/mail/mail.service';
+import { CatalogService } from './catalog/catalog.service';
 import { ContractsService } from './contracts/contracts.service';
 import { SoftwareLicensesService } from './software-licenses/software-licenses.service';
 import { VendorsService } from './vendors/vendors.service';
@@ -28,6 +31,23 @@ function globalAccess(): AccessPolicy {
       entityIds: [],
     }),
     isGlobalBuiltInAdmin: () => true,
+    toDocument: () => ({ permissions: [], scopes: {} }),
+  };
+}
+
+function entityScopedAccess(): AccessPolicy {
+  return {
+    can: () => true,
+    scopeFor: () => ({
+      organizationId,
+      userId: 'user-1',
+      unrestricted: false,
+      ownOnly: false,
+      departmentIds: [],
+      projectIds: [],
+      entityIds: ['entity-1'],
+    }),
+    isGlobalBuiltInAdmin: () => false,
     toDocument: () => ({ permissions: [], scopes: {} }),
   };
 }
@@ -90,6 +110,31 @@ describe('supplier operational authorization regressions', () => {
         contractNumber: 'CTR-2026-0001',
         createdBy: 'user-1',
       }),
+      (error: unknown) => error instanceof ForbiddenException,
+    );
+    assert.equal(insertCalled, false);
+  });
+
+  it('keeps vendorless catalog items global-only under an entity-scoped grant', async () => {
+    let insertCalled = false;
+    const db = {
+      insert: () => {
+        insertCalled = true;
+        throw new Error('vendorless item escaped scope validation');
+      },
+    } as unknown as Db;
+    const service = new CatalogService(
+      db,
+      undefined as unknown as MailService,
+      undefined as unknown as SettingsService,
+    );
+
+    await assert.rejects(
+      service.create(
+        organizationId,
+        { name: 'Internal item', unitPrice: 10 },
+        entityScopedAccess(),
+      ),
       (error: unknown) => error instanceof ForbiddenException,
     );
     assert.equal(insertCalled, false);

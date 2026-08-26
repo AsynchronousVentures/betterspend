@@ -6,7 +6,7 @@ import {
   Logger,
   ForbiddenException,
 } from '@nestjs/common';
-import { eq, and, ilike, or, desc, isNull, inArray, sql } from 'drizzle-orm';
+import { eq, and, ilike, or, desc, isNull, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { auditLog, catalogItems, catalogPriceProposals, vendors } from '@betterspend/db';
@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
 import type { AccessPolicy } from '../auth/access-policy';
-import { operationalScope } from '../auth/operational-access';
+import { operationalScope, scopedVendorPredicate } from '../auth/operational-access';
 
 export interface CreateCatalogItemInput {
   vendorId?: string;
@@ -56,7 +56,6 @@ export class CatalogService {
     filters?: { vendorId?: string; category?: string; activeOnly?: boolean },
     access?: AccessPolicy,
   ) {
-    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'catalog:view');
     await this.applyDueApprovedProposals(organizationId);
     return this.db.query.catalogItems.findMany({
       where: (c, { and, eq }) => {
@@ -64,11 +63,15 @@ export class CatalogService {
         if (filters?.vendorId) conditions.push(eq(c.vendorId, filters.vendorId));
         if (filters?.category) conditions.push(eq(c.category, filters.category));
         if (filters?.activeOnly) conditions.push(eq(c.isActive, true));
-        if (scopedVendorIds) {
-          conditions.push(
-            scopedVendorIds.length > 0 ? inArray(c.vendorId, scopedVendorIds) : sql`false`,
-          );
-        }
+        const vendorScope = scopedVendorPredicate(
+          this.db,
+          organizationId,
+          access,
+          'catalog',
+          'catalog:view',
+          c.vendorId,
+        );
+        if (vendorScope) conditions.push(vendorScope);
         return and(...conditions);
       },
       with: { vendor: true },
@@ -77,7 +80,6 @@ export class CatalogService {
   }
 
   async search(organizationId: string, q: string, access?: AccessPolicy) {
-    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'catalog:view');
     await this.applyDueApprovedProposals(organizationId);
     const term = `%${q}%`;
     return this.db.query.catalogItems.findMany({
@@ -86,11 +88,14 @@ export class CatalogService {
           eq(c.organizationId, organizationId),
           eq(c.isActive, true),
           or(ilike(c.name, term), ilike(c.sku, term), ilike(c.description, term)),
-          scopedVendorIds
-            ? scopedVendorIds.length > 0
-              ? inArray(c.vendorId, scopedVendorIds)
-              : sql`false`
-            : undefined,
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'catalog',
+            'catalog:view',
+            c.vendorId,
+          ),
         ),
       with: { vendor: true },
       orderBy: (c, { asc }) => asc(c.name),
@@ -104,25 +109,32 @@ export class CatalogService {
     access?: AccessPolicy,
     permission = 'catalog:view',
   ) {
-    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, permission);
     await this.applyDueApprovedProposals(organizationId);
     const item = await this.db.query.catalogItems.findFirst({
       where: (c, { and, eq }) =>
         and(
           eq(c.id, id),
           eq(c.organizationId, organizationId),
-          scopedVendorIds
-            ? scopedVendorIds.length > 0
-              ? inArray(c.vendorId, scopedVendorIds)
-              : sql`false`
-            : undefined,
+          scopedVendorPredicate(this.db, organizationId, access, 'catalog', permission, c.vendorId),
         ),
       with: { vendor: true },
     });
     if (!item) throw new NotFoundException(`Catalog item ${id} not found`);
+    const proposalVendorScope = scopedVendorPredicate(
+      this.db,
+      organizationId,
+      access,
+      'catalog',
+      permission,
+      catalogPriceProposals.vendorId,
+    );
     const proposals = await this.db.query.catalogPriceProposals.findMany({
       where: (proposal, { and, eq }) =>
-        and(eq(proposal.organizationId, organizationId), eq(proposal.itemId, id)),
+        and(
+          eq(proposal.organizationId, organizationId),
+          eq(proposal.itemId, id),
+          proposalVendorScope,
+        ),
       with: {
         vendor: true,
         reviewer: true,
@@ -184,16 +196,18 @@ export class CatalogService {
   }
 
   async getCategories(organizationId: string, access?: AccessPolicy): Promise<string[]> {
-    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'catalog:view');
     const items = await this.db.query.catalogItems.findMany({
       where: (c, { and, eq }) =>
         and(
           eq(c.organizationId, organizationId),
-          scopedVendorIds
-            ? scopedVendorIds.length > 0
-              ? inArray(c.vendorId, scopedVendorIds)
-              : sql`false`
-            : undefined,
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'catalog',
+            'catalog:view',
+            c.vendorId,
+          ),
         ),
       columns: { category: true },
     });
@@ -202,18 +216,20 @@ export class CatalogService {
   }
 
   async listPriceProposals(organizationId: string, status?: string, access?: AccessPolicy) {
-    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'catalog:view');
     await this.applyDueApprovedProposals(organizationId);
     return this.db.query.catalogPriceProposals.findMany({
       where: (p, { and, eq }) =>
         and(
           eq(p.organizationId, organizationId),
           status ? eq(p.status, status) : undefined,
-          scopedVendorIds
-            ? scopedVendorIds.length > 0
-              ? inArray(p.vendorId, scopedVendorIds)
-              : sql`false`
-            : undefined,
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'catalog',
+            'catalog:view',
+            p.vendorId,
+          ),
         ),
       with: {
         item: { with: { vendor: true } },
@@ -271,8 +287,7 @@ export class CatalogService {
     await this.notifyVendorOfDecision(updated, input.status, input.reviewNote);
 
     return this.db.query.catalogPriceProposals.findFirst({
-      where: (p, { and, eq }) =>
-        and(eq(p.id, proposalId), eq(p.organizationId, organizationId)),
+      where: (p, { and, eq }) => and(eq(p.id, proposalId), eq(p.organizationId, organizationId)),
       with: {
         item: { with: { vendor: true } },
         vendor: true,
@@ -497,30 +512,15 @@ export class CatalogService {
     }
   }
 
-  private async scopedVendorIds(
-    organizationId: string,
-    access: AccessPolicy | undefined,
-    permission: string,
-  ): Promise<string[] | undefined> {
-    const scope = operationalScope(access, 'catalog', permission);
-    if (!scope || scope.unrestricted) return undefined;
-    if (scope.entityIds.length === 0) return [];
-
-    const rows = await this.db
-      .select({ id: vendors.id })
-      .from(vendors)
-      .where(
-        and(eq(vendors.organizationId, organizationId), inArray(vendors.entityId, scope.entityIds)),
-      );
-    return rows.map((row) => row.id);
-  }
-
   private async assertVendorScope(
     organizationId: string,
     access: AccessPolicy | undefined,
     permission: string,
     vendorId: string | null | undefined,
   ) {
+    // Vendorless catalog items are organization-wide internal items. They are
+    // global-only, so scoped grants must not create or mutate them, and the
+    // query predicates above intentionally exclude NULL vendor IDs.
     if (!vendorId) {
       const scope = operationalScope(access, 'catalog', permission);
       if (scope && !scope.unrestricted) {

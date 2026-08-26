@@ -1,12 +1,10 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type * as schema from '@betterspend/db';
 import type { AccessPolicy } from '../auth/access-policy';
-import { operationalScope } from '../auth/operational-access';
-import { vendors } from '@betterspend/db';
-import type { PermissionKey } from '@betterspend/shared';
+import { scopedEntityPredicate } from '../auth/operational-access';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -82,14 +80,8 @@ export class SupplierScorecardService {
     limit = 50,
     access?: AccessPolicy,
   ): Promise<ScorecardSummary[]> {
-    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'vendors:view');
-    if (scopedVendorIds?.length === 0) return [];
-    const vendorScope = scopedVendorIds
-      ? sql`AND v.id IN (${sql.join(
-          scopedVendorIds.map((id) => sql`${id}`),
-          sql`, `,
-        )})`
-      : sql``;
+    const vendorScope =
+      scopedEntityPredicate(access, 'vendor', 'vendors:view', sql.raw('v.entity_id')) ?? sql``;
     const rows = await this.db.execute(sql`
       WITH vendor_pos AS (
         SELECT
@@ -194,15 +186,14 @@ export class SupplierScorecardService {
     vendorId: string,
     access?: AccessPolicy,
   ): Promise<ScorecardDetail> {
-    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'vendors:view');
-    if (scopedVendorIds && !scopedVendorIds.includes(vendorId)) {
-      throw new NotFoundException(`Vendor ${vendorId} not found`);
-    }
+    const vendorScope =
+      scopedEntityPredicate(access, 'vendor', 'vendors:view', sql.raw('entity_id')) ?? sql`true`;
     // Vendor info
     const vendorRows = await this.db.execute(sql`
       SELECT id, name, email, phone, status
       FROM vendors
       WHERE id = ${vendorId} AND organization_id = ${organizationId}
+        AND ${vendorScope}
       LIMIT 1
     `);
 
@@ -386,23 +377,5 @@ export class SupplierScorecardService {
         invoiceDate: String(r.invoiceDate),
       })),
     };
-  }
-
-  private async scopedVendorIds(
-    organizationId: string,
-    access: AccessPolicy | undefined,
-    permission: string,
-  ): Promise<string[] | undefined> {
-    const scope = access?.scopeFor('vendor', permission as PermissionKey);
-    if (!scope || scope.unrestricted) return undefined;
-    if (scope.entityIds.length === 0) return [];
-
-    const rows = await this.db
-      .select({ id: vendors.id })
-      .from(vendors)
-      .where(
-        and(eq(vendors.organizationId, organizationId), inArray(vendors.entityId, scope.entityIds)),
-      );
-    return rows.map((row) => row.id);
   }
 }

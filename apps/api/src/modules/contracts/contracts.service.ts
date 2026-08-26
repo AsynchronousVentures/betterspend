@@ -21,7 +21,11 @@ import { AuditService } from '../audit/audit.service';
 import { DocumentsService } from '../documents/documents.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import type { AccessPolicy } from '../auth/access-policy';
-import { operationalScope } from '../auth/operational-access';
+import {
+  operationalScope,
+  requiresGlobalOperationalAccess,
+  scopedVendorPredicate,
+} from '../auth/operational-access';
 
 type RiskLevel = 'low' | 'medium' | 'high';
 
@@ -61,18 +65,21 @@ export class ContractsService {
     filters?: { status?: string; vendorId?: string; type?: string },
     access?: AccessPolicy,
   ) {
-    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'contracts:view');
     const rows = await this.db.query.contracts.findMany({
       where: (c, { and, eq }) => {
         const conditions = [eq(c.organizationId, organizationId)];
         if (filters?.status) conditions.push(eq(c.status, filters.status));
         if (filters?.vendorId) conditions.push(eq(c.vendorId, filters.vendorId));
         if (filters?.type) conditions.push(eq(c.type, filters.type));
-        if (scopedVendorIds) {
-          conditions.push(
-            scopedVendorIds.length > 0 ? inArray(c.vendorId, scopedVendorIds) : sql`false`,
-          );
-        }
+        const vendorScope = scopedVendorPredicate(
+          this.db,
+          organizationId,
+          access,
+          'contract',
+          'contracts:view',
+          c.vendorId,
+        );
+        if (vendorScope) conditions.push(vendorScope);
         return and(...conditions);
       },
       with: {
@@ -90,17 +97,19 @@ export class ContractsService {
     access?: AccessPolicy,
     permission = 'contracts:view',
   ) {
-    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, permission);
     const contract = await this.db.query.contracts.findFirst({
       where: (c, { and, eq }) =>
         and(
           eq(c.id, id),
           eq(c.organizationId, organizationId),
-          scopedVendorIds
-            ? scopedVendorIds.length > 0
-              ? inArray(c.vendorId, scopedVendorIds)
-              : sql`false`
-            : undefined,
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'contract',
+            permission,
+            c.vendorId,
+          ),
         ),
       with: {
         vendor: true,
@@ -278,7 +287,6 @@ export class ContractsService {
   }
 
   async getExpiringContracts(organizationId: string, daysAhead = 30, access?: AccessPolicy) {
-    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, 'contracts:view');
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() + daysAhead);
     const now = new Date();
@@ -290,11 +298,14 @@ export class ContractsService {
           eq(c.status, 'active'),
           lte(c.endDate, cutoff),
           gt(c.endDate, now),
-          scopedVendorIds
-            ? scopedVendorIds.length > 0
-              ? inArray(c.vendorId, scopedVendorIds)
-              : sql`false`
-            : undefined,
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'contract',
+            'contracts:view',
+            c.vendorId,
+          ),
         ),
       with: { vendor: true },
       orderBy: (c, { asc }) => asc(c.endDate),
@@ -302,7 +313,7 @@ export class ContractsService {
   }
 
   async syncExpiringStatus(organizationId: string, access?: AccessPolicy) {
-    if (access && !this.isGlobal(access, 'contracts:manage')) {
+    if (!requiresGlobalOperationalAccess(access, 'contract', 'contracts:manage')) {
       throw new ForbiddenException('Contract status synchronization requires a global grant');
     }
     const now = new Date();
@@ -979,28 +990,6 @@ export class ContractsService {
         )
         .catch(() => {});
     }
-  }
-
-  private isGlobal(access: AccessPolicy, permission: string) {
-    return operationalScope(access, 'contract', permission)?.unrestricted === true;
-  }
-
-  private async scopedVendorIds(
-    organizationId: string,
-    access: AccessPolicy | undefined,
-    permission: string,
-  ): Promise<string[] | undefined> {
-    const scope = operationalScope(access, 'contract', permission);
-    if (!scope || scope.unrestricted) return undefined;
-    if (scope.entityIds.length === 0) return [];
-
-    const rows = await this.db
-      .select({ id: vendors.id })
-      .from(vendors)
-      .where(
-        and(eq(vendors.organizationId, organizationId), inArray(vendors.entityId, scope.entityIds)),
-      );
-    return rows.map((row) => row.id);
   }
 
   private async assertVendorScope(

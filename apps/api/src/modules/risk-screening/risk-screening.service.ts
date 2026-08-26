@@ -9,7 +9,7 @@ import {
 import { lookup } from 'node:dns/promises';
 import { request } from 'node:https';
 import ipaddr from 'ipaddr.js';
-import { and, eq, sql, inArray } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import {
@@ -22,7 +22,12 @@ import {
 import { sanctionsImportRowSchema } from '@betterspend/shared';
 import { SettingsService } from '../settings/settings.service';
 import type { AccessPolicy } from '../auth/access-policy';
-import { operationalScope } from '../auth/operational-access';
+import {
+  operationalScope,
+  requiresGlobalOperationalAccess,
+  scopedEntityPredicate,
+  scopedVendorPredicate,
+} from '../auth/operational-access';
 
 export interface SanctionMatch {
   entryId: string;
@@ -68,10 +73,7 @@ export class RiskScreeningService {
     source = 'ofac_sdn',
     access?: AccessPolicy,
   ): Promise<{ count: number; source: string }> {
-    if (
-      access &&
-      operationalScope(access, 'supplier_risk', 'supplier_risk:manage')?.unrestricted !== true
-    ) {
+    if (!requiresGlobalOperationalAccess(access, 'supplier_risk', 'supplier_risk:manage')) {
       throw new ForbiddenException('Sanctions registry ingestion requires a global grant');
     }
     const listUrl =
@@ -153,7 +155,6 @@ export class RiskScreeningService {
   }
 
   async screenAllVendors(organizationId: string, screenedBy?: string, access?: AccessPolicy) {
-    const scope = operationalScope(access, 'supplier_risk', 'supplier_risk:manage');
     return this.db.transaction(async (tx) => {
       // Hold a shared registry-version lock for the whole batch. Ingestion's
       // version update waits until every result from this snapshot commits.
@@ -166,11 +167,12 @@ export class RiskScreeningService {
           and(
             eq(vendors.organizationId, organizationId),
             eq(vendors.status, 'active'),
-            scope && !scope.unrestricted
-              ? scope.entityIds.length > 0
-                ? inArray(vendors.entityId, scope.entityIds)
-                : sql`false`
-              : undefined,
+            scopedEntityPredicate(
+              access,
+              'supplier_risk',
+              'supplier_risk:manage',
+              vendors.entityId,
+            ),
           ),
         );
       let flagged = 0;
@@ -322,7 +324,19 @@ export class RiskScreeningService {
     });
 
     return this.db.query.vendors.findFirst({
-      where: (v, { and, eq }) => and(eq(v.id, vendorId), eq(v.organizationId, organizationId)),
+      where: (v, { and, eq }) =>
+        and(
+          eq(v.id, vendorId),
+          eq(v.organizationId, organizationId),
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'supplier_risk',
+            'supplier_risk:manage',
+            v.id,
+          ),
+        ),
     });
   }
 
@@ -332,11 +346,7 @@ export class RiskScreeningService {
       where: (v, { and, eq }) =>
         and(
           eq(v.organizationId, organizationId),
-          scope && !scope.unrestricted
-            ? scope.entityIds.length > 0
-              ? inArray(v.entityId, scope.entityIds)
-              : sql`false`
-            : undefined,
+          scopedEntityPredicate(access, 'supplier_risk', 'supplier_risk:view', v.entityId),
         ),
       columns: {
         id: true,
@@ -394,32 +404,30 @@ export class RiskScreeningService {
     }
   }
 
-  private async scopedVendorIds(
-    organizationId: string,
-    access: AccessPolicy | undefined,
-    permission: string,
-  ): Promise<string[] | undefined> {
-    const scope = operationalScope(access, 'supplier_risk', permission);
-    if (!scope || scope.unrestricted) return undefined;
-    if (scope.entityIds.length === 0) return [];
-
-    const rows = await this.db
-      .select({ id: vendors.id })
-      .from(vendors)
-      .where(
-        and(eq(vendors.organizationId, organizationId), inArray(vendors.entityId, scope.entityIds)),
-      );
-    return rows.map((row) => row.id);
-  }
-
   private async assertVendorScope(
     organizationId: string,
     vendorId: string,
     access: AccessPolicy | undefined,
     permission: string,
   ) {
-    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, permission);
-    if (scopedVendorIds && !scopedVendorIds.includes(vendorId)) {
+    const [vendor] = await this.db
+      .select({ id: vendors.id })
+      .from(vendors)
+      .where(
+        and(
+          eq(vendors.id, vendorId),
+          eq(vendors.organizationId, organizationId),
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'supplier_risk',
+            permission,
+            vendors.id,
+          ),
+        ),
+      );
+    if (!vendor) {
       throw new ForbiddenException('The vendor is outside your assigned risk scope');
     }
   }

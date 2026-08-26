@@ -11,6 +11,7 @@ import type { Db } from '@betterspend/db';
 import { onboardingQuestionnaires, vendorOnboardingSubmissions, vendors } from '@betterspend/db';
 import { EntitiesService } from '../entities/entities.service';
 import type { AccessPolicy } from '../auth/access-policy';
+import { scopedVendorPredicate } from '../auth/operational-access';
 import type { PermissionKey } from '@betterspend/shared';
 
 @Injectable()
@@ -218,26 +219,19 @@ export class VendorsService {
   }
 
   async listOnboardingQueue(organizationId: string, access?: AccessPolicy) {
-    const scope = access?.scopeFor('vendor', 'vendors:view');
-    let scopedVendorIds: string[] | undefined;
-    if (scope && !scope.unrestricted) {
-      const rows = await this.db
-        .select({ id: vendors.id })
-        .from(vendors)
-        .where(
-          and(
-            eq(vendors.organizationId, organizationId),
-            scope.entityIds.length > 0 ? inArray(vendors.entityId, scope.entityIds) : sql`false`,
-          ),
-        );
-      scopedVendorIds = rows.map((row) => row.id);
-    }
     const submissions = await this.db.query.vendorOnboardingSubmissions.findMany({
       where: (record, { and, eq, inArray }) =>
         and(
           eq(record.organizationId, organizationId),
           inArray(record.status, ['submitted', 'changes_requested']),
-          scopedVendorIds ? inArray(record.vendorId, scopedVendorIds) : undefined,
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'vendor',
+            'vendors:view',
+            record.vendorId,
+          ),
         ),
       with: { vendor: true, questionnaire: true },
       orderBy: (record, { desc }) => desc(record.submittedAt),

@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, lte, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { softwareLicenses, vendors } from '@betterspend/db';
@@ -13,7 +13,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { RequisitionsService } from '../requisitions/requisitions.service';
 import { RfqService } from '../rfq/rfq.service';
 import type { AccessPolicy } from '../auth/access-policy';
-import { operationalScope } from '../auth/operational-access';
+import { operationalScope, scopedVendorPredicate } from '../auth/operational-access';
 
 export interface RenewalRef {
   action: 'renew' | 'renegotiate' | 'cancel';
@@ -40,11 +40,6 @@ export class SoftwareLicensesService {
     filters?: { status?: string; vendorId?: string; renewingWithinDays?: number },
     access?: AccessPolicy,
   ) {
-    const scopedVendorIds = await this.scopedVendorIds(
-      organizationId,
-      access,
-      'software_licenses:view',
-    );
     const renewalCutoff =
       filters?.renewingWithinDays != null
         ? new Date(Date.now() + filters.renewingWithinDays * 24 * 60 * 60 * 1000)
@@ -57,11 +52,14 @@ export class SoftwareLicensesService {
           filters?.status ? eq(sl.status, filters.status) : undefined,
           filters?.vendorId ? eq(sl.vendorId, filters.vendorId) : undefined,
           renewalCutoff ? lte(sl.renewalDate, renewalCutoff) : undefined,
-          scopedVendorIds
-            ? scopedVendorIds.length > 0
-              ? inArray(sl.vendorId, scopedVendorIds)
-              : sql`false`
-            : undefined,
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'software_license',
+            'software_licenses:view',
+            sl.vendorId,
+          ),
         ),
       with: {
         vendor: true,
@@ -78,17 +76,19 @@ export class SoftwareLicensesService {
     access?: AccessPolicy,
     permission = 'software_licenses:view',
   ) {
-    const scopedVendorIds = await this.scopedVendorIds(organizationId, access, permission);
     const license = await this.db.query.softwareLicenses.findFirst({
       where: (sl, { and, eq }) =>
         and(
           eq(sl.id, id),
           eq(sl.organizationId, organizationId),
-          scopedVendorIds
-            ? scopedVendorIds.length > 0
-              ? inArray(sl.vendorId, scopedVendorIds)
-              : sql`false`
-            : undefined,
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'software_license',
+            permission,
+            sl.vendorId,
+          ),
         ),
       with: {
         vendor: true,
@@ -110,12 +110,7 @@ export class SoftwareLicensesService {
     );
     const [license] = await this.db.insert(softwareLicenses).values(data).returning();
     await this.notifyIfRenewalDueSoon(license);
-    return this.findOne(
-      license.id,
-      data.organizationId,
-      access,
-      'software_licenses:manage',
-    );
+    return this.findOne(license.id, data.organizationId, access, 'software_licenses:manage');
   }
 
   async update(
@@ -128,7 +123,9 @@ export class SoftwareLicensesService {
       const [existing] = await tx
         .select()
         .from(softwareLicenses)
-        .where(and(eq(softwareLicenses.id, id), eq(softwareLicenses.organizationId, organizationId)))
+        .where(
+          and(eq(softwareLicenses.id, id), eq(softwareLicenses.organizationId, organizationId)),
+        )
         .for('update');
       if (!existing) throw new NotFoundException(`Software license ${id} not found`);
 
@@ -163,11 +160,6 @@ export class SoftwareLicensesService {
   }
 
   async renewalCalendar(organizationId: string, daysAhead = 90, access?: AccessPolicy) {
-    const scopedVendorIds = await this.scopedVendorIds(
-      organizationId,
-      access,
-      'software_licenses:view',
-    );
     const cutoff = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000);
     return this.db.query.softwareLicenses.findMany({
       where: (sl, { and, eq, lte }) =>
@@ -175,11 +167,14 @@ export class SoftwareLicensesService {
           eq(sl.organizationId, organizationId),
           eq(sl.status, 'active'),
           lte(sl.renewalDate, cutoff),
-          scopedVendorIds
-            ? scopedVendorIds.length > 0
-              ? inArray(sl.vendorId, scopedVendorIds)
-              : sql`false`
-            : undefined,
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'software_license',
+            'software_licenses:view',
+            sl.vendorId,
+          ),
         ),
       with: {
         vendor: true,
@@ -190,18 +185,16 @@ export class SoftwareLicensesService {
   }
 
   async utilization(organizationId: string, access?: AccessPolicy) {
-    const scopedVendorIds = await this.scopedVendorIds(
-      organizationId,
-      access,
-      'software_licenses:view',
-    );
-    if (scopedVendorIds?.length === 0) return [];
-    const vendorScope = scopedVendorIds
-      ? sql`AND sl.vendor_id IN (${sql.join(
-          scopedVendorIds.map((id) => sql`${id}`),
-          sql`, `,
-        )})`
-      : sql``;
+    const scope = operationalScope(access, 'software_license', 'software_licenses:view');
+    const vendorScope =
+      !scope || scope.unrestricted
+        ? sql``
+        : scope.entityIds.length > 0
+          ? sql`AND v.entity_id IN (${sql.join(
+              scope.entityIds.map((id) => sql`${id}`),
+              sql`, `,
+            )})`
+          : sql`AND false`;
     const rows = await this.db.execute(sql`
       SELECT
         sl.id,
@@ -225,11 +218,6 @@ export class SoftwareLicensesService {
   }
 
   async upcomingRenewalCount(organizationId: string, daysAhead = 30, access?: AccessPolicy) {
-    const scopedVendorIds = await this.scopedVendorIds(
-      organizationId,
-      access,
-      'software_licenses:view',
-    );
     const cutoff = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000);
     const rows = await this.db
       .select({ count: sql<number>`COUNT(*)::int` })
@@ -239,11 +227,14 @@ export class SoftwareLicensesService {
           eq(softwareLicenses.organizationId, organizationId),
           eq(softwareLicenses.status, 'active'),
           lte(softwareLicenses.renewalDate, cutoff),
-          scopedVendorIds
-            ? scopedVendorIds.length > 0
-              ? inArray(softwareLicenses.vendorId, scopedVendorIds)
-              : sql`false`
-            : undefined,
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'software_license',
+            'software_licenses:view',
+            softwareLicenses.vendorId,
+          ),
         ),
       );
     return Number(rows[0]?.count ?? 0);
@@ -443,24 +434,6 @@ export class SoftwareLicensesService {
         .set({ status: 'renewal_due', updatedAt: new Date() })
         .where(eq(softwareLicenses.id, license.id));
     }
-  }
-
-  private async scopedVendorIds(
-    organizationId: string,
-    access: AccessPolicy | undefined,
-    permission: string,
-  ): Promise<string[] | undefined> {
-    const scope = operationalScope(access, 'software_license', permission);
-    if (!scope || scope.unrestricted) return undefined;
-    if (scope.entityIds.length === 0) return [];
-
-    const rows = await this.db
-      .select({ id: vendors.id })
-      .from(vendors)
-      .where(
-        and(eq(vendors.organizationId, organizationId), inArray(vendors.entityId, scope.entityIds)),
-      );
-    return rows.map((row) => row.id);
   }
 
   private async assertVendorScope(

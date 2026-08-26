@@ -1,4 +1,5 @@
 import { SetMetadata } from '@nestjs/common';
+import type { PermissionKey } from '@betterspend/shared';
 import { PERMISSIONS_KEY } from './permissions.decorator';
 
 /** Permission keys introduced for supplier and operational resource families. */
@@ -17,7 +18,12 @@ export const OPERATIONAL_PERMISSION_KEYS = [
   'software_licenses:manage',
 ] as const;
 
-export type OperationalPermissionKey = (typeof OPERATIONAL_PERMISSION_KEYS)[number];
+/**
+ * The shared catalog will own these values once the authz foundation lands.
+ * Keeping PermissionKey in this union makes the metadata contract line up
+ * with @Permissions without accepting arbitrary strings at call sites.
+ */
+export type OperationalPermissionKey = PermissionKey | (typeof OPERATIONAL_PERMISSION_KEYS)[number];
 
 /**
  * Keep new resource keys type-safe until the shared permission catalog carries
