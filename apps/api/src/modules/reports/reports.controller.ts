@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Res, Query, Body, Param, NotFoundException } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Post, Delete, Res, Query, Body, Param, NotFoundException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { Response } from 'express';
 import { ReportsService } from './reports.service';
@@ -40,14 +40,21 @@ export class ReportsController {
     @Query('format') format?: string,
     @CurrentAccess() access?: AccessPolicy,
   ) {
+    const isCsv = format === 'csv';
+    if (isCsv && !access?.can('reports:export')) {
+      throw new ForbiddenException('CSV report export requires reports:export permission');
+    }
+    const reportScope = isCsv
+      ? this.reportExportScope(access)
+      : access?.scopeFor('report', 'reports:view');
     const rows = await this.reportsService.runCustomReport(orgId, {
       reportType,
       startDate,
       endDate,
       groupBy,
-    }, access?.scopeFor('report', 'reports:view'));
+    }, reportScope);
 
-    if (format === 'csv') {
+    if (isCsv) {
       const csv = this.reportsService.toCsvPublic(rows);
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="${reportType}-${new Date().toISOString().slice(0, 10)}.csv"`);

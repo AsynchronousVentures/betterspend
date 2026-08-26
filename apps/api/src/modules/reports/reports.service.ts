@@ -200,7 +200,7 @@ export class ReportsService {
       SELECT
         COALESCE(ci.category, 'Uncategorized')       AS "category",
         COUNT(DISTINCT il.id)::int                   AS "lineCount",
-        SUM(il.total_price)::numeric                 AS "totalSpend"
+        SUM(il.base_total_price)::numeric            AS "totalSpend"
       FROM invoice_lines il
       JOIN invoices i ON i.id = il.invoice_id
       LEFT JOIN catalog_items ci ON ci.id = il.catalog_item_id

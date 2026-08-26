@@ -88,6 +88,22 @@ test('custom reports apply row scope inside the aggregate query', async () => {
   assert.ok(query.params.includes('department-1'));
 });
 
+test('custom spend-by-category reports aggregate base-currency line totals', async () => {
+  const queries: unknown[] = [];
+  const service = new ReportsService({
+    execute: async (query: unknown) => {
+      queries.push(query);
+      return [];
+    },
+  } as never);
+
+  await service.runCustomReport('org-acme', { reportType: 'spend_by_category' });
+
+  const query = new PgDialect().sqlToQuery(queries[0] as never);
+  assert.match(query.sql, /SUM\(il\.base_total_price\)/i);
+  assert.doesNotMatch(query.sql, /SUM\(il\.total_price\)/i);
+});
+
 test('scoped audit exports fail closed while global exports remain available', async () => {
   const queries: unknown[] = [];
   const service = new ExportService({
