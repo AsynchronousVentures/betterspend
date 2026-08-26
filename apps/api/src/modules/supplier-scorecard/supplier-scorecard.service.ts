@@ -1,12 +1,12 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, sql, type SQL } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import type * as schema from '@betterspend/db';
 import type { AccessPolicy } from '../auth/access-policy';
 import { scopedEntityPredicate } from '../auth/operational-access';
 
-type Db = NodePgDatabase<typeof schema>;
+export interface ScorecardDatabase {
+  execute(query: SQL): Promise<unknown>;
+}
 
 export interface ScorecardSummary {
   vendorId: string;
@@ -73,7 +73,7 @@ function computeOverallScore(
 
 @Injectable()
 export class SupplierScorecardService {
-  constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
+  constructor(@Inject(DB_TOKEN) private readonly db: ScorecardDatabase) {}
 
   async listScores(
     organizationId: string,

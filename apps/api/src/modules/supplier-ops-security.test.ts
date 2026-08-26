@@ -25,7 +25,10 @@ import { CatalogService } from './catalog/catalog.service';
 import { ContractsService } from './contracts/contracts.service';
 import { PunchoutService } from './punchout/punchout.service';
 import { SoftwareLicensesService } from './software-licenses/software-licenses.service';
-import { SupplierScorecardService } from './supplier-scorecard/supplier-scorecard.service';
+import {
+  SupplierScorecardService,
+  type ScorecardDatabase,
+} from './supplier-scorecard/supplier-scorecard.service';
 import { VendorsService } from './vendors/vendors.service';
 
 const organizationId = 'organization-1';
@@ -313,12 +316,12 @@ describe('supplier operational authorization regressions', () => {
 
   it('renders the scoped scorecard predicate as valid SQL', async () => {
     let renderedSql = '';
-    const db = {
+    const db: ScorecardDatabase = {
       execute: async (query: unknown) => {
         renderedSql = new PgDialect().sqlToQuery(query as SQL).sql;
         return [];
       },
-    } as unknown as Db;
+    };
     const service = new SupplierScorecardService(db);
 
     await service.listScores(organizationId, 50, entityScopedAccess());
