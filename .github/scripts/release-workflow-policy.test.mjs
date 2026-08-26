@@ -225,7 +225,7 @@ test('avoids duplicate Blacksmith work for promoted PRs and validated commits', 
 test('keeps the required Validate check while skipping expensive non-runtime validation', () => {
   assert.match(workflow, /change-scope:\n    name: Classify Changes/);
   assert.match(workflow, /merge_group\) base_sha="\$MERGE_GROUP_BASE_SHA"/);
-  assert.match(workflow, /git diff --name-only -z "\$base_sha" "\$GITHUB_SHA"/);
+  assert.match(workflow, /git diff --no-renames --name-only -z "\$base_sha" "\$GITHUB_SHA"/);
   assert.match(workflow, /node \.github\/scripts\/ci-change-policy\.mjs --force-runtime/);
   assert.match(
     workflow,
