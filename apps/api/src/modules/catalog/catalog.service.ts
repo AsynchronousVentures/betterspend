@@ -286,6 +286,14 @@ export class CatalogService {
           eq(catalogPriceProposals.id, proposalId),
           eq(catalogPriceProposals.organizationId, organizationId),
           eq(catalogPriceProposals.status, 'pending'),
+          scopedVendorPredicate(
+            this.db,
+            organizationId,
+            access,
+            'catalog',
+            'catalog:manage',
+            catalogPriceProposals.vendorId,
+          ),
         ),
       )
       .returning();

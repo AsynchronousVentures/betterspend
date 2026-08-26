@@ -154,7 +154,13 @@ export class VendorsService {
     const [vendor] = await this.db
       .update(vendors)
       .set({ ...data, updatedAt: new Date() })
-      .where(and(eq(vendors.id, id), eq(vendors.organizationId, organizationId)))
+      .where(
+        and(
+          eq(vendors.id, id),
+          eq(vendors.organizationId, organizationId),
+          scopedEntityPredicate(access, 'vendor', 'vendors:edit', vendors.entityId),
+        ),
+      )
       .returning();
 
     if (!vendor) throw new NotFoundException(`Vendor ${id} not found`);

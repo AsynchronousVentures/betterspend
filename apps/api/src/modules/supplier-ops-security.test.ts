@@ -84,16 +84,22 @@ describe('supplier operational authorization regressions', () => {
 
   it('rejects a contract create when its vendor belongs to another organization', async () => {
     let insertCalled = false;
-    const db = {
+    const transaction = {
       select: () => ({
         from: () => ({
-          where: async () => [],
+          where: () => ({
+            for: async () => [],
+          }),
         }),
       }),
       insert: () => {
         insertCalled = true;
         return undefined;
       },
+    };
+    const db = {
+      transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) =>
+        callback(transaction),
     } as unknown as Db;
     const service = new ContractsService(
       db,

@@ -28,6 +28,7 @@ import {
 } from '../auth/operational-access';
 
 type RiskLevel = 'low' | 'medium' | 'high';
+type ContractTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 interface ExtractedClause {
   clauseType: string;
@@ -133,21 +134,31 @@ export class ContractsService {
   }
 
   async create(data: typeof contracts.$inferInsert, access?: AccessPolicy) {
-    await this.assertVendorScope(data.organizationId, access, 'contracts:manage', data.vendorId);
-    // Auto-generate contract number
-    const [{ count }] = await this.db
-      .select({ count: sql<number>`count(*)` })
-      .from(contracts)
-      .where(eq(contracts.organizationId, data.organizationId));
+    const contract = await this.db.transaction(async (tx) => {
+      await this.assertVendorScopeInTransaction(
+        tx,
+        data.organizationId,
+        access,
+        'contracts:manage',
+        data.vendorId,
+      );
+      // Keep the vendor scope lock through the insert so a reassignment cannot
+      // invalidate the authorization between the check and the write.
+      const [{ count }] = await tx
+        .select({ count: sql<number>`count(*)` })
+        .from(contracts)
+        .where(eq(contracts.organizationId, data.organizationId));
 
-    const year = new Date().getFullYear();
-    const num = (Number(count) + 1).toString().padStart(4, '0');
-    const contractNumber = `CTR-${year}-${num}`;
+      const year = new Date().getFullYear();
+      const num = (Number(count) + 1).toString().padStart(4, '0');
+      const contractNumber = `CTR-${year}-${num}`;
 
-    const [contract] = await this.db
-      .insert(contracts)
-      .values({ ...data, contractNumber })
-      .returning();
+      const [created] = await tx
+        .insert(contracts)
+        .values({ ...data, contractNumber })
+        .returning();
+      return created;
+    });
 
     this.auditService
       .log(data.organizationId, data.createdBy, 'contract', contract.id, 'created')
@@ -236,12 +247,14 @@ export class ContractsService {
     data: typeof contractLines.$inferInsert,
     access?: AccessPolicy,
   ) {
-    await this.findOne(contractId, organizationId, access, 'contracts:manage'); // verify ownership
-    const [line] = await this.db
-      .insert(contractLines)
-      .values({ ...data, contractId })
-      .returning();
-    return line;
+    return this.db.transaction(async (tx) => {
+      await this.lockManagedContract(tx, contractId, organizationId, access);
+      const [line] = await tx
+        .insert(contractLines)
+        .values({ ...data, contractId })
+        .returning();
+      return line;
+    });
   }
 
   async addAmendment(
@@ -257,51 +270,39 @@ export class ContractsService {
     },
     access?: AccessPolicy,
   ) {
-    await this.findOne(contractId, organizationId, access, 'contracts:manage');
+    return this.db.transaction(async (tx) => {
+      const contract = await this.lockManagedContract(tx, contractId, organizationId, access);
 
-    // get next amendment number
-    const [{ maxNum }] = await this.db
-      .select({ maxNum: sql<number>`coalesce(max(amendment_number), 0)` })
-      .from(contractAmendments)
-      .where(eq(contractAmendments.contractId, contractId));
+      // Keep the parent lock through the amendment and its related contract
+      // updates so the authorization and all writes share one snapshot.
+      const [{ maxNum }] = await tx
+        .select({ maxNum: sql<number>`coalesce(max(amendment_number), 0)` })
+        .from(contractAmendments)
+        .where(eq(contractAmendments.contractId, contractId));
 
-    const [amendment] = await this.db
-      .insert(contractAmendments)
-      .values({ ...data, contractId, createdBy: userId, amendmentNumber: Number(maxNum) + 1 })
-      .returning();
+      const [amendment] = await tx
+        .insert(contractAmendments)
+        .values({ ...data, contractId, createdBy: userId, amendmentNumber: Number(maxNum) + 1 })
+        .returning();
 
-    // If there's a value change, update contract total
-    if (data.valueChange) {
-      const contract = await this.findOne(contractId, organizationId, access, 'contracts:manage');
-      const currentValue = parseFloat(contract.totalValue ?? '0');
-      const delta = parseFloat(String(data.valueChange));
-      await this.db
-        .update(contracts)
-        .set({ totalValue: (currentValue + delta).toFixed(2), updatedAt: new Date() })
-        .where(
-          and(
-            eq(contracts.id, contractId),
-            eq(contracts.organizationId, organizationId),
-            this.managedContractScope(organizationId, access),
-          ),
-        );
-    }
+      if (data.valueChange) {
+        const currentValue = parseFloat(contract.totalValue ?? '0');
+        const delta = parseFloat(String(data.valueChange));
+        await tx
+          .update(contracts)
+          .set({ totalValue: (currentValue + delta).toFixed(2), updatedAt: new Date() })
+          .where(and(eq(contracts.id, contractId), eq(contracts.organizationId, organizationId)));
+      }
 
-    // If new end date, update contract
-    if (data.newEndDate) {
-      await this.db
-        .update(contracts)
-        .set({ endDate: new Date(data.newEndDate as unknown as string), updatedAt: new Date() })
-        .where(
-          and(
-            eq(contracts.id, contractId),
-            eq(contracts.organizationId, organizationId),
-            this.managedContractScope(organizationId, access),
-          ),
-        );
-    }
+      if (data.newEndDate) {
+        await tx
+          .update(contracts)
+          .set({ endDate: new Date(data.newEndDate as unknown as string), updatedAt: new Date() })
+          .where(and(eq(contracts.id, contractId), eq(contracts.organizationId, organizationId)));
+      }
 
-    return amendment;
+      return amendment;
+    });
   }
 
   async getExpiringContracts(organizationId: string, daysAhead = 30, access?: AccessPolicy) {
@@ -494,55 +495,59 @@ export class ContractsService {
     input: { decision: 'approved' | 'rejected'; fields?: Record<string, unknown> },
     access?: AccessPolicy,
   ) {
-    await this.findOne(contractId, organizationId, access, 'contracts:manage');
-    const extraction = await this.db.query.contractExtractions.findFirst({
-      where: (record, { and, eq }) =>
-        and(
-          eq(record.id, extractionId),
-          eq(record.contractId, contractId),
-          eq(record.organizationId, organizationId),
-        ),
-    });
-    if (!extraction) throw new NotFoundException(`Contract extraction ${extractionId} not found`);
+    await this.db.transaction(async (tx) => {
+      await this.lockManagedContract(tx, contractId, organizationId, access);
+      const [extraction] = await tx
+        .select()
+        .from(contractExtractions)
+        .where(
+          and(
+            eq(contractExtractions.id, extractionId),
+            eq(contractExtractions.contractId, contractId),
+            eq(contractExtractions.organizationId, organizationId),
+          ),
+        );
+      if (!extraction) throw new NotFoundException(`Contract extraction ${extractionId} not found`);
 
-    const reviewedAt = new Date();
-    await this.db
-      .update(contractExtractions)
-      .set({
-        status: input.decision,
-        reviewedBy: userId,
-        reviewedAt,
-        updatedAt: reviewedAt,
-        extractedFields: { ...(extraction.extractedFields ?? {}), ...(input.fields ?? {}) },
-      })
-      .where(eq(contractExtractions.id, extractionId));
+      const reviewedAt = new Date();
+      await tx
+        .update(contractExtractions)
+        .set({
+          status: input.decision,
+          reviewedBy: userId,
+          reviewedAt,
+          updatedAt: reviewedAt,
+          extractedFields: { ...(extraction.extractedFields ?? {}), ...(input.fields ?? {}) },
+        })
+        .where(
+          and(
+            eq(contractExtractions.id, extractionId),
+            eq(contractExtractions.contractId, contractId),
+            eq(contractExtractions.organizationId, organizationId),
+          ),
+        );
 
-    await this.db
-      .update(contractClauses)
-      .set({ status: input.decision, reviewedBy: userId, reviewedAt, updatedAt: reviewedAt })
-      .where(
-        and(
-          eq(contractClauses.extractionId, extractionId),
-          eq(contractClauses.organizationId, organizationId),
-        ),
-      );
+      await tx
+        .update(contractClauses)
+        .set({ status: input.decision, reviewedBy: userId, reviewedAt, updatedAt: reviewedAt })
+        .where(
+          and(
+            eq(contractClauses.extractionId, extractionId),
+            eq(contractClauses.organizationId, organizationId),
+          ),
+        );
 
-    if (input.decision === 'approved') {
-      const fields = { ...(extraction.extractedFields ?? {}), ...(input.fields ?? {}) };
-      const authoritative = this.authoritativeContractUpdates(fields);
-      if (Object.keys(authoritative).length > 0) {
-        await this.db
-          .update(contracts)
-          .set({ ...authoritative, updatedAt: new Date() })
-          .where(
-            and(
-              eq(contracts.id, contractId),
-              eq(contracts.organizationId, organizationId),
-              this.managedContractScope(organizationId, access),
-            ),
-          );
+      if (input.decision === 'approved') {
+        const fields = { ...(extraction.extractedFields ?? {}), ...(input.fields ?? {}) };
+        const authoritative = this.authoritativeContractUpdates(fields);
+        if (Object.keys(authoritative).length > 0) {
+          await tx
+            .update(contracts)
+            .set({ ...authoritative, updatedAt: new Date() })
+            .where(and(eq(contracts.id, contractId), eq(contracts.organizationId, organizationId)));
+        }
       }
-    }
+    });
 
     await this.auditService
       .log(organizationId, userId, 'contract', contractId, 'intelligence_reviewed', {
@@ -1025,6 +1030,57 @@ export class ContractsService {
       'contracts:manage',
       contracts.vendorId,
     );
+  }
+
+  private async lockManagedContract(
+    tx: ContractTransaction,
+    contractId: string,
+    organizationId: string,
+    access?: AccessPolicy,
+  ) {
+    const [contract] = await tx
+      .select()
+      .from(contracts)
+      .where(and(eq(contracts.id, contractId), eq(contracts.organizationId, organizationId)))
+      .for('update');
+    if (!contract) throw new NotFoundException(`Contract ${contractId} not found`);
+
+    await this.assertVendorScopeInTransaction(
+      tx,
+      organizationId,
+      access,
+      'contracts:manage',
+      contract.vendorId,
+    );
+    return contract;
+  }
+
+  private async assertVendorScopeInTransaction(
+    tx: ContractTransaction,
+    organizationId: string,
+    access: AccessPolicy | undefined,
+    permission: string,
+    vendorId: string | null | undefined,
+  ) {
+    const scope = operationalScope(access, 'contract', permission);
+    if (!vendorId) {
+      if (scope && !scope.unrestricted) {
+        throw new ForbiddenException('The contract vendor is outside your assigned scope');
+      }
+      return;
+    }
+
+    const [vendor] = await tx
+      .select({ id: vendors.id, entityId: vendors.entityId })
+      .from(vendors)
+      .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
+      .for('share');
+    if (!vendor) {
+      throw new ForbiddenException('The contract vendor must belong to the current organization');
+    }
+    if (scope && !scope.unrestricted && !scope.entityIds.includes(vendor.entityId ?? '')) {
+      throw new ForbiddenException('The contract vendor is outside your assigned scope');
+    }
   }
 
   private async assertVendorScope(
