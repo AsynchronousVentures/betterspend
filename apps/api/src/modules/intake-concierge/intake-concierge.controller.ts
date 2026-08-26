@@ -25,7 +25,14 @@ export class IntakeConciergeController {
   createPolicy(
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
-    @Body() body: { title?: string; policyType?: string; body?: string; rules?: Record<string, unknown>; status?: string },
+    @Body()
+    body: {
+      title?: string;
+      policyType?: string;
+      body?: string;
+      rules?: Record<string, unknown>;
+      status?: string;
+    },
   ) {
     return this.conciergeService.createPolicy(orgId, userId, body);
   }
@@ -37,7 +44,14 @@ export class IntakeConciergeController {
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
-    @Body() body: { title?: string; policyType?: string; body?: string; rules?: Record<string, unknown>; status?: string },
+    @Body()
+    body: {
+      title?: string;
+      policyType?: string;
+      body?: string;
+      rules?: Record<string, unknown>;
+      status?: string;
+    },
   ) {
     return this.conciergeService.updatePolicy(id, orgId, userId, body);
   }
@@ -59,7 +73,9 @@ export class IntakeConciergeController {
   }
 
   @Post('sessions/:id/messages')
-  @ApiOperation({ summary: 'Add information to a procurement concierge session and refresh guidance' })
+  @ApiOperation({
+    summary: 'Add information to a procurement concierge session and refresh guidance',
+  })
   addMessage(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentOrgId() orgId: string,
@@ -75,7 +91,11 @@ export class IntakeConciergeController {
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
-    @Body() body: { workflow?: 'requisition' | 'rfq' | 'vendor_onboarding' | 'software_license'; acceptedValues?: Record<string, unknown> },
+    @Body()
+    body: {
+      workflow?: 'requisition' | 'rfq' | 'vendor_onboarding' | 'software_license';
+      acceptedValues?: Record<string, unknown>;
+    },
   ) {
     return this.conciergeService.convertSession(id, orgId, userId, body ?? {});
   }

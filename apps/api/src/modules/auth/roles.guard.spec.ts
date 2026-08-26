@@ -1,115 +1,125 @@
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
+import { Public } from '../../common/decorators/public.decorator';
 import { RolesGuard } from './roles.guard';
+
+class PublicController {
+  @Public()
+  handler() {}
+}
+
+@Authenticated()
+class AuthenticatedController {
+  handler() {}
+}
+
+class PermissionController {
+  @Permissions('vendors:view')
+  handler() {}
+}
+
+class UnclassifiedController {
+  handler() {}
+}
+
+function contextFor(controller: object, handler: object, request: Record<string, unknown> = {}) {
+  return {
+    getHandler: () => handler,
+    getClass: () => controller,
+    switchToHttp: () => ({ getRequest: () => request }),
+  };
+}
 
 describe('RolesGuard', () => {
   afterEach(() => {
     delete process.env.DEMO_MODE;
   });
 
-  it('rejects a role-protected request without an authenticated user', () => {
-    const guard = new RolesGuard({
-      getAllAndOverride: jest.fn().mockReturnValueOnce(['admin']).mockReturnValueOnce(undefined),
-    } as never);
-    const context = {
-      getHandler: jest.fn(),
-      getClass: jest.fn(),
-      switchToHttp: jest.fn(() => ({ getRequest: () => ({}) })),
-    };
+  it('allows an explicitly public route without a session', () => {
+    const guard = new RolesGuard();
 
-    expect(() => guard.canActivate(context as never)).toThrow(UnauthorizedException);
+    expect(
+      guard.canActivate(contextFor(PublicController, PublicController.prototype.handler) as never),
+    ).toBe(true);
   });
 
-  it('leaves routes without authorization metadata to SessionGuard', () => {
-    const guard = new RolesGuard({
-      getAllAndOverride: jest.fn(() => undefined),
-    } as never);
-    const context = {
-      getHandler: jest.fn(),
-      getClass: jest.fn(),
-    };
+  it('allows an authenticated-only route after SessionGuard resolved a user', () => {
+    const guard = new RolesGuard();
+    const request = { authUser: { id: 'user-1' }, authAccess: {} };
 
-    expect(guard.canActivate(context as never)).toBe(true);
+    expect(
+      guard.canActivate(
+        contextFor(
+          AuthenticatedController,
+          AuthenticatedController.prototype.handler,
+          request,
+        ) as never,
+      ),
+    ).toBe(true);
   });
 
-  it('allows a missing user only when demo mode is explicitly enabled', () => {
+  it('rejects a permission-protected request without an authenticated user', () => {
+    const guard = new RolesGuard();
+
+    expect(() =>
+      guard.canActivate(
+        contextFor(PermissionController, PermissionController.prototype.handler) as never,
+      ),
+    ).toThrow(UnauthorizedException);
+  });
+
+  it('rejects a user who lacks a required permission', () => {
+    const guard = new RolesGuard();
+    const request = {
+      authUser: { id: 'user-1' },
+      authAccess: { can: jest.fn(() => false) },
+    };
+
+    expect(() =>
+      guard.canActivate(
+        contextFor(PermissionController, PermissionController.prototype.handler, request) as never,
+      ),
+    ).toThrow(ForbiddenException);
+  });
+
+  it('allows a user with every required permission', () => {
+    const guard = new RolesGuard();
+    const request = {
+      authUser: { id: 'user-1' },
+      authAccess: { can: jest.fn(() => true) },
+    };
+
+    expect(
+      guard.canActivate(
+        contextFor(PermissionController, PermissionController.prototype.handler, request) as never,
+      ),
+    ).toBe(true);
+  });
+
+  it('fails closed for a route without an explicit classification', () => {
+    const guard = new RolesGuard();
+    const request = { authUser: { id: 'user-1' }, authAccess: {} };
+
+    expect(() =>
+      guard.canActivate(
+        contextFor(
+          UnclassifiedController,
+          UnclassifiedController.prototype.handler,
+          request,
+        ) as never,
+      ),
+    ).toThrow('Route access classification is required');
+  });
+
+  it('retains the explicit demo-mode escape hatch for classified routes', () => {
     process.env.DEMO_MODE = 'true';
-    const guard = new RolesGuard({
-      getAllAndOverride: jest.fn().mockReturnValueOnce(['admin']).mockReturnValueOnce(undefined),
-    } as never);
-    const context = {
-      getHandler: jest.fn(),
-      getClass: jest.fn(),
-      switchToHttp: jest.fn(() => ({ getRequest: () => ({}) })),
-    };
+    const guard = new RolesGuard();
 
-    expect(guard.canActivate(context as never)).toBe(true);
-  });
-
-  it('does not grant admin access based on the seeded demo user id', () => {
-    const guard = new RolesGuard({
-      getAllAndOverride: jest.fn().mockReturnValueOnce(['admin']).mockReturnValueOnce(undefined),
-    } as never);
-    const context = {
-      getHandler: jest.fn(),
-      getClass: jest.fn(),
-      switchToHttp: jest.fn(() => ({
-        getRequest: () => ({
-          authUser: {
-            id: '00000000-0000-0000-0000-000000000002',
-          },
-          authAccess: {
-            can: jest.fn(() => true),
-            scopeFor: jest.fn(() => ({ unrestricted: false })),
-            isGlobalBuiltInAdmin: jest.fn(() => false),
-          },
-        }),
-      })),
-    };
-
-    expect(() => guard.canActivate(context as never)).toThrow(ForbiddenException);
-  });
-
-  it('does not treat a department-scoped admin grant as the global admin bypass', () => {
-    const guard = new RolesGuard({
-      getAllAndOverride: jest.fn().mockReturnValueOnce(['admin']).mockReturnValueOnce(undefined),
-    } as never);
-    const context = {
-      getHandler: jest.fn(),
-      getClass: jest.fn(),
-      switchToHttp: jest.fn(() => ({
-        getRequest: () => ({
-          authUser: { id: 'user-1' },
-          authAccess: {
-            can: jest.fn(() => true),
-            scopeFor: jest.fn(() => ({ unrestricted: false })),
-            isGlobalBuiltInAdmin: jest.fn(() => false),
-          },
-        }),
-      })),
-    };
-
-    expect(() => guard.canActivate(context as never)).toThrow(ForbiddenException);
-  });
-
-  it('requires global built-in admin provenance for legacy admin metadata', () => {
-    const guard = new RolesGuard({
-      getAllAndOverride: jest.fn().mockReturnValueOnce(['admin']).mockReturnValueOnce(undefined),
-    } as never);
-    const context = {
-      getHandler: jest.fn(),
-      getClass: jest.fn(),
-      switchToHttp: jest.fn(() => ({
-        getRequest: () => ({
-          authUser: { id: 'user-1' },
-          authAccess: {
-            can: jest.fn(() => true),
-            scopeFor: jest.fn(() => ({ unrestricted: true })),
-            isGlobalBuiltInAdmin: jest.fn(() => false),
-          },
-        }),
-      })),
-    };
-
-    expect(() => guard.canActivate(context as never)).toThrow(ForbiddenException);
+    expect(
+      guard.canActivate(
+        contextFor(PermissionController, PermissionController.prototype.handler) as never,
+      ),
+    ).toBe(true);
   });
 });

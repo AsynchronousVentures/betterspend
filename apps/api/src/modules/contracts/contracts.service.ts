@@ -17,6 +17,7 @@ import {
   contracts,
   vendors,
 } from '@betterspend/db';
+import type { PermissionKey } from '@betterspend/shared';
 import { AuditService } from '../audit/audit.service';
 import { DocumentsService } from '../documents/documents.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -96,7 +97,7 @@ export class ContractsService {
     id: string,
     organizationId: string,
     access?: AccessPolicy,
-    permission = 'contracts:view',
+    permission: PermissionKey = 'contracts:view',
   ) {
     const contract = await this.db.query.contracts.findFirst({
       where: (c, { and, eq }) =>
@@ -1083,7 +1084,7 @@ export class ContractsService {
     tx: ContractTransaction,
     organizationId: string,
     access: AccessPolicy | undefined,
-    permission: string,
+    permission: PermissionKey,
     vendorId: string | null | undefined,
   ) {
     const scope = operationalScope(access, 'contract', permission);
@@ -1110,7 +1111,7 @@ export class ContractsService {
   private async assertVendorScope(
     organizationId: string,
     access: AccessPolicy | undefined,
-    permission: string,
+    permission: PermissionKey,
     vendorId: string | null | undefined,
   ) {
     if (!vendorId) {

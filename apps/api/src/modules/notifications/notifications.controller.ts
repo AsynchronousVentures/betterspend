@@ -41,19 +41,13 @@ export class NotificationsController {
 
   @Get('types')
   @ApiOperation({ summary: 'List notification types for current user' })
-  types(
-    @CurrentOrgId() orgId: string,
-    @CurrentUserId() userId: string,
-  ) {
+  types(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
     return this.notificationsService.getAvailableTypes(orgId, userId);
   }
 
   @Get('preferences')
   @ApiOperation({ summary: 'Get notification preferences for current user' })
-  preferences(
-    @CurrentOrgId() orgId: string,
-    @CurrentUserId() userId: string,
-  ) {
+  preferences(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
     return this.notificationsService.getPreferences(orgId, userId);
   }
 
@@ -69,28 +63,19 @@ export class NotificationsController {
 
   @Get('unread-count')
   @ApiOperation({ summary: 'Get unread notification count for current user' })
-  unreadCount(
-    @CurrentOrgId() orgId: string,
-    @CurrentUserId() userId: string,
-  ) {
+  unreadCount(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
     return this.notificationsService.getUnreadCount(orgId, userId);
   }
 
   @Post(':id/read')
   @ApiOperation({ summary: 'Mark a notification as read' })
-  markRead(
-    @Param('id') id: string,
-    @CurrentUserId() userId: string,
-  ) {
+  markRead(@Param('id') id: string, @CurrentUserId() userId: string) {
     return this.notificationsService.markRead(id, userId);
   }
 
   @Post('read-all')
   @ApiOperation({ summary: 'Mark all notifications as read' })
-  markAllRead(
-    @CurrentOrgId() orgId: string,
-    @CurrentUserId() userId: string,
-  ) {
+  markAllRead(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
     return this.notificationsService.markAllRead(orgId, userId);
   }
 }

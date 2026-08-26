@@ -1,6 +1,4 @@
-import {
-  Controller, Get, Post, Param, Body, HttpCode, HttpStatus,
-} from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { OcrService } from './ocr.service';
@@ -40,7 +38,11 @@ export class OcrController {
     description:
       'Creates an OCR job and runs extraction asynchronously. Poll GET /ocr/jobs/:id until status = "done".',
   })
-  createJob(@Body() body: SubmitOcrJobDto, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
+  createJob(
+    @Body() body: SubmitOcrJobDto,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+  ) {
     return this.ocrService.createJob({
       organizationId: orgId,
       uploadedBy: userId,

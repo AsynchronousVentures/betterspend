@@ -1,43 +1,68 @@
 import { UnauthorizedException } from '@nestjs/common';
+import { Public } from '../../common/decorators/public.decorator';
 import { SessionGuard } from './session.guard';
+
+class PublicController {
+  @Public()
+  handler() {}
+}
+
+class UnclassifiedController {
+  handler() {}
+}
+
+function contextFor(controller: object, handler: object, request: Record<string, unknown>) {
+  return {
+    getHandler: () => handler,
+    getClass: () => controller,
+    switchToHttp: () => ({ getRequest: () => request }),
+  };
+}
+
+function createGuard(auth = { api: { getSession: jest.fn(async () => null) } }) {
+  return new SessionGuard(auth as never, {} as never, {} as never);
+}
 
 describe('SessionGuard', () => {
   afterEach(() => {
     delete process.env.DEMO_MODE;
   });
 
-  it('rejects a non-public request without a bearer or cookie session', async () => {
-    const guard = new SessionGuard(
-      { getAllAndOverride: jest.fn(() => false) } as never,
-      { api: { getSession: jest.fn(async () => null) } } as never,
-      {} as never,
-      {} as never,
-    );
-    const request = { headers: {} };
-    const context = {
-      getHandler: jest.fn(),
-      getClass: jest.fn(),
-      switchToHttp: jest.fn(() => ({ getRequest: () => request })),
-    };
+  it('allows an explicitly public request without resolving a session', async () => {
+    const auth = { api: { getSession: jest.fn() } };
+    const guard = createGuard(auth);
 
-    await expect(guard.canActivate(context as never)).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(
+      guard.canActivate(
+        contextFor(PublicController, PublicController.prototype.handler, { headers: {} }) as never,
+      ),
+    ).resolves.toBe(true);
+    expect(auth.api.getSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unclassified request without a bearer or cookie session', async () => {
+    const guard = createGuard();
+
+    await expect(
+      guard.canActivate(
+        contextFor(UnclassifiedController, UnclassifiedController.prototype.handler, {
+          headers: {},
+        }) as never,
+      ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   it('allows a missing session only when demo mode is explicitly enabled', async () => {
     process.env.DEMO_MODE = 'true';
-    const guard = new SessionGuard(
-      { getAllAndOverride: jest.fn(() => false) } as never,
-      { api: { getSession: jest.fn(async () => null) } } as never,
-      {} as never,
-      {} as never,
-    );
-    const context = {
-      getHandler: jest.fn(),
-      getClass: jest.fn(),
-      switchToHttp: jest.fn(() => ({ getRequest: () => ({ headers: {} }) })),
-    };
+    const guard = createGuard();
 
-    await expect(guard.canActivate(context as never)).resolves.toBe(true);
+    await expect(
+      guard.canActivate(
+        contextFor(UnclassifiedController, UnclassifiedController.prototype.handler, {
+          headers: {},
+        }) as never,
+      ),
+    ).resolves.toBe(true);
   });
 
   it('rejects an inactive user for an otherwise valid bearer session', async () => {
@@ -65,20 +90,18 @@ describe('SessionGuard', () => {
     };
     const accessPolicy = { resolve: jest.fn() };
     const guard = new SessionGuard(
-      { getAllAndOverride: jest.fn(() => false) } as never,
       { api: { getSession: jest.fn() } } as never,
       db as never,
       accessPolicy as never,
     );
-    const context = {
-      getHandler: jest.fn(),
-      getClass: jest.fn(),
-      switchToHttp: jest.fn(() => ({
-        getRequest: () => ({ headers: { authorization: 'Bearer token-1' } }),
-      })),
-    };
 
-    await expect(guard.canActivate(context as never)).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(
+      guard.canActivate(
+        contextFor(UnclassifiedController, UnclassifiedController.prototype.handler, {
+          headers: { authorization: 'Bearer token-1' },
+        }) as never,
+      ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
     expect(accessPolicy.resolve).not.toHaveBeenCalled();
   });
 });

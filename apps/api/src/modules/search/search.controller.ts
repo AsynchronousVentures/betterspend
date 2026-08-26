@@ -13,7 +13,8 @@ export class SearchController {
   @Get()
   @ApiOperation({ summary: 'Global search across entities' })
   search(@Query('q') q: string, @CurrentOrgId() orgId: string) {
-    if (!q || q.trim().length < 2) return { requisitions: [], purchaseOrders: [], invoices: [], vendors: [], catalogItems: [] };
+    if (!q || q.trim().length < 2)
+      return { requisitions: [], purchaseOrders: [], invoices: [], vendors: [], catalogItems: [] };
     return this.searchService.search(q.trim(), orgId);
   }
 }

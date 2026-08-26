@@ -19,7 +19,7 @@ import {
   sanctionsScreenings,
   vendors,
 } from '@betterspend/db';
-import { sanctionsImportRowSchema } from '@betterspend/shared';
+import { sanctionsImportRowSchema, type PermissionKey } from '@betterspend/shared';
 import { SettingsService } from '../settings/settings.service';
 import type { AccessPolicy } from '../auth/access-policy';
 import {
@@ -408,7 +408,7 @@ export class RiskScreeningService {
     organizationId: string,
     vendorId: string,
     access: AccessPolicy | undefined,
-    permission: string,
+    permission: PermissionKey,
   ) {
     const [vendor] = await this.db
       .select({ id: vendors.id })

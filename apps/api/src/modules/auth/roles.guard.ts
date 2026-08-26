@@ -25,7 +25,9 @@ export class RolesGuard implements CanActivate {
     }
 
     if (routeAccess.access.kind === 'permissions') {
-      const hasPermissions = routeAccess.access.permissions.every((permission) => authAccess.can(permission));
+      const hasPermissions = routeAccess.access.permissions.every((permission) =>
+        authAccess.can(permission),
+      );
       if (!hasPermissions) {
         throw new ForbiddenException(
           `Requires permissions: ${routeAccess.access.permissions.join(', ')}`,

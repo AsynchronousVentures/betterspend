@@ -1,3 +1,4 @@
+import 'reflect-metadata';
 import type { PermissionKey } from '@betterspend/shared';
 
 export const ROUTE_ACCESS_KEY = 'routeAccess';
@@ -49,9 +50,10 @@ export function declareRouteAccess(access: RouteAccess): RouteAccessDecorator {
 }
 
 /** Resolve the effective route classification using Nest's method-over-class precedence. */
-export function resolveRouteAccess(handler: Function, controller: Function): RouteAccessResolution {
+export function resolveRouteAccess(handler: object, controller: object): RouteAccessResolution {
   const declarations = declarationsFor(handler);
-  const effectiveDeclarations = declarations.length > 0 ? declarations : declarationsFor(controller);
+  const effectiveDeclarations =
+    declarations.length > 0 ? declarations : declarationsFor(controller);
 
   if (effectiveDeclarations.length === 0) {
     return {

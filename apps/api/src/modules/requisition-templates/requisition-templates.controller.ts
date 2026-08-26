@@ -1,9 +1,21 @@
 import {
-  Controller, Get, Post, Patch, Delete, Param, Body, ParseUUIDPipe, HttpCode, HttpStatus,
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Param,
+  Body,
+  ParseUUIDPipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { RequisitionTemplatesService } from './requisition-templates.service';
-import { createRequisitionTemplateSchema, createTemplateFromRequisitionSchema } from '@betterspend/shared';
+import {
+  createRequisitionTemplateSchema,
+  createTemplateFromRequisitionSchema,
+} from '@betterspend/shared';
 import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
@@ -32,11 +44,7 @@ export class RequisitionTemplatesController {
 
   @Post()
   @ApiOperation({ summary: 'Create a requisition template' })
-  create(
-    @Body() body: unknown,
-    @CurrentOrgId() orgId: string,
-    @CurrentUserId() userId: string,
-  ) {
+  create(@Body() body: unknown, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
     const parsed = createRequisitionTemplateSchema.parse(body);
     return this.service.create(orgId, userId, parsed);
   }

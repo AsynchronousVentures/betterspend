@@ -6,4 +6,5 @@ import { Permissions } from './permissions.decorator';
  * come from the shared catalog and use the same route metadata as every other
  * permission-protected operation.
  */
-export const OperationalPermissions = (...permissions: PermissionKey[]) => Permissions(...permissions);
+export const OperationalPermissions = (...permissions: PermissionKey[]) =>
+  Permissions(...permissions);

@@ -28,7 +28,8 @@ export class RecurringPoController {
   create(
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
-    @Body() dto: {
+    @Body()
+    dto: {
       title: string;
       description?: string;
       vendorId?: string;
@@ -36,7 +37,12 @@ export class RecurringPoController {
       dayOfMonth?: number;
       totalAmount: number;
       currency?: string;
-      lines: Array<{ description: string; quantity: number; unitPrice: number; unitOfMeasure?: string }>;
+      lines: Array<{
+        description: string;
+        quantity: number;
+        unitPrice: number;
+        unitOfMeasure?: string;
+      }>;
       glAccount?: string;
       notes?: string;
       maxRuns?: number;
@@ -51,7 +57,8 @@ export class RecurringPoController {
   update(
     @CurrentOrgId() orgId: string,
     @Param('id') id: string,
-    @Body() dto: {
+    @Body()
+    dto: {
       title?: string;
       description?: string;
       vendorId?: string;
@@ -60,7 +67,12 @@ export class RecurringPoController {
       dayOfMonth?: number;
       totalAmount?: number;
       currency?: string;
-      lines?: Array<{ description: string; quantity: number; unitPrice: number; unitOfMeasure?: string }>;
+      lines?: Array<{
+        description: string;
+        quantity: number;
+        unitPrice: number;
+        unitOfMeasure?: string;
+      }>;
       glAccount?: string;
       notes?: string;
       maxRuns?: number;
@@ -77,11 +89,7 @@ export class RecurringPoController {
 
   @Post(':id/run')
   @ApiOperation({ summary: 'Manually trigger a run — creates a draft PO from the template' })
-  run(
-    @CurrentOrgId() orgId: string,
-    @CurrentUserId() userId: string,
-    @Param('id') id: string,
-  ) {
+  run(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string, @Param('id') id: string) {
     return this.recurringPoService.triggerRun(id, orgId, userId);
   }
 
