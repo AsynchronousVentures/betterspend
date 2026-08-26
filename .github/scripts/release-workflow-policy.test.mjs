@@ -181,7 +181,7 @@ test('deploys the validated release tag and runs the shared preflight in fast CI
   );
 });
 
-test('avoids duplicate Blacksmith work for promoted PRs and validated commits', () => {
+test('uses standard GitHub-hosted runners without duplicate validation', () => {
   assert.match(workflow, /permissions:\n  checks: read\n  contents: read\n  pull-requests: read/);
   assert.match(
     workflow,
@@ -196,17 +196,19 @@ test('avoids duplicate Blacksmith work for promoted PRs and validated commits', 
   assert.match(workflow, /check\.app\?\.slug === 'github-actions'/);
   assert.match(
     workflow,
-    /needs\.change-scope\.outputs\.runtime == 'true'[\s\S]*?needs\.full-ci-proof\.outputs\.available != 'true'[\s\S]*?runs-on: blacksmith-2vcpu-ubuntu-2404[\s\S]*?timeout-minutes: 30/,
+    /name: Fast CI[\s\S]*?runs-on: \$\{\{ needs\.change-scope\.outputs\.runtime == 'true' && 'ubuntu-24\.04' \|\| 'ubuntu-slim' \}\}/,
   );
   assert.match(
     workflow,
-    /runs-on: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/v'\) && 'ubuntu-latest' \|\| 'blacksmith-2vcpu-ubuntu-2404' \}\}/,
+    /needs\.change-scope\.outputs\.runtime == 'true'[\s\S]*?needs\.full-ci-proof\.outputs\.available != 'true'[\s\S]*?runs-on: ubuntu-24\.04[\s\S]*?timeout-minutes: 30/,
   );
   assert.match(
     workflow,
-    /- name: Setup Blacksmith Builder\n        if: github\.ref == 'refs\/heads\/main'/,
+    /publish:\n    name: Publish Images[\s\S]*?runs-on: ubuntu-24\.04[\s\S]*?timeout-minutes: 30/,
   );
-  assert.doesNotMatch(workflow, /blacksmith-4vcpu/);
+  assert.equal((workflow.match(/uses: docker\/setup-buildx-action@v3/g) ?? []).length, 2);
+  assert.equal((workflow.match(/uses: docker\/build-push-action@v6/g) ?? []).length, 6);
+  assert.doesNotMatch(workflow, /blacksmith|useblacksmith/i);
   assert.match(
     workflow,
     /full-ci-proof:[\s\S]*?runs-on: ubuntu-slim[\s\S]*?validate:[\s\S]*?runs-on: ubuntu-slim/,
@@ -219,7 +221,7 @@ test('avoids duplicate Blacksmith work for promoted PRs and validated commits', 
     workflow,
     /validate:\n    name: Validate\n    if: always\(\)\n    needs: \[change-scope, fast-ci, full-ci-proof, full-ci\]/,
   );
-  assert.match(workflow, /deploy:[\s\S]*?runs-on: ubuntu-latest[\s\S]*?timeout-minutes: 15/);
+  assert.match(workflow, /deploy:[\s\S]*?runs-on: ubuntu-24\.04[\s\S]*?timeout-minutes: 15/);
 });
 
 test('keeps the required Validate check while skipping expensive non-runtime validation', () => {
@@ -243,20 +245,20 @@ test('keeps the required Validate check while skipping expensive non-runtime val
   assert.doesNotMatch(workflow, /paths-ignore:/);
 });
 
-test('builds missing immutable sources only during a fully validated release fallback', () => {
+test('builds missing immutable sources with the standard Docker actions after validation', () => {
   assert.match(
     workflow,
     /push\)[\s\S]*?if \[\[ "\$GITHUB_REF" == refs\/tags\/\* \]\]; then[\s\S]*?ci-change-policy\.mjs --force-runtime/,
   );
   assert.match(
     workflow,
-    /name: Set up release Docker builder\n        if: startsWith\(github\.ref, 'refs\/tags\/v'\)\n        uses: docker\/setup-buildx-action@v3/,
+    /publish:\n    name: Publish Images[\s\S]*?needs\.validate\.result == 'success'[\s\S]*?name: Set up Docker builder\n        uses: docker\/setup-buildx-action@v3/,
   );
   for (const image of ['API', 'web', 'migrator']) {
     assert.match(
       workflow,
       new RegExp(
-        `name: Build and push missing ${image} source for release[\\s\\S]*?if: startsWith\\(github\\.ref, 'refs/tags/v'\\) && steps\\.existing_images\\.outputs\\.${image.toLowerCase()}_exists != 'true'[\\s\\S]*?uses: docker/build-push-action@v6`,
+        `name: Build and push ${image} image[\\s\\S]*?if: steps\\.existing_images\\.outputs\\.${image.toLowerCase()}_exists != 'true'[\\s\\S]*?uses: docker/build-push-action@v6`,
       ),
     );
   }
