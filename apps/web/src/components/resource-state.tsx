@@ -78,19 +78,23 @@ export function ListState({
 }
 
 interface PanelErrorProps {
+  state?: 'denied' | 'failed';
   title?: string;
   onRetry?: () => void;
 }
 
 /** Keeps a loaded detail page usable when one secondary panel cannot be retrieved. */
-export function PanelError({ title = 'Failed to load this section', onRetry }: PanelErrorProps) {
+export function PanelError({ state = 'failed', title, onRetry }: PanelErrorProps) {
+  const denied = state === 'denied';
+  const resolvedTitle = title ?? (denied ? 'Access denied' : 'Failed to load this section');
+
   return (
     <div
       role="alert"
       className="flex flex-wrap items-center justify-between gap-3 border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm"
     >
-      <span className="font-medium text-foreground">{title}</span>
-      {onRetry ? (
+      <span className="font-medium text-foreground">{resolvedTitle}</span>
+      {!denied && onRetry ? (
         <Button type="button" size="sm" variant="outline" onClick={onRetry}>
           <RefreshCw className="h-3.5 w-3.5" />
           Retry

@@ -220,7 +220,12 @@ export default function InvoicesPage() {
               )}
               {exporting ? 'Exporting...' : 'Export CSV'}
             </Button>
-            <Button type="button" onClick={() => setShowAddSources((open) => !open)}>
+            <Button
+              type="button"
+              aria-controls="invoice-sources"
+              aria-expanded={showAddSources}
+              onClick={() => setShowAddSources((open) => !open)}
+            >
               <Plus className="h-4 w-4" />
               Add invoice
             </Button>
@@ -229,7 +234,7 @@ export default function InvoicesPage() {
       />
 
       {showAddSources ? (
-        <Card>
+        <Card id="invoice-sources">
           <CardContent className="grid gap-3 p-4 md:grid-cols-3">
             <Link
               href="/invoices/new"

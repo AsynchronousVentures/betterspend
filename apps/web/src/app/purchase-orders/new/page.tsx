@@ -326,11 +326,16 @@ export default function NewPurchaseOrderPage() {
     <div className="space-y-6 p-4 lg:p-8">
       <PageHeader
         title="Standalone PO"
-        description="Use this exception only when no approved requisition or awarded RFQ should be the source record."
+        description="This exception bypasses a source requisition or RFQ. Use it only when no approved requisition or awarded RFQ should be the source record."
         actions={
-          <Button asChild variant="outline">
-            <Link href="/purchase-orders">Back to Purchase Orders</Link>
-          </Button>
+          <div className="flex flex-wrap gap-3">
+            <Button asChild>
+              <Link href="/start">Start Request</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link href="/purchase-orders">Back to Purchase Orders</Link>
+            </Button>
+          </div>
         }
       />
 

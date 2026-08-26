@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { RefreshCw } from 'lucide-react';
-import { api } from '../../../lib/api';
+import { api, loadFailureState } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { DocumentUploader } from '../../../components/document-uploader';
 import { MessageThread } from '../../../components/message-thread';
@@ -102,7 +102,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const [glSystem, setGlSystem] = useState<'qbo' | 'xero'>('qbo');
   const [glJobs, setGlJobs] = useState<GlExportJob[]>([]);
   const [glJobsLoading, setGlJobsLoading] = useState(false);
-  const [glJobsFailed, setGlJobsFailed] = useState(false);
+  const [glJobsError, setGlJobsError] = useState<unknown>(null);
   const [showExternalPayment, setShowExternalPayment] = useState(false);
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
   const [paymentMethod, setPaymentMethod] = useState('ach');
@@ -110,12 +110,12 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
 
   const refreshExportJobs = useCallback(async (invoiceId: string) => {
     setGlJobsLoading(true);
-    setGlJobsFailed(false);
+    setGlJobsError(null);
     try {
       const jobs = await api.glExportJobs.forInvoice(invoiceId);
       setGlJobs(Array.isArray(jobs) ? (jobs as GlExportJob[]) : []);
-    } catch {
-      setGlJobsFailed(true);
+    } catch (error) {
+      setGlJobsError(error);
     } finally {
       setGlJobsLoading(false);
     }
@@ -517,9 +517,9 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                 <div role="status" aria-live="polite" className="text-sm text-muted-foreground">
                   Loading accounting status...
                 </div>
-              ) : glJobsFailed ? (
+              ) : glJobsError ? (
                 <PanelError
-                  title="Failed to load accounting status"
+                  state={loadFailureState(glJobsError)}
                   onRetry={() => void refreshExportJobs(id)}
                 />
               ) : latestGlJob ? (
