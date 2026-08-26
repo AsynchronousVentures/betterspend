@@ -100,6 +100,21 @@ export type CreatePoInput = z.infer<typeof createPoSchema>;
 export type ChangeOrderInput = z.infer<typeof changeOrderSchema>;
 export { createPoSchema, changeOrderSchema };
 
+export function purchaseOrderScopeEntityId(
+  input: Pick<CreatePoInput, 'entityId' | 'requisitionId'>,
+  linkedRequisition: unknown,
+) {
+  if (
+    linkedRequisition &&
+    typeof linkedRequisition === 'object' &&
+    'entityId' in linkedRequisition
+  ) {
+    const entityId = linkedRequisition.entityId;
+    return typeof entityId === 'string' ? entityId : null;
+  }
+  return linkedRequisition ? null : (input.entityId ?? null);
+}
+
 function purchaseOrderScopePredicates(organizationId: string) {
   return {
     own: (userId: string) =>
@@ -319,7 +334,7 @@ export class PurchaseOrdersService {
       access,
       'purchase_orders:create',
       {
-        entityId: input.entityId ?? null,
+        entityId: purchaseOrderScopeEntityId(input, linkedRequisition),
         issuedBy,
         requisition: linkedRequisition,
       },

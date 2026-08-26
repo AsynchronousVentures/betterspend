@@ -310,38 +310,50 @@ export class ReceivingService {
   }
 
   private async updatePoReceiptStatus(poId: string, organizationId: string) {
-    // Fetch all GRN lines for this PO to compute received totals
-    const po = await this.db.query.purchaseOrders.findFirst({
-      where: (p, { eq }) => eq(p.id, poId),
-      with: { lines: true, goodsReceipts: { with: { lines: true } } },
+    await this.db.transaction(async (tx) => {
+      // Lock the PO before reading receipts so concurrent cancellation/recompute
+      // operations serialize their read, compute, and write sequence.
+      const [po] = await tx
+        .select()
+        .from(purchaseOrders)
+        .where(and(eq(purchaseOrders.id, poId), eq(purchaseOrders.organizationId, organizationId)))
+        .for('update');
+      if (!po) return;
+
+      const poLinesForStatus = await tx.query.poLines.findMany({
+        where: (line, { eq }) => eq(line.purchaseOrderId, poId),
+      });
+      const receipts = await tx.query.goodsReceipts.findMany({
+        where: (receipt, { and, eq }) =>
+          and(eq(receipt.purchaseOrderId, poId), eq(receipt.organizationId, organizationId)),
+        with: { lines: true },
+      });
+      const allGrnLines = receipts
+        .filter((receipt) => receipt.status !== 'cancelled')
+        .flatMap((receipt) => receipt.lines ?? []);
+
+      const allFullyReceived = poLinesForStatus.every((poLine) => {
+        const received = allGrnLines
+          .filter((line) => line.poLineId === poLine.id)
+          .reduce((sum, line) => sum + parseFloat(line.quantityReceived), 0);
+        return received >= parseFloat(poLine.quantity);
+      });
+
+      const anyReceived = allGrnLines.length > 0;
+      const newStatus = allFullyReceived
+        ? 'received'
+        : anyReceived
+          ? 'partially_received'
+          : ['received', 'partially_received'].includes(po.status)
+            ? po.issuedAt
+              ? 'issued'
+              : 'approved'
+            : po.status;
+
+      await tx
+        .update(purchaseOrders)
+        .set({ status: newStatus, updatedAt: new Date() })
+        .where(and(eq(purchaseOrders.id, poId), eq(purchaseOrders.organizationId, organizationId)));
     });
-    if (!po) return;
-
-    const allGrnLines = (po.goodsReceipts as any[])
-      .filter((g: any) => g.status !== 'cancelled')
-      .flatMap((g: any) => g.lines ?? []);
-
-    const allFullyReceived = (po.lines as any[]).every((poLine: any) => {
-      const received = allGrnLines
-        .filter((gl: any) => gl.poLineId === poLine.id)
-        .reduce((sum: number, gl: any) => sum + parseFloat(gl.quantityReceived), 0);
-      return received >= parseFloat(poLine.quantity);
-    });
-
-    const anyReceived = allGrnLines.length > 0;
-    const newStatus = allFullyReceived
-      ? 'received'
-      : anyReceived
-        ? 'partially_received'
-        : ['received', 'partially_received'].includes(po.status)
-          ? po.issuedAt
-            ? 'issued'
-            : 'approved'
-          : po.status;
-
-    await this.db
-      .update(purchaseOrders)
-      .set({ status: newStatus, updatedAt: new Date() })
-      .where(eq(purchaseOrders.id, poId));
   }
 }

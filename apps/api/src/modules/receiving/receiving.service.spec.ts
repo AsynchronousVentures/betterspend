@@ -128,26 +128,39 @@ describe('ReceivingService response context', () => {
         purchaseOrder: { id: 'po-1', number: 'PO-2026-0001', organizationId, vendor: null },
         lines: [],
       });
-    const findPurchaseOrder = jest.fn().mockResolvedValue({
+    const lockedPurchaseOrder = {
       id: 'po-1',
       status: 'received',
       issuedAt: new Date('2026-01-01T00:00:00.000Z'),
-      lines: [{ id: 'po-line-1', quantity: '10' }],
-      goodsReceipts: [
-        {
-          status: 'cancelled',
-          lines: [{ poLineId: 'po-line-1', quantityReceived: '10' }],
-        },
-      ],
-    });
+    };
+    const findPoLines = jest.fn().mockResolvedValue([{ id: 'po-line-1', quantity: '10' }]);
+    const findReceipts = jest.fn().mockResolvedValue([
+      {
+        status: 'cancelled',
+        lines: [{ poLineId: 'po-line-1', quantityReceived: '10' }],
+      },
+    ]);
     const updateWhere = jest.fn().mockResolvedValue([]);
     const updateSet = jest.fn(() => ({ where: updateWhere }));
+    const lockedFor = jest.fn().mockResolvedValue([lockedPurchaseOrder]);
+    const selectWhere = jest.fn(() => ({ for: lockedFor }));
+    const selectFrom = jest.fn(() => ({ where: selectWhere }));
+    const transaction = jest.fn(async (callback: (tx: unknown) => unknown) =>
+      callback({
+        query: {
+          poLines: { findMany: findPoLines },
+          goodsReceipts: { findMany: findReceipts },
+        },
+        select: jest.fn(() => ({ from: selectFrom })),
+        update: jest.fn(() => ({ set: updateSet })),
+      }),
+    );
     const db = {
       query: {
         goodsReceipts: { findFirst: findReceipt },
-        purchaseOrders: { findFirst: findPurchaseOrder },
       },
       update: jest.fn(() => ({ set: updateSet })),
+      transaction,
     };
     const service = new ReceivingService(
       db as never,
@@ -161,5 +174,6 @@ describe('ReceivingService response context', () => {
 
     expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ status: 'cancelled' }));
     expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ status: 'issued' }));
+    expect(lockedFor).toHaveBeenCalledWith('update');
   });
 });
