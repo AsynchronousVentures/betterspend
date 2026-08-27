@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
 import { Select } from '../../components/ui/select';
+import { formatDateOnly, isDateOnlyBeforeToday } from '../../lib/date-only';
 import {
   Table,
   TableBody,
@@ -288,122 +289,236 @@ export default function InvoicesPage() {
               onRetry={() => void load()}
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-10">
-                    <input
-                      type="checkbox"
-                      onChange={toggleAll}
-                      checked={
-                        filtered
-                          .filter(
-                            (invoice) =>
-                              !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
-                              invoice.matchStatus !== 'exception',
-                          )
-                          .every((invoice) => selected.has(invoice.id)) &&
-                        filtered.some(
-                          (invoice) => !['approved', 'paid', 'cancelled'].includes(invoice.status),
-                        )
-                      }
-                    />
-                  </TableHead>
-                  <TableHead>Internal #</TableHead>
-                  <TableHead>Vendor Invoice #</TableHead>
-                  <TableHead>Vendor</TableHead>
-                  <TableHead>PO</TableHead>
-                  <TableHead>Invoice Date</TableHead>
-                  <TableHead>Due Date</TableHead>
-                  <TableHead>Total</TableHead>
-                  <TableHead>Match</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              <div className="divide-y divide-border/70 md:hidden">
                 {filtered.map((invoice) => {
                   const isOverdue =
-                    invoice.dueDate &&
+                    Boolean(invoice.dueDate) &&
                     !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
-                    new Date(invoice.dueDate) < new Date();
+                    isDateOnlyBeforeToday(invoice.dueDate);
                   const canSelect =
                     !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
                     invoice.matchStatus !== 'exception';
 
                   return (
-                    <TableRow
+                    <article
                       key={invoice.id}
-                      className={isOverdue ? 'bg-rose-50/70 hover:bg-rose-50' : undefined}
+                      className={`space-y-4 p-4 ${isOverdue ? 'bg-rose-50/70' : ''}`}
                     >
-                      <TableCell>
-                        {canSelect ? (
-                          <input
-                            type="checkbox"
-                            checked={selected.has(invoice.id)}
-                            onChange={() => toggleSelect(invoice.id)}
-                          />
-                        ) : null}
-                      </TableCell>
-                      <TableCell className="font-semibold">
-                        <Link
-                          href={`/invoices/${invoice.id}`}
-                          className="text-primary hover:underline"
-                        >
-                          {invoice.internalNumber}
-                        </Link>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {invoice.invoiceNumber}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        <RelatedRecordLink
-                          record={{
-                            kind: 'vendor',
-                            id: invoice.vendor?.id,
-                            label: invoice.vendor?.name,
-                            relation: 'Supplier',
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        <RelatedRecordLink
-                          record={{
-                            kind: 'purchase_order',
-                            id: invoice.purchaseOrder?.id,
-                            label: invoice.purchaseOrder?.number,
-                            relation: 'Purchase order',
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {new Date(invoice.invoiceDate).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell
-                        className={
-                          isOverdue ? 'font-semibold text-rose-700' : 'text-muted-foreground'
-                        }
-                      >
-                        <div className="flex items-center gap-2">
-                          <span>
-                            {invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : '—'}
-                          </span>
-                          {isOverdue ? <AlertTriangle className="h-4 w-4" /> : null}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 items-start gap-3">
+                          {canSelect ? (
+                            <input
+                              type="checkbox"
+                              aria-label={`Select invoice ${invoice.internalNumber}`}
+                              checked={selected.has(invoice.id)}
+                              onChange={() => toggleSelect(invoice.id)}
+                              className="mt-1"
+                            />
+                          ) : null}
+                          <div className="min-w-0">
+                            <Link
+                              href={`/invoices/${invoice.id}`}
+                              className="font-semibold text-primary hover:underline"
+                            >
+                              {invoice.internalNumber}
+                            </Link>
+                            <div className="mt-1 truncate text-xs text-muted-foreground">
+                              Vendor invoice {invoice.invoiceNumber}
+                            </div>
+                          </div>
                         </div>
-                      </TableCell>
-                      <TableCell className="font-medium text-foreground">
-                        {formatCurrency(invoice.totalAmount, invoice.currency)}
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge value={invoice.matchStatus} />
-                      </TableCell>
-                      <TableCell>
                         <StatusBadge value={invoice.status} />
-                      </TableCell>
-                    </TableRow>
+                      </div>
+                      <dl className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                        <div className="min-w-0">
+                          <dt className="text-xs text-muted-foreground">Supplier</dt>
+                          <dd className="mt-1 truncate text-foreground">
+                            <RelatedRecordLink
+                              record={{
+                                kind: 'vendor',
+                                id: invoice.vendor?.id,
+                                label: invoice.vendor?.name,
+                                relation: 'Supplier',
+                              }}
+                            />
+                          </dd>
+                        </div>
+                        <div className="min-w-0">
+                          <dt className="text-xs text-muted-foreground">Purchase order</dt>
+                          <dd className="mt-1 truncate text-foreground">
+                            <RelatedRecordLink
+                              record={{
+                                kind: 'purchase_order',
+                                id: invoice.purchaseOrder?.id,
+                                label: invoice.purchaseOrder?.number,
+                                relation: 'Purchase order',
+                              }}
+                            />
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-muted-foreground">Total</dt>
+                          <dd className="mt-1 font-medium text-foreground">
+                            {formatCurrency(invoice.totalAmount, invoice.currency)}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-muted-foreground">Match</dt>
+                          <dd className="mt-1">
+                            <StatusBadge value={invoice.matchStatus} />
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-muted-foreground">Invoice date</dt>
+                          <dd className="mt-1 text-foreground">
+                            {new Date(invoice.invoiceDate).toLocaleDateString()}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-muted-foreground">Due date</dt>
+                          <dd
+                            className={
+                              isOverdue
+                                ? 'mt-1 font-semibold text-rose-700'
+                                : 'mt-1 text-foreground'
+                            }
+                          >
+                            {formatDateOnly(invoice.dueDate)}
+                          </dd>
+                        </div>
+                      </dl>
+                      <Link
+                        href={`/invoices/${invoice.id}`}
+                        className="inline-flex text-sm font-semibold text-primary hover:underline"
+                      >
+                        View invoice
+                      </Link>
+                    </article>
                   );
                 })}
-              </TableBody>
-            </Table>
+              </div>
+
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="w-10">
+                        <input
+                          type="checkbox"
+                          aria-label="Select approvable invoices"
+                          onChange={toggleAll}
+                          checked={
+                            filtered
+                              .filter(
+                                (invoice) =>
+                                  !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
+                                  invoice.matchStatus !== 'exception',
+                              )
+                              .every((invoice) => selected.has(invoice.id)) &&
+                            filtered.some(
+                              (invoice) =>
+                                !['approved', 'paid', 'cancelled'].includes(invoice.status),
+                            )
+                          }
+                        />
+                      </TableHead>
+                      <TableHead>Internal #</TableHead>
+                      <TableHead>Vendor Invoice #</TableHead>
+                      <TableHead>Vendor</TableHead>
+                      <TableHead>PO</TableHead>
+                      <TableHead>Invoice Date</TableHead>
+                      <TableHead>Due Date</TableHead>
+                      <TableHead>Total</TableHead>
+                      <TableHead>Match</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((invoice) => {
+                      const isOverdue =
+                        Boolean(invoice.dueDate) &&
+                        !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
+                        isDateOnlyBeforeToday(invoice.dueDate);
+                      const canSelect =
+                        !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
+                        invoice.matchStatus !== 'exception';
+
+                      return (
+                        <TableRow
+                          key={invoice.id}
+                          className={isOverdue ? 'bg-rose-50/70 hover:bg-rose-50' : undefined}
+                        >
+                          <TableCell>
+                            {canSelect ? (
+                              <input
+                                type="checkbox"
+                                aria-label={`Select invoice ${invoice.internalNumber}`}
+                                checked={selected.has(invoice.id)}
+                                onChange={() => toggleSelect(invoice.id)}
+                              />
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="font-semibold">
+                            <Link
+                              href={`/invoices/${invoice.id}`}
+                              className="text-primary hover:underline"
+                            >
+                              {invoice.internalNumber}
+                            </Link>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {invoice.invoiceNumber}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            <RelatedRecordLink
+                              record={{
+                                kind: 'vendor',
+                                id: invoice.vendor?.id,
+                                label: invoice.vendor?.name,
+                                relation: 'Supplier',
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            <RelatedRecordLink
+                              record={{
+                                kind: 'purchase_order',
+                                id: invoice.purchaseOrder?.id,
+                                label: invoice.purchaseOrder?.number,
+                                relation: 'Purchase order',
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {new Date(invoice.invoiceDate).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell
+                            className={
+                              isOverdue ? 'font-semibold text-rose-700' : 'text-muted-foreground'
+                            }
+                          >
+                            <div className="flex items-center gap-2">
+                              <span>{formatDateOnly(invoice.dueDate)}</span>
+                              {isOverdue ? <AlertTriangle className="h-4 w-4" /> : null}
+                            </div>
+                          </TableCell>
+                          <TableCell className="font-medium text-foreground">
+                            {formatCurrency(invoice.totalAmount, invoice.currency)}
+                          </TableCell>
+                          <TableCell>
+                            <StatusBadge value={invoice.matchStatus} />
+                          </TableCell>
+                          <TableCell>
+                            <StatusBadge value={invoice.status} />
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

@@ -163,64 +163,130 @@ export default function PurchaseOrdersPage() {
               onRetry={() => void load()}
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>Number</TableHead>
-                  <TableHead>Vendor</TableHead>
-                  <TableHead>Version</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Total</TableHead>
-                  <TableHead>Issued Date</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              <div className="divide-y divide-border/70 md:hidden">
                 {filtered.map((purchaseOrder) => (
-                  <TableRow key={purchaseOrder.id}>
-                    <TableCell className="font-semibold">
-                      <div className="flex items-center gap-2">
+                  <article key={purchaseOrder.id} className="space-y-4 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
                         <Link
                           href={`/purchase-orders/${purchaseOrder.id}`}
-                          className="text-primary hover:underline"
+                          className="font-semibold text-primary hover:underline"
                         >
                           {purchaseOrder.number}
                         </Link>
-                        {purchaseOrder.poType === 'blanket' ? (
-                          <span className="rounded-md bg-amber-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-800">
-                            Blanket
-                          </span>
-                        ) : null}
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          Version {purchaseOrder.version ?? 1}
+                          {purchaseOrder.poType === 'blanket' ? ' · Blanket' : ''}
+                        </div>
                       </div>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      <RelatedRecordLink
-                        record={{
-                          kind: 'vendor',
-                          id: purchaseOrder.vendor?.id,
-                          label: purchaseOrder.vendor?.name,
-                          relation: 'Supplier',
-                        }}
-                      />
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">V{purchaseOrder.version ?? 1}</TableCell>
-                    <TableCell>
                       <StatusBadge
                         value={purchaseOrder.status}
                         label={STATUS_LABELS[purchaseOrder.status]}
                       />
-                    </TableCell>
-                    <TableCell className="font-medium text-foreground">
-                      {formatCurrency(purchaseOrder.totalAmount, purchaseOrder.currency)}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {purchaseOrder.issuedAt
-                        ? new Date(purchaseOrder.issuedAt).toLocaleDateString()
-                        : '—'}
-                    </TableCell>
-                  </TableRow>
+                    </div>
+                    <dl className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                      <div className="min-w-0">
+                        <dt className="text-xs text-muted-foreground">Supplier</dt>
+                        <dd className="mt-1 truncate text-foreground">
+                          <RelatedRecordLink
+                            record={{
+                              kind: 'vendor',
+                              id: purchaseOrder.vendor?.id,
+                              label: purchaseOrder.vendor?.name,
+                              relation: 'Supplier',
+                            }}
+                          />
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-muted-foreground">Total</dt>
+                        <dd className="mt-1 font-medium text-foreground">
+                          {formatCurrency(purchaseOrder.totalAmount, purchaseOrder.currency)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-muted-foreground">Issued</dt>
+                        <dd className="mt-1 text-foreground">
+                          {purchaseOrder.issuedAt
+                            ? new Date(purchaseOrder.issuedAt).toLocaleDateString()
+                            : '—'}
+                        </dd>
+                      </div>
+                    </dl>
+                    <Link
+                      href={`/purchase-orders/${purchaseOrder.id}`}
+                      className="inline-flex text-sm font-semibold text-primary hover:underline"
+                    >
+                      View purchase order
+                    </Link>
+                  </article>
                 ))}
-              </TableBody>
-            </Table>
+              </div>
+
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>Number</TableHead>
+                      <TableHead>Vendor</TableHead>
+                      <TableHead>Version</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Total</TableHead>
+                      <TableHead>Issued Date</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((purchaseOrder) => (
+                      <TableRow key={purchaseOrder.id}>
+                        <TableCell className="font-semibold">
+                          <div className="flex items-center gap-2">
+                            <Link
+                              href={`/purchase-orders/${purchaseOrder.id}`}
+                              className="text-primary hover:underline"
+                            >
+                              {purchaseOrder.number}
+                            </Link>
+                            {purchaseOrder.poType === 'blanket' ? (
+                              <span className="rounded-md bg-amber-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-800">
+                                Blanket
+                              </span>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          <RelatedRecordLink
+                            record={{
+                              kind: 'vendor',
+                              id: purchaseOrder.vendor?.id,
+                              label: purchaseOrder.vendor?.name,
+                              relation: 'Supplier',
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          V{purchaseOrder.version ?? 1}
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge
+                            value={purchaseOrder.status}
+                            label={STATUS_LABELS[purchaseOrder.status]}
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium text-foreground">
+                          {formatCurrency(purchaseOrder.totalAmount, purchaseOrder.currency)}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {purchaseOrder.issuedAt
+                            ? new Date(purchaseOrder.issuedAt).toLocaleDateString()
+                            : '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

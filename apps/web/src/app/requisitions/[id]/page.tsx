@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -23,6 +23,14 @@ import {
 import { Input } from '../../../components/ui/input';
 import { Select } from '../../../components/ui/select';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../../components/ui/dialog';
+import {
   Table,
   TableBody,
   TableCell,
@@ -31,6 +39,7 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { Textarea } from '../../../components/ui/textarea';
+import { restoreFocus } from '../../../lib/accessibility';
 
 interface RequisitionLine {
   id: string;
@@ -54,7 +63,11 @@ interface Requisition {
   lines: RequisitionLine[];
   activeApproval?: { id: string; currentStep: number; status: string } | null;
   purchaseOrders?: { id: string; number: string; status: string }[];
-  commitmentEvents?: { id: string; budgetId: string; budget?: { id: string; name: string } | null }[];
+  commitmentEvents?: {
+    id: string;
+    budgetId: string;
+    budget?: { id: string; name: string } | null;
+  }[];
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -92,6 +105,7 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
   const [poPaymentTerms, setPoPaymentTerms] = useState('');
   const [poSubmitting, setPoSubmitting] = useState(false);
   const [poError, setPoError] = useState('');
+  const poDialogTriggerRef = useRef<HTMLButtonElement>(null);
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   const [templateName, setTemplateName] = useState('');
   const [templateDesc, setTemplateDesc] = useState('');
@@ -99,6 +113,7 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
   const [templateSaving, setTemplateSaving] = useState(false);
   const [templateError, setTemplateError] = useState('');
   const [templateSuccess, setTemplateSuccess] = useState(false);
+  const templateDialogTriggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     params.then(({ id: pid }) => {
@@ -257,7 +272,9 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
-      <Breadcrumbs items={[{ label: 'Requisitions', href: '/requisitions' }, { label: req.number }]} />
+      <Breadcrumbs
+        items={[{ label: 'Requisitions', href: '/requisitions' }, { label: req.number }]}
+      />
 
       <PageHeader
         title={req.number}
@@ -283,7 +300,7 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
               </Button>
             ) : null}
             {canCreatePurchaseOrder ? (
-              <Button type="button" onClick={openPoDialog}>
+              <Button type="button" ref={poDialogTriggerRef} onClick={openPoDialog}>
                 Create Purchase Order
               </Button>
             ) : null}
@@ -293,6 +310,7 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
                   type="button"
                   variant="outline"
                   className="justify-start"
+                  ref={templateDialogTriggerRef}
                   onClick={() => {
                     setSaveTemplateOpen(true);
                     setTemplateError('');
@@ -342,8 +360,14 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
 
       <div className="grid gap-4 md:grid-cols-3">
         <StatCard label="Total" value={formatCurrency(req.totalAmount, req.currency)} />
-        <StatCard label="Priority" value={req.priority.charAt(0).toUpperCase() + req.priority.slice(1)} />
-        <StatCard label="Needed By" value={req.neededBy ? new Date(req.neededBy).toLocaleDateString() : '—'} />
+        <StatCard
+          label="Priority"
+          value={req.priority.charAt(0).toUpperCase() + req.priority.slice(1)}
+        />
+        <StatCard
+          label="Needed By"
+          value={req.neededBy ? new Date(req.neededBy).toLocaleDateString() : '—'}
+        />
       </div>
 
       <Card className="rounded-lg">
@@ -357,7 +381,10 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
           <DetailField label="Created" value={new Date(req.createdAt).toLocaleDateString()} />
           <DetailField label="Currency" value={req.currency} />
           <DetailField label="Line Count" value={String(lines.length)} />
-          <DetailField label="Needed By" value={req.neededBy ? new Date(req.neededBy).toLocaleDateString() : '—'} />
+          <DetailField
+            label="Needed By"
+            value={req.neededBy ? new Date(req.neededBy).toLocaleDateString() : '—'}
+          />
           {req.description ? (
             <div className="sm:col-span-2 lg:col-span-3">
               <DetailField label="Description" value={req.description} />
@@ -394,7 +421,9 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
                   return (
                     <TableRow key={line.id}>
                       <TableCell className="text-muted-foreground">{index + 1}</TableCell>
-                      <TableCell className="font-medium text-foreground">{line.description}</TableCell>
+                      <TableCell className="font-medium text-foreground">
+                        {line.description}
+                      </TableCell>
                       <TableCell>{Number(line.qty)}</TableCell>
                       <TableCell>{line.uom}</TableCell>
                       <TableCell>{formatCurrency(line.unitPrice, req.currency)}</TableCell>
@@ -418,72 +447,100 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
         </CardContent>
       </Card>
 
-      {saveTemplateOpen ? (
-        <ModalShell onClose={() => setSaveTemplateOpen(false)}>
+      <Dialog
+        open={saveTemplateOpen}
+        onOpenChange={(open) => {
+          setSaveTemplateOpen(open);
+          if (!open) setTemplateError('');
+        }}
+      >
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus(templateDialogTriggerRef.current);
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Save as Template</DialogTitle>
+            <DialogDescription>
+              Save this requisition as a reusable template to pre-fill future requests.
+            </DialogDescription>
+          </DialogHeader>
           <div className="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">Save as Template</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Save this requisition as a reusable template to pre-fill future requests.
-              </p>
-            </div>
-            <Field label="Template Name">
+            <Field id="template-name" label="Template Name">
               <Input
+                id="template-name"
                 value={templateName}
                 onChange={(event) => setTemplateName(event.target.value)}
                 placeholder="Monthly Office Supplies"
               />
             </Field>
-            <Field label="Description">
+            <Field id="template-description" label="Description">
               <Textarea
+                id="template-description"
                 value={templateDesc}
                 onChange={(event) => setTemplateDesc(event.target.value)}
                 rows={3}
                 placeholder="Optional description"
               />
             </Field>
-            <label className="inline-flex items-center gap-3 text-sm text-muted-foreground">
+            <div>
               <input
+                id="template-org-wide"
                 type="checkbox"
                 checked={templateOrgWide}
                 onChange={(event) => setTemplateOrgWide(event.target.checked)}
-                className="h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
+                className="mr-3 h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
               />
-              Make available to all org members
-            </label>
+              <label htmlFor="template-org-wide" className="text-sm text-muted-foreground">
+                Make available to all org members
+              </label>
+            </div>
             {templateError ? (
               <Alert variant="destructive">
                 <AlertDescription>{templateError}</AlertDescription>
               </Alert>
             ) : null}
-            <div className="flex justify-end gap-3">
-              <Button type="button" variant="outline" onClick={() => setSaveTemplateOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="button" onClick={saveAsTemplate} disabled={templateSaving}>
-                {templateSaving ? 'Saving...' : 'Save Template'}
-              </Button>
-            </div>
           </div>
-        </ModalShell>
-      ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setSaveTemplateOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={saveAsTemplate} disabled={templateSaving}>
+              {templateSaving ? 'Saving...' : 'Save Template'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {poDialogOpen ? (
-        <ModalShell
-          onClose={() => {
-            setPoDialogOpen(false);
-            setPoError('');
+      <Dialog
+        open={poDialogOpen}
+        onOpenChange={(open) => {
+          setPoDialogOpen(open);
+          if (!open) setPoError('');
+        }}
+      >
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            restoreFocus(poDialogTriggerRef.current);
           }}
         >
+          <DialogHeader>
+            <DialogTitle>Create Purchase Order</DialogTitle>
+            <DialogDescription>
+              Select a vendor to create a PO from {req.number}. All {req.lines?.length ?? 0} line
+              items will be included.
+            </DialogDescription>
+          </DialogHeader>
           <div className="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">Create Purchase Order</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Select a vendor to create a PO from {req.number}. All {req.lines?.length ?? 0} line items will be included.
-              </p>
-            </div>
-            <Field label="Vendor">
-              <Select value={poVendorId} onChange={(event) => setPoVendorId(event.target.value)} className="w-full">
+            <Field id="po-vendor" label="Vendor">
+              <Select
+                id="po-vendor"
+                value={poVendorId}
+                onChange={(event) => setPoVendorId(event.target.value)}
+                className="w-full"
+              >
                 <option value="">Select vendor</option>
                 {vendors.map((vendor) => (
                   <option key={vendor.id} value={vendor.id}>
@@ -492,8 +549,9 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
                 ))}
               </Select>
             </Field>
-            <Field label="Payment Terms">
+            <Field id="po-payment-terms" label="Payment Terms">
               <Input
+                id="po-payment-terms"
                 value={poPaymentTerms}
                 onChange={(event) => setPoPaymentTerms(event.target.value)}
                 placeholder="Net 30"
@@ -504,24 +562,24 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
                 <AlertDescription>{poError}</AlertDescription>
               </Alert>
             ) : null}
-            <div className="flex justify-end gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setPoDialogOpen(false);
-                  setPoError('');
-                }}
-              >
-                Cancel
-              </Button>
-              <Button type="button" onClick={submitCreatePO} disabled={poSubmitting || !poVendorId}>
-                {poSubmitting ? 'Creating...' : 'Create PO'}
-              </Button>
-            </div>
           </div>
-        </ModalShell>
-      ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setPoDialogOpen(false);
+                setPoError('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={submitCreatePO} disabled={poSubmitting || !poVendorId}>
+              {poSubmitting ? 'Creating...' : 'Create PO'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -529,7 +587,9 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
 function DetailField({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-lg border border-border/70 bg-background/70 p-4">
-      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </div>
       <div className="mt-2 text-sm text-foreground">{value}</div>
     </div>
   );
@@ -539,47 +599,27 @@ function StatCard({ label, value }: { label: string; value: string }) {
   return (
     <Card className="rounded-lg border-border/70 bg-card/95">
       <CardContent className="p-6">
-        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
-        <div className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-foreground">{value}</div>
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          {label}
+        </div>
+        <div className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-foreground">
+          {value}
+        </div>
       </CardContent>
     </Card>
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ id, label, children }: { id: string; label: string; children: React.ReactNode }) {
   return (
-    <label className="space-y-2">
-      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+    <div className="space-y-2">
+      <label
+        htmlFor={id}
+        className="block text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+      >
         {label}
-      </span>
+      </label>
       {children}
-    </label>
-  );
-}
-
-function ModalShell({
-  children,
-  onClose,
-}: {
-  children: React.ReactNode;
-  onClose: () => void;
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div className="w-full max-w-xl rounded-lg border border-border/70 bg-background p-6 shadow-[0_30px_100px_-40px_rgba(15,23,42,0.6)]">
-        {children}
-      </div>
     </div>
   );
 }

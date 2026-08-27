@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import * as React from 'react';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { isRecordKind, recordHref } from '@betterspend/shared';
+import { isRecordKind, recordHref, type PermissionKey } from '@betterspend/shared';
 import {
   Bell,
   ChevronRight,
@@ -32,9 +33,25 @@ import { Badge } from './ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Separator } from './ui/separator';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog';
 import { cn } from '../lib/utils';
 import { useAccess } from './access-provider';
 import { createSearchRequestController } from '../lib/search-request';
+import {
+  getFocusableElements,
+  getFocusTrapIndex,
+  getSearchActiveIndex,
+  getSearchOptionId,
+  getSearchSelectionIndex,
+  restoreFocus,
+} from '../lib/accessibility';
 
 function OfflineIndicator() {
   const [isOffline, setIsOffline] = useState(false);
@@ -73,6 +90,7 @@ const SHORTCUTS_DISABLED_KEY = 'betterspend:shortcuts-disabled';
 const SIDEBAR_COLLAPSED_KEY = 'betterspend:sidebar-collapsed';
 const RECENT_SEARCHES_KEY = 'betterspend:recent-searches';
 const NOTIFICATION_LAST_VIEWED_KEY = 'betterspend:notification-last-viewed-at';
+const NO_PERMISSIONS: readonly PermissionKey[] = [];
 
 const TYPE_LABELS: Record<string, string> = {
   requisition: 'Req',
@@ -160,9 +178,17 @@ function timeAgo(dateStr: string): string {
   return `${days}d ago`;
 }
 
-function GlobalSearch({ isMobile }: { isMobile: boolean }) {
-  const router = useRouter();
-  const { access } = useAccess();
+export function GlobalSearch({
+  isMobile,
+  onNavigate,
+  search = api.search.query,
+  permissions = NO_PERMISSIONS,
+}: {
+  isMobile: boolean;
+  onNavigate: (href: string) => void;
+  search?: (query: string) => Promise<unknown>;
+  permissions?: readonly PermissionKey[];
+}) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [totalResults, setTotalResults] = useState(0);
@@ -170,13 +196,14 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [searchAnnouncement, setSearchAnnouncement] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRequestController = useRef(createSearchRequestController()).current;
   const visibleProductResults = useMemo(
-    () => productSearchResults(query, access?.permissions ?? []),
-    [access?.permissions, query],
+    () => productSearchResults(query, permissions),
+    [permissions, query],
   );
 
   useEffect(() => {
@@ -192,18 +219,22 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   useEffect(() => {
     const requestId = searchRequestController.begin();
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    setLoading(false);
     if (query.length < 2) {
       setResults([]);
       setTotalResults(0);
       setActiveIndex(-1);
-      setLoading(false);
+      setSearchAnnouncement('');
       return;
     }
 
+    setActiveIndex(-1);
+    setResults([]);
+    setTotalResults(0);
+    setSearchAnnouncement(`Searching for ${query}`);
     debounceRef.current = setTimeout(() => {
       setLoading(true);
-      api.search
-        .query(query)
+      search(query)
         .then((data: unknown) => {
           if (!searchRequestController.isCurrent(requestId)) return;
           const all = [
@@ -213,6 +244,11 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
           setTotalResults(all.length);
           setResults(all.slice(0, 10));
           setActiveIndex(all.length > 0 ? 0 : -1);
+          setSearchAnnouncement(
+            all.length === 0
+              ? `No results found for ${query}`
+              : `${all.length} result${all.length === 1 ? '' : 's'} found for ${query}`,
+          );
           setOpen(true);
         })
         .catch(() => {
@@ -221,6 +257,11 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
           setResults(fallback.slice(0, 10));
           setTotalResults(fallback.length);
           setActiveIndex(fallback.length > 0 ? 0 : -1);
+          setSearchAnnouncement(
+            fallback.length === 0
+              ? `Search failed for ${query}`
+              : `${fallback.length} result${fallback.length === 1 ? '' : 's'} found for ${query}`,
+          );
           setOpen(fallback.length > 0);
         })
         .finally(() => {
@@ -234,7 +275,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
       }
       searchRequestController.invalidate();
     };
-  }, [query, searchRequestController, visibleProductResults]);
+  }, [query, search, searchRequestController, visibleProductResults]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -248,6 +289,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   }, []);
 
   function navigate(href: string) {
+    searchRequestController.invalidate();
     setOpen(false);
     const normalizedQuery = query.trim();
     if (normalizedQuery) {
@@ -261,10 +303,11 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
       }
     }
     setActiveIndex(-1);
-    router.push(href);
+    onNavigate(href);
   }
 
   function applyRecentSearch(searchValue: string) {
+    searchRequestController.invalidate();
     setQuery(searchValue);
     setOpen(true);
     inputRef.current?.focus();
@@ -279,6 +322,7 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
 
   function handleKeyDown(event: React.KeyboardEvent) {
     if (event.key === 'Escape') {
+      searchRequestController.invalidate();
       if (query) {
         setQuery('');
         setResults([]);
@@ -290,25 +334,35 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
       return;
     }
 
-    if (!open || results.length === 0) return;
+    const optionCount =
+      results.length > 0 ? results.length : query.length < 2 ? recentSearches.length : 0;
+    if (!open || optionCount === 0) return;
 
-    if (event.key === 'ArrowDown') {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const nextIndex = getSearchActiveIndex(activeIndex, optionCount, event.key);
+      if (nextIndex === null) return;
       event.preventDefault();
-      setActiveIndex((prev) => (prev + 1) % results.length);
+      setActiveIndex(nextIndex);
       return;
     }
 
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      setActiveIndex((prev) => (prev <= 0 ? results.length - 1 : prev - 1));
-      return;
-    }
-
-    if (event.key === 'Enter' && activeIndex >= 0 && results[activeIndex]) {
-      event.preventDefault();
-      navigate(results[activeIndex]._href);
+    if (event.key === 'Enter' && activeIndex >= 0) {
+      const selectionIndex = getSearchSelectionIndex(activeIndex, optionCount, event.key);
+      if (selectionIndex === null) return;
+      if (results[selectionIndex]) {
+        event.preventDefault();
+        navigate(results[selectionIndex]._href);
+      } else if (query.length < 2 && recentSearches[selectionIndex]) {
+        event.preventDefault();
+        applyRecentSearch(recentSearches[selectionIndex]);
+      }
     }
   }
+
+  const listboxId = 'global-search-results';
+  const optionCount =
+    results.length > 0 ? results.length : query.length < 2 ? recentSearches.length : 0;
+  const listboxOpen = open && optionCount > 0;
 
   return (
     <div ref={containerRef} className={cn('relative', isMobile ? 'w-full' : 'w-[22rem]')}>
@@ -317,9 +371,21 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
         <Input
           data-global-search="true"
           aria-label="Global search"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          aria-expanded={listboxOpen}
+          aria-controls={listboxId}
+          aria-activedescendant={
+            listboxOpen && activeIndex >= 0 && activeIndex < optionCount
+              ? getSearchOptionId(activeIndex)
+              : undefined
+          }
+          aria-busy={loading}
           ref={inputRef}
           value={query}
           onChange={(event) => {
+            searchRequestController.invalidate();
             setQuery(event.target.value);
             if (event.target.value.length >= 2 || recentSearches.length > 0) setOpen(true);
           }}
@@ -341,7 +407,11 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
         )}
       </div>
 
-      {open && (results.length > 0 || (query.length < 2 && recentSearches.length > 0)) ? (
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {searchAnnouncement}
+      </div>
+
+      {listboxOpen ? (
         <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-50 animate-[slideDown_0.15s_ease-out_both] overflow-hidden rounded-lg border border-border/70 bg-card shadow-xl">
           {query.length < 2 && recentSearches.length > 0 ? (
             <>
@@ -357,48 +427,64 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
                   Clear
                 </button>
               </div>
-              {recentSearches.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => applyRecentSearch(item)}
-                  className="flex w-full items-center px-4 py-3 text-left text-sm text-foreground transition-colors hover:bg-muted/60"
-                >
-                  {item}
-                </button>
-              ))}
             </>
           ) : null}
 
-          {results.map((result, index) => {
-            const tone = TYPE_TONE[result._type] ?? 'bg-muted text-muted-foreground';
-            return (
-              <button
-                key={`${result._type}-${result.id}`}
-                onClick={() => navigate(result._href)}
-                onMouseEnter={() => setActiveIndex(index)}
-                className={cn(
-                  'flex w-full items-center gap-3 border-b border-border/50 px-4 py-3 text-left transition-colors',
-                  activeIndex === index ? 'bg-muted/70' : 'hover:bg-muted/40',
-                )}
-              >
-                <span
-                  className={cn(
-                    'rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em]',
-                    tone,
-                  )}
-                >
-                  {TYPE_LABELS[result._type] ?? result._type}
-                </span>
-                <span className="truncate text-sm text-foreground">{result._label}</span>
-                {result.status ? (
-                  <span className="ml-auto shrink-0 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                    {result.status}
-                  </span>
-                ) : null}
-              </button>
-            );
-          })}
+          <div id={listboxId} role="listbox" aria-label="Global search results">
+            {query.length < 2
+              ? recentSearches.map((item, index) => (
+                  <button
+                    key={item}
+                    id={getSearchOptionId(index)}
+                    type="button"
+                    tabIndex={-1}
+                    role="option"
+                    aria-selected={activeIndex === index}
+                    onClick={() => applyRecentSearch(item)}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    className={cn(
+                      'flex w-full items-center border-b border-border/50 px-4 py-3 text-left text-sm text-foreground transition-colors',
+                      activeIndex === index ? 'bg-muted/70' : 'hover:bg-muted/60',
+                    )}
+                  >
+                    {item}
+                  </button>
+                ))
+              : results.map((result, index) => {
+                  const tone = TYPE_TONE[result._type] ?? 'bg-muted text-muted-foreground';
+                  return (
+                    <button
+                      key={`${result._type}-${result.id}`}
+                      id={getSearchOptionId(index)}
+                      type="button"
+                      tabIndex={-1}
+                      role="option"
+                      aria-selected={activeIndex === index}
+                      onClick={() => navigate(result._href)}
+                      onMouseEnter={() => setActiveIndex(index)}
+                      className={cn(
+                        'flex w-full items-center gap-3 border-b border-border/50 px-4 py-3 text-left transition-colors',
+                        activeIndex === index ? 'bg-muted/70' : 'hover:bg-muted/40',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em]',
+                          tone,
+                        )}
+                      >
+                        {TYPE_LABELS[result._type] ?? result._type}
+                      </span>
+                      <span className="truncate text-sm text-foreground">{result._label}</span>
+                      {result.status ? (
+                        <span className="ml-auto shrink-0 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                          {result.status}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+          </div>
 
           {query.length >= 2 && totalResults > 0 ? (
             <div className="flex items-center justify-between bg-muted/50 px-4 py-3">
@@ -419,6 +505,19 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function CapabilityAwareGlobalSearch({ isMobile }: { isMobile: boolean }) {
+  const router = useRouter();
+  const { access } = useAccess();
+
+  return (
+    <GlobalSearch
+      isMobile={isMobile}
+      onNavigate={(href) => router.push(href)}
+      permissions={access?.permissions ?? NO_PERMISSIONS}
+    />
   );
 }
 
@@ -756,46 +855,111 @@ function NotificationBell() {
   );
 }
 
-function ShortcutsModal({
+export function MobileSidebar({
+  open,
+  onOpenChange,
+  triggerRef,
+  appName,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  triggerRef: React.RefObject<HTMLElement | null>;
+  appName: string;
+  children?: React.ReactNode;
+}) {
+  const sidebarRef = useRef<HTMLElement>(null);
+  const wasOpenRef = useRef(false);
+
+  useEffect(() => {
+    if (open) {
+      wasOpenRef.current = true;
+      const firstFocusable =
+        sidebarRef.current?.querySelector<HTMLElement>('[data-mobile-sidebar-close]') ??
+        getFocusableElements(sidebarRef.current ?? document.createElement('aside'))[0];
+      firstFocusable?.focus();
+      return;
+    }
+
+    if (wasOpenRef.current) {
+      wasOpenRef.current = false;
+      restoreFocus(triggerRef.current);
+    }
+  }, [open, triggerRef]);
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onOpenChange(false);
+      return;
+    }
+
+    if (event.key !== 'Tab' || !sidebarRef.current) return;
+    const focusable = getFocusableElements(sidebarRef.current);
+    const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
+    const nextIndex = getFocusTrapIndex(focusable.length, currentIndex, event.shiftKey);
+    if (nextIndex === null) return;
+    event.preventDefault();
+    focusable[nextIndex]?.focus();
+  }
+
+  if (!open) return null;
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-50 bg-[rgba(19,18,21,0.48)]"
+        aria-hidden="true"
+        onClick={() => onOpenChange(false)}
+      />
+      <aside
+        ref={sidebarRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${appName} navigation`}
+        onKeyDown={handleKeyDown}
+        className="fixed left-0 top-0 z-[60] flex h-screen w-[280px] shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200"
+      >
+        {children}
+      </aside>
+    </>
+  );
+}
+
+export function ShortcutsModal({
   open,
   shortcutsDisabled,
   onClose,
   onToggleDisabled,
+  returnFocusRef,
 }: {
   open: boolean;
   shortcutsDisabled: boolean;
   onClose: () => void;
   onToggleDisabled: (nextValue: boolean) => void;
+  returnFocusRef: React.MutableRefObject<HTMLElement | null>;
 }) {
-  useEffect(() => {
-    if (!open) return;
-
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose();
-    }
-
-    window.addEventListener('keydown', handleEscape);
-    return () => window.removeEventListener('keydown', handleEscape);
-  }, [onClose, open]);
-
-  if (!open) return null;
-
   return (
-    <div
-      onClick={onClose}
-      className="fixed inset-0 z-[120] flex items-center justify-center bg-[rgba(19,18,21,0.48)] px-4 py-6"
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
     >
-      <Card
-        className="w-full max-w-xl overflow-hidden"
-        onClick={(event) => event.stopPropagation()}
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          restoreFocus(returnFocusRef.current);
+        }}
       >
-        <CardHeader className="border-b border-border/70 pb-4">
-          <CardTitle className="text-base font-semibold">Keyboard Shortcuts</CardTitle>
-          <p className="text-sm text-muted-foreground">
+        <DialogHeader>
+          <DialogTitle>Keyboard Shortcuts</DialogTitle>
+          <DialogDescription>
             Global navigation and form actions for faster workflows.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-4 pt-5">
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
           {[
             ['/', 'Focus global search'],
             ['Ctrl/Cmd + K', 'Focus global search'],
@@ -826,14 +990,14 @@ function ShortcutsModal({
               </div>
             </div>
           </label>
-          <div className="flex justify-end">
-            <Button type="button" onClick={onClose}>
-              Close
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+        <DialogFooter>
+          <Button type="button" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -844,6 +1008,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [shortcutsDisabled, setShortcutsDisabled] = useState(false);
+  const shortcutsReturnFocusRef = useRef<HTMLElement | null>(null);
+  const sidebarTriggerRef = useRef<HTMLButtonElement>(null);
   const isAuthPage = AUTH_PATHS.some(
     (path) => pathname === path || pathname.startsWith(path + '/'),
   );
@@ -937,6 +1103,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       if (!typing && event.key === '?') {
         event.preventDefault();
+        shortcutsReturnFocusRef.current = document.activeElement as HTMLElement | null;
         setShowShortcutsModal(true);
       }
     }
@@ -964,14 +1131,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   }
 
-  const sidebar = (
-    <aside
-      className={cn(
-        'flex h-screen shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200',
-        isMobile ? 'fixed left-0 top-0 z-[60]' : 'sticky top-0',
-      )}
-      style={{ width: `${sidebarWidth}px` }}
-    >
+  const sidebarBody = (
+    <>
       <div className="flex items-center justify-between border-b border-sidebar-border px-4 py-4">
         {branding.app_logo_url ? (
           <img
@@ -984,6 +1145,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           />
         ) : (
           <span
+            id={isMobile ? 'mobile-sidebar-title' : undefined}
             title={sidebarCollapsed ? branding.app_name : undefined}
             className="text-lg font-bold tracking-[-0.02em] text-sidebar-foreground"
           >
@@ -1013,6 +1175,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               variant="ghost"
               size="icon"
               onClick={() => setSidebarOpen(false)}
+              data-mobile-sidebar-close="true"
               className="size-8 rounded-lg text-sidebar-muted hover:bg-white/8 hover:text-sidebar-foreground"
               aria-label="Close sidebar"
             >
@@ -1022,6 +1185,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </div>
       <SidebarNav onClose={() => setSidebarOpen(false)} collapsed={!isMobile && sidebarCollapsed} />
+    </>
+  );
+
+  const sidebar = (
+    <aside
+      className="sticky top-0 flex h-screen shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200"
+      style={{ width: `${sidebarWidth}px` }}
+    >
+      {sidebarBody}
     </aside>
   );
 
@@ -1032,18 +1204,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         shortcutsDisabled={shortcutsDisabled}
         onClose={() => setShowShortcutsModal(false)}
         onToggleDisabled={handleToggleShortcutsDisabled}
+        returnFocusRef={shortcutsReturnFocusRef}
       />
 
       {!isMobile ? sidebar : null}
 
-      {isMobile && sidebarOpen ? (
-        <>
-          <div
-            className="fixed inset-0 z-50 bg-[rgba(19,18,21,0.48)]"
-            onClick={() => setSidebarOpen(false)}
-          />
-          {sidebar}
-        </>
+      {isMobile ? (
+        <MobileSidebar
+          open={sidebarOpen}
+          onOpenChange={setSidebarOpen}
+          triggerRef={sidebarTriggerRef}
+          appName={branding.app_name}
+        >
+          {sidebarBody}
+        </MobileSidebar>
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -1056,13 +1230,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 variant="ghost"
                 size="icon"
                 onClick={() => setSidebarOpen(true)}
+                ref={sidebarTriggerRef}
                 className="size-9 rounded-lg border border-border/70 bg-background/80"
                 aria-label="Open sidebar"
               >
                 <Menu className="size-4" />
               </Button>
             ) : null}
-            <GlobalSearch isMobile={isMobile} />
+            <CapabilityAwareGlobalSearch isMobile={isMobile} />
             <div className="hidden min-[520px]:block">
               <EntitySwitcher />
             </div>
@@ -1071,7 +1246,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 type="button"
                 variant="ghost"
                 size="icon"
-                onClick={() => setShowShortcutsModal(true)}
+                onClick={(event) => {
+                  shortcutsReturnFocusRef.current = event.currentTarget;
+                  setShowShortcutsModal(true);
+                }}
                 className="hidden size-9 rounded-lg border border-border/70 bg-background/80 text-muted-foreground hover:bg-muted md:inline-flex"
                 aria-label="Keyboard shortcuts"
               >
