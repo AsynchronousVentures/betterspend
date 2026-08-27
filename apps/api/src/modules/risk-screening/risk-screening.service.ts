@@ -60,7 +60,7 @@ export class RiskScreeningService {
    * into an SSRF primitive or a tenant-controlled data swap.
    */
   private static readonly INGEST_SOURCES: Record<string, string> = {
-    ofac_sdn: 'https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV',
+    ofac_sdn: 'https://sanctionslistservice.ofac.treas.gov/api/download/SDN.CSV',
   };
   private static readonly INGEST_TIMEOUT_MS = 30_000;
   private static readonly MAX_INGEST_BYTES = 25 * 1024 * 1024;
