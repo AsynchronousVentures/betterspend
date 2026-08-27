@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
+import { DetailActionMenu } from '../../../components/detail-action-menu';
+import { LifecycleStrip } from '../../../components/lifecycle-strip';
 import { PageHeader } from '../../../components/page-header';
 import { RelatedRecords } from '../../../components/related-records';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
@@ -214,11 +216,44 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
   }
 
   const lines = req.lines ?? [];
-  const relatedRecords = [
-    ...(req.activeApproval ? [{ kind: 'approval_request' as const, id: req.activeApproval.id, label: `Step ${req.activeApproval.currentStep}`, relation: 'Approval' }] : []),
-    ...(req.purchaseOrders ?? []).map((purchaseOrder) => ({ kind: 'purchase_order' as const, id: purchaseOrder.id, label: purchaseOrder.number, relation: 'Purchase order' })),
-    ...(req.commitmentEvents ?? []).flatMap((event) => event.budget ? [{ kind: 'budget' as const, id: event.budget.id, label: event.budget.name, relation: 'Budget' }] : []),
-  ];
+  const request = {
+    kind: 'requisition' as const,
+    id: req.id,
+    label: req.number,
+    relation: 'Request',
+  };
+  const approval = req.activeApproval
+    ? {
+        kind: 'approval_request' as const,
+        id: req.activeApproval.id,
+        label: `Step ${req.activeApproval.currentStep}`,
+        relation: 'Approval',
+      }
+    : null;
+  const purchaseOrders = (req.purchaseOrders ?? []).map((purchaseOrder) => ({
+    kind: 'purchase_order' as const,
+    id: purchaseOrder.id,
+    label: purchaseOrder.number,
+    relation: 'Purchase order',
+  }));
+  const budgets = (req.commitmentEvents ?? []).flatMap((event) =>
+    event.budget
+      ? [
+          {
+            kind: 'budget' as const,
+            id: event.budget.id,
+            label: event.budget.name,
+            relation: 'Budget',
+          },
+        ]
+      : [],
+  );
+  const lifecycleRecords = [request, ...(approval ? [approval] : []), ...purchaseOrders];
+  const relatedRecords = [...budgets];
+  const showApprovalAsPrimary = Boolean(approval);
+  const canSubmit = !showApprovalAsPrimary && req.status === 'draft';
+  const canCreatePurchaseOrder = !showApprovalAsPrimary && req.status === 'approved';
+  const canCancel = req.status === 'draft' || req.status === 'pending_approval';
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -227,18 +262,65 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
       <PageHeader
         title={req.number}
         description={req.title}
+        className="sticky top-28 z-20 -mx-4 bg-background px-4 py-4 min-[520px]:top-[4.5rem] lg:-mx-8 lg:px-8"
         actions={
           <div className="flex flex-wrap gap-3">
             <Badge variant={statusVariant(req.status) as any}>
               {STATUS_LABELS[req.status] ?? req.status}
             </Badge>
-            <Button asChild variant="outline">
-              <Link href="/requisitions">Back to Requisitions</Link>
-            </Button>
+            {showApprovalAsPrimary ? (
+              <Button asChild>
+                <Link href={`/approvals/${approval?.id}`}>Review approval</Link>
+              </Button>
+            ) : null}
+            {canSubmit ? (
+              <Button
+                type="button"
+                onClick={() => doAction('submit')}
+                disabled={actionLoading !== null}
+              >
+                {actionLoading === 'submit' ? 'Submitting...' : 'Submit for Approval'}
+              </Button>
+            ) : null}
+            {canCreatePurchaseOrder ? (
+              <Button type="button" onClick={openPoDialog}>
+                Create Purchase Order
+              </Button>
+            ) : null}
+            <DetailActionMenu
+              secondary={
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="justify-start"
+                  onClick={() => {
+                    setSaveTemplateOpen(true);
+                    setTemplateError('');
+                    setTemplateSuccess(false);
+                  }}
+                >
+                  Save as Template
+                </Button>
+              }
+              destructive={
+                canCancel ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="justify-start"
+                    onClick={() => doAction('cancel')}
+                    disabled={actionLoading !== null}
+                  >
+                    {actionLoading === 'cancel' ? 'Cancelling...' : 'Cancel Requisition'}
+                  </Button>
+                ) : null
+              }
+            />
           </div>
         }
       />
 
+      <LifecycleStrip records={lifecycleRecords} current={{ kind: 'requisition', id: req.id }} />
       <RelatedRecords records={relatedRecords} />
 
       {error ? (
@@ -335,38 +417,6 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
           )}
         </CardContent>
       </Card>
-
-      <div className="flex flex-wrap gap-3">
-        {req.status === 'draft' ? (
-          <Button type="button" onClick={() => doAction('submit')} disabled={actionLoading !== null}>
-            {actionLoading === 'submit' ? 'Submitting...' : 'Submit for Approval'}
-          </Button>
-        ) : null}
-
-        {req.status === 'approved' ? (
-          <Button type="button" onClick={openPoDialog}>
-            Create Purchase Order
-          </Button>
-        ) : null}
-
-        {req.status === 'draft' || req.status === 'pending_approval' ? (
-          <Button type="button" variant="destructive" onClick={() => doAction('cancel')} disabled={actionLoading !== null}>
-            {actionLoading === 'cancel' ? 'Cancelling...' : 'Cancel Requisition'}
-          </Button>
-        ) : null}
-
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => {
-            setSaveTemplateOpen(true);
-            setTemplateError('');
-            setTemplateSuccess(false);
-          }}
-        >
-          Save as Template
-        </Button>
-      </div>
 
       {saveTemplateOpen ? (
         <ModalShell onClose={() => setSaveTemplateOpen(false)}>

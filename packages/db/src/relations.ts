@@ -547,6 +547,7 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   }),
   lines: many(invoiceLines),
   commitmentEvents: many(budgetCommitmentEvents),
+  paymentRunInvoices: many(paymentRunInvoices),
 }));
 
 export const invoiceLinesRelations = relations(invoiceLines, ({ one, many }) => ({

@@ -12,6 +12,7 @@ import type { SpendGuardService } from '../spend-guard/spend-guard.service';
 import type { SettingsService } from '../settings/settings.service';
 import type { WebhookEventService } from '../webhooks/webhook-event.service';
 import type { WorkflowExecutionService } from '../workflow-execution/workflow-execution.service';
+import type { AccessPolicy } from '../auth/access-policy';
 import type { MatchingService } from './matching.service';
 import { InvoicesService } from './invoices.service';
 
@@ -31,6 +32,7 @@ function createService(
     id: 'invoice-1',
     organizationId: 'organization-1',
     purchaseOrderId: 'po-1',
+    entityId: null,
     status: 'approved',
     matchStatus,
     totalAmount: '125.00',
@@ -39,6 +41,16 @@ function createService(
     internalNumber: 'INV-2026-0001',
     createdBy: options.createdBy === undefined ? 'maker-1' : options.createdBy,
     submissionSource: options.submissionSource ?? 'internal',
+    purchaseOrder: {
+      id: 'po-1',
+      entityId: 'entity-1',
+      issuedBy: null,
+      requisition: {
+        requesterId: 'requester-1',
+        departmentId: 'department-1',
+        projectId: null,
+      },
+    },
     lines: [{ taxAmount: '25.00', taxCode: { isRecoverable: true } }],
   };
   const transaction = {
@@ -104,8 +116,16 @@ function createService(
     },
   };
   const db = {
+    query: transaction.query,
     transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) =>
       callback(transaction),
+    update() {
+      return {
+        set() {
+          return { where: async () => undefined };
+        },
+      };
+    },
   } as unknown as Db;
   const webhookEvents = { emit() {} } as unknown as WebhookEventService;
   const glExport = { enqueue: async () => undefined } as unknown as GlExportService;
@@ -146,7 +166,43 @@ function createService(
   };
 }
 
+function scopedInvoiceAccess(permission: 'invoices:manage' | 'invoices:approve'): AccessPolicy {
+  return {
+    can: (candidate) => candidate === permission,
+    scopeFor: (resource, candidate) => ({
+      organizationId: 'organization-1',
+      userId: 'actor-1',
+      unrestricted: false,
+      ownOnly: false,
+      departmentIds: resource === 'invoice' && candidate === permission ? ['department-1'] : [],
+      projectIds: [],
+      entityIds: [],
+    }),
+    isGlobalBuiltInAdmin: () => false,
+    toDocument: () => ({ permissions: [permission], scopes: {} }),
+  };
+}
+
 describe('InvoicesService approval budget accounting', () => {
+  it('authorizes scoped approval without exposing the linked purchase order', async () => {
+    const { service } = createService();
+    const access = scopedInvoiceAccess('invoices:approve');
+    const visibleInvoice = await service.findOne('invoice-1', 'organization-1', access);
+
+    assert.equal(visibleInvoice.purchaseOrder, null);
+    assert.equal('authorizationScope' in visibleInvoice, false);
+    await service.approve('invoice-1', 'organization-1', 'actor-1', access);
+  });
+
+  it('authorizes scoped exception resolution without exposing the linked purchase order', async () => {
+    const { service } = createService(async () => {}, 'exception');
+    const access = scopedInvoiceAccess('invoices:manage');
+    const visibleInvoice = await service.findOne('invoice-1', 'organization-1', access);
+
+    assert.equal(visibleInvoice.purchaseOrder, null);
+    await service.resolveException('invoice-1', 'organization-1', 'actor-1', {}, access);
+  });
+
   it('does not bypass an active approval request through direct invoice approval', async () => {
     const { service } = createService(async () => {}, 'full_match', {
       makerCheckerEnabled: false,

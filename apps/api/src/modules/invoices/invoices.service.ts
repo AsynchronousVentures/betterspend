@@ -18,6 +18,7 @@ import {
   purchaseOrders,
   requisitions,
   vendors,
+  approvalRequests,
 } from '@betterspend/db';
 import { SequenceService } from '../../common/services/sequence.service';
 import { MatchingService } from './matching.service';
@@ -42,6 +43,7 @@ import { WorkflowExecutionService } from '../workflow-execution/workflow-executi
 import { changedMaterialInvoiceFields, type MaterialInvoiceState } from './invoice-material-edit';
 import { calculateInvoiceLineAmounts } from './invoice-money';
 import type { AccessPolicy } from '../auth/access-policy';
+import { canViewRelatedRecord } from '../auth/related-record-access';
 import {
   permissionScopePredicate,
   requireAnyPermission,
@@ -50,6 +52,18 @@ import {
 
 type InvoiceLookupPermission =
   'invoices:view_all' | 'invoices:manage' | 'invoices:approve' | 'payments:manage';
+
+type InvoiceAuthorizationScope = {
+  entityId: string | null;
+  createdBy: string | null;
+  purchaseOrder?: {
+    requisition?: {
+      requesterId: string;
+      departmentId: string | null;
+      projectId: string | null;
+    } | null;
+  } | null;
+};
 
 function invoiceScopePredicates(organizationId: string) {
   const poScope = (condition: ReturnType<typeof sql>) =>
@@ -75,27 +89,14 @@ function invoiceScopePredicates(organizationId: string) {
 function assertInvoiceScope(
   access: AccessPolicy | undefined,
   permission: 'invoices:create' | 'invoices:manage' | 'invoices:approve' | 'payments:manage',
-  invoice: {
-    entityId: string | null;
-    createdBy: string | null;
-    purchaseOrder?: unknown;
-  },
+  invoice: InvoiceAuthorizationScope,
   actorId: string,
 ) {
   requirePermission(access, permission);
   if (!access) return;
   const resource = permission === 'payments:manage' ? 'payment' : 'invoice';
   const scope = access.scopeFor(resource, permission);
-  const purchaseOrder = invoice.purchaseOrder as
-    | {
-        requisition?: {
-          requesterId: string;
-          departmentId: string | null;
-          projectId: string | null;
-        } | null;
-      }
-    | null
-    | undefined;
+  const purchaseOrder = invoice.purchaseOrder;
   if (
     scope.unrestricted ||
     scope.entityIds.includes(invoice.entityId ?? '') ||
@@ -323,10 +324,10 @@ export class InvoicesService {
     return invoice;
   }
 
-  async findOne(
+  private async findOneWithAuthorizationScope(
     id: string,
     organizationId: string,
-    access?: AccessPolicy,
+    access: AccessPolicy,
     permissions: readonly InvoiceLookupPermission[] = [
       'invoices:view_all',
       'invoices:manage',
@@ -334,7 +335,6 @@ export class InvoicesService {
     ],
     resource: 'invoice' | 'payment' = 'invoice',
   ) {
-    if (!access) return this.findOneWithExecutor(id, organizationId, this.db);
     const invoice = await this.db.query.invoices.findFirst({
       where: (i, { and, eq }) =>
         and(
@@ -350,11 +350,167 @@ export class InvoicesService {
       with: {
         vendor: true,
         entity: true,
-        purchaseOrder: { with: { lines: true, requisition: true } },
+        purchaseOrder: {
+          with: {
+            lines: true,
+            requisition: true,
+            goodsReceipts: { columns: { id: true, number: true, status: true } },
+          },
+        },
         lines: { with: { matchResults: true, taxCode: true } },
+        paymentRunInvoices: {
+          columns: { paymentRunId: true },
+          with: {
+            paymentRun: { columns: { id: true, status: true, entityId: true } },
+          },
+        },
       },
     });
     if (!invoice) throw new NotFoundException(`Invoice ${id} not found`);
+
+    const purchaseOrder = invoice.purchaseOrder;
+    const authorizationScope: InvoiceAuthorizationScope = {
+      entityId: invoice.entityId,
+      createdBy: invoice.createdBy,
+      purchaseOrder: purchaseOrder
+        ? {
+            requisition: purchaseOrder.requisition
+              ? {
+                  requesterId: purchaseOrder.requisition.requesterId,
+                  departmentId: purchaseOrder.requisition.departmentId,
+                  projectId: purchaseOrder.requisition.projectId,
+                }
+              : null,
+          }
+        : null,
+    };
+    const purchaseOrderScope = {
+      ownerIds: [purchaseOrder?.issuedBy, purchaseOrder?.requisition?.requesterId],
+      departmentId: purchaseOrder?.requisition?.departmentId,
+      projectId: purchaseOrder?.requisition?.projectId,
+      entityId: purchaseOrder?.entityId,
+    };
+    const relatedRecordScope = {
+      ownerIds: [invoice.createdBy, purchaseOrder?.requisition?.requesterId],
+      departmentId: purchaseOrder?.requisition?.departmentId,
+      projectId: purchaseOrder?.requisition?.projectId,
+      entityId: invoice.entityId ?? purchaseOrder?.entityId,
+    };
+    const visiblePurchaseOrder =
+      purchaseOrder &&
+      canViewRelatedRecord(
+        access,
+        'purchase_order',
+        [
+          'purchase_orders:view_all',
+          'purchase_orders:view_own',
+          'purchase_orders:manage',
+          'purchase_orders:issue',
+        ],
+        purchaseOrderScope,
+      )
+        ? purchaseOrder
+        : null;
+    const visibleRequisition =
+      visiblePurchaseOrder?.requisition &&
+      canViewRelatedRecord(
+        access,
+        'requisition',
+        ['requisitions:view_all', 'requisitions:view_own', 'requisitions:manage'],
+        {
+          ownerIds: [visiblePurchaseOrder.requisition.requesterId],
+          departmentId: visiblePurchaseOrder.requisition.departmentId,
+          projectId: visiblePurchaseOrder.requisition.projectId,
+        },
+      )
+        ? visiblePurchaseOrder.requisition
+        : null;
+    const goodsReceipts = visiblePurchaseOrder
+      ? (visiblePurchaseOrder.goodsReceipts ?? []).filter(() =>
+          canViewRelatedRecord(
+            access,
+            'receiving',
+            ['receiving:view', 'receiving:manage'],
+            purchaseOrderScope,
+          ),
+        )
+      : [];
+    const paymentRuns = (invoice.paymentRunInvoices ?? []).flatMap((paymentRunInvoice) => {
+      const paymentRun = paymentRunInvoice.paymentRun;
+      if (
+        !paymentRun ||
+        !canViewRelatedRecord(access, 'payment', ['payments:view', 'payments:manage'], {
+          entityId: paymentRun.entityId,
+        })
+      ) {
+        return [];
+      }
+      return [{ id: paymentRun.id, status: paymentRun.status }];
+    });
+    const visibleVendor =
+      invoice.vendor &&
+      canViewRelatedRecord(access, 'vendor', ['vendors:view'], {
+        entityId: invoice.vendor.entityId,
+      })
+        ? invoice.vendor
+        : null;
+    const activeApproval = canViewRelatedRecord(
+      access,
+      'approval',
+      ['approvals:view', 'approvals:act'],
+      relatedRecordScope,
+    )
+      ? await this.db.query.approvalRequests.findFirst({
+          where: (approval, { and, eq }) =>
+            and(
+              eq(approval.organizationId, organizationId),
+              eq(approval.approvableType, 'invoice'),
+              eq(approval.approvableId, id),
+              eq(approval.status, 'pending'),
+            ),
+          columns: { id: true, currentStep: true, status: true },
+        })
+      : null;
+    const { paymentRunInvoices: _paymentRunInvoices, ...invoiceRecord } = invoice;
+    return {
+      invoice: {
+        ...invoiceRecord,
+        vendor: visibleVendor,
+        purchaseOrder: visiblePurchaseOrder
+          ? {
+              ...visiblePurchaseOrder,
+              requisition: visibleRequisition
+                ? { id: visibleRequisition.id, number: visibleRequisition.number }
+                : null,
+              goodsReceipts,
+            }
+          : null,
+        paymentRuns,
+        activeApproval,
+      },
+      authorizationScope,
+    };
+  }
+
+  async findOne(
+    id: string,
+    organizationId: string,
+    access?: AccessPolicy,
+    permissions: readonly InvoiceLookupPermission[] = [
+      'invoices:view_all',
+      'invoices:manage',
+      'invoices:approve',
+    ],
+    resource: 'invoice' | 'payment' = 'invoice',
+  ) {
+    if (!access) return this.findOneWithExecutor(id, organizationId, this.db);
+    const { invoice } = await this.findOneWithAuthorizationScope(
+      id,
+      organizationId,
+      access,
+      permissions,
+      resource,
+    );
     return invoice;
   }
 
@@ -367,8 +523,12 @@ export class InvoicesService {
   ) {
     const input = updateInvoiceSchema.parse(rawInput);
     if (access) {
-      const visibleInvoice = await this.findOne(id, organizationId, access);
-      assertInvoiceScope(access, 'invoices:manage', visibleInvoice, actorId);
+      const { authorizationScope } = await this.findOneWithAuthorizationScope(
+        id,
+        organizationId,
+        access,
+      );
+      assertInvoiceScope(access, 'invoices:manage', authorizationScope, actorId);
     }
     const result = await this.db.transaction(async (tx) => {
       const [lockedInvoice] = await tx
@@ -980,8 +1140,12 @@ export class InvoicesService {
 
   async runMatch(id: string, organizationId: string, actorId: string, access?: AccessPolicy) {
     if (access) {
-      const visibleInvoice = await this.findOne(id, organizationId, access);
-      assertInvoiceScope(access, 'invoices:manage', visibleInvoice, actorId);
+      const { authorizationScope } = await this.findOneWithAuthorizationScope(
+        id,
+        organizationId,
+        access,
+      );
+      assertInvoiceScope(access, 'invoices:manage', authorizationScope, actorId);
     }
     const outcome = await this.db.transaction(async (tx) => {
       const [lockedInvoice] = await tx
@@ -1103,8 +1267,20 @@ export class InvoicesService {
     if (Number.isNaN(paidAt.getTime()) || paidAt.toISOString().slice(0, 10) !== paymentDate) {
       throw new BadRequestException('Payment date is invalid');
     }
-    const invoice = await this.findOne(id, organizationId, access, ['payments:manage'], 'payment');
-    assertInvoiceScope(access, 'payments:manage', invoice, userId);
+    let invoice;
+    if (access) {
+      const scoped = await this.findOneWithAuthorizationScope(
+        id,
+        organizationId,
+        access,
+        ['payments:manage'],
+        'payment',
+      );
+      assertInvoiceScope(access, 'payments:manage', scoped.authorizationScope, userId);
+      invoice = scoped.invoice;
+    } else {
+      invoice = await this.findOne(id, organizationId, access, ['payments:manage'], 'payment');
+    }
     if ((invoice as any).status !== 'approved') {
       throw new BadRequestException('Only approved invoices can be marked as paid');
     }
@@ -1289,8 +1465,14 @@ export class InvoicesService {
     input?: ResolveExceptionInput,
     access?: AccessPolicy,
   ) {
-    const invoice = await this.findOne(id, organizationId, access);
-    assertInvoiceScope(access, 'invoices:manage', invoice, reviewerId);
+    let invoice;
+    if (access) {
+      const scoped = await this.findOneWithAuthorizationScope(id, organizationId, access);
+      assertInvoiceScope(access, 'invoices:manage', scoped.authorizationScope, reviewerId);
+      invoice = scoped.invoice;
+    } else {
+      invoice = await this.findOne(id, organizationId);
+    }
     if (invoice.matchStatus !== 'exception') {
       throw new BadRequestException('Invoice does not have an active exception');
     }
@@ -1331,8 +1513,12 @@ export class InvoicesService {
 
   async approve(id: string, organizationId: string, approverId: string, access?: AccessPolicy) {
     if (access) {
-      const visibleInvoice = await this.findOne(id, organizationId, access);
-      assertInvoiceScope(access, 'invoices:approve', visibleInvoice, approverId);
+      const { authorizationScope } = await this.findOneWithAuthorizationScope(
+        id,
+        organizationId,
+        access,
+      );
+      assertInvoiceScope(access, 'invoices:approve', authorizationScope, approverId);
     }
     const result = await this.db.transaction(async (tx) => {
       const [lockedInvoice] = await tx

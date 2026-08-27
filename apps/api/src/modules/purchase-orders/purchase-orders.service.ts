@@ -24,6 +24,7 @@ import { canViewRelatedRecord } from '../auth/related-record-access';
 import type { Db } from '@betterspend/db';
 import {
   auditLog,
+  approvalRequests,
   purchaseOrders,
   poLines,
   poVersions,
@@ -116,6 +117,38 @@ export function purchaseOrderScopeEntityId(
   return linkedRequisition ? null : (input.entityId ?? null);
 }
 
+export function visibleRequisitionSummary(
+  access: AccessPolicy | undefined,
+  requisition:
+    | {
+        id: string;
+        number: string;
+        requesterId: string;
+        departmentId: string | null;
+        projectId: string | null;
+      }
+    | null
+    | undefined,
+) {
+  if (
+    !requisition ||
+    !canViewRelatedRecord(
+      access,
+      'requisition',
+      ['requisitions:view_all', 'requisitions:view_own', 'requisitions:manage'],
+      {
+        ownerIds: [requisition.requesterId],
+        departmentId: requisition.departmentId,
+        projectId: requisition.projectId,
+      },
+    )
+  ) {
+    return null;
+  }
+
+  return { id: requisition.id, number: requisition.number };
+}
+
 /** Keeps version history independent from the caller's related-record access. */
 export function createChangeOrderSnapshot<
   T extends {
@@ -123,6 +156,7 @@ export function createChangeOrderSnapshot<
     goodsReceipts?: unknown;
     invoices?: unknown;
     commitmentEvents?: unknown;
+    activeApproval?: unknown;
   },
 >(po: T) {
   const {
@@ -130,6 +164,7 @@ export function createChangeOrderSnapshot<
     goodsReceipts: _goodsReceipts,
     invoices: _invoices,
     commitmentEvents: _commitmentEvents,
+    activeApproval: _activeApproval,
     ...purchaseOrder
   } = po;
 
@@ -176,9 +211,11 @@ function assertPurchaseOrderScope(
     entityId: string | null;
     issuedBy: string | null;
     requisition?: {
-      requesterId: string;
-      departmentId: string | null;
-      projectId: string | null;
+      id?: string;
+      number?: string;
+      requesterId?: string;
+      departmentId?: string | null;
+      projectId?: string | null;
     } | null;
   },
   actorId: string,
@@ -290,7 +327,12 @@ export class PurchaseOrdersService {
     });
   }
 
-  async findOne(id: string, organizationId: string, access?: AccessPolicy) {
+  async findOne(
+    id: string,
+    organizationId: string,
+    access?: AccessPolicy,
+    includeRequisitionDetails = false,
+  ) {
     const po = await this.db.query.purchaseOrders.findFirst({
       where: (po, { and, eq }) =>
         and(
@@ -351,6 +393,26 @@ export class PurchaseOrdersService {
       projectId: po.requisition?.projectId,
       entityId: po.entityId,
     };
+    const activeApproval = canViewRelatedRecord(
+      access,
+      'approval',
+      ['approvals:view', 'approvals:act'],
+      recordScope,
+    )
+      ? await this.db.query.approvalRequests.findFirst({
+          where: (approval, { and, eq }) =>
+            and(
+              eq(approval.organizationId, organizationId),
+              eq(approval.approvableType, 'purchase_order'),
+              eq(approval.approvableId, id),
+              eq(approval.status, 'pending'),
+            ),
+          columns: { id: true, currentStep: true, status: true },
+        })
+      : null;
+    const requisition = includeRequisitionDetails
+      ? po.requisition
+      : visibleRequisitionSummary(access, po.requisition);
     const lines = (po.lines ?? []).map(({ matchedContract, ...line }) => ({
       ...line,
       matchedContract:
@@ -398,9 +460,18 @@ export class PurchaseOrdersService {
       goodsReceipts: _goodsReceipts,
       invoices: _invoices,
       commitmentEvents: _commitmentEvents,
+      requisition: _requisition,
       ...purchaseOrder
     } = po;
-    return { ...purchaseOrder, lines, goodsReceipts, invoices, commitmentEvents };
+    return {
+      ...purchaseOrder,
+      requisition,
+      lines,
+      goodsReceipts,
+      invoices,
+      commitmentEvents,
+      activeApproval,
+    };
   }
 
   async create(
@@ -607,7 +678,7 @@ export class PurchaseOrdersService {
   }
 
   async issue(id: string, organizationId: string, issuedBy: string, access?: AccessPolicy) {
-    const po = await this.findOne(id, organizationId, access);
+    const po = await this.findOne(id, organizationId, access, true);
     assertPurchaseOrderScope(access, 'purchase_orders:issue', po, issuedBy);
     if (!['draft', 'approved'].includes(po.status)) {
       throw new BadRequestException(`Cannot issue a PO with status "${po.status}"`);
@@ -754,7 +825,7 @@ export class PurchaseOrdersService {
           budgetDecision: outcome.budgetEnforcement,
         },
       );
-      const pending = await this.findOne(id, organizationId);
+      const pending = await this.findOne(id, organizationId, access);
       return { ...pending, budgetEnforcement: outcome.budgetEnforcement };
     }
 
@@ -784,7 +855,7 @@ export class PurchaseOrdersService {
     input: ChangeOrderInput,
     access?: AccessPolicy,
   ) {
-    const po = await this.findOne(id, organizationId, access);
+    const po = await this.findOne(id, organizationId, access, true);
     assertPurchaseOrderScope(access, 'purchase_orders:manage', po, changedBy);
     const snapshot = createChangeOrderSnapshot(po);
 
@@ -919,7 +990,7 @@ export class PurchaseOrdersService {
   }
 
   async cancel(id: string, organizationId: string, actorId: string, access?: AccessPolicy) {
-    const po = await this.findOne(id, organizationId, access);
+    const po = await this.findOne(id, organizationId, access, true);
     assertPurchaseOrderScope(access, 'purchase_orders:manage', po, actorId);
     if (['closed', 'cancelled', 'received', 'invoiced'].includes(po.status)) {
       throw new BadRequestException(`Cannot cancel a ${po.status} PO`);
@@ -961,7 +1032,7 @@ export class PurchaseOrdersService {
     input: { amount: number; description?: string },
     access?: AccessPolicy,
   ) {
-    const po = await this.findOne(blanketPoId, organizationId, access);
+    const po = await this.findOne(blanketPoId, organizationId, access, true);
     assertPurchaseOrderScope(access, 'purchase_orders:manage', po, releasedBy);
     if (po.poType !== 'blanket')
       throw new BadRequestException('Releases can only be created against blanket POs');
@@ -1014,7 +1085,7 @@ export class PurchaseOrdersService {
     actorId: string,
     access?: AccessPolicy,
   ) {
-    const blanketPo = await this.findOne(blanketPoId, organizationId, access);
+    const blanketPo = await this.findOne(blanketPoId, organizationId, access, true);
     assertPurchaseOrderScope(access, 'purchase_orders:manage', blanketPo, actorId);
     const release = await this.db.query.blanketReleases.findFirst({
       where: (r, { and, eq }) => and(eq(r.id, releaseId), eq(r.blanketPoId, blanketPoId)),

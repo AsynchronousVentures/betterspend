@@ -71,3 +71,21 @@ test('canViewRelatedRecord honors target-resource own and scoped grants', () => 
     true,
   );
 });
+
+test('scoped vendor access does not widen global vendors using another record entity', () => {
+  const access = accessFor(['vendors:view'], {
+    organizationId: 'organization-1',
+    userId: 'user-1',
+    unrestricted: false,
+    ownOnly: false,
+    departmentIds: [],
+    projectIds: [],
+    entityIds: ['entity-1'],
+  });
+
+  assert.equal(canViewRelatedRecord(access, 'vendor', ['vendors:view'], { entityId: null }), false);
+  assert.equal(
+    canViewRelatedRecord(access, 'vendor', ['vendors:view'], { entityId: 'entity-1' }),
+    true,
+  );
+});
