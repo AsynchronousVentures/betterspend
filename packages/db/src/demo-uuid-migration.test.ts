@@ -36,6 +36,7 @@ const migrationWorkload = {
   approvalRequestId: '10000000-0000-4000-8000-000000000022',
   workflowAssignmentId: '10000000-0000-4000-8000-000000000023',
   workflowPublicationId: '10000000-0000-4000-8000-000000000024',
+  approvalActionId: '10000000-0000-4000-8000-000000000025',
   integrationConnectionId: '10000000-0000-4000-8000-000000000030',
   syncRecordId: '10000000-0000-4000-8000-000000000031',
   budgetId: '10000000-0000-4000-8000-000000000040',
@@ -566,6 +567,17 @@ test('rekeys a legacy demo graph without losing workload references', async () =
       ],
     );
     await database.query(
+      `INSERT INTO approval_actions (
+         id, approval_request_id, step_order, approver_id, action, comment, node_id, metadata
+       ) VALUES ($1, $2, 1, $3, 'approved', 'Legacy approval evidence', 'manager', $4)`,
+      [
+        migrationWorkload.approvalActionId,
+        migrationWorkload.approvalRequestId,
+        legacyIdentity.approverId,
+        JSON.stringify({ source: 'legacy-fixture' }),
+      ],
+    );
+    await database.query(
       `INSERT INTO workflow_approval_assignments (
          id, organization_id, approval_request_id, node_id, sequence, resolver,
          resolved_approver_id, assigned_approver_id
@@ -810,6 +822,39 @@ test('rekeys a legacy demo graph without losing workload references', async () =
       assignmentResolvedApproverId: identity.adminId,
       assignmentAssignedApproverId: identity.requesterId,
       publicationOrganizationId: identity.organizationId,
+    });
+
+    const approvalAction = await database.query<{
+      id: string;
+      approvalRequestId: string;
+      stepOrder: number;
+      approverId: string;
+      action: string;
+      comment: string;
+      nodeId: string;
+      metadata: string;
+    }>(`
+      SELECT
+        id,
+        approval_request_id AS "approvalRequestId",
+        step_order AS "stepOrder",
+        approver_id AS "approverId",
+        action,
+        comment,
+        node_id AS "nodeId",
+        metadata::text AS metadata
+      FROM approval_actions
+      WHERE id = '${migrationWorkload.approvalActionId}'
+    `);
+    assert.deepEqual(approvalAction.rows[0], {
+      id: migrationWorkload.approvalActionId,
+      approvalRequestId: migrationWorkload.approvalRequestId,
+      stepOrder: 1,
+      approverId: identity.approverId,
+      action: 'approved',
+      comment: 'Legacy approval evidence',
+      nodeId: 'manager',
+      metadata: '{"source": "legacy-fixture"}',
     });
 
     const syncGraph = await database.query<{
@@ -1102,6 +1147,8 @@ test('rekeys a legacy demo graph without losing workload references', async () =
         + (SELECT count(*) FROM approval_requests
            WHERE organization_id = '${legacyIdentity.organizationId}'
               OR initiated_by IN ('${legacyIdentity.adminId}', '${legacyIdentity.requesterId}', '${legacyIdentity.approverId}'))
+        + (SELECT count(*) FROM approval_actions
+           WHERE approver_id IN ('${legacyIdentity.adminId}', '${legacyIdentity.requesterId}', '${legacyIdentity.approverId}'))
         + (SELECT count(*) FROM workflow_approval_assignments
            WHERE organization_id = '${legacyIdentity.organizationId}'
               OR resolved_approver_id IN ('${legacyIdentity.adminId}', '${legacyIdentity.requesterId}', '${legacyIdentity.approverId}')

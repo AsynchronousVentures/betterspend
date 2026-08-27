@@ -73,10 +73,7 @@ import {
   webhookEndpoints,
   purchaseOrders,
 } from './schema';
-import {
-  DEMO_TEST_IDENTITY,
-  type DemoIdentity,
-} from './demo-fixtures';
+import type { DemoIdentity } from './demo-fixtures';
 
 export const DEFAULT_RANDOM_COUNT = 500;
 export const DEFAULT_RANDOM_SEED = 'betterspend-demo-2026';
@@ -472,7 +469,7 @@ function emptyRows(): Rows {
 
 export function generateRandomSeedDataset(
   options: RandomSeedOptions,
-  identity: DemoIdentity = DEMO_TEST_IDENTITY,
+  identity: DemoIdentity,
 ): RandomSeedDataset {
   if (
     !Number.isSafeInteger(options.count) ||

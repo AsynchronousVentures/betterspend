@@ -24,9 +24,8 @@ export interface DemoIdentity {
 }
 
 /**
- * Pure generators need an identity context before a database exists. These
- * deterministic UUIDs are only a default for those generators and tests;
- * persisted demo rows resolve their IDs from natural keys below.
+ * Pure-generator tests need an identity context before a database exists.
+ * Persisted demo rows always resolve their IDs from natural keys below.
  */
 function deterministicFixtureUuid(kind: string, index: number): string {
   const digest = createHash('sha256')
@@ -46,16 +45,6 @@ export const DEMO_TEST_IDENTITY: DemoIdentity = {
   parentEntityId: deterministicFixtureUuid('entity', 0),
   vendorIds: [deterministicFixtureUuid('vendor', 0), deterministicFixtureUuid('vendor', 1)],
 };
-
-/** Compatibility aliases for the in-memory random-seed test context. */
-export const DEMO_ORG_ID = DEMO_TEST_IDENTITY.organizationId;
-export const DEMO_ADMIN_ID = DEMO_TEST_IDENTITY.adminId;
-export const DEMO_REQUESTER_ID = DEMO_TEST_IDENTITY.requesterId;
-export const DEMO_APPROVER_ID = DEMO_TEST_IDENTITY.approverId;
-export const DEMO_ENG_DEPT_ID = DEMO_TEST_IDENTITY.engineeringDepartmentId;
-export const DEMO_MKT_DEPT_ID = DEMO_TEST_IDENTITY.marketingDepartmentId;
-export const DEMO_PARENT_ENTITY_ID = DEMO_TEST_IDENTITY.parentEntityId;
-export const DEMO_VENDOR_IDS = DEMO_TEST_IDENTITY.vendorIds;
 
 type DemoUserRoleFixture = Omit<typeof userRoles.$inferInsert, 'id'> & { id?: string };
 type DemoVendorFixture = Omit<typeof vendors.$inferInsert, 'id'> & { id?: string };

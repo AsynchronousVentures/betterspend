@@ -449,6 +449,7 @@ BEGIN
         AND parent_namespace.nspname = 'public'
         AND parent_table.relname = ANY(source_identity_tables)
         AND child_table.relname NOT IN (
+          'approval_actions',
           'email_intake_messages',
           'workflow_definition_versions'
         )
@@ -467,6 +468,18 @@ BEGIN
       uuid_where
     );
   END LOOP;
+
+  -- Approval actions are append-only application evidence. This one-time
+  -- identity repair changes only their actor foreign key so the historical
+  -- record stays attached to the cloned user before legacy users are removed.
+  EXECUTE format(
+    $update$
+      UPDATE approval_actions
+      SET approver_id = CASE approver_id %s ELSE approver_id END
+      WHERE approver_id IN (SELECT old_id FROM _demo_uuid_map)
+    $update$,
+    uuid_cases
+  );
 
   -- These immutable tables deliberately stay out of the catalog sweep. Their
   -- named immutability triggers are disabled only for this guarded rewrite.
