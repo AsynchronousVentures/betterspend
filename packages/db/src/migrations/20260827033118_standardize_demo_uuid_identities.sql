@@ -5,6 +5,7 @@
 DO $migration$
 DECLARE
   legacy_org uuid := '00000000-0000-0000-0000-000000000001';
+  migrated_org uuid;
   table_record record;
   column_record record;
   map_record record;
@@ -314,6 +315,47 @@ BEGIN
   INTO uuid_cases
   FROM _demo_uuid_map;
 
+  SELECT new_id
+  INTO migrated_org
+  FROM _demo_uuid_map
+  WHERE old_id = legacy_org;
+
+  -- These organization-scoped graphs contain non-deferrable composite keys.
+  -- Defer just their relationship checks while every side moves, then force
+  -- validation and restore their original non-deferrable configuration below.
+  ALTER TABLE email_intake_attachments
+    ALTER CONSTRAINT email_intake_attachments_message_org_fk DEFERRABLE INITIALLY IMMEDIATE,
+    ALTER CONSTRAINT email_intake_attachments_item_org_fk DEFERRABLE INITIALLY IMMEDIATE;
+  ALTER TABLE workflow_definitions
+    ALTER CONSTRAINT workflow_definitions_published_version_org_fk DEFERRABLE INITIALLY IMMEDIATE;
+  ALTER TABLE workflow_definition_versions
+    ALTER CONSTRAINT workflow_definition_versions_definition_org_fk DEFERRABLE INITIALLY IMMEDIATE,
+    ALTER CONSTRAINT workflow_definition_versions_published_by_org_fk DEFERRABLE INITIALLY IMMEDIATE;
+  ALTER TABLE approval_requests
+    ALTER CONSTRAINT approval_requests_definition_version_org_fk DEFERRABLE INITIALLY IMMEDIATE,
+    ALTER CONSTRAINT approval_requests_initiated_by_org_fk DEFERRABLE INITIALLY IMMEDIATE;
+  ALTER TABLE workflow_approval_assignments
+    ALTER CONSTRAINT workflow_approval_assignments_request_org_fk DEFERRABLE INITIALLY IMMEDIATE,
+    ALTER CONSTRAINT workflow_approval_assignments_resolved_approver_org_fk DEFERRABLE INITIALLY IMMEDIATE,
+    ALTER CONSTRAINT workflow_approval_assignments_assigned_approver_org_fk DEFERRABLE INITIALLY IMMEDIATE,
+    ALTER CONSTRAINT workflow_approval_assignments_acted_by_org_fk DEFERRABLE INITIALLY IMMEDIATE;
+  ALTER TABLE workflow_runtime_publications
+    ALTER CONSTRAINT workflow_runtime_publications_request_org_fk DEFERRABLE INITIALLY IMMEDIATE;
+  SET CONSTRAINTS
+    email_intake_attachments_message_org_fk,
+    email_intake_attachments_item_org_fk,
+    workflow_definitions_published_version_org_fk,
+    workflow_definition_versions_definition_org_fk,
+    workflow_definition_versions_published_by_org_fk,
+    approval_requests_definition_version_org_fk,
+    approval_requests_initiated_by_org_fk,
+    workflow_approval_assignments_request_org_fk,
+    workflow_approval_assignments_resolved_approver_org_fk,
+    workflow_approval_assignments_assigned_approver_org_fk,
+    workflow_approval_assignments_acted_by_org_fk,
+    workflow_runtime_publications_request_org_fk
+  DEFERRED;
+
   -- Move every declared FK that targets an identity table. Columns belonging
   -- to the same child table are set together so composite keys never observe
   -- a half-migrated organization/user or organization/vendor pair.
@@ -353,6 +395,10 @@ BEGIN
         AND child_namespace.nspname = 'public'
         AND parent_namespace.nspname = 'public'
         AND parent_table.relname = ANY(source_identity_tables)
+        AND child_table.relname NOT IN (
+          'email_intake_messages',
+          'workflow_definition_versions'
+        )
     ) AS fk_columns
     GROUP BY fk_columns.table_schema, fk_columns.table_name
   LOOP
@@ -368,6 +414,73 @@ BEGIN
       uuid_where
     );
   END LOOP;
+
+  -- These immutable tables deliberately stay out of the catalog sweep. Their
+  -- named immutability triggers are disabled only for this guarded rewrite.
+  ALTER TABLE email_intake_messages DISABLE TRIGGER email_intake_messages_append_only;
+  EXECUTE format(
+    $update$
+      UPDATE email_intake_messages
+      SET
+        organization_id = CASE organization_id %s ELSE organization_id END,
+        vendor_id = CASE vendor_id %s ELSE vendor_id END
+      WHERE organization_id IN (SELECT old_id FROM _demo_uuid_map)
+         OR vendor_id IN (SELECT old_id FROM _demo_uuid_map)
+    $update$,
+    uuid_cases,
+    uuid_cases
+  );
+
+  ALTER TABLE workflow_definition_versions
+    DISABLE TRIGGER workflow_definition_versions_immutable;
+  EXECUTE format(
+    $update$
+      UPDATE workflow_definition_versions
+      SET
+        organization_id = CASE organization_id %s ELSE organization_id END,
+        published_by = CASE published_by %s ELSE published_by END
+      WHERE organization_id IN (SELECT old_id FROM _demo_uuid_map)
+         OR published_by IN (SELECT old_id FROM _demo_uuid_map)
+    $update$,
+    uuid_cases,
+    uuid_cases
+  );
+
+  SET CONSTRAINTS
+    email_intake_attachments_message_org_fk,
+    email_intake_attachments_item_org_fk,
+    workflow_definitions_published_version_org_fk,
+    workflow_definition_versions_definition_org_fk,
+    workflow_definition_versions_published_by_org_fk,
+    approval_requests_definition_version_org_fk,
+    approval_requests_initiated_by_org_fk,
+    workflow_approval_assignments_request_org_fk,
+    workflow_approval_assignments_resolved_approver_org_fk,
+    workflow_approval_assignments_assigned_approver_org_fk,
+    workflow_approval_assignments_acted_by_org_fk,
+    workflow_runtime_publications_request_org_fk
+  IMMEDIATE;
+  ALTER TABLE email_intake_messages ENABLE TRIGGER email_intake_messages_append_only;
+  ALTER TABLE workflow_definition_versions
+    ENABLE TRIGGER workflow_definition_versions_immutable;
+  ALTER TABLE email_intake_attachments
+    ALTER CONSTRAINT email_intake_attachments_message_org_fk NOT DEFERRABLE,
+    ALTER CONSTRAINT email_intake_attachments_item_org_fk NOT DEFERRABLE;
+  ALTER TABLE workflow_definitions
+    ALTER CONSTRAINT workflow_definitions_published_version_org_fk NOT DEFERRABLE;
+  ALTER TABLE workflow_definition_versions
+    ALTER CONSTRAINT workflow_definition_versions_definition_org_fk NOT DEFERRABLE,
+    ALTER CONSTRAINT workflow_definition_versions_published_by_org_fk NOT DEFERRABLE;
+  ALTER TABLE approval_requests
+    ALTER CONSTRAINT approval_requests_definition_version_org_fk NOT DEFERRABLE,
+    ALTER CONSTRAINT approval_requests_initiated_by_org_fk NOT DEFERRABLE;
+  ALTER TABLE workflow_approval_assignments
+    ALTER CONSTRAINT workflow_approval_assignments_request_org_fk NOT DEFERRABLE,
+    ALTER CONSTRAINT workflow_approval_assignments_resolved_approver_org_fk NOT DEFERRABLE,
+    ALTER CONSTRAINT workflow_approval_assignments_assigned_approver_org_fk NOT DEFERRABLE,
+    ALTER CONSTRAINT workflow_approval_assignments_acted_by_org_fk NOT DEFERRABLE;
+  ALTER TABLE workflow_runtime_publications
+    ALTER CONSTRAINT workflow_runtime_publications_request_org_fk NOT DEFERRABLE;
 
   -- A few older tables intentionally use polymorphic or audit references
   -- instead of foreign keys. This is the complete, audited list of those
@@ -420,24 +533,39 @@ BEGIN
     );
   END LOOP;
 
-  -- Only known identifier-bearing JSON is rewritten. Audit changes and
-  -- metadata are snapshots of references; template_data holds seeded
-  -- department IDs. User-authored JSON and all free-form text stay untouched.
+  -- Only known identifier-bearing JSON fields are rewritten, and only after
+  -- their audit or template row has moved into the migrated demo organization.
+  -- User-authored JSON and all free-form text stay untouched.
   FOR map_record IN SELECT old_id, new_id FROM _demo_uuid_map LOOP
     UPDATE audit_log
-    SET
-      changes = replace(changes::text, map_record.old_id::text, map_record.new_id::text)::jsonb,
-      metadata = replace(metadata::text, map_record.old_id::text, map_record.new_id::text)::jsonb
-    WHERE changes::text LIKE '%' || map_record.old_id::text || '%'
-       OR metadata::text LIKE '%' || map_record.old_id::text || '%';
+    SET changes = jsonb_set(
+      changes,
+      '{requesterId}',
+      to_jsonb(map_record.new_id::text),
+      false
+    )
+    WHERE organization_id = migrated_org
+      AND changes ->> 'requesterId' = map_record.old_id::text;
+
+    UPDATE audit_log
+    SET metadata = jsonb_set(
+      metadata,
+      '{ownerId}',
+      to_jsonb(map_record.new_id::text),
+      false
+    )
+    WHERE organization_id = migrated_org
+      AND metadata ->> 'ownerId' = map_record.old_id::text;
 
     UPDATE requisition_templates
-    SET template_data = replace(
-      template_data::text,
-      map_record.old_id::text,
-      map_record.new_id::text
-    )::jsonb
-    WHERE template_data::text LIKE '%' || map_record.old_id::text || '%';
+    SET template_data = jsonb_set(
+      template_data,
+      '{departmentId}',
+      to_jsonb(map_record.new_id::text),
+      false
+    )
+    WHERE organization_id = migrated_org
+      AND template_data ->> 'departmentId' = map_record.old_id::text;
   END LOOP;
 
   -- All references now point at the cloned identities. Delete only the

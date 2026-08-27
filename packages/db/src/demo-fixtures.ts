@@ -243,6 +243,12 @@ async function reconcileDemoVendors(
  * the seed preserves identities without hardcoded IDs.
  */
 export async function upsertDemoFixtures(tx: DbTransaction): Promise<DemoIdentity> {
+  // This is shared by regular and random seeding. Without it, two different
+  // random-seed names can both observe a missing natural key and insert it.
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtextextended('betterspend:demo-fixtures:acme-corp', 0))`,
+  );
+
   const [existingOrganization] = await tx
     .select()
     .from(organizations)

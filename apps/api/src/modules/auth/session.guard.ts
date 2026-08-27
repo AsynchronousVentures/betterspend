@@ -14,7 +14,7 @@ import { and, eq, gt } from 'drizzle-orm';
 import * as schema from '@betterspend/db';
 import type { Db } from '@betterspend/db';
 import { isDemoModeEnabled } from '../../common/demo-mode';
-import { resolveDemoIdentity } from '../../common/demo-identity';
+import { MissingDemoIdentityError, resolveDemoIdentity } from '../../common/demo-identity';
 import { AccessPolicyService, type AccessPolicy } from './access-policy';
 
 // Extend Express Request to carry our user type
@@ -71,8 +71,11 @@ export class SessionGuard implements CanActivate {
             const identity = await resolveDemoIdentity(this.db);
             req.demoOrganizationId = identity.organizationId;
             req.demoUserId = identity.userId;
-          } catch {
-            throw new UnauthorizedException('Demo identity is not seeded');
+          } catch (error) {
+            if (error instanceof MissingDemoIdentityError) {
+              throw new UnauthorizedException('Demo identity is not seeded');
+            }
+            throw error;
           }
           return true;
         }

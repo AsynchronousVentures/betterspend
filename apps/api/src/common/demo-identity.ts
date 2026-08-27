@@ -16,6 +16,14 @@ export interface DemoRequestIdentity {
   userId: string;
 }
 
+/** The only demo identity failure that callers may translate to a 401 response. */
+export class MissingDemoIdentityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MissingDemoIdentityError';
+  }
+}
+
 /** Resolve the demo request identity from the same natural keys used by seeding. */
 export async function resolveDemoIdentity(db: IdentityDatabase): Promise<DemoRequestIdentity> {
   const [organization] = await db
@@ -23,7 +31,7 @@ export async function resolveDemoIdentity(db: IdentityDatabase): Promise<DemoReq
     .from(organizations)
     .where(eq(organizations.slug, DEMO_ORGANIZATION_SLUG))
     .limit(1);
-  if (!organization) throw new Error('Demo organization is not seeded');
+  if (!organization) throw new MissingDemoIdentityError('Demo organization is not seeded');
 
   const [admin] = await db
     .select({ id: users.id })
@@ -36,7 +44,7 @@ export async function resolveDemoIdentity(db: IdentityDatabase): Promise<DemoReq
       ),
     )
     .limit(1);
-  if (!admin) throw new Error('Demo administrator is not seeded');
+  if (!admin) throw new MissingDemoIdentityError('Demo administrator is not seeded');
 
   return { organizationId: organization.id, userId: admin.id };
 }
