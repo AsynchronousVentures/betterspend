@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { CheckCircle2, CreditCard, FileCheck2, RefreshCw, Send, XCircle } from 'lucide-react';
 import { api } from '../../lib/api';
 import { formatCurrencyMinorUnits, sumCurrencyAmounts } from '../../lib/money';
+import { useAccess } from '../../components/access-provider';
 import { PageHeader } from '../../components/page-header';
 import { StatusBadge } from '../../components/status-badge';
 import { Alert, AlertDescription } from '../../components/ui/alert';
@@ -14,6 +15,7 @@ import { Input } from '../../components/ui/input';
 import { Select } from '../../components/ui/select';
 import { Textarea } from '../../components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
+import { canAccessProductActionForPathname } from '../../lib/product-routes';
 
 type Invoice = {
   id: string;
@@ -71,6 +73,7 @@ function statusTone(status: string) {
 }
 
 function PaymentRunsContent() {
+  const { access } = useAccess();
   const searchParams = useSearchParams();
   const selectedRunId = searchParams.get('run');
   const selectedInvoiceId = searchParams.get('invoiceId');
@@ -89,6 +92,10 @@ function PaymentRunsContent() {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const canManagePaymentRuns = canAccessProductActionForPathname(
+    '/payment-runs',
+    access?.permissions ?? [],
+  );
 
   async function load() {
     setLoading(true);
@@ -143,6 +150,7 @@ function PaymentRunsContent() {
   const mixedEntity = new Set(selectedInvoices.map((invoice) => invoice.entity?.name ?? 'none')).size > 1;
 
   function toggleInvoice(id: string) {
+    if (!canManagePaymentRuns) return;
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -152,7 +160,7 @@ function PaymentRunsContent() {
   }
 
   async function handleCreateRun() {
-    if (selectedInvoices.length === 0 || mixedCurrency || mixedEntity) return;
+    if (!canManagePaymentRuns || selectedInvoices.length === 0 || mixedCurrency || mixedEntity) return;
     setBusy('create');
     setError('');
     setMessage('');
@@ -177,6 +185,7 @@ function PaymentRunsContent() {
   }
 
   async function runAction(id: string, action: 'approve' | 'submit' | 'cancel') {
+    if (!canManagePaymentRuns) return;
     setBusy(`${action}:${id}`);
     setError('');
     setMessage('');
@@ -267,6 +276,8 @@ function PaymentRunsContent() {
           <CardDescription>Select approved unpaid invoices to schedule as one payment batch.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {canManagePaymentRuns ? (
+            <>
           <div className="grid gap-3 md:grid-cols-[1fr_180px_180px]">
             <Textarea
               value={notes}
@@ -298,6 +309,12 @@ function PaymentRunsContent() {
               {busy === 'create' ? 'Creating...' : 'Create Draft Run'}
             </Button>
           </div>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              You can view eligible invoices, but payment-run creation requires payment management access.
+            </p>
+          )}
 
           <div className="overflow-hidden rounded-lg border border-border/70">
             <Table>
@@ -337,6 +354,7 @@ function PaymentRunsContent() {
                           type="checkbox"
                           checked={selected.has(invoice.id)}
                           onChange={() => toggleInvoice(invoice.id)}
+                          disabled={!canManagePaymentRuns}
                           aria-label={`Select ${invoice.internalNumber}`}
                           className="h-4 w-4 rounded border-border"
                         />
@@ -366,13 +384,15 @@ function PaymentRunsContent() {
           <CardDescription>Approve and release scheduled payment batches.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex max-w-lg gap-3">
-            <Input
-              value={paymentReference}
-              onChange={(event) => setPaymentReference(event.target.value)}
-              placeholder="Optional payment reference for submission"
-            />
-          </div>
+          {canManagePaymentRuns ? (
+            <div className="flex max-w-lg gap-3">
+              <Input
+                value={paymentReference}
+                onChange={(event) => setPaymentReference(event.target.value)}
+                placeholder="Optional payment reference for submission"
+              />
+            </div>
+          ) : null}
           <div className="overflow-hidden rounded-lg border border-border/70">
             <Table>
               <TableHeader>
@@ -420,7 +440,7 @@ function PaymentRunsContent() {
                         </TableCell>
                         <TableCell>
                           <div className="flex justify-end gap-2">
-                            {run.status === 'draft' || run.status === 'pending_approval' ? (
+                            {canManagePaymentRuns && (run.status === 'draft' || run.status === 'pending_approval') ? (
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -431,7 +451,7 @@ function PaymentRunsContent() {
                                 Approve
                               </Button>
                             ) : null}
-                            {run.status === 'approved' ? (
+                            {canManagePaymentRuns && run.status === 'approved' ? (
                               <Button size="sm" onClick={() => runAction(run.id, 'submit')} disabled={actionBusy('submit')}>
                                 {usesVirtualCard ? (
                                   <CreditCard className="h-4 w-4" />
@@ -441,7 +461,7 @@ function PaymentRunsContent() {
                                 Submit
                               </Button>
                             ) : null}
-                            {!['paid', 'cancelled'].includes(run.status) ? (
+                            {canManagePaymentRuns && !['paid', 'cancelled'].includes(run.status) ? (
                               <Button
                                 size="sm"
                                 variant="outline"

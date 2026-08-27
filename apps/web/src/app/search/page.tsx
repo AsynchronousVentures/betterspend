@@ -5,6 +5,8 @@ import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ArrowLeft, SearchIcon } from 'lucide-react';
 import { api } from '../../lib/api';
+import { productSearchResults } from '../../lib/product-routes';
+import { useAccess } from '../../components/access-provider';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 
 const TYPE_LABELS: Record<string, string> = {
@@ -18,6 +20,7 @@ const TYPE_LABELS: Record<string, string> = {
 function SearchContent() {
   const searchParams = useSearchParams();
   const query = searchParams.get('q')?.trim() ?? '';
+  const { access } = useAccess();
   const [results, setResults] = useState<Record<string, any[]>>({
     requisitions: [],
     purchaseOrders: [],
@@ -66,7 +69,17 @@ function SearchContent() {
     [results],
   );
 
-  const totalResults = sections.reduce((sum, section) => sum + section.items.length, 0);
+  const productResults = useMemo(
+    () => productSearchResults(query, access?.permissions ?? []),
+    [access?.permissions, query],
+  );
+  const productDestinations = productResults.filter(
+    (result) => result.resultType === 'Destination',
+  );
+  const productActions = productResults.filter((result) => result.resultType === 'Action');
+
+  const totalResults =
+    productResults.length + sections.reduce((sum, section) => sum + section.items.length, 0);
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -99,6 +112,56 @@ function SearchContent() {
         </Card>
       ) : (
         <div className="grid gap-4">
+          {productDestinations.length > 0 ? (
+            <Card className="overflow-hidden">
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Destinations ({productDestinations.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="divide-y divide-border/70">
+                  {productDestinations.map((result) => (
+                    <Link
+                      key={result.key}
+                      href={result.href}
+                      className="flex items-center gap-3 px-5 py-4 transition-colors hover:bg-muted/30"
+                    >
+                      <span className="rounded-md bg-primary/12 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-primary">
+                        {result.resultType}
+                      </span>
+                      <span className="text-sm font-medium text-foreground">{result.label}</span>
+                    </Link>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {productActions.length > 0 ? (
+            <Card className="overflow-hidden">
+              <CardHeader>
+                <CardTitle className="text-base">Actions ({productActions.length})</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="divide-y divide-border/70">
+                  {productActions.map((result) => (
+                    <Link
+                      key={result.key}
+                      href={result.href}
+                      className="flex items-center gap-3 px-5 py-4 transition-colors hover:bg-muted/30"
+                    >
+                      <span className="rounded-md bg-amber-100 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-amber-800">
+                        {result.resultType}
+                      </span>
+                      <span className="text-sm font-medium text-foreground">{result.label}</span>
+                    </Link>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
           {sections.map((section) =>
             section.items.length === 0 ? null : (
               <Card key={section.key} className="overflow-hidden">

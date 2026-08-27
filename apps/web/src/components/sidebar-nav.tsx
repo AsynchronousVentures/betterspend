@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   LayoutDashboard,
   ClipboardList,
@@ -45,18 +45,24 @@ import {
 import { signOut } from '../lib/auth-client';
 import { api } from '../lib/api';
 import { useBranding } from '../lib/branding';
+import {
+  PRODUCT_NAV_SECTIONS,
+  productNavigationSections,
+  type ProductNavSectionKey,
+  type ProductNavigationSection,
+  type ProductRoute,
+  type ProductRouteIcon,
+} from '../lib/product-routes';
 import { useReleaseVersion } from './release-version-provider';
+import { useAccess } from './access-provider';
 import { Badge } from './ui/badge';
 import { cn } from '../lib/utils';
 import { SidebarAccount } from './sidebar-account';
 
-type NavChild = { label: string; href: string };
-type NavGroup = { label: string; children: NavChild[]; defaultOpen?: boolean };
-type NavTopLevel = { label: string; href: string };
-type NavEntry = NavTopLevel | NavGroup;
-
-function isGroup(entry: NavEntry): entry is NavGroup {
-  return 'children' in entry;
+function isGroup(
+  section: ProductNavigationSection,
+): section is ProductNavigationSection & { label: string } {
+  return section.label !== null;
 }
 
 function isNavPathActive(pathname: string, href: string) {
@@ -65,137 +71,55 @@ function isNavPathActive(pathname: string, href: string) {
   return pathname.startsWith(`${href}/`) && !pathname.endsWith('/new');
 }
 
-const NAV_ICONS: Record<string, LucideIcon> = {
+const NAV_ICONS: Record<ProductRouteIcon, LucideIcon> = {
   Dashboard: LayoutDashboard,
-  'Start Request': Sparkles,
+  StartRequest: Sparkles,
   Requisitions: ClipboardList,
-  'Purchase Orders': ShoppingCart,
-  'RFQ / Sourcing': Megaphone,
-  'Recurring POs': RefreshCw,
+  PurchaseOrders: ShoppingCart,
+  Rfq: Megaphone,
+  RecurringPos: RefreshCw,
   Catalog: BookOpen,
   Receiving: PackageCheck,
   Inventory: Boxes,
   Invoices: Receipt,
-  'Intake Queue': Inbox,
-  'OCR Jobs': ScanLine,
-  'Pending Approvals': CheckSquare,
-  'Approval Rules': SlidersHorizontal,
+  Intake: Inbox,
+  Ocr: ScanLine,
+  Approvals: CheckSquare,
+  ApprovalRules: SlidersHorizontal,
   Delegations: ArrowLeftRight,
   Budgets: PiggyBank,
-  'Spend Guard': ShieldAlert,
-  'Tax Codes': Percent,
-  'AP Aging': Clock,
-  'Payment Runs': CreditCard,
-  'GL Integration': Link2,
-  'Add-ons': Puzzle,
+  SpendGuard: ShieldAlert,
+  TaxCodes: Percent,
+  Currencies: ArrowLeftRight,
+  ApAging: Clock,
+  PaymentRuns: CreditCard,
+  GlIntegration: Link2,
   Analytics: BarChart2,
   Reports: FileBarChart2,
   Suppliers: Building2,
   Contracts: ScrollText,
-  'Software Licenses': KeyRound,
-  Users: Users,
+  SoftwareLicenses: KeyRound,
+  Users,
   Departments: FolderTree,
   Projects: Briefcase,
   Entities: Building,
+  Addons: Puzzle,
   Webhooks: Zap,
-  'Audit Log': History,
+  AuditLog: History,
   Compliance: ShieldCheck,
-  Settings: Settings,
-  'Workspace Settings': Settings,
-  Currencies: ArrowLeftRight,
+  WorkspaceSettings: Settings,
 };
 
-const GROUP_ICONS: Record<string, LucideIcon> = {
-  Procurement: ShoppingCart,
-  Operations: PackageCheck,
-  Approvals: CheckSquare,
-  Finance: PiggyBank,
-  'Analytics & Reports': BarChart2,
-  'Supplier operations': Building2,
-  Organization: Building,
-  System: Settings,
+const GROUP_ICONS: Partial<Record<ProductNavSectionKey, LucideIcon>> = {
+  procurement: ShoppingCart,
+  operations: PackageCheck,
+  approvals: CheckSquare,
+  finance: PiggyBank,
+  analytics: BarChart2,
+  'supplier-operations': Building2,
+  organization: Building,
+  system: Settings,
 };
-
-const NAV_CONFIG: NavEntry[] = [
-  { label: 'Dashboard', href: '/' },
-  {
-    label: 'Procurement',
-    defaultOpen: true,
-    children: [
-      { label: 'Start Request', href: '/start' },
-      { label: 'Requisitions', href: '/requisitions' },
-      { label: 'Purchase Orders', href: '/purchase-orders' },
-      { label: 'RFQ / Sourcing', href: '/rfq' },
-      { label: 'Recurring POs', href: '/recurring-po' },
-      { label: 'Catalog', href: '/catalog' },
-    ],
-  },
-  {
-    label: 'Operations',
-    defaultOpen: true,
-    children: [
-      { label: 'Receiving', href: '/receiving' },
-      { label: 'Inventory', href: '/inventory' },
-      { label: 'Invoices', href: '/invoices' },
-      { label: 'Intake Queue', href: '/intake' },
-      { label: 'OCR Jobs', href: '/ocr' },
-    ],
-  },
-  {
-    label: 'Approvals',
-    children: [
-      { label: 'Pending Approvals', href: '/approvals' },
-      { label: 'Approval Rules', href: '/approval-rules' },
-      { label: 'Delegations', href: '/approval-delegations' },
-    ],
-  },
-  {
-    label: 'Finance',
-    children: [
-      { label: 'Budgets', href: '/budgets' },
-      { label: 'Spend Guard', href: '/spend-guard' },
-      { label: 'Tax Codes', href: '/tax-codes' },
-      { label: 'Currencies', href: '/currencies' },
-      { label: 'AP Aging', href: '/ap-aging' },
-      { label: 'Payment Runs', href: '/payment-runs' },
-      { label: 'GL Integration', href: '/gl-mappings' },
-    ],
-  },
-  {
-    label: 'Analytics & Reports',
-    children: [
-      { label: 'Analytics', href: '/analytics' },
-      { label: 'Reports', href: '/reports' },
-    ],
-  },
-  {
-    label: 'Supplier operations',
-    children: [
-      { label: 'Suppliers', href: '/vendors' },
-      { label: 'Contracts', href: '/contracts' },
-      { label: 'Software Licenses', href: '/software-licenses' },
-    ],
-  },
-  {
-    label: 'Organization',
-    children: [
-      { label: 'Users', href: '/users' },
-      { label: 'Departments', href: '/departments' },
-      { label: 'Projects', href: '/projects' },
-      { label: 'Entities', href: '/entities' },
-    ],
-  },
-  {
-    label: 'System',
-    children: [
-      { label: 'Add-ons', href: '/addons' },
-      { label: 'Webhooks', href: '/webhooks' },
-      { label: 'Audit Log', href: '/audit' },
-      { label: 'Compliance', href: '/compliance' },
-      { label: 'Workspace Settings', href: '/workspace-settings' },
-    ],
-  },
-];
 
 export default function SidebarNav({
   onClose,
@@ -212,35 +136,38 @@ export default function SidebarNav({
   const [softwareRenewalCount, setSoftwareRenewalCount] = useState(0);
   const branding = useBranding();
   const { version: appReleaseVersion } = useReleaseVersion();
+  const { access } = useAccess();
+  const navigationSections = useMemo(
+    () => productNavigationSections(access?.permissions ?? []),
+    [access?.permissions],
+  );
 
-  const getInitialOpen = useCallback(() => {
-    const initial = new Set<string>();
-    for (const entry of NAV_CONFIG) {
-      if (!isGroup(entry)) continue;
-      if (entry.defaultOpen) initial.add(entry.label);
-      for (const child of entry.children) {
-        if (isNavPathActive(pathname, child.href)) {
-          initial.add(entry.label);
-        }
-      }
-    }
-    return initial;
-  }, [pathname]);
-
-  const [openGroups, setOpenGroups] = useState<Set<string>>(getInitialOpen);
+  const [openGroups, setOpenGroups] = useState<Set<ProductNavSectionKey>>(
+    () =>
+      new Set(
+        PRODUCT_NAV_SECTIONS.filter((section) => section.label !== null && section.defaultOpen).map(
+          (section) => section.key,
+        ),
+      ),
+  );
 
   useEffect(() => {
-    const activeGroups = new Set<string>();
-    for (const entry of NAV_CONFIG) {
-      if (!isGroup(entry)) continue;
-      for (const child of entry.children) {
-        if (isNavPathActive(pathname, child.href)) {
-          activeGroups.add(entry.label);
+    setOpenGroups((current) => {
+      const availableGroups = new Set(
+        navigationSections.filter(isGroup).map((section) => section.key),
+      );
+      const next = new Set([...current].filter((key) => availableGroups.has(key)));
+      for (const section of navigationSections) {
+        if (
+          isGroup(section) &&
+          section.routes.some((route) => isNavPathActive(pathname, route.href))
+        ) {
+          next.add(section.key);
         }
       }
-    }
-    setOpenGroups(activeGroups);
-  }, [pathname]);
+      return next;
+    });
+  }, [navigationSections, pathname]);
 
   useEffect(() => {
     api.analytics
@@ -254,11 +181,11 @@ export default function SidebarNav({
       .catch(() => {});
   }, [pathname]);
 
-  function toggleGroup(label: string) {
+  function toggleGroup(sectionKey: ProductNavSectionKey) {
     setOpenGroups((prev) => {
       const next = new Set(prev);
-      if (next.has(label)) next.delete(label);
-      else next.add(label);
+      if (next.has(sectionKey)) next.delete(sectionKey);
+      else next.add(sectionKey);
       return next;
     });
   }
@@ -284,14 +211,14 @@ export default function SidebarNav({
     return undefined;
   }
 
-  function renderLink(item: NavChild, indented: boolean) {
+  function renderLink(item: ProductRoute, indented: boolean) {
     const active = isActive(item.href);
     const badge = getBadge(item.href);
-    const Icon = NAV_ICONS[item.label];
+    const Icon = NAV_ICONS[item.icon];
 
     return (
       <Link
-        key={item.href}
+        key={item.key}
         href={item.href}
         title={collapsed ? item.label : undefined}
         onClick={handleLinkClick}
@@ -329,17 +256,17 @@ export default function SidebarNav({
     );
   }
 
-  function renderGroup(group: NavGroup) {
-    const open = openGroups.has(group.label);
-    const hasActiveChild = group.children.some((child) => isActive(child.href));
-    const groupBadge = group.children.reduce((sum, child) => sum + (getBadge(child.href) ?? 0), 0);
-    const GroupIcon = GROUP_ICONS[group.label];
+  function renderGroup(group: ProductNavigationSection & { label: string }) {
+    const open = openGroups.has(group.key);
+    const hasActiveChild = group.routes.some((route) => isActive(route.href));
+    const groupBadge = group.routes.reduce((sum, route) => sum + (getBadge(route.href) ?? 0), 0);
+    const GroupIcon = GROUP_ICONS[group.key];
 
     return (
-      <div key={group.label} className="space-y-0.5">
+      <div key={group.key} className="space-y-0.5">
         <button
           type="button"
-          onClick={() => toggleGroup(group.label)}
+          onClick={() => toggleGroup(group.key)}
           title={collapsed ? group.label : undefined}
           className={cn(
             'flex w-full items-center justify-between rounded-md px-3 py-1.5 transition-colors',
@@ -378,9 +305,7 @@ export default function SidebarNav({
           ) : null}
         </button>
         {open ? (
-          <div className="space-y-0.5">
-            {group.children.map((child) => renderLink(child, true))}
-          </div>
+          <div className="space-y-0.5">{group.routes.map((route) => renderLink(route, true))}</div>
         ) : null}
       </div>
     );
@@ -389,8 +314,10 @@ export default function SidebarNav({
   return (
     <>
       <nav className="flex-1 space-y-2 overflow-y-auto px-3 py-3">
-        {NAV_CONFIG.map((entry) =>
-          isGroup(entry) ? renderGroup(entry) : renderLink(entry, false),
+        {navigationSections.map((section) =>
+          isGroup(section)
+            ? renderGroup(section)
+            : section.routes.map((route) => renderLink(route, false)),
         )}
       </nav>
 

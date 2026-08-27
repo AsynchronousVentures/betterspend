@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { isRecordKind, recordHref } from '@betterspend/shared';
 import {
   Bell,
   ChevronRight,
   Command,
+  LockKeyhole,
   Menu,
   Search,
   Settings2,
@@ -15,15 +16,25 @@ import {
   X,
 } from 'lucide-react';
 import SidebarNav from './sidebar-nav';
-import { api } from '../lib/api';
+import { api, loadFailureState } from '../lib/api';
 import { useIsMobile, useMediaQuery } from '../lib/use-media-query';
 import { useBranding } from '../lib/branding';
+import {
+  canAccessProductRoute,
+  canAccessProductAction,
+  productActionForPathname,
+  productRouteForPathname,
+  productSearchResults,
+  type ProductSearchResult,
+} from '../lib/product-routes';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Separator } from './ui/separator';
 import { cn } from '../lib/utils';
+import { useAccess } from './access-provider';
+import { createSearchRequestController } from '../lib/search-request';
 
 function OfflineIndicator() {
   const [isOffline, setIsOffline] = useState(false);
@@ -48,7 +59,15 @@ function OfflineIndicator() {
   );
 }
 
-const AUTH_PATHS = ['/login', '/signup', '/punchout', '/forgot-password', '/reset-password', '/vendor-portal', '/account/verify-email'];
+const AUTH_PATHS = [
+  '/login',
+  '/signup',
+  '/punchout',
+  '/forgot-password',
+  '/reset-password',
+  '/vendor-portal',
+  '/account/verify-email',
+];
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 const SHORTCUTS_DISABLED_KEY = 'betterspend:shortcuts-disabled';
 const SIDEBAR_COLLAPSED_KEY = 'betterspend:sidebar-collapsed';
@@ -61,6 +80,8 @@ const TYPE_LABELS: Record<string, string> = {
   invoice: 'Inv',
   vendor: 'Vendor',
   catalog_item: 'Catalog',
+  product_destination: 'Destination',
+  product_action: 'Action',
 };
 
 const TYPE_TONE: Record<string, string> = {
@@ -69,7 +90,64 @@ const TYPE_TONE: Record<string, string> = {
   invoice: 'bg-amber-100 text-amber-800',
   vendor: 'bg-violet-100 text-violet-800',
   catalog_item: 'bg-sky-100 text-sky-800',
+  product_destination: 'bg-primary/12 text-primary',
+  product_action: 'bg-amber-100 text-amber-800',
 };
+
+interface SearchResult {
+  readonly id: string;
+  readonly _type: string;
+  readonly _href: string;
+  readonly _label: string;
+  readonly status?: string;
+}
+
+function displayProductSearchResult(result: ProductSearchResult): SearchResult {
+  return {
+    id: result.key,
+    _type: result.resultType === 'Destination' ? 'product_destination' : 'product_action',
+    _href: result.href,
+    _label: result.label,
+  };
+}
+
+function recordSearchResults(data: unknown): SearchResult[] {
+  if (!data || typeof data !== 'object') return [];
+
+  const response = data as Record<string, unknown>;
+  const resultGroups = [
+    ['requisitions', 'requisition'],
+    ['purchaseOrders', 'purchase_order'],
+    ['invoices', 'invoice'],
+    ['vendors', 'vendor'],
+    ['catalogItems', 'catalog_item'],
+  ] as const;
+
+  return resultGroups.flatMap(([group, type]) => {
+    const records = response[group];
+    if (!Array.isArray(records)) return [];
+    return records.flatMap((record): SearchResult[] => {
+      if (!record || typeof record !== 'object') return [];
+      const item = record as Record<string, unknown>;
+      if (
+        typeof item.id !== 'string' ||
+        typeof item._href !== 'string' ||
+        typeof item._label !== 'string'
+      ) {
+        return [];
+      }
+      return [
+        {
+          id: item.id,
+          _type: type,
+          _href: item._href,
+          _label: item._label,
+          ...(typeof item.status === 'string' ? { status: item.status } : {}),
+        },
+      ];
+    });
+  });
+}
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -84,8 +162,9 @@ function timeAgo(dateStr: string): string {
 
 function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   const router = useRouter();
+  const { access } = useAccess();
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = useState<SearchResult[]>([]);
   const [totalResults, setTotalResults] = useState(0);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -94,6 +173,11 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchRequestController = useRef(createSearchRequestController()).current;
+  const visibleProductResults = useMemo(
+    () => productSearchResults(query, access?.permissions ?? []),
+    [access?.permissions, query],
+  );
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -106,11 +190,13 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   }, []);
 
   useEffect(() => {
+    const requestId = searchRequestController.begin();
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (query.length < 2) {
       setResults([]);
       setTotalResults(0);
       setActiveIndex(-1);
+      setLoading(false);
       return;
     }
 
@@ -118,13 +204,11 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
       setLoading(true);
       api.search
         .query(query)
-        .then((data: any) => {
-          const all: any[] = [
-            ...data.requisitions,
-            ...data.purchaseOrders,
-            ...data.invoices,
-            ...data.vendors,
-            ...data.catalogItems,
+        .then((data: unknown) => {
+          if (!searchRequestController.isCurrent(requestId)) return;
+          const all = [
+            ...visibleProductResults.map(displayProductSearchResult),
+            ...recordSearchResults(data),
           ];
           setTotalResults(all.length);
           setResults(all.slice(0, 10));
@@ -132,13 +216,25 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
           setOpen(true);
         })
         .catch(() => {
-          setResults([]);
-          setTotalResults(0);
-          setActiveIndex(-1);
+          if (!searchRequestController.isCurrent(requestId)) return;
+          const fallback = visibleProductResults.map(displayProductSearchResult);
+          setResults(fallback.slice(0, 10));
+          setTotalResults(fallback.length);
+          setActiveIndex(fallback.length > 0 ? 0 : -1);
+          setOpen(fallback.length > 0);
         })
-        .finally(() => setLoading(false));
+        .finally(() => {
+          if (searchRequestController.isCurrent(requestId)) setLoading(false);
+        });
     }, 300);
-  }, [query]);
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      searchRequestController.invalidate();
+    };
+  }, [query, searchRequestController, visibleProductResults]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -231,11 +327,13 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
             if (results.length > 0 || recentSearches.length > 0) setOpen(true);
           }}
           onKeyDown={handleKeyDown}
-          placeholder="Search requisitions, POs, invoices..."
+          placeholder="Search records, destinations, actions..."
           className="h-9 rounded-md border-border/70 bg-background/85 pl-10 pr-10 shadow-none backdrop-blur"
         />
         {loading ? (
-          <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">...</div>
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+            ...
+          </div>
         ) : (
           <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-md border border-border/70 bg-muted/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             <Command className="mr-1 inline size-3" />K
@@ -284,7 +382,12 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
                   activeIndex === index ? 'bg-muted/70' : 'hover:bg-muted/40',
                 )}
               >
-                <span className={cn('rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em]', tone)}>
+                <span
+                  className={cn(
+                    'rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em]',
+                    tone,
+                  )}
+                >
                   {TYPE_LABELS[result._type] ?? result._type}
                 </span>
                 <span className="truncate text-sm text-foreground">{result._label}</span>
@@ -319,15 +422,96 @@ function GlobalSearch({ isMobile }: { isMobile: boolean }) {
   );
 }
 
+function AccessDeniedState({ routeLabel }: { routeLabel?: string }) {
+  return (
+    <div
+      role="alert"
+      className="flex min-h-[300px] flex-col items-center justify-center gap-4 px-6 text-center"
+    >
+      <LockKeyhole className="h-6 w-6 text-destructive" aria-hidden="true" />
+      <div>
+        <h1 className="text-base font-semibold text-foreground">Access denied</h1>
+        <p className="mt-1 max-w-md text-sm text-muted-foreground">
+          {routeLabel
+            ? `You do not have permission to open ${routeLabel}. Return to your work or ask an administrator for access.`
+            : 'You do not have access to this section. Return to your work or ask an administrator for access.'}
+        </p>
+      </div>
+      <Link
+        href="/"
+        className="text-sm font-semibold text-primary transition-colors hover:text-primary/80"
+      >
+        Return to dashboard
+      </Link>
+    </div>
+  );
+}
+
+function ProductRouteAccessBoundary({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const { access, error, loading, resolved, refresh } = useAccess();
+  const route = productRouteForPathname(pathname);
+  const action = productActionForPathname(pathname);
+
+  if (!resolved || loading) {
+    return (
+      <div role="status" aria-live="polite" className="p-8 text-sm text-muted-foreground">
+        Checking access...
+      </div>
+    );
+  }
+
+  if (error) {
+    if (loadFailureState(error) === 'denied') return <AccessDeniedState />;
+
+    return (
+      <div
+        role="alert"
+        className="flex min-h-[300px] flex-col items-center justify-center gap-4 px-6 text-center"
+      >
+        <p className="text-base font-semibold text-foreground">Unable to verify access</p>
+        <p className="max-w-md text-sm text-muted-foreground">
+          Try again. If this keeps happening, contact your administrator.
+        </p>
+        <Button type="button" variant="outline" onClick={() => void refresh()}>
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
+  if (!access) {
+    return <AccessDeniedState />;
+  }
+
+  if (
+    action &&
+    action.href !== route?.href &&
+    !canAccessProductAction(action, access.permissions)
+  ) {
+    return <AccessDeniedState routeLabel={action.label} />;
+  }
+
+  if (route && !canAccessProductRoute(route, access.permissions)) {
+    return <AccessDeniedState routeLabel={route.label} />;
+  }
+
+  return <>{children}</>;
+}
+
 function EntitySwitcher() {
   const [entities, setEntities] = useState<any[]>([]);
   const [selectedEntityId, setSelectedEntityId] = useState('');
   const compactEntitySwitcher = useMediaQuery('(max-width: 479px)');
 
   useEffect(() => {
-    const stored = typeof window !== 'undefined' ? window.localStorage.getItem(ENTITY_STORAGE_KEY) ?? '' : '';
+    const stored =
+      typeof window !== 'undefined' ? (window.localStorage.getItem(ENTITY_STORAGE_KEY) ?? '') : '';
     setSelectedEntityId(stored);
-    api.entities.list().then(setEntities).catch(() => {});
+    api.entities
+      .list()
+      .then(setEntities)
+      .catch(() => {});
   }, []);
 
   if (entities.length === 0) return null;
@@ -377,10 +561,16 @@ function NotificationBell() {
       .then(([countData, latestData]) => {
         setUnreadCount(countData.count);
         const lastViewedAt =
-          typeof window === 'undefined' ? null : window.localStorage.getItem(NOTIFICATION_LAST_VIEWED_KEY);
+          typeof window === 'undefined'
+            ? null
+            : window.localStorage.getItem(NOTIFICATION_LAST_VIEWED_KEY);
         const latest = latestData.items[0];
         setHasNewSinceLastView(
-          Boolean(latest?.createdAt && lastViewedAt && new Date(latest.createdAt).getTime() > new Date(lastViewedAt).getTime()),
+          Boolean(
+            latest?.createdAt &&
+            lastViewedAt &&
+            new Date(latest.createdAt).getTime() > new Date(lastViewedAt).getTime(),
+          ),
         );
       })
       .catch(() => {});
@@ -407,7 +597,8 @@ function NotificationBell() {
       setOpen(false);
     }
     window.addEventListener('betterspend:escape', handleShortcutEscape as EventListener);
-    return () => window.removeEventListener('betterspend:escape', handleShortcutEscape as EventListener);
+    return () =>
+      window.removeEventListener('betterspend:escape', handleShortcutEscape as EventListener);
   }, []);
 
   function handleBellClick() {
@@ -428,7 +619,9 @@ function NotificationBell() {
 
   async function handleMarkAllRead() {
     await api.notifications.markAllRead().catch(() => {});
-    setNotifications((prev) => prev.map((notification) => ({ ...notification, readAt: new Date().toISOString() })));
+    setNotifications((prev) =>
+      prev.map((notification) => ({ ...notification, readAt: new Date().toISOString() })),
+    );
     setUnreadCount(0);
   }
 
@@ -436,17 +629,15 @@ function NotificationBell() {
     if (!notification.readAt) {
       await api.notifications.markRead(notification.id).catch(() => {});
       setNotifications((prev) =>
-        prev.map((record) => (record.id === notification.id ? { ...record, readAt: new Date().toISOString() } : record)),
+        prev.map((record) =>
+          record.id === notification.id ? { ...record, readAt: new Date().toISOString() } : record,
+        ),
       );
       setUnreadCount((count) => Math.max(0, count - 1));
     }
 
     setOpen(false);
-    if (
-      notification.entityType &&
-      notification.entityId &&
-      isRecordKind(notification.entityType)
-    ) {
+    if (notification.entityType && notification.entityId && isRecordKind(notification.entityType)) {
       router.push(recordHref({ kind: notification.entityType, id: notification.entityId }));
     }
   }
@@ -493,9 +684,13 @@ function NotificationBell() {
             </div>
           </CardHeader>
           <div className="max-h-[26rem] overflow-y-auto">
-            {loading ? <div className="px-6 py-8 text-center text-sm text-muted-foreground">Loading...</div> : null}
+            {loading ? (
+              <div className="px-6 py-8 text-center text-sm text-muted-foreground">Loading...</div>
+            ) : null}
             {!loading && notifications.length === 0 ? (
-              <div className="px-6 py-8 text-center text-sm text-muted-foreground">No notifications</div>
+              <div className="px-6 py-8 text-center text-sm text-muted-foreground">
+                No notifications
+              </div>
             ) : null}
             {!loading
               ? notifications.map((notification) => {
@@ -510,19 +705,33 @@ function NotificationBell() {
                       )}
                     >
                       <div className="flex items-start gap-2">
-                        {isUnread ? <span className="mt-1.5 size-2 shrink-0 rounded-full bg-primary" /> : null}
-                        <span className="flex-1 text-sm font-medium leading-6 text-foreground">{notification.title}</span>
+                        {isUnread ? (
+                          <span className="mt-1.5 size-2 shrink-0 rounded-full bg-primary" />
+                        ) : null}
+                        <span className="flex-1 text-sm font-medium leading-6 text-foreground">
+                          {notification.title}
+                        </span>
                         <span className="shrink-0 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                           {timeAgo(notification.createdAt)}
                         </span>
                       </div>
                       {notification.body ? (
-                        <span className={cn('line-clamp-2 text-sm leading-6 text-muted-foreground', isUnread && 'pl-4')}>
+                        <span
+                          className={cn(
+                            'line-clamp-2 text-sm leading-6 text-muted-foreground',
+                            isUnread && 'pl-4',
+                          )}
+                        >
                           {notification.body}
                         </span>
                       ) : null}
                       {notification.entityType && notification.entityId ? (
-                        <span className={cn('text-xs font-semibold uppercase tracking-[0.2em] text-primary', isUnread && 'pl-4')}>
+                        <span
+                          className={cn(
+                            'text-xs font-semibold uppercase tracking-[0.2em] text-primary',
+                            isUnread && 'pl-4',
+                          )}
+                        >
                           View {notification.entityType.replace('_', ' ')}
                         </span>
                       ) : null}
@@ -576,10 +785,15 @@ function ShortcutsModal({
       onClick={onClose}
       className="fixed inset-0 z-[120] flex items-center justify-center bg-[rgba(19,18,21,0.48)] px-4 py-6"
     >
-      <Card className="w-full max-w-xl overflow-hidden" onClick={(event) => event.stopPropagation()}>
+      <Card
+        className="w-full max-w-xl overflow-hidden"
+        onClick={(event) => event.stopPropagation()}
+      >
         <CardHeader className="border-b border-border/70 pb-4">
           <CardTitle className="text-base font-semibold">Keyboard Shortcuts</CardTitle>
-          <p className="text-sm text-muted-foreground">Global navigation and form actions for faster workflows.</p>
+          <p className="text-sm text-muted-foreground">
+            Global navigation and form actions for faster workflows.
+          </p>
         </CardHeader>
         <CardContent className="space-y-4 pt-5">
           {[
@@ -607,7 +821,8 @@ function ShortcutsModal({
             <div>
               <div className="font-medium text-foreground">Disable keyboard shortcuts</div>
               <div className="mt-1 text-xs leading-5 text-muted-foreground">
-                Stores your preference in this browser for accessibility or screen-reader compatibility.
+                Stores your preference in this browser for accessibility or screen-reader
+                compatibility.
               </div>
             </div>
           </label>
@@ -629,7 +844,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [shortcutsDisabled, setShortcutsDisabled] = useState(false);
-  const isAuthPage = AUTH_PATHS.some((path) => pathname === path || pathname.startsWith(path + '/'));
+  const isAuthPage = AUTH_PATHS.some(
+    (path) => pathname === path || pathname.startsWith(path + '/'),
+  );
   const branding = useBranding();
 
   useEffect(() => {
@@ -649,7 +866,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       const element = target as HTMLElement | null;
       if (!element) return false;
       const tagName = element.tagName;
-      return tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || element.isContentEditable;
+      return (
+        tagName === 'INPUT' ||
+        tagName === 'TEXTAREA' ||
+        tagName === 'SELECT' ||
+        element.isContentEditable
+      );
     }
 
     function focusGlobalSearch() {
@@ -663,7 +885,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       const form = activeElement?.closest('form');
       if (!form) return;
 
-      const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"], input[type="submit"]');
+      const submitButton = form.querySelector<HTMLButtonElement>(
+        'button[type="submit"], input[type="submit"]',
+      );
       if (submitButton) {
         submitButton.click();
         return;
@@ -763,7 +987,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             title={sidebarCollapsed ? branding.app_name : undefined}
             className="text-lg font-bold tracking-[-0.02em] text-sidebar-foreground"
           >
-            {sidebarCollapsed && !isMobile ? branding.app_name.slice(0, 2).toUpperCase() : branding.app_name}
+            {sidebarCollapsed && !isMobile
+              ? branding.app_name.slice(0, 2).toUpperCase()
+              : branding.app_name}
           </span>
         )}
         <div className="flex items-center gap-1">
@@ -777,7 +1003,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             >
-              <ChevronRight className={cn('size-4 transition-transform', !sidebarCollapsed && 'rotate-180')} />
+              <ChevronRight
+                className={cn('size-4 transition-transform', !sidebarCollapsed && 'rotate-180')}
+              />
             </Button>
           ) : (
             <Button
@@ -810,7 +1038,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       {isMobile && sidebarOpen ? (
         <>
-          <div className="fixed inset-0 z-50 bg-[rgba(19,18,21,0.48)]" onClick={() => setSidebarOpen(false)} />
+          <div
+            className="fixed inset-0 z-50 bg-[rgba(19,18,21,0.48)]"
+            onClick={() => setSidebarOpen(false)}
+          />
           {sidebar}
         </>
       ) : null}
@@ -856,7 +1087,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
         <main className="flex-1 overflow-x-auto">
           <div className="mx-auto min-h-[calc(100vh-4.5rem)] w-full max-w-[1440px]">
-            {children}
+            <ProductRouteAccessBoundary>{children}</ProductRouteAccessBoundary>
           </div>
         </main>
       </div>
