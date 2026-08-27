@@ -7,7 +7,8 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { lookup } from 'node:dns/promises';
-import { request } from 'node:https';
+import { request, type RequestOptions } from 'node:https';
+import type { LookupFunction } from 'node:net';
 import ipaddr from 'ipaddr.js';
 import { and, eq, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
@@ -598,62 +599,76 @@ function isGlobalIp(address: string): boolean {
 
 function requestPinned(
   url: URL,
-  pinned: { address: string; family: 4 | 6 },
+  pinned: PinnedAddress,
   timeoutMs: number,
   maxBytes: number,
 ): Promise<{ statusCode: number; location?: string; body: string }> {
   return new Promise((resolve, reject) => {
-    const req = request(
-      url,
-      {
-        servername: url.hostname,
-        lookup: (_hostname, _options, callback) => {
-          callback(null, pinned.address, pinned.family);
-        },
-      },
-      (response) => {
-        const statusCode = response.statusCode ?? 0;
-        const location = response.headers.location;
-        if (statusCode < 200 || statusCode >= 300) {
-          response.resume();
-          resolve({ statusCode, location, body: '' });
+    const req = request(url, createSanctionsRequestOptions(url, pinned), (response) => {
+      const statusCode = response.statusCode ?? 0;
+      const location = response.headers.location;
+      if (statusCode < 200 || statusCode >= 300) {
+        response.resume();
+        resolve({ statusCode, location, body: '' });
+        return;
+      }
+      const contentLength = Number(response.headers['content-length']);
+      if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+        response.destroy();
+        reject(new Error(`Sanctions list exceeds the ${maxBytes}-byte limit`));
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let totalBytes = 0;
+      response.on('data', (chunk: Buffer) => {
+        totalBytes += chunk.byteLength;
+        if (totalBytes > maxBytes) {
+          response.destroy(new Error(`Sanctions list exceeds the ${maxBytes}-byte limit`));
           return;
         }
-        const contentLength = Number(response.headers['content-length']);
-        if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-          response.destroy();
-          reject(new Error(`Sanctions list exceeds the ${maxBytes}-byte limit`));
-          return;
-        }
-        const chunks: Buffer[] = [];
-        let totalBytes = 0;
-        response.on('data', (chunk: Buffer) => {
-          totalBytes += chunk.byteLength;
-          if (totalBytes > maxBytes) {
-            response.destroy(new Error(`Sanctions list exceeds the ${maxBytes}-byte limit`));
-            return;
-          }
-          chunks.push(chunk);
-        });
-        response.on('end', () => {
-          resolve({ statusCode, location, body: Buffer.concat(chunks).toString('utf8') });
-        });
-        response.on('error', reject);
-      },
-    );
+        chunks.push(chunk);
+      });
+      response.on('end', () => {
+        resolve({ statusCode, location, body: Buffer.concat(chunks).toString('utf8') });
+      });
+      response.on('error', reject);
+    });
     req.setTimeout(timeoutMs, () => req.destroy(new Error('Sanctions source download timed out')));
     req.on('error', reject);
     req.end();
   });
 }
 
+interface PinnedAddress {
+  address: string;
+  family: 4 | 6;
+}
+
+export function createSanctionsRequestOptions(url: URL, pinned: PinnedAddress): RequestOptions {
+  const pinnedLookup: LookupFunction = (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, [pinned]);
+      return;
+    }
+    callback(null, pinned.address, pinned.family);
+  };
+  return {
+    servername: url.hostname,
+    headers: {
+      Accept: 'text/csv',
+      'User-Agent': 'BetterSpend-Sanctions-Ingest/1.0',
+    },
+    lookup: pinnedLookup,
+  };
+}
+
 /**
  * Tolerant parser for OFAC's SDN CSV (ent_num, SDN_Name, SDN_Type, Program,
- * ...). Structural validation instead of a name character class: a row is an
- * entry when it has at least two cells and cell[1] looks like a name. Rows
- * that fail are counted and reported so silent data loss is visible.
+ * ...). Structural validation instead of a name character class allows valid
+ * names such as the numeric vessel "7-28". Rows that fail are counted and
+ * reported so silent data loss is visible.
  */
-function parseSdnCsv(csv: string): {
+export function parseSdnCsv(csv: string): {
   entries: Array<{
     externalId: string | null;
     entityName: string;
@@ -662,7 +677,10 @@ function parseSdnCsv(csv: string): {
   }>;
   skipped: number;
 } {
-  const lines = csv.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  const lines = csv.split(/\r?\n/).filter((line) => {
+    const trimmed = line.trim();
+    return trimmed.length > 0 && trimmed !== '\x1A';
+  });
   const entries: Array<{
     externalId: string | null;
     entityName: string;
@@ -676,10 +694,8 @@ function parseSdnCsv(csv: string): {
     const isHeader = /^ent_num$/i.test(cells[0]?.trim() ?? '') && /^sdn_name$/i.test(candidate);
     if (isHeader) continue;
     // Malformed data rows are counted so ingestion cannot silently discard them.
-    const looksLikeName =
-      candidate.length > 1 &&
-      /[A-Za-z\u00C0-\u024F]/.test(candidate) &&
-      !/^sdn_name$/i.test(candidate);
+    const hasCandidateName =
+      candidate.length > 1 && candidate !== '-0-' && !/^sdn_name$/i.test(candidate);
     const hasNumericEntityId = /^\d+$/.test(cells[0] ?? '');
     const parsed = sanctionsImportRowSchema.safeParse({
       externalId: cells[0] || null,
@@ -687,7 +703,7 @@ function parseSdnCsv(csv: string): {
       entryType: cells[2] ?? null,
       raw: { cells },
     });
-    if (hasNumericEntityId && looksLikeName && parsed.success) {
+    if (hasNumericEntityId && hasCandidateName && parsed.success) {
       entries.push(parsed.data);
     } else {
       skipped += 1;
