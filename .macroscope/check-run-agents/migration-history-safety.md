@@ -1,6 +1,6 @@
 ---
 title: "Migration history safety"
-model: gpt-5-6-sol
+model: gpt-5-6-luna
 reasoning: high
 effort: high
 input: full_diff
