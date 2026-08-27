@@ -48,10 +48,10 @@ DECLARE
   legacy_org uuid := '00000000-0000-0000-0000-000000000001';
   migrated_org uuid;
   table_record record;
-  column_record record;
   map_record record;
   uuid_cases text;
   uuid_where text;
+  deferred_constraints text;
   source_identity_tables text[] := ARRAY[
     'organizations',
     'legal_entities',
@@ -220,42 +220,44 @@ BEGIN
 
   CREATE TEMP TABLE _demo_uuid_map (
     old_id uuid PRIMARY KEY,
-    new_id uuid NOT NULL UNIQUE
+    new_id uuid NOT NULL UNIQUE,
+    kind text NOT NULL
   ) ON COMMIT DROP;
 
-  INSERT INTO _demo_uuid_map (old_id, new_id) VALUES (legacy_org, gen_random_uuid());
-  INSERT INTO _demo_uuid_map (old_id, new_id)
-  SELECT '00000000-0000-0000-0000-000000000002', gen_random_uuid()
+  INSERT INTO _demo_uuid_map (old_id, new_id, kind)
+  VALUES (legacy_org, gen_random_uuid(), 'organization');
+  INSERT INTO _demo_uuid_map (old_id, new_id, kind)
+  SELECT '00000000-0000-0000-0000-000000000002', gen_random_uuid(), 'user'
   WHERE EXISTS (SELECT 1 FROM users WHERE id = '00000000-0000-0000-0000-000000000002');
-  INSERT INTO _demo_uuid_map (old_id, new_id)
-  SELECT '00000000-0000-0000-0000-000000000003', gen_random_uuid()
+  INSERT INTO _demo_uuid_map (old_id, new_id, kind)
+  SELECT '00000000-0000-0000-0000-000000000003', gen_random_uuid(), 'user'
   WHERE EXISTS (SELECT 1 FROM users WHERE id = '00000000-0000-0000-0000-000000000003');
-  INSERT INTO _demo_uuid_map (old_id, new_id)
-  SELECT '00000000-0000-0000-0000-000000000004', gen_random_uuid()
+  INSERT INTO _demo_uuid_map (old_id, new_id, kind)
+  SELECT '00000000-0000-0000-0000-000000000004', gen_random_uuid(), 'user'
   WHERE EXISTS (SELECT 1 FROM users WHERE id = '00000000-0000-0000-0000-000000000004');
-  INSERT INTO _demo_uuid_map (old_id, new_id)
-  SELECT '00000000-0000-0000-0000-000000000010', gen_random_uuid()
+  INSERT INTO _demo_uuid_map (old_id, new_id, kind)
+  SELECT '00000000-0000-0000-0000-000000000010', gen_random_uuid(), 'department'
   WHERE EXISTS (SELECT 1 FROM departments WHERE id = '00000000-0000-0000-0000-000000000010');
-  INSERT INTO _demo_uuid_map (old_id, new_id)
-  SELECT '00000000-0000-0000-0000-000000000011', gen_random_uuid()
+  INSERT INTO _demo_uuid_map (old_id, new_id, kind)
+  SELECT '00000000-0000-0000-0000-000000000011', gen_random_uuid(), 'department'
   WHERE EXISTS (SELECT 1 FROM departments WHERE id = '00000000-0000-0000-0000-000000000011');
-  INSERT INTO _demo_uuid_map (old_id, new_id)
-  SELECT '00000000-0000-0000-0000-000000000020', gen_random_uuid()
+  INSERT INTO _demo_uuid_map (old_id, new_id, kind)
+  SELECT '00000000-0000-0000-0000-000000000020', gen_random_uuid(), 'legal_entity'
   WHERE EXISTS (SELECT 1 FROM legal_entities WHERE id = '00000000-0000-0000-0000-000000000020');
-  INSERT INTO _demo_uuid_map (old_id, new_id)
-  SELECT '00000000-0000-0000-0000-000000000030', gen_random_uuid()
+  INSERT INTO _demo_uuid_map (old_id, new_id, kind)
+  SELECT '00000000-0000-0000-0000-000000000030', gen_random_uuid(), 'vendor'
   WHERE EXISTS (SELECT 1 FROM vendors WHERE id = '00000000-0000-0000-0000-000000000030');
-  INSERT INTO _demo_uuid_map (old_id, new_id)
-  SELECT '00000000-0000-0000-0000-000000000031', gen_random_uuid()
+  INSERT INTO _demo_uuid_map (old_id, new_id, kind)
+  SELECT '00000000-0000-0000-0000-000000000031', gen_random_uuid(), 'vendor'
   WHERE EXISTS (SELECT 1 FROM vendors WHERE id = '00000000-0000-0000-0000-000000000031');
-  INSERT INTO _demo_uuid_map (old_id, new_id)
-  SELECT '00000000-0000-0000-0000-000000000040', gen_random_uuid()
+  INSERT INTO _demo_uuid_map (old_id, new_id, kind)
+  SELECT '00000000-0000-0000-0000-000000000040', gen_random_uuid(), 'user_role'
   WHERE EXISTS (SELECT 1 FROM user_roles WHERE id = '00000000-0000-0000-0000-000000000040');
-  INSERT INTO _demo_uuid_map (old_id, new_id)
-  SELECT '00000000-0000-0000-0000-000000000041', gen_random_uuid()
+  INSERT INTO _demo_uuid_map (old_id, new_id, kind)
+  SELECT '00000000-0000-0000-0000-000000000041', gen_random_uuid(), 'user_role'
   WHERE EXISTS (SELECT 1 FROM user_roles WHERE id = '00000000-0000-0000-0000-000000000041');
-  INSERT INTO _demo_uuid_map (old_id, new_id)
-  SELECT '00000000-0000-0000-0000-000000000042', gen_random_uuid()
+  INSERT INTO _demo_uuid_map (old_id, new_id, kind)
+  SELECT '00000000-0000-0000-0000-000000000042', gen_random_uuid(), 'user_role'
   WHERE EXISTS (SELECT 1 FROM user_roles WHERE id = '00000000-0000-0000-0000-000000000042');
 
   -- Clone the identity records with their new parents in place. Temporary
@@ -361,53 +363,67 @@ BEGIN
   FROM _demo_uuid_map
   WHERE old_id = legacy_org;
 
-  -- These organization-scoped graphs contain non-deferrable composite keys.
-  -- Defer just their relationship checks while every side moves, then force
-  -- validation and restore their original non-deferrable configuration below.
-  ALTER TABLE email_intake_attachments
-    ALTER CONSTRAINT email_intake_attachments_message_org_fk DEFERRABLE INITIALLY IMMEDIATE,
-    ALTER CONSTRAINT email_intake_attachments_item_org_fk DEFERRABLE INITIALLY IMMEDIATE;
-  ALTER TABLE sync_records
-    ALTER CONSTRAINT sync_records_connection_org_fk DEFERRABLE INITIALLY IMMEDIATE;
-  ALTER TABLE budget_commitment_events
-    ALTER CONSTRAINT budget_commitment_events_budget_org_fk DEFERRABLE INITIALLY IMMEDIATE,
-    ALTER CONSTRAINT budget_commitment_events_requisition_org_fk DEFERRABLE INITIALLY IMMEDIATE,
-    ALTER CONSTRAINT budget_commitment_events_purchase_order_org_fk DEFERRABLE INITIALLY IMMEDIATE,
-    ALTER CONSTRAINT budget_commitment_events_invoice_org_fk DEFERRABLE INITIALLY IMMEDIATE;
-  ALTER TABLE workflow_definitions
-    ALTER CONSTRAINT workflow_definitions_published_version_org_fk DEFERRABLE INITIALLY IMMEDIATE;
-  ALTER TABLE workflow_definition_versions
-    ALTER CONSTRAINT workflow_definition_versions_definition_org_fk DEFERRABLE INITIALLY IMMEDIATE,
-    ALTER CONSTRAINT workflow_definition_versions_published_by_org_fk DEFERRABLE INITIALLY IMMEDIATE;
-  ALTER TABLE approval_requests
-    ALTER CONSTRAINT approval_requests_definition_version_org_fk DEFERRABLE INITIALLY IMMEDIATE,
-    ALTER CONSTRAINT approval_requests_initiated_by_org_fk DEFERRABLE INITIALLY IMMEDIATE;
-  ALTER TABLE workflow_approval_assignments
-    ALTER CONSTRAINT workflow_approval_assignments_request_org_fk DEFERRABLE INITIALLY IMMEDIATE,
-    ALTER CONSTRAINT workflow_approval_assignments_resolved_approver_org_fk DEFERRABLE INITIALLY IMMEDIATE,
-    ALTER CONSTRAINT workflow_approval_assignments_assigned_approver_org_fk DEFERRABLE INITIALLY IMMEDIATE,
-    ALTER CONSTRAINT workflow_approval_assignments_acted_by_org_fk DEFERRABLE INITIALLY IMMEDIATE;
-  ALTER TABLE workflow_runtime_publications
-    ALTER CONSTRAINT workflow_runtime_publications_request_org_fk DEFERRABLE INITIALLY IMMEDIATE;
-  SET CONSTRAINTS
-    email_intake_attachments_message_org_fk,
-    email_intake_attachments_item_org_fk,
-    sync_records_connection_org_fk,
-    budget_commitment_events_budget_org_fk,
-    budget_commitment_events_requisition_org_fk,
-    budget_commitment_events_purchase_order_org_fk,
-    budget_commitment_events_invoice_org_fk,
-    workflow_definitions_published_version_org_fk,
-    workflow_definition_versions_definition_org_fk,
-    workflow_definition_versions_published_by_org_fk,
-    approval_requests_definition_version_org_fk,
-    approval_requests_initiated_by_org_fk,
-    workflow_approval_assignments_request_org_fk,
-    workflow_approval_assignments_resolved_approver_org_fk,
-    workflow_approval_assignments_assigned_approver_org_fk,
-    workflow_approval_assignments_acted_by_org_fk,
-    workflow_runtime_publications_request_org_fk
-  DEFERRED;
+  -- Every non-deferrable organization-scoped composite FK is deferred while
+  -- the catalog sweep moves its rows. Older installations can lack the two
+  -- user-role contracts until the migrator's post-SQL contract step, so only
+  -- constraints present in this database are touched.
+  CREATE TEMP TABLE _demo_deferred_constraints (
+    table_schema text NOT NULL,
+    table_name text NOT NULL,
+    constraint_name text PRIMARY KEY
+  ) ON COMMIT DROP;
+  INSERT INTO _demo_deferred_constraints (table_schema, table_name, constraint_name)
+  SELECT constraint_namespace.nspname, constraint_table.relname, foreign_key.conname
+  FROM pg_constraint AS foreign_key
+  JOIN pg_class AS constraint_table ON constraint_table.oid = foreign_key.conrelid
+  JOIN pg_namespace AS constraint_namespace ON constraint_namespace.oid = constraint_table.relnamespace
+  WHERE foreign_key.contype = 'f'
+    AND constraint_namespace.nspname = 'public'
+    AND NOT foreign_key.condeferrable
+    AND foreign_key.conname = ANY (ARRAY[
+      'approval_requests_definition_version_org_fk',
+      'approval_requests_initiated_by_org_fk',
+      'budget_commitment_events_budget_org_fk',
+      'budget_commitment_events_invoice_org_fk',
+      'budget_commitment_events_purchase_order_org_fk',
+      'budget_commitment_events_requisition_org_fk',
+      'email_intake_attachments_item_org_fk',
+      'email_intake_attachments_message_org_fk',
+      'email_intake_messages_vendor_org_fk',
+      'integration_connections_connected_by_user_org_fk',
+      'invoices_created_by_organization_fk',
+      'sync_records_connection_org_fk',
+      'user_roles_custom_role_org_fk',
+      'user_roles_user_org_fk',
+      'users_manager_org_fk',
+      'vendor_portal_sessions_vendor_org_fk',
+      'workflow_approval_assignments_acted_by_org_fk',
+      'workflow_approval_assignments_assigned_approver_org_fk',
+      'workflow_approval_assignments_request_org_fk',
+      'workflow_approval_assignments_resolved_approver_org_fk',
+      'workflow_definition_versions_definition_org_fk',
+      'workflow_definition_versions_published_by_org_fk',
+      'workflow_definitions_created_by_org_fk',
+      'workflow_definitions_entity_org_fk',
+      'workflow_definitions_published_version_org_fk',
+      'workflow_definitions_updated_by_org_fk',
+      'workflow_runtime_publications_request_org_fk'
+    ]);
+
+  FOR table_record IN SELECT * FROM _demo_deferred_constraints LOOP
+    EXECUTE format(
+      'ALTER TABLE %I.%I ALTER CONSTRAINT %I DEFERRABLE INITIALLY IMMEDIATE',
+      table_record.table_schema,
+      table_record.table_name,
+      table_record.constraint_name
+    );
+  END LOOP;
+  SELECT string_agg(format('%I', constraint_name), ', ' ORDER BY constraint_name)
+  INTO deferred_constraints
+  FROM _demo_deferred_constraints;
+  IF deferred_constraints IS NOT NULL THEN
+    EXECUTE format('SET CONSTRAINTS %s DEFERRED', deferred_constraints);
+  END IF;
 
   -- Move every declared FK that targets an identity table. Columns belonging
   -- to the same child table are set together so composite keys never observe
@@ -563,104 +579,146 @@ BEGIN
       );
   END LOOP;
 
-  SET CONSTRAINTS
-    email_intake_attachments_message_org_fk,
-    email_intake_attachments_item_org_fk,
-    sync_records_connection_org_fk,
-    budget_commitment_events_budget_org_fk,
-    budget_commitment_events_requisition_org_fk,
-    budget_commitment_events_purchase_order_org_fk,
-    budget_commitment_events_invoice_org_fk,
-    workflow_definitions_published_version_org_fk,
-    workflow_definition_versions_definition_org_fk,
-    workflow_definition_versions_published_by_org_fk,
-    approval_requests_definition_version_org_fk,
-    approval_requests_initiated_by_org_fk,
-    workflow_approval_assignments_request_org_fk,
-    workflow_approval_assignments_resolved_approver_org_fk,
-    workflow_approval_assignments_assigned_approver_org_fk,
-    workflow_approval_assignments_acted_by_org_fk,
-    workflow_runtime_publications_request_org_fk
-  IMMEDIATE;
+  IF deferred_constraints IS NOT NULL THEN
+    EXECUTE format('SET CONSTRAINTS %s IMMEDIATE', deferred_constraints);
+  END IF;
   ALTER TABLE email_intake_messages ENABLE TRIGGER email_intake_messages_append_only;
   ALTER TABLE workflow_definition_versions
     ENABLE TRIGGER workflow_definition_versions_immutable;
-  ALTER TABLE email_intake_attachments
-    ALTER CONSTRAINT email_intake_attachments_message_org_fk NOT DEFERRABLE,
-    ALTER CONSTRAINT email_intake_attachments_item_org_fk NOT DEFERRABLE;
-  ALTER TABLE sync_records
-    ALTER CONSTRAINT sync_records_connection_org_fk NOT DEFERRABLE;
-  ALTER TABLE budget_commitment_events
-    ALTER CONSTRAINT budget_commitment_events_budget_org_fk NOT DEFERRABLE,
-    ALTER CONSTRAINT budget_commitment_events_requisition_org_fk NOT DEFERRABLE,
-    ALTER CONSTRAINT budget_commitment_events_purchase_order_org_fk NOT DEFERRABLE,
-    ALTER CONSTRAINT budget_commitment_events_invoice_org_fk NOT DEFERRABLE;
-  ALTER TABLE workflow_definitions
-    ALTER CONSTRAINT workflow_definitions_published_version_org_fk NOT DEFERRABLE;
-  ALTER TABLE workflow_definition_versions
-    ALTER CONSTRAINT workflow_definition_versions_definition_org_fk NOT DEFERRABLE,
-    ALTER CONSTRAINT workflow_definition_versions_published_by_org_fk NOT DEFERRABLE;
-  ALTER TABLE approval_requests
-    ALTER CONSTRAINT approval_requests_definition_version_org_fk NOT DEFERRABLE,
-    ALTER CONSTRAINT approval_requests_initiated_by_org_fk NOT DEFERRABLE;
-  ALTER TABLE workflow_approval_assignments
-    ALTER CONSTRAINT workflow_approval_assignments_request_org_fk NOT DEFERRABLE,
-    ALTER CONSTRAINT workflow_approval_assignments_resolved_approver_org_fk NOT DEFERRABLE,
-    ALTER CONSTRAINT workflow_approval_assignments_assigned_approver_org_fk NOT DEFERRABLE,
-    ALTER CONSTRAINT workflow_approval_assignments_acted_by_org_fk NOT DEFERRABLE;
-  ALTER TABLE workflow_runtime_publications
-    ALTER CONSTRAINT workflow_runtime_publications_request_org_fk NOT DEFERRABLE;
-
-  -- A few older tables intentionally use polymorphic or audit references
-  -- instead of foreign keys. This is the complete, audited list of those
-  -- scalar identity columns. Keep it explicit: arbitrary UUID columns are not
-  -- part of this migration.
-  FOR column_record IN
-    SELECT reference_columns.table_name, reference_columns.column_name
-    FROM (
-      VALUES
-        ('approval_delegations', 'organization_id'),
-        ('approval_requests', 'approvable_id'),
-        ('approval_rule_steps', 'approver_id'),
-        ('audit_log', 'organization_id'),
-        ('audit_log', 'user_id'),
-        ('audit_log', 'entity_id'),
-        ('budget_commitment_events', 'organization_id'),
-        ('budgets', 'scope_id'),
-        ('departments', 'parent_id'),
-        ('departments', 'budget_owner_id'),
-        ('documents', 'organization_id'),
-        ('documents', 'uploaded_by'),
-        ('documents', 'entity_id'),
-        ('inventory_movements', 'organization_id'),
-        ('inventory_movements', 'reference_id'),
-        ('notification_preferences', 'organization_id'),
-        ('notifications', 'organization_id'),
-        ('notifications', 'entity_id'),
-        ('ocr_jobs', 'uploaded_by'),
-        ('sequences', 'organization_id'),
-        ('spend_guard_alerts', 'record_id'),
-        ('spend_guard_alerts', 'resolved_by'),
-        ('system_settings', 'organization_id'),
-        ('user_roles', 'scope_id')
-    ) AS reference_columns(table_name, column_name)
-  LOOP
-    uuid_where := format('%I IN (SELECT old_id FROM _demo_uuid_map)', column_record.column_name);
-    IF column_record.table_name = ANY(source_identity_tables) THEN
-      uuid_where := format('(%s) AND id NOT IN (SELECT old_id FROM _demo_uuid_map)', uuid_where);
-    END IF;
+  FOR table_record IN SELECT * FROM _demo_deferred_constraints LOOP
     EXECUTE format(
-      'UPDATE public.%I
-       SET %I = CASE %I %s ELSE %I END
-       WHERE %s',
-      column_record.table_name,
-      column_record.column_name,
-      column_record.column_name,
-      uuid_cases,
-      column_record.column_name,
-      uuid_where
+      'ALTER TABLE %I.%I ALTER CONSTRAINT %I NOT DEFERRABLE',
+      table_record.table_schema,
+      table_record.table_name,
+      table_record.constraint_name
     );
   END LOOP;
+
+  -- Scalar references without foreign keys are intentionally handled one
+  -- domain at a time. A UUID collision in a polymorphic workload reference
+  -- must never turn a requisition, invoice, or document into an identity.
+  UPDATE approval_delegations
+  SET organization_id = migrated_org
+  WHERE organization_id = legacy_org;
+  UPDATE audit_log
+  SET organization_id = migrated_org
+  WHERE organization_id = legacy_org;
+  UPDATE documents
+  SET organization_id = migrated_org
+  WHERE organization_id = legacy_org;
+  UPDATE inventory_movements
+  SET organization_id = migrated_org
+  WHERE organization_id = legacy_org;
+  UPDATE notification_preferences
+  SET organization_id = migrated_org
+  WHERE organization_id = legacy_org;
+  UPDATE notifications
+  SET organization_id = migrated_org
+  WHERE organization_id = legacy_org;
+  UPDATE sequences
+  SET organization_id = migrated_org
+  WHERE organization_id = legacy_org;
+  UPDATE system_settings
+  SET organization_id = migrated_org
+  WHERE organization_id = legacy_org;
+
+  -- These actor and hierarchy references have a single target type, but are
+  -- still bounded to the migrated demo organization before they are remapped.
+  UPDATE departments AS department
+  SET parent_id = map.new_id
+  FROM _demo_uuid_map AS map
+  WHERE department.organization_id = migrated_org
+    AND department.parent_id = map.old_id
+    AND map.kind = 'department';
+  UPDATE departments AS department
+  SET budget_owner_id = map.new_id
+  FROM _demo_uuid_map AS map
+  WHERE department.organization_id = migrated_org
+    AND department.budget_owner_id = map.old_id
+    AND map.kind = 'user';
+  UPDATE approval_rule_steps AS step
+  SET approver_id = map.new_id
+  FROM approval_rules AS rule, _demo_uuid_map AS map
+  WHERE step.approval_rule_id = rule.id
+    AND rule.organization_id = migrated_org
+    AND step.approver_type = 'user'
+    AND step.approver_id = map.old_id
+    AND map.kind = 'user';
+  UPDATE audit_log AS audit
+  SET user_id = map.new_id
+  FROM _demo_uuid_map AS map
+  WHERE audit.organization_id = migrated_org
+    AND audit.user_id = map.old_id
+    AND map.kind = 'user';
+  UPDATE budgets AS budget
+  SET scope_id = map.new_id
+  FROM _demo_uuid_map AS map
+  WHERE budget.organization_id = migrated_org
+    AND budget.budget_type = 'department'
+    AND budget.scope_id = map.old_id
+    AND map.kind = 'department';
+  UPDATE documents AS document
+  SET uploaded_by = map.new_id
+  FROM _demo_uuid_map AS map
+  WHERE document.organization_id = migrated_org
+    AND document.uploaded_by = map.old_id
+    AND map.kind = 'user';
+  UPDATE ocr_jobs AS job
+  SET uploaded_by = map.new_id
+  FROM _demo_uuid_map AS map
+  WHERE job.organization_id = migrated_org
+    AND job.uploaded_by = map.old_id
+    AND map.kind = 'user';
+  UPDATE spend_guard_alerts AS alert
+  SET resolved_by = map.new_id
+  FROM _demo_uuid_map AS map
+  WHERE alert.org_id = migrated_org
+    AND alert.resolved_by = map.old_id
+    AND map.kind = 'user';
+
+  -- Older schemas did not consistently constrain user roles to the user's
+  -- organization. Source fixture roles are cloned and deleted below, so move
+  -- only surviving role rows before remapping their scoped identity.
+  UPDATE user_roles
+  SET organization_id = migrated_org
+  WHERE organization_id = legacy_org
+    AND id NOT IN (SELECT old_id FROM _demo_uuid_map);
+  UPDATE user_roles AS role
+  SET scope_id = map.new_id
+  FROM _demo_uuid_map AS map
+  WHERE role.organization_id = migrated_org
+    AND role.scope_id = map.old_id
+    AND (
+      (role.scope_type = 'department' AND map.kind = 'department')
+      OR (role.scope_type = 'entity' AND map.kind = 'legal_entity')
+    );
+
+  -- entity_id is polymorphic in audit, documents, and notifications. The
+  -- identity kind must agree with the stored entity type, and the row must
+  -- already belong to the migrated demo organization.
+  UPDATE audit_log AS audit
+  SET entity_id = map.new_id
+  FROM _demo_uuid_map AS map
+  WHERE audit.organization_id = migrated_org
+    AND audit.entity_type = map.kind
+    AND audit.entity_id = map.old_id;
+  UPDATE documents AS document
+  SET entity_id = map.new_id
+  FROM _demo_uuid_map AS map
+  WHERE document.organization_id = migrated_org
+    AND document.entity_type = map.kind
+    AND document.entity_id = map.old_id;
+  UPDATE notifications AS notification
+  SET entity_id = map.new_id
+  FROM _demo_uuid_map AS map
+  WHERE notification.organization_id = migrated_org
+    AND notification.entity_type = map.kind
+    AND notification.entity_id = map.old_id;
+
+  -- These IDs intentionally remain untouched. Their discriminators are
+  -- workload-only: approval requests reference requisitions, purchase orders,
+  -- or invoices; spend-guard alerts reference requisitions or invoices; and
+  -- inventory movements reference goods receipts or purchase orders.
 
   -- Only known identifier-bearing JSON fields are rewritten, and only after
   -- their audit or template row has moved into the migrated demo organization.

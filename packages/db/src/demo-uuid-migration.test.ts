@@ -50,6 +50,49 @@ const migrationWorkload = {
   otherWorkflowVersionId: '10000000-0000-4000-8000-000000000051',
 };
 
+const scalarReferenceWorkload = {
+  childDepartmentId: '10000000-0000-4000-8000-000000000060',
+  approvalRuleId: '10000000-0000-4000-8000-000000000061',
+  approvalRuleStepId: '10000000-0000-4000-8000-000000000062',
+  departmentScopeRoleId: '10000000-0000-4000-8000-000000000063',
+  entityScopeRoleId: '10000000-0000-4000-8000-000000000064',
+  projectScopeRoleId: '10000000-0000-4000-8000-000000000065',
+  projectBudgetId: '10000000-0000-4000-8000-000000000066',
+  typedAuditId: '10000000-0000-4000-8000-000000000067',
+  mismatchedAuditId: '10000000-0000-4000-8000-000000000068',
+  otherAuditId: '10000000-0000-4000-8000-000000000069',
+  typedDocumentId: '10000000-0000-4000-8000-000000000070',
+  mismatchedDocumentId: '10000000-0000-4000-8000-000000000071',
+  otherDocumentId: '10000000-0000-4000-8000-000000000072',
+  typedNotificationId: '10000000-0000-4000-8000-000000000073',
+  mismatchedNotificationId: '10000000-0000-4000-8000-000000000074',
+  otherNotificationId: '10000000-0000-4000-8000-000000000075',
+  ocrJobId: '10000000-0000-4000-8000-000000000076',
+  otherOcrJobId: '10000000-0000-4000-8000-000000000077',
+  inventoryItemId: '10000000-0000-4000-8000-000000000078',
+  inventoryMovementId: '10000000-0000-4000-8000-000000000079',
+  spendGuardAlertId: '10000000-0000-4000-8000-000000000080',
+  otherSpendGuardAlertId: '10000000-0000-4000-8000-000000000081',
+  collisionApprovalRequestId: '10000000-0000-4000-8000-000000000082',
+  approvalDelegationId: '10000000-0000-4000-8000-000000000083',
+  notificationPreferenceId: '10000000-0000-4000-8000-000000000084',
+  sequenceId: '10000000-0000-4000-8000-000000000085',
+};
+
+const inPlaceIdentityWorkload = {
+  userId: '10000000-0000-4000-8000-000000000086',
+  managedUserId: '10000000-0000-4000-8000-000000000087',
+  entityId: '10000000-0000-4000-8000-000000000088',
+  vendorId: '10000000-0000-4000-8000-000000000089',
+  customRoleId: '10000000-0000-4000-8000-000000000090',
+  roleId: '10000000-0000-4000-8000-000000000091',
+  integrationConnectionId: '10000000-0000-4000-8000-000000000092',
+  invoiceId: '10000000-0000-4000-8000-000000000093',
+  vendorPortalSessionId: '10000000-0000-4000-8000-000000000094',
+  emailMessageId: '10000000-0000-4000-8000-000000000095',
+  workflowDefinitionId: '10000000-0000-4000-8000-000000000096',
+};
+
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const temporarilyDeferredConstraints = [
@@ -61,14 +104,24 @@ const temporarilyDeferredConstraints = [
   'budget_commitment_events_requisition_org_fk',
   'email_intake_attachments_item_org_fk',
   'email_intake_attachments_message_org_fk',
+  'email_intake_messages_vendor_org_fk',
+  'integration_connections_connected_by_user_org_fk',
+  'invoices_created_by_organization_fk',
   'sync_records_connection_org_fk',
+  'user_roles_custom_role_org_fk',
+  'user_roles_user_org_fk',
+  'users_manager_org_fk',
+  'vendor_portal_sessions_vendor_org_fk',
   'workflow_approval_assignments_acted_by_org_fk',
   'workflow_approval_assignments_assigned_approver_org_fk',
   'workflow_approval_assignments_request_org_fk',
   'workflow_approval_assignments_resolved_approver_org_fk',
   'workflow_definition_versions_definition_org_fk',
   'workflow_definition_versions_published_by_org_fk',
+  'workflow_definitions_created_by_org_fk',
+  'workflow_definitions_entity_org_fk',
   'workflow_definitions_published_version_org_fk',
+  'workflow_definitions_updated_by_org_fk',
   'workflow_runtime_publications_request_org_fk',
 ] as const;
 
@@ -601,6 +654,245 @@ test('rekeys a legacy demo graph without losing workload references', async () =
         migrationWorkload.approvalRequestId,
       ],
     );
+    await database.exec(`
+      INSERT INTO legal_entities (id, organization_id, name, code)
+        VALUES (
+          '${inPlaceIdentityWorkload.entityId}', '${legacyIdentity.organizationId}',
+          'Legacy branch entity', 'ACME-BRANCH'
+        );
+      INSERT INTO users (
+        id, organization_id, email, name, email_verified, department_id
+      ) VALUES (
+        '${inPlaceIdentityWorkload.userId}', '${legacyIdentity.organizationId}',
+        'legacy-in-place@acme.com', 'Legacy in-place user', true,
+        '${legacyIdentity.engineeringDepartmentId}'
+      );
+      INSERT INTO users (
+        id, organization_id, email, name, email_verified, department_id, manager_id
+      ) VALUES (
+        '${inPlaceIdentityWorkload.managedUserId}', '${legacyIdentity.organizationId}',
+        'legacy-managed@acme.com', 'Legacy managed user', true,
+        '${legacyIdentity.engineeringDepartmentId}', '${inPlaceIdentityWorkload.userId}'
+      );
+      INSERT INTO custom_roles (id, organization_id, name)
+        VALUES (
+          '${inPlaceIdentityWorkload.customRoleId}', '${legacyIdentity.organizationId}',
+          'Legacy in-place role'
+        );
+      INSERT INTO vendors (id, organization_id, entity_id, name, code)
+        VALUES (
+          '${inPlaceIdentityWorkload.vendorId}', '${legacyIdentity.organizationId}',
+          '${inPlaceIdentityWorkload.entityId}', 'Legacy in-place vendor', 'INPLACE-LEGACY'
+        );
+      INSERT INTO user_roles (
+        id, user_id, organization_id, role, custom_role_id, scope_type
+      ) VALUES (
+        '${inPlaceIdentityWorkload.roleId}', '${inPlaceIdentityWorkload.userId}',
+        '${legacyIdentity.organizationId}', 'custom', '${inPlaceIdentityWorkload.customRoleId}',
+        'global'
+      );
+      INSERT INTO integration_connections (
+        id, organization_id, provider, realm_id, connected_by_user_id
+      ) VALUES (
+        '${inPlaceIdentityWorkload.integrationConnectionId}', '${legacyIdentity.organizationId}',
+        'xero', 'legacy-in-place-realm', '${inPlaceIdentityWorkload.userId}'
+      );
+      INSERT INTO invoices (
+        id, organization_id, entity_id, vendor_id, invoice_number, internal_number,
+        invoice_date, created_by
+      ) VALUES (
+        '${inPlaceIdentityWorkload.invoiceId}', '${legacyIdentity.organizationId}',
+        '${inPlaceIdentityWorkload.entityId}', '${inPlaceIdentityWorkload.vendorId}',
+        'INPLACE-LEGACY', 'INV-INPLACE-LEGACY', now(), '${inPlaceIdentityWorkload.userId}'
+      );
+      INSERT INTO vendor_portal_sessions (
+        id, organization_id, vendor_id, token_hash, expires_at
+      ) VALUES (
+        '${inPlaceIdentityWorkload.vendorPortalSessionId}', '${legacyIdentity.organizationId}',
+        '${inPlaceIdentityWorkload.vendorId}',
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', now() + interval '1 day'
+      );
+      INSERT INTO email_intake_messages (
+        id, organization_id, ses_message_id, raw_storage_key, source_email,
+        envelope_source, recipients, subject, received_at, auth_verdicts,
+        sender_classification, vendor_id, risk_score, risk_signals, status
+      ) VALUES (
+        '${inPlaceIdentityWorkload.emailMessageId}', '${legacyIdentity.organizationId}',
+        'legacy-in-place-email', 'legacy/in-place.eml', 'sales@example.test',
+        'sales@example.test', '["ap@acme.com"]', 'Legacy in-place email', now(),
+        '{"spam":"PASS","virus":"PASS","spf":"PASS","dkim":"PASS","dmarc":"PASS"}',
+        'known_vendor', '${inPlaceIdentityWorkload.vendorId}', 0, '[]', 'accepted'
+      );
+      INSERT INTO workflow_definitions (
+        id, organization_id, entity_id, domain, name, current_draft, created_by, updated_by
+      ) VALUES (
+        '${inPlaceIdentityWorkload.workflowDefinitionId}', '${legacyIdentity.organizationId}',
+        '${inPlaceIdentityWorkload.entityId}', 'requisition', 'Legacy in-place workflow', '{}',
+        '${inPlaceIdentityWorkload.userId}', '${inPlaceIdentityWorkload.userId}'
+      );
+      INSERT INTO departments (
+        id, organization_id, name, code, parent_id, budget_owner_id
+      ) VALUES (
+        '${scalarReferenceWorkload.childDepartmentId}', '${legacyIdentity.organizationId}',
+        'Legacy child department', 'ENG-OPS', '${legacyIdentity.engineeringDepartmentId}',
+        '${legacyIdentity.adminId}'
+      );
+      INSERT INTO approval_rules (id, organization_id, name, conditions)
+        VALUES (
+          '${scalarReferenceWorkload.approvalRuleId}', '${legacyIdentity.organizationId}',
+          'Legacy scalar reference rule', '{}'
+        );
+      INSERT INTO approval_rule_steps (
+        id, approval_rule_id, step_order, approver_type, approver_id
+      ) VALUES (
+        '${scalarReferenceWorkload.approvalRuleStepId}', '${scalarReferenceWorkload.approvalRuleId}',
+        1, 'user', '${legacyIdentity.approverId}'
+      );
+      INSERT INTO user_roles (id, user_id, organization_id, role, scope_type, scope_id)
+        VALUES
+          (
+            '${scalarReferenceWorkload.departmentScopeRoleId}', '${legacyIdentity.adminId}',
+            '${legacyIdentity.organizationId}', 'receiver', 'department',
+            '${legacyIdentity.engineeringDepartmentId}'
+          ),
+          (
+            '${scalarReferenceWorkload.entityScopeRoleId}', '${legacyIdentity.requesterId}',
+            '${legacyIdentity.organizationId}', 'finance', 'entity',
+            '${legacyIdentity.parentEntityId}'
+          ),
+          (
+            '${scalarReferenceWorkload.projectScopeRoleId}', '${legacyIdentity.approverId}',
+            '${legacyIdentity.organizationId}', 'approver', 'project',
+            '${legacyIdentity.engineeringDepartmentId}'
+          );
+      INSERT INTO budgets (
+        id, organization_id, entity_id, name, budget_type, scope_id, fiscal_year, total_amount
+      ) VALUES (
+        '${scalarReferenceWorkload.projectBudgetId}', '${legacyIdentity.organizationId}',
+        '${legacyIdentity.parentEntityId}', 'Project collision budget', 'project',
+        '${legacyIdentity.engineeringDepartmentId}', 2026, '1000'
+      );
+      INSERT INTO audit_log (id, organization_id, user_id, entity_type, entity_id, action)
+        VALUES
+          (
+            '${scalarReferenceWorkload.typedAuditId}', '${legacyIdentity.organizationId}',
+            '${legacyIdentity.adminId}', 'vendor', '${legacyIdentity.vendorIds[0]}',
+            'typed_identity_reference'
+          ),
+          (
+            '${scalarReferenceWorkload.mismatchedAuditId}', '${legacyIdentity.organizationId}',
+            '${legacyIdentity.adminId}', 'requisition', '${legacyIdentity.vendorIds[0]}',
+            'workload_collision_reference'
+          ),
+          (
+            '${scalarReferenceWorkload.otherAuditId}', '${migrationWorkload.otherOrganizationId}',
+            '${legacyIdentity.adminId}', 'vendor', '${legacyIdentity.vendorIds[0]}',
+            'other_organization_identity_reference'
+          );
+      INSERT INTO documents (
+        id, organization_id, uploaded_by, filename, content_type, size_bytes,
+        storage_key, entity_type, entity_id
+      ) VALUES
+          (
+            '${scalarReferenceWorkload.typedDocumentId}', '${legacyIdentity.organizationId}',
+            '${legacyIdentity.adminId}', 'typed-vendor.pdf', 'application/pdf', 1,
+            'scalar/typed-vendor.pdf', 'vendor', '${legacyIdentity.vendorIds[0]}'
+          ),
+          (
+            '${scalarReferenceWorkload.mismatchedDocumentId}', '${legacyIdentity.organizationId}',
+            '${legacyIdentity.adminId}', 'collision-invoice.pdf', 'application/pdf', 1,
+            'scalar/collision-invoice.pdf', 'invoice', '${legacyIdentity.vendorIds[0]}'
+          ),
+          (
+            '${scalarReferenceWorkload.otherDocumentId}', '${migrationWorkload.otherOrganizationId}',
+            '${legacyIdentity.adminId}', 'other-vendor.pdf', 'application/pdf', 1,
+            'scalar/other-vendor.pdf', 'vendor', '${legacyIdentity.vendorIds[0]}'
+          );
+      INSERT INTO notifications (
+        id, organization_id, user_id, type, title, entity_type, entity_id
+      ) VALUES
+          (
+            '${scalarReferenceWorkload.typedNotificationId}', '${legacyIdentity.organizationId}',
+            '${legacyIdentity.adminId}', 'migration', 'Typed vendor', 'vendor',
+            '${legacyIdentity.vendorIds[0]}'
+          ),
+          (
+            '${scalarReferenceWorkload.mismatchedNotificationId}', '${legacyIdentity.organizationId}',
+            '${legacyIdentity.adminId}', 'migration', 'Collision invoice', 'invoice',
+            '${legacyIdentity.vendorIds[0]}'
+          ),
+          (
+            '${scalarReferenceWorkload.otherNotificationId}', '${migrationWorkload.otherOrganizationId}',
+            '${migrationWorkload.otherUserId}', 'migration', 'Other vendor', 'vendor',
+            '${legacyIdentity.vendorIds[0]}'
+          );
+      INSERT INTO ocr_jobs (
+        id, organization_id, uploaded_by, filename, content_type, storage_key
+      ) VALUES
+          (
+            '${scalarReferenceWorkload.ocrJobId}', '${legacyIdentity.organizationId}',
+            '${legacyIdentity.adminId}', 'legacy-ocr.pdf', 'application/pdf', 'scalar/legacy-ocr.pdf'
+          ),
+          (
+            '${scalarReferenceWorkload.otherOcrJobId}', '${migrationWorkload.otherOrganizationId}',
+            '${legacyIdentity.adminId}', 'other-ocr.pdf', 'application/pdf', 'scalar/other-ocr.pdf'
+          );
+      INSERT INTO inventory_items (id, organization_id, sku, name)
+        VALUES (
+          '${scalarReferenceWorkload.inventoryItemId}', '${legacyIdentity.organizationId}',
+          'SCALAR-ITEM', 'Scalar reference item'
+        );
+      INSERT INTO inventory_movements (
+        id, organization_id, inventory_item_id, movement_type, quantity,
+        quantity_before, quantity_after, reference_type, reference_id
+      ) VALUES (
+        '${scalarReferenceWorkload.inventoryMovementId}', '${legacyIdentity.organizationId}',
+        '${scalarReferenceWorkload.inventoryItemId}', 'receipt', '1', '0', '1',
+        'purchase_order', '${legacyIdentity.vendorIds[0]}'
+      );
+      INSERT INTO spend_guard_alerts (
+        id, org_id, alert_type, severity, record_type, record_id, resolved_by
+      ) VALUES
+          (
+            '${scalarReferenceWorkload.spendGuardAlertId}', '${legacyIdentity.organizationId}',
+            'scalar_collision', 'low', 'requisition', '${legacyIdentity.vendorIds[0]}',
+            '${legacyIdentity.adminId}'
+          ),
+          (
+            '${scalarReferenceWorkload.otherSpendGuardAlertId}', '${migrationWorkload.otherOrganizationId}',
+            'other_scalar_collision', 'low', 'requisition', '${legacyIdentity.vendorIds[0]}',
+            '${legacyIdentity.adminId}'
+          );
+      INSERT INTO approval_requests (
+        id, organization_id, approvable_type, approvable_id, initiated_by, workflow_context
+      ) VALUES (
+        '${scalarReferenceWorkload.collisionApprovalRequestId}', '${legacyIdentity.organizationId}',
+        'requisition', '${legacyIdentity.vendorIds[0]}', '${legacyIdentity.adminId}', '{}'
+      );
+      INSERT INTO approval_delegations (
+        id, organization_id, delegator_id, delegate_id, start_date, end_date
+      ) VALUES (
+        '${scalarReferenceWorkload.approvalDelegationId}', '${legacyIdentity.organizationId}',
+        '${legacyIdentity.approverId}', '${legacyIdentity.requesterId}', now(), now() + interval '1 day'
+      );
+      INSERT INTO notification_preferences (id, organization_id, user_id)
+        VALUES (
+          '${scalarReferenceWorkload.notificationPreferenceId}', '${legacyIdentity.organizationId}',
+          '${legacyIdentity.adminId}'
+        );
+      INSERT INTO sequences (id, organization_id, entity_type, year, last_value)
+        VALUES (
+          '${scalarReferenceWorkload.sequenceId}', '${legacyIdentity.organizationId}',
+          'requisition', 2026, 1
+        );
+    `);
+
+    const constraintsBeforeMigration = await database.query<{ conname: string }>(`
+      SELECT conname
+      FROM pg_constraint
+      WHERE conname IN (${temporarilyDeferredConstraints.map((name) => `'${name}'`).join(', ')})
+      ORDER BY conname
+    `);
 
     const migration = await readFile(join(migrationDirectory, upgradeMigration), 'utf8');
     await database.exec(migration);
@@ -656,6 +948,107 @@ test('rekeys a legacy demo graph without losing workload references', async () =
     assert.notEqual(identity.approverId, legacyIdentity.approverId);
     assert.notEqual(identity.primaryVendorId, legacyIdentity.vendorIds[0]);
     assert.notEqual(identity.secondaryVendorId, legacyIdentity.vendorIds[1]);
+
+    const inPlaceCompositeReferences = await database.query<{
+      userOrganizationId: string;
+      managedUserOrganizationId: string;
+      managedUserManagerId: string;
+      entityOrganizationId: string;
+      vendorOrganizationId: string;
+      vendorEntityId: string;
+      customRoleOrganizationId: string;
+      roleOrganizationId: string;
+      roleUserId: string;
+      roleCustomRoleId: string;
+      connectionOrganizationId: string;
+      connectionUserId: string;
+      invoiceOrganizationId: string;
+      invoiceEntityId: string;
+      invoiceVendorId: string;
+      invoiceCreatedBy: string;
+      portalOrganizationId: string;
+      portalVendorId: string;
+      emailOrganizationId: string;
+      emailVendorId: string;
+      definitionOrganizationId: string;
+      definitionEntityId: string;
+      definitionCreatedBy: string;
+      definitionUpdatedBy: string;
+    }>(`
+      SELECT
+        in_place_user.organization_id AS "userOrganizationId",
+        managed_user.organization_id AS "managedUserOrganizationId",
+        managed_user.manager_id AS "managedUserManagerId",
+        entity.organization_id AS "entityOrganizationId",
+        vendor.organization_id AS "vendorOrganizationId",
+        vendor.entity_id AS "vendorEntityId",
+        custom_role.organization_id AS "customRoleOrganizationId",
+        assignment.organization_id AS "roleOrganizationId",
+        assignment.user_id AS "roleUserId",
+        assignment.custom_role_id AS "roleCustomRoleId",
+        connection.organization_id AS "connectionOrganizationId",
+        connection.connected_by_user_id AS "connectionUserId",
+        invoice.organization_id AS "invoiceOrganizationId",
+        invoice.entity_id AS "invoiceEntityId",
+        invoice.vendor_id AS "invoiceVendorId",
+        invoice.created_by AS "invoiceCreatedBy",
+        portal.organization_id AS "portalOrganizationId",
+        portal.vendor_id AS "portalVendorId",
+        email.organization_id AS "emailOrganizationId",
+        email.vendor_id AS "emailVendorId",
+        definition.organization_id AS "definitionOrganizationId",
+        definition.entity_id AS "definitionEntityId",
+        definition.created_by AS "definitionCreatedBy",
+        definition.updated_by AS "definitionUpdatedBy"
+      FROM users AS in_place_user
+      CROSS JOIN users AS managed_user
+      CROSS JOIN legal_entities AS entity
+      CROSS JOIN vendors AS vendor
+      CROSS JOIN custom_roles AS custom_role
+      CROSS JOIN user_roles AS assignment
+      CROSS JOIN integration_connections AS connection
+      CROSS JOIN invoices AS invoice
+      CROSS JOIN vendor_portal_sessions AS portal
+      CROSS JOIN email_intake_messages AS email
+      CROSS JOIN workflow_definitions AS definition
+      WHERE in_place_user.id = '${inPlaceIdentityWorkload.userId}'
+        AND managed_user.id = '${inPlaceIdentityWorkload.managedUserId}'
+        AND entity.id = '${inPlaceIdentityWorkload.entityId}'
+        AND vendor.id = '${inPlaceIdentityWorkload.vendorId}'
+        AND custom_role.id = '${inPlaceIdentityWorkload.customRoleId}'
+        AND assignment.id = '${inPlaceIdentityWorkload.roleId}'
+        AND connection.id = '${inPlaceIdentityWorkload.integrationConnectionId}'
+        AND invoice.id = '${inPlaceIdentityWorkload.invoiceId}'
+        AND portal.id = '${inPlaceIdentityWorkload.vendorPortalSessionId}'
+        AND email.id = '${inPlaceIdentityWorkload.emailMessageId}'
+        AND definition.id = '${inPlaceIdentityWorkload.workflowDefinitionId}'
+    `);
+    assert.deepEqual(inPlaceCompositeReferences.rows[0], {
+      userOrganizationId: identity.organizationId,
+      managedUserOrganizationId: identity.organizationId,
+      managedUserManagerId: inPlaceIdentityWorkload.userId,
+      entityOrganizationId: identity.organizationId,
+      vendorOrganizationId: identity.organizationId,
+      vendorEntityId: inPlaceIdentityWorkload.entityId,
+      customRoleOrganizationId: identity.organizationId,
+      roleOrganizationId: identity.organizationId,
+      roleUserId: inPlaceIdentityWorkload.userId,
+      roleCustomRoleId: inPlaceIdentityWorkload.customRoleId,
+      connectionOrganizationId: identity.organizationId,
+      connectionUserId: inPlaceIdentityWorkload.userId,
+      invoiceOrganizationId: identity.organizationId,
+      invoiceEntityId: inPlaceIdentityWorkload.entityId,
+      invoiceVendorId: inPlaceIdentityWorkload.vendorId,
+      invoiceCreatedBy: inPlaceIdentityWorkload.userId,
+      portalOrganizationId: identity.organizationId,
+      portalVendorId: inPlaceIdentityWorkload.vendorId,
+      emailOrganizationId: identity.organizationId,
+      emailVendorId: inPlaceIdentityWorkload.vendorId,
+      definitionOrganizationId: identity.organizationId,
+      definitionEntityId: inPlaceIdentityWorkload.entityId,
+      definitionCreatedBy: inPlaceIdentityWorkload.userId,
+      definitionUpdatedBy: inPlaceIdentityWorkload.userId,
+    });
 
     const workloadResult = await database.query<{
       requisitionId: string;
@@ -987,6 +1380,239 @@ test('rekeys a legacy demo graph without losing workload references', async () =
       },
     ]);
 
+    const scalarReferences = await database.query<{
+      childDepartmentOrganizationId: string;
+      childDepartmentParentId: string;
+      childDepartmentBudgetOwnerId: string;
+      ruleStepApproverId: string;
+      departmentRoleOrganizationId: string;
+      departmentRoleUserId: string;
+      departmentRoleScopeId: string;
+      entityRoleOrganizationId: string;
+      entityRoleUserId: string;
+      entityRoleScopeId: string;
+      projectRoleScopeId: string;
+      projectBudgetOrganizationId: string;
+      projectBudgetEntityId: string;
+      projectBudgetScopeId: string;
+      delegationOrganizationId: string;
+      delegationDelegatorId: string;
+      delegationDelegateeId: string;
+      preferenceOrganizationId: string;
+      preferenceUserId: string;
+      sequenceOrganizationId: string;
+      ocrOrganizationId: string;
+      ocrUploadedBy: string;
+      otherOcrOrganizationId: string;
+      otherOcrUploadedBy: string;
+      inventoryOrganizationId: string;
+      inventoryReferenceId: string;
+      alertOrganizationId: string;
+      alertRecordId: string;
+      alertResolvedBy: string;
+      otherAlertOrganizationId: string;
+      otherAlertRecordId: string;
+      otherAlertResolvedBy: string;
+      approvalOrganizationId: string;
+      approvalApprovableId: string;
+      approvalInitiatedBy: string;
+    }>(`
+      SELECT
+        child_department.organization_id AS "childDepartmentOrganizationId",
+        child_department.parent_id AS "childDepartmentParentId",
+        child_department.budget_owner_id AS "childDepartmentBudgetOwnerId",
+        rule_step.approver_id AS "ruleStepApproverId",
+        department_role.organization_id AS "departmentRoleOrganizationId",
+        department_role.user_id AS "departmentRoleUserId",
+        department_role.scope_id AS "departmentRoleScopeId",
+        entity_role.organization_id AS "entityRoleOrganizationId",
+        entity_role.user_id AS "entityRoleUserId",
+        entity_role.scope_id AS "entityRoleScopeId",
+        project_role.scope_id AS "projectRoleScopeId",
+        project_budget.organization_id AS "projectBudgetOrganizationId",
+        project_budget.entity_id AS "projectBudgetEntityId",
+        project_budget.scope_id AS "projectBudgetScopeId",
+        delegation.organization_id AS "delegationOrganizationId",
+        delegation.delegator_id AS "delegationDelegatorId",
+        delegation.delegate_id AS "delegationDelegateeId",
+        preference.organization_id AS "preferenceOrganizationId",
+        preference.user_id AS "preferenceUserId",
+        sequence.organization_id AS "sequenceOrganizationId",
+        ocr.organization_id AS "ocrOrganizationId",
+        ocr.uploaded_by AS "ocrUploadedBy",
+        other_ocr.organization_id AS "otherOcrOrganizationId",
+        other_ocr.uploaded_by AS "otherOcrUploadedBy",
+        movement.organization_id AS "inventoryOrganizationId",
+        movement.reference_id AS "inventoryReferenceId",
+        alert.org_id AS "alertOrganizationId",
+        alert.record_id AS "alertRecordId",
+        alert.resolved_by AS "alertResolvedBy",
+        other_alert.org_id AS "otherAlertOrganizationId",
+        other_alert.record_id AS "otherAlertRecordId",
+        other_alert.resolved_by AS "otherAlertResolvedBy",
+        request.organization_id AS "approvalOrganizationId",
+        request.approvable_id AS "approvalApprovableId",
+        request.initiated_by AS "approvalInitiatedBy"
+      FROM departments AS child_department
+      CROSS JOIN approval_rule_steps AS rule_step
+      CROSS JOIN user_roles AS department_role
+      CROSS JOIN user_roles AS entity_role
+      CROSS JOIN user_roles AS project_role
+      CROSS JOIN budgets AS project_budget
+      CROSS JOIN approval_delegations AS delegation
+      CROSS JOIN notification_preferences AS preference
+      CROSS JOIN sequences AS sequence
+      CROSS JOIN ocr_jobs AS ocr
+      CROSS JOIN ocr_jobs AS other_ocr
+      CROSS JOIN inventory_movements AS movement
+      CROSS JOIN spend_guard_alerts AS alert
+      CROSS JOIN spend_guard_alerts AS other_alert
+      CROSS JOIN approval_requests AS request
+      WHERE child_department.id = '${scalarReferenceWorkload.childDepartmentId}'
+        AND rule_step.id = '${scalarReferenceWorkload.approvalRuleStepId}'
+        AND department_role.id = '${scalarReferenceWorkload.departmentScopeRoleId}'
+        AND entity_role.id = '${scalarReferenceWorkload.entityScopeRoleId}'
+        AND project_role.id = '${scalarReferenceWorkload.projectScopeRoleId}'
+        AND project_budget.id = '${scalarReferenceWorkload.projectBudgetId}'
+        AND delegation.id = '${scalarReferenceWorkload.approvalDelegationId}'
+        AND preference.id = '${scalarReferenceWorkload.notificationPreferenceId}'
+        AND sequence.id = '${scalarReferenceWorkload.sequenceId}'
+        AND ocr.id = '${scalarReferenceWorkload.ocrJobId}'
+        AND other_ocr.id = '${scalarReferenceWorkload.otherOcrJobId}'
+        AND movement.id = '${scalarReferenceWorkload.inventoryMovementId}'
+        AND alert.id = '${scalarReferenceWorkload.spendGuardAlertId}'
+        AND other_alert.id = '${scalarReferenceWorkload.otherSpendGuardAlertId}'
+        AND request.id = '${scalarReferenceWorkload.collisionApprovalRequestId}'
+    `);
+    assert.deepEqual(scalarReferences.rows[0], {
+      childDepartmentOrganizationId: identity.organizationId,
+      childDepartmentParentId: identity.departmentId,
+      childDepartmentBudgetOwnerId: identity.adminId,
+      ruleStepApproverId: identity.approverId,
+      departmentRoleOrganizationId: identity.organizationId,
+      departmentRoleUserId: identity.adminId,
+      departmentRoleScopeId: identity.departmentId,
+      entityRoleOrganizationId: identity.organizationId,
+      entityRoleUserId: identity.requesterId,
+      entityRoleScopeId: identity.entityId,
+      projectRoleScopeId: legacyIdentity.engineeringDepartmentId,
+      projectBudgetOrganizationId: identity.organizationId,
+      projectBudgetEntityId: identity.entityId,
+      projectBudgetScopeId: legacyIdentity.engineeringDepartmentId,
+      delegationOrganizationId: identity.organizationId,
+      delegationDelegatorId: identity.approverId,
+      delegationDelegateeId: identity.requesterId,
+      preferenceOrganizationId: identity.organizationId,
+      preferenceUserId: identity.adminId,
+      sequenceOrganizationId: identity.organizationId,
+      ocrOrganizationId: identity.organizationId,
+      ocrUploadedBy: identity.adminId,
+      otherOcrOrganizationId: migrationWorkload.otherOrganizationId,
+      otherOcrUploadedBy: legacyIdentity.adminId,
+      inventoryOrganizationId: identity.organizationId,
+      inventoryReferenceId: legacyIdentity.vendorIds[0],
+      alertOrganizationId: identity.organizationId,
+      alertRecordId: legacyIdentity.vendorIds[0],
+      alertResolvedBy: identity.adminId,
+      otherAlertOrganizationId: migrationWorkload.otherOrganizationId,
+      otherAlertRecordId: legacyIdentity.vendorIds[0],
+      otherAlertResolvedBy: legacyIdentity.adminId,
+      approvalOrganizationId: identity.organizationId,
+      approvalApprovableId: legacyIdentity.vendorIds[0],
+      approvalInitiatedBy: identity.adminId,
+    });
+
+    const typedPolymorphicReferences = await database.query<{
+      kind: string;
+      organizationId: string;
+      actorId: string;
+      entityId: string;
+    }>(`
+      SELECT 'audit_typed' AS kind, organization_id AS "organizationId", user_id AS "actorId", entity_id AS "entityId"
+      FROM audit_log WHERE id = '${scalarReferenceWorkload.typedAuditId}'
+      UNION ALL
+      SELECT 'audit_mismatched', organization_id, user_id, entity_id
+      FROM audit_log WHERE id = '${scalarReferenceWorkload.mismatchedAuditId}'
+      UNION ALL
+      SELECT 'audit_other', organization_id, user_id, entity_id
+      FROM audit_log WHERE id = '${scalarReferenceWorkload.otherAuditId}'
+      UNION ALL
+      SELECT 'document_typed', organization_id, uploaded_by, entity_id
+      FROM documents WHERE id = '${scalarReferenceWorkload.typedDocumentId}'
+      UNION ALL
+      SELECT 'document_mismatched', organization_id, uploaded_by, entity_id
+      FROM documents WHERE id = '${scalarReferenceWorkload.mismatchedDocumentId}'
+      UNION ALL
+      SELECT 'document_other', organization_id, uploaded_by, entity_id
+      FROM documents WHERE id = '${scalarReferenceWorkload.otherDocumentId}'
+      UNION ALL
+      SELECT 'notification_typed', organization_id, user_id, entity_id
+      FROM notifications WHERE id = '${scalarReferenceWorkload.typedNotificationId}'
+      UNION ALL
+      SELECT 'notification_mismatched', organization_id, user_id, entity_id
+      FROM notifications WHERE id = '${scalarReferenceWorkload.mismatchedNotificationId}'
+      UNION ALL
+      SELECT 'notification_other', organization_id, user_id, entity_id
+      FROM notifications WHERE id = '${scalarReferenceWorkload.otherNotificationId}'
+      ORDER BY kind
+    `);
+    assert.deepEqual(typedPolymorphicReferences.rows, [
+      {
+        kind: 'audit_mismatched',
+        organizationId: identity.organizationId,
+        actorId: identity.adminId,
+        entityId: legacyIdentity.vendorIds[0],
+      },
+      {
+        kind: 'audit_other',
+        organizationId: migrationWorkload.otherOrganizationId,
+        actorId: legacyIdentity.adminId,
+        entityId: legacyIdentity.vendorIds[0],
+      },
+      {
+        kind: 'audit_typed',
+        organizationId: identity.organizationId,
+        actorId: identity.adminId,
+        entityId: identity.primaryVendorId,
+      },
+      {
+        kind: 'document_mismatched',
+        organizationId: identity.organizationId,
+        actorId: identity.adminId,
+        entityId: legacyIdentity.vendorIds[0],
+      },
+      {
+        kind: 'document_other',
+        organizationId: migrationWorkload.otherOrganizationId,
+        actorId: legacyIdentity.adminId,
+        entityId: legacyIdentity.vendorIds[0],
+      },
+      {
+        kind: 'document_typed',
+        organizationId: identity.organizationId,
+        actorId: identity.adminId,
+        entityId: identity.primaryVendorId,
+      },
+      {
+        kind: 'notification_mismatched',
+        organizationId: identity.organizationId,
+        actorId: identity.adminId,
+        entityId: legacyIdentity.vendorIds[0],
+      },
+      {
+        kind: 'notification_other',
+        organizationId: migrationWorkload.otherOrganizationId,
+        actorId: migrationWorkload.otherUserId,
+        entityId: legacyIdentity.vendorIds[0],
+      },
+      {
+        kind: 'notification_typed',
+        organizationId: identity.organizationId,
+        actorId: identity.adminId,
+        entityId: identity.primaryVendorId,
+      },
+    ]);
+
     const otherOrganizationJson = await database.query<{
       auditOrganizationId: string;
       auditRequesterId: string;
@@ -1057,9 +1683,7 @@ test('rekeys a legacy demo graph without losing workload references', async () =
     `);
     assert.deepEqual(
       constraintDeferrability.rows,
-      [...temporarilyDeferredConstraints]
-        .sort()
-        .map((conname) => ({ conname, condeferrable: false })),
+      constraintsBeforeMigration.rows.map(({ conname }) => ({ conname, condeferrable: false })),
     );
 
     const oldRowCounts = await database.query<{ count: string }>(`
@@ -1123,7 +1747,10 @@ test('rekeys a legacy demo graph without losing workload references', async () =
         + (SELECT count(*) FROM budgets
            WHERE organization_id = '${legacyIdentity.organizationId}'
               OR entity_id = '${legacyIdentity.parentEntityId}'
-              OR scope_id IN ('${legacyIdentity.engineeringDepartmentId}', '${legacyIdentity.marketingDepartmentId}'))
+              OR (
+                budget_type = 'department'
+                AND scope_id IN ('${legacyIdentity.engineeringDepartmentId}', '${legacyIdentity.marketingDepartmentId}')
+              ))
         + (SELECT count(*) FROM purchase_orders
            WHERE organization_id = '${legacyIdentity.organizationId}'
               OR entity_id = '${legacyIdentity.parentEntityId}'
