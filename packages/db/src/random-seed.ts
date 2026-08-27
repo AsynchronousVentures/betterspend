@@ -74,12 +74,8 @@ import {
   purchaseOrders,
 } from './schema';
 import {
-  DEMO_ADMIN_ID,
-  DEMO_APPROVER_ID,
-  DEMO_ENG_DEPT_ID,
-  DEMO_ORG_ID,
-  DEMO_REQUESTER_ID,
-  DEMO_VENDOR_IDS,
+  DEMO_TEST_IDENTITY,
+  type DemoIdentity,
 } from './demo-fixtures';
 
 export const DEFAULT_RANDOM_COUNT = 500;
@@ -474,7 +470,10 @@ function emptyRows(): Rows {
   };
 }
 
-export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSeedDataset {
+export function generateRandomSeedDataset(
+  options: RandomSeedOptions,
+  identity: DemoIdentity = DEMO_TEST_IDENTITY,
+): RandomSeedDataset {
   if (
     !Number.isSafeInteger(options.count) ||
     options.count < MIN_RANDOM_COUNT ||
@@ -484,13 +483,23 @@ export function generateRandomSeedDataset(options: RandomSeedOptions): RandomSee
   }
   if (!options.seed) throw new Error('seed must not be empty.');
   const { count, seed } = options;
+  const {
+    organizationId: DEMO_ORG_ID,
+    adminId: DEMO_ADMIN_ID,
+    requesterId: DEMO_REQUESTER_ID,
+    approverId: DEMO_APPROVER_ID,
+    engineeringDepartmentId: DEMO_ENG_DEPT_ID,
+    marketingDepartmentId: DEMO_MKT_DEPT_ID,
+    parentEntityId: DEMO_PARENT_ENTITY_ID,
+    vendorIds: DEMO_VENDOR_IDS,
+  } = identity;
   const rows = emptyRows();
   const departmentCount = Math.max(8, Math.min(40, Math.ceil(count / 25)));
   const userCount = Math.max(16, Math.min(120, Math.ceil(count / 8)));
   const vendorCount = Math.max(12, Math.min(100, Math.ceil(count / 10)));
   const catalogCount = Math.max(36, Math.min(300, vendorCount * 3));
-  const entityIds: string[] = [];
-  const departmentIds: string[] = [];
+  const entityIds: string[] = [DEMO_PARENT_ENTITY_ID];
+  const departmentIds: string[] = [DEMO_ENG_DEPT_ID, DEMO_MKT_DEPT_ID];
   const projectIds: string[] = [];
   const userIds: string[] = [];
   const vendorIds: string[] = [];

@@ -1,111 +1,172 @@
+import { createHash } from 'node:crypto';
 import type { DbTransaction } from './client';
-import { eq, inArray, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { departments, legalEntities, organizations, userRoles, users, vendors } from './schema';
 
-/** IDs used by the demo controllers and the ordinary, small seed. */
-export const DEMO_ORG_ID = '00000000-0000-0000-0000-000000000001';
-export const DEMO_ADMIN_ID = '00000000-0000-0000-0000-000000000002';
-export const DEMO_REQUESTER_ID = '00000000-0000-0000-0000-000000000003';
-export const DEMO_APPROVER_ID = '00000000-0000-0000-0000-000000000004';
-export const DEMO_ENG_DEPT_ID = '00000000-0000-0000-0000-000000000010';
-export const DEMO_MKT_DEPT_ID = '00000000-0000-0000-0000-000000000011';
-export const DEMO_PARENT_ENTITY_ID = '00000000-0000-0000-0000-000000000020';
-export const DEMO_VENDOR_IDS = [
-  '00000000-0000-0000-0000-000000000030',
-  '00000000-0000-0000-0000-000000000031',
-] as const;
+/** Stable natural keys for the small Acme fixture and demo-mode identity. */
+export const DEMO_ORGANIZATION_SLUG = 'acme-corp';
+export const DEMO_ADMIN_EMAIL = 'admin@acme.com';
+export const DEMO_REQUESTER_EMAIL = 'requester@acme.com';
+export const DEMO_APPROVER_EMAIL = 'approver@acme.com';
+export const DEMO_ENGINEERING_DEPARTMENT_CODE = 'ENG';
+export const DEMO_MARKETING_DEPARTMENT_CODE = 'MKT';
+export const DEMO_PARENT_ENTITY_CODE = 'ACME-HQ';
 
-type DemoUserRoleFixture = typeof userRoles.$inferInsert;
-type DemoVendorFixture = typeof vendors.$inferInsert;
+export interface DemoIdentity {
+  organizationId: string;
+  adminId: string;
+  requesterId: string;
+  approverId: string;
+  engineeringDepartmentId: string;
+  marketingDepartmentId: string;
+  parentEntityId: string;
+  vendorIds: readonly [string, string];
+}
 
-export const DEMO_USER_ROLE_FIXTURES: DemoUserRoleFixture[] = [
-  {
-    id: '00000000-0000-0000-0000-000000000040',
-    userId: DEMO_ADMIN_ID,
-    organizationId: DEMO_ORG_ID,
-    role: 'admin',
-    customRoleId: null,
-    scopeType: 'global',
-    scopeId: null,
-  },
-  {
-    id: '00000000-0000-0000-0000-000000000041',
-    userId: DEMO_REQUESTER_ID,
-    organizationId: DEMO_ORG_ID,
-    role: 'requester',
-    customRoleId: null,
-    scopeType: 'global',
-    scopeId: null,
-  },
-  {
-    id: '00000000-0000-0000-0000-000000000042',
-    userId: DEMO_APPROVER_ID,
-    organizationId: DEMO_ORG_ID,
-    role: 'approver',
-    customRoleId: null,
-    scopeType: 'global',
-    scopeId: null,
-  },
-];
+/**
+ * Pure generators need an identity context before a database exists. These
+ * deterministic UUIDs are only a default for those generators and tests;
+ * persisted demo rows resolve their IDs from natural keys below.
+ */
+function deterministicFixtureUuid(kind: string, index: number): string {
+  const digest = createHash('sha256')
+    .update(`betterspend-demo-fixture\0${kind}\0${index}`)
+    .digest('hex');
+  const variant = ['8', '9', 'a', 'b'][Number.parseInt(digest[16] ?? '8', 16) % 4];
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-${variant}${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
 
-export const DEMO_VENDOR_FIXTURES: DemoVendorFixture[] = [
-  {
-    id: DEMO_VENDOR_IDS[0],
-    organizationId: DEMO_ORG_ID,
-    entityId: DEMO_PARENT_ENTITY_ID,
-    name: 'Acme Supplies Inc.',
-    code: 'ACME-SUP',
-    taxId: null,
-    paymentTerms: 'Net 30',
-    address: {},
-    contactInfo: { email: 'sales@acmesupplies.com', phone: '+1-555-0100' },
-    status: 'active',
-    onboardingStatus: 'not_started',
-    onboardingRiskScore: 0,
-    onboardingRiskLevel: 'low',
-    onboardingApprovedAt: null,
-    onboardingLastSubmittedAt: null,
-    punchoutEnabled: false,
-    punchoutConfig: null,
-    diversityCategories: [],
-    esgRating: null,
-    carbonFootprintTons: null,
-    sustainabilityCertifications: [],
-    esgNotes: null,
-    diversityVerifiedAt: null,
-    sanctionsStatus: 'untested',
-    sanctionsCheckedAt: null,
-    sanctionsNote: null,
-  },
-  {
-    id: DEMO_VENDOR_IDS[1],
-    organizationId: DEMO_ORG_ID,
-    entityId: DEMO_PARENT_ENTITY_ID,
-    name: 'TechParts Global',
-    code: 'TECHPARTS',
-    taxId: null,
-    paymentTerms: 'Net 60',
-    address: {},
-    contactInfo: { email: 'orders@techparts.com', phone: '+1-555-0200' },
-    status: 'active',
-    onboardingStatus: 'not_started',
-    onboardingRiskScore: 0,
-    onboardingRiskLevel: 'low',
-    onboardingApprovedAt: null,
-    onboardingLastSubmittedAt: null,
-    punchoutEnabled: false,
-    punchoutConfig: null,
-    diversityCategories: [],
-    esgRating: null,
-    carbonFootprintTons: null,
-    sustainabilityCertifications: [],
-    esgNotes: null,
-    diversityVerifiedAt: null,
-    sanctionsStatus: 'untested',
-    sanctionsCheckedAt: null,
-    sanctionsNote: null,
-  },
-];
+export const DEMO_TEST_IDENTITY: DemoIdentity = {
+  organizationId: deterministicFixtureUuid('organization', 0),
+  adminId: deterministicFixtureUuid('user', 0),
+  requesterId: deterministicFixtureUuid('user', 1),
+  approverId: deterministicFixtureUuid('user', 2),
+  engineeringDepartmentId: deterministicFixtureUuid('department', 0),
+  marketingDepartmentId: deterministicFixtureUuid('department', 1),
+  parentEntityId: deterministicFixtureUuid('entity', 0),
+  vendorIds: [deterministicFixtureUuid('vendor', 0), deterministicFixtureUuid('vendor', 1)],
+};
+
+/** Compatibility aliases for the in-memory random-seed test context. */
+export const DEMO_ORG_ID = DEMO_TEST_IDENTITY.organizationId;
+export const DEMO_ADMIN_ID = DEMO_TEST_IDENTITY.adminId;
+export const DEMO_REQUESTER_ID = DEMO_TEST_IDENTITY.requesterId;
+export const DEMO_APPROVER_ID = DEMO_TEST_IDENTITY.approverId;
+export const DEMO_ENG_DEPT_ID = DEMO_TEST_IDENTITY.engineeringDepartmentId;
+export const DEMO_MKT_DEPT_ID = DEMO_TEST_IDENTITY.marketingDepartmentId;
+export const DEMO_PARENT_ENTITY_ID = DEMO_TEST_IDENTITY.parentEntityId;
+export const DEMO_VENDOR_IDS = DEMO_TEST_IDENTITY.vendorIds;
+
+type DemoUserRoleFixture = Omit<typeof userRoles.$inferInsert, 'id'> & { id?: string };
+type DemoVendorFixture = Omit<typeof vendors.$inferInsert, 'id'> & { id?: string };
+type DemoIdentityWithoutVendors = Omit<DemoIdentity, 'vendorIds'>;
+
+function demoUserRoleFixtures(
+  identity: Pick<DemoIdentity, 'organizationId' | 'adminId' | 'requesterId' | 'approverId'>,
+): DemoUserRoleFixture[] {
+  return [
+    {
+      userId: identity.adminId,
+      organizationId: identity.organizationId,
+      role: 'admin',
+      customRoleId: null,
+      scopeType: 'global',
+      scopeId: null,
+    },
+    {
+      userId: identity.requesterId,
+      organizationId: identity.organizationId,
+      role: 'requester',
+      customRoleId: null,
+      scopeType: 'global',
+      scopeId: null,
+    },
+    {
+      userId: identity.approverId,
+      organizationId: identity.organizationId,
+      role: 'approver',
+      customRoleId: null,
+      scopeType: 'global',
+      scopeId: null,
+    },
+  ];
+}
+
+function demoVendorFixtures(
+  identity: Pick<DemoIdentity, 'organizationId' | 'parentEntityId'>,
+): DemoVendorFixture[] {
+  return [
+    {
+      organizationId: identity.organizationId,
+      entityId: identity.parentEntityId,
+      name: 'Acme Supplies Inc.',
+      code: 'ACME-SUP',
+      taxId: null,
+      paymentTerms: 'Net 30',
+      address: {},
+      contactInfo: { email: 'sales@acmesupplies.com', phone: '+1-555-0100' },
+      status: 'active',
+      onboardingStatus: 'not_started',
+      onboardingRiskScore: 0,
+      onboardingRiskLevel: 'low',
+      onboardingApprovedAt: null,
+      onboardingLastSubmittedAt: null,
+      punchoutEnabled: false,
+      punchoutConfig: null,
+      diversityCategories: [],
+      esgRating: null,
+      carbonFootprintTons: null,
+      sustainabilityCertifications: [],
+      esgNotes: null,
+      diversityVerifiedAt: null,
+      sanctionsStatus: 'untested',
+      sanctionsCheckedAt: null,
+      sanctionsNote: null,
+    },
+    {
+      organizationId: identity.organizationId,
+      entityId: identity.parentEntityId,
+      name: 'TechParts Global',
+      code: 'TECHPARTS',
+      taxId: null,
+      paymentTerms: 'Net 60',
+      address: {},
+      contactInfo: { email: 'orders@techparts.com', phone: '+1-555-0200' },
+      status: 'active',
+      onboardingStatus: 'not_started',
+      onboardingRiskScore: 0,
+      onboardingRiskLevel: 'low',
+      onboardingApprovedAt: null,
+      onboardingLastSubmittedAt: null,
+      punchoutEnabled: false,
+      punchoutConfig: null,
+      diversityCategories: [],
+      esgRating: null,
+      carbonFootprintTons: null,
+      sustainabilityCertifications: [],
+      esgNotes: null,
+      diversityVerifiedAt: null,
+      sanctionsStatus: 'untested',
+      sanctionsCheckedAt: null,
+      sanctionsNote: null,
+    },
+  ];
+}
+
+/** Default context retained for pure random-seed tests, never for API lookup. */
+export const DEMO_USER_ROLE_FIXTURES: DemoUserRoleFixture[] = demoUserRoleFixtures(
+  DEMO_TEST_IDENTITY,
+).map((fixture, index) => ({
+  ...fixture,
+  id: deterministicFixtureUuid('user-role', index),
+}));
+
+export const DEMO_VENDOR_FIXTURES: DemoVendorFixture[] = demoVendorFixtures(DEMO_TEST_IDENTITY).map(
+  (fixture, index) => ({
+    ...fixture,
+    id: DEMO_TEST_IDENTITY.vendorIds[index] as string,
+  }),
+);
 
 export function demoUserRoleNaturalKey(
   row: Pick<DemoUserRoleFixture, 'userId' | 'role' | 'customRoleId' | 'scopeType' | 'scopeId'>,
@@ -121,120 +182,33 @@ export function demoVendorNaturalKey(
   return [row.organizationId, row.code ?? `name:${row.name}`].join('\0');
 }
 
-async function reconcileLegacyDemoUserRoles(tx: DbTransaction): Promise<void> {
-  const fixtureIds = DEMO_USER_ROLE_FIXTURES.map((row) => row.id).filter((id): id is string =>
-    Boolean(id),
-  );
-  const fixtureUserIds = DEMO_USER_ROLE_FIXTURES.map((row) => row.userId).filter(
-    (id): id is string => Boolean(id),
-  );
+async function reconcileDemoUserRoles(
+  tx: DbTransaction,
+  identity: Pick<DemoIdentity, 'organizationId' | 'adminId' | 'requesterId' | 'approverId'>,
+): Promise<void> {
+  const fixtures = demoUserRoleFixtures(identity);
   const existing = await tx
     .select()
     .from(userRoles)
-    .where(or(inArray(userRoles.userId, fixtureUserIds), inArray(userRoles.id, fixtureIds)));
-  const existingById = new Map(existing.map((row) => [row.id, row]));
-
-  for (const fixture of DEMO_USER_ROLE_FIXTURES) {
-    if (!fixture.id || !fixture.userId) continue;
-    const naturalKey = demoUserRoleNaturalKey(fixture);
-    const matching = existing.filter(
-      (row) => demoUserRoleNaturalKey(row) === naturalKey && row.id !== fixture.id,
+    .where(
+      and(
+        eq(userRoles.organizationId, identity.organizationId),
+        inArray(userRoles.userId, fixtures.map((fixture) => fixture.userId)),
+      ),
     );
-    const fixedRow = existingById.get(fixture.id);
-    let retainedId = fixedRow?.id;
-    if (!retainedId && matching[0]?.id) {
-      retainedId = fixture.id;
-      await tx
-        .update(userRoles)
-        .set({
-          id: fixture.id,
-          userId: fixture.userId,
-          organizationId: fixture.organizationId,
-          role: fixture.role,
-          customRoleId: fixture.customRoleId,
-          scopeType: fixture.scopeType,
-          scopeId: fixture.scopeId,
-        })
-        .where(eq(userRoles.id, matching[0].id));
-      existingById.delete(matching[0].id);
-      existingById.set(fixture.id, { ...matching[0], ...fixture });
+
+  for (const fixture of fixtures) {
+    if (existing.some((row) => demoUserRoleNaturalKey(row) === demoUserRoleNaturalKey(fixture))) {
+      continue;
     }
-    for (const duplicate of matching) {
-      if (duplicate.id !== retainedId)
-        await tx.delete(userRoles).where(eq(userRoles.id, duplicate.id));
-    }
+    await tx.insert(userRoles).values(fixture);
   }
 }
 
-/** Move legacy vendor children before removing duplicate random-ID fixtures. */
-async function repointLegacyVendorReferences(
+async function reconcileDemoVendors(
   tx: DbTransaction,
-  legacyId: string,
-  canonicalId: string,
-): Promise<void> {
-  await tx.execute(
-    sql`UPDATE "catalog_items" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "requisition_lines" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "purchase_orders" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "invoices" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "recurring_pos" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "contracts" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "vendor_portal_tokens" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "vendor_portal_sessions" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "rfq_requests" SET "awarded_vendor_id" = ${canonicalId} WHERE "awarded_vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "rfq_invitations" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "rfq_responses" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "software_licenses" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "catalog_price_proposals" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "vendor_onboarding_submissions" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "messages" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "messages" SET "recipient_vendor_id" = ${canonicalId} WHERE "recipient_vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "sanctions_screenings" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "vendor_payment_accounts" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "vendor_virtual_cards" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-  await tx.execute(
-    sql`UPDATE "email_intake_messages" SET "vendor_id" = ${canonicalId} WHERE "vendor_id" = ${legacyId}`,
-  );
-}
-
-async function reconcileLegacyDemoVendors(tx: DbTransaction): Promise<void> {
+  identity: Pick<DemoIdentity, 'organizationId' | 'parentEntityId'>,
+): Promise<[string, string]> {
   const existing = await tx
     .select({
       id: vendors.id,
@@ -243,206 +217,229 @@ async function reconcileLegacyDemoVendors(tx: DbTransaction): Promise<void> {
       name: vendors.name,
     })
     .from(vendors)
-    .where(eq(vendors.organizationId, DEMO_ORG_ID));
-  for (const fixture of DEMO_VENDOR_FIXTURES) {
-    if (!fixture.id || !fixture.organizationId || !fixture.code) continue;
+    .where(eq(vendors.organizationId, identity.organizationId));
+  const retainedIds: string[] = [];
+  for (const fixture of demoVendorFixtures(identity)) {
+    if (!fixture.organizationId || !fixture.code) continue;
     const naturalKey = demoVendorNaturalKey(fixture);
-    const legacyRows = existing.filter(
-      (row) => row.id !== fixture.id && demoVendorNaturalKey(row) === naturalKey,
-    );
-    if (legacyRows.length === 0) continue;
-    await tx.insert(vendors).values(fixture).onConflictDoNothing();
-    for (const legacy of legacyRows) {
-      await repointLegacyVendorReferences(tx, legacy.id, fixture.id);
-      await tx.delete(vendors).where(eq(vendors.id, legacy.id));
+    const matching = existing.filter((row) => demoVendorNaturalKey(row) === naturalKey);
+    const [retained] = matching;
+    if (retained) {
+      retainedIds.push(retained.id);
+    } else {
+      const [inserted] = await tx.insert(vendors).values(fixture).returning({ id: vendors.id });
+      if (!inserted) throw new Error(`Failed to insert demo vendor ${fixture.code}`);
+      retainedIds.push(inserted.id);
     }
   }
+  const [firstVendorId, secondVendorId] = retainedIds;
+  if (!firstVendorId || !secondVendorId) throw new Error('Failed to resolve all Acme demo vendors');
+  return [firstVendorId, secondVendorId];
 }
 
 /**
- * Insert the fixed records used by demo-mode requests. This is deliberately
- * an upsert, rather than a delete/reinsert, so it remains safe after a
- * workload seed has added children that point at the demo organization.
+ * Resolve or insert the records used by demo-mode requests through stable
+ * natural keys. Primary keys are always returned by PostgreSQL, so rerunning
+ * the seed preserves identities without hardcoded IDs.
  */
-export async function upsertDemoFixtures(tx: DbTransaction): Promise<void> {
-  await tx
-    .insert(organizations)
-    .values({
-      id: DEMO_ORG_ID,
-      name: 'Acme Corp',
-      slug: 'acme-corp',
-      baseCurrency: 'USD',
-      settings: { currency: 'USD', fiscalYearStart: 1 },
-      logoUrl: null,
-    })
-    .onConflictDoUpdate({
-      target: organizations.id,
-      set: {
-        name: 'Acme Corp',
-        slug: 'acme-corp',
-        baseCurrency: 'USD',
-        settings: { currency: 'USD', fiscalYearStart: 1 },
-        logoUrl: null,
-      },
-    });
+export async function upsertDemoFixtures(tx: DbTransaction): Promise<DemoIdentity> {
+  const [existingOrganization] = await tx
+    .select()
+    .from(organizations)
+    .where(eq(organizations.slug, DEMO_ORGANIZATION_SLUG))
+    .limit(1);
+  const [organization] = existingOrganization
+    ? await tx
+        .update(organizations)
+        .set({
+          name: 'Acme Corp',
+          baseCurrency: 'USD',
+          settings: { currency: 'USD', fiscalYearStart: 1 },
+          logoUrl: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(organizations.id, existingOrganization.id))
+        .returning()
+    : await tx
+        .insert(organizations)
+        .values({
+          name: 'Acme Corp',
+          slug: DEMO_ORGANIZATION_SLUG,
+          baseCurrency: 'USD',
+          settings: { currency: 'USD', fiscalYearStart: 1 },
+          logoUrl: null,
+        })
+        .returning();
+  if (!organization) throw new Error('Failed to resolve the Acme demo organization');
+  const organizationId = organization.id;
 
-  await tx
-    .insert(legalEntities)
-    .values({
-      id: DEMO_PARENT_ENTITY_ID,
-      organizationId: DEMO_ORG_ID,
-      name: 'Acme Holdings',
-      code: 'ACME-HQ',
-      currency: 'USD',
-      glAccountPrefix: '100',
-      address: {},
-      taxId: '99-9999999',
-      isActive: true,
-    })
-    .onConflictDoUpdate({
-      target: legalEntities.id,
-      set: {
-        organizationId: DEMO_ORG_ID,
-        name: 'Acme Holdings',
-        code: 'ACME-HQ',
-        currency: 'USD',
-        glAccountPrefix: '100',
-        address: {},
-        taxId: '99-9999999',
-        isActive: true,
-      },
-    });
+  const [existingEntity] = await tx
+    .select()
+    .from(legalEntities)
+    .where(
+      and(
+        eq(legalEntities.organizationId, organizationId),
+        eq(legalEntities.code, DEMO_PARENT_ENTITY_CODE),
+      ),
+    )
+    .limit(1);
+  const [parentEntity] = existingEntity
+    ? await tx
+        .update(legalEntities)
+        .set({
+          name: 'Acme Holdings',
+          currency: 'USD',
+          glAccountPrefix: '100',
+          address: {},
+          taxId: '99-9999999',
+          isActive: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(legalEntities.id, existingEntity.id))
+        .returning()
+    : await tx
+        .insert(legalEntities)
+        .values({
+          organizationId,
+          name: 'Acme Holdings',
+          code: DEMO_PARENT_ENTITY_CODE,
+          currency: 'USD',
+          glAccountPrefix: '100',
+          address: {},
+          taxId: '99-9999999',
+          isActive: true,
+        })
+        .returning();
+  if (!parentEntity) throw new Error('Failed to resolve the Acme demo entity');
 
-  await tx
-    .insert(departments)
-    .values([
-      {
-        id: DEMO_ENG_DEPT_ID,
-        organizationId: DEMO_ORG_ID,
-        name: 'Engineering',
-        code: 'ENG',
-        parentId: null,
-        budgetOwnerId: null,
-      },
-      {
-        id: DEMO_MKT_DEPT_ID,
-        organizationId: DEMO_ORG_ID,
-        name: 'Marketing',
-        code: 'MKT',
-        parentId: null,
-        budgetOwnerId: null,
-      },
-    ])
-    .onConflictDoUpdate({
-      target: departments.id,
-      set: {
-        organizationId: sql`excluded.organization_id`,
-        name: sql`excluded.name`,
-        code: sql`excluded.code`,
-        parentId: sql`excluded.parent_id`,
-        budgetOwnerId: sql`excluded.budget_owner_id`,
-      },
-    });
+  async function upsertDepartment(name: string, code: string) {
+    const [existing] = await tx
+      .select()
+      .from(departments)
+      .where(and(eq(departments.organizationId, organizationId), eq(departments.code, code)))
+      .limit(1);
+    const [department] = existing
+      ? await tx
+          .update(departments)
+          .set({ name, parentId: null, budgetOwnerId: null, updatedAt: new Date() })
+          .where(eq(departments.id, existing.id))
+          .returning()
+      : await tx
+          .insert(departments)
+          .values({ organizationId, name, code, parentId: null, budgetOwnerId: null })
+          .returning();
+    if (!department) throw new Error(`Failed to resolve demo department ${code}`);
+    return department;
+  }
 
-  await tx
-    .insert(users)
-    .values([
-      {
-        id: DEMO_ADMIN_ID,
-        organizationId: DEMO_ORG_ID,
-        email: 'admin@acme.com',
-        name: 'Admin User',
-        departmentId: DEMO_ENG_DEPT_ID,
-        emailVerified: true,
-        image: null,
-        managerId: null,
-        isActive: true,
-      },
-      {
-        id: DEMO_REQUESTER_ID,
-        organizationId: DEMO_ORG_ID,
-        email: 'requester@acme.com',
-        name: 'Jane Requester',
-        departmentId: DEMO_ENG_DEPT_ID,
-        emailVerified: true,
-        image: null,
-        managerId: null,
-        isActive: true,
-      },
-      {
-        id: DEMO_APPROVER_ID,
-        organizationId: DEMO_ORG_ID,
-        email: 'approver@acme.com',
-        name: 'Bob Approver',
-        departmentId: DEMO_ENG_DEPT_ID,
-        emailVerified: true,
-        image: null,
-        managerId: null,
-        isActive: true,
-      },
-    ])
-    .onConflictDoUpdate({
-      target: users.id,
-      set: {
-        organizationId: sql`excluded.organization_id`,
-        email: sql`excluded.email`,
-        name: sql`excluded.name`,
-        emailVerified: sql`excluded.email_verified`,
-        image: sql`excluded.image`,
-        departmentId: sql`excluded.department_id`,
-        managerId: sql`excluded.manager_id`,
-        isActive: sql`excluded.is_active`,
-      },
-    });
+  const engineeringDepartment = await upsertDepartment(
+    'Engineering',
+    DEMO_ENGINEERING_DEPARTMENT_CODE,
+  );
+  const marketingDepartment = await upsertDepartment(
+    'Marketing',
+    DEMO_MARKETING_DEPARTMENT_CODE,
+  );
 
-  await reconcileLegacyDemoUserRoles(tx);
-  await tx
-    .insert(userRoles)
-    .values(DEMO_USER_ROLE_FIXTURES)
-    .onConflictDoUpdate({
-      target: userRoles.id,
-      set: {
-        userId: sql`excluded.user_id`,
-        organizationId: sql`excluded.organization_id`,
-        role: sql`excluded.role`,
-        customRoleId: sql`excluded.custom_role_id`,
-        scopeType: sql`excluded.scope_type`,
-        scopeId: sql`excluded.scope_id`,
-      },
-    });
+  async function upsertUser(email: string, name: string) {
+    const [existing] = await tx
+      .select()
+      .from(users)
+      .where(sql`lower(${users.email}) = lower(${email})`)
+      .limit(1);
+    if (existing && existing.organizationId !== organizationId) {
+      throw new Error(`Demo user ${email} belongs to a different organization`);
+    }
+    const [user] = existing
+      ? await tx
+          .update(users)
+          .set({
+            organizationId,
+            email,
+            name,
+            emailVerified: true,
+            image: null,
+            departmentId: engineeringDepartment.id,
+            managerId: null,
+            isActive: true,
+            updatedAt: new Date(),
+          })
+          .where(eq(users.id, existing.id))
+          .returning()
+      : await tx
+          .insert(users)
+          .values({
+            organizationId,
+            email,
+            name,
+            departmentId: engineeringDepartment.id,
+            emailVerified: true,
+            image: null,
+            managerId: null,
+            isActive: true,
+          })
+          .returning();
+    if (!user) throw new Error(`Failed to resolve demo user ${email}`);
+    return user;
+  }
 
-  await reconcileLegacyDemoVendors(tx);
-  await tx
-    .insert(vendors)
-    .values(DEMO_VENDOR_FIXTURES)
-    .onConflictDoUpdate({
-      target: vendors.id,
-      set: {
-        organizationId: sql`excluded.organization_id`,
-        entityId: sql`excluded.entity_id`,
-        name: sql`excluded.name`,
-        code: sql`excluded.code`,
-        taxId: sql`excluded.tax_id`,
-        paymentTerms: sql`excluded.payment_terms`,
-        address: sql`excluded.address`,
-        contactInfo: sql`excluded.contact_info`,
-        status: sql`excluded.status`,
-        onboardingStatus: sql`excluded.onboarding_status`,
-        onboardingRiskScore: sql`excluded.onboarding_risk_score`,
-        onboardingRiskLevel: sql`excluded.onboarding_risk_level`,
-        onboardingApprovedAt: sql`excluded.onboarding_approved_at`,
-        onboardingLastSubmittedAt: sql`excluded.onboarding_last_submitted_at`,
-        punchoutEnabled: sql`excluded.punchout_enabled`,
-        punchoutConfig: sql`excluded.punchout_config`,
-        diversityCategories: sql`excluded.diversity_categories`,
-        esgRating: sql`excluded.esg_rating`,
-        carbonFootprintTons: sql`excluded.carbon_footprint_tons`,
-        sustainabilityCertifications: sql`excluded.sustainability_certifications`,
-        esgNotes: sql`excluded.esg_notes`,
-        diversityVerifiedAt: sql`excluded.diversity_verified_at`,
-        sanctionsStatus: sql`excluded.sanctions_status`,
-        sanctionsCheckedAt: sql`excluded.sanctions_checked_at`,
-        sanctionsNote: sql`excluded.sanctions_note`,
-      },
-    });
+  const admin = await upsertUser(DEMO_ADMIN_EMAIL, 'Admin User');
+  const requester = await upsertUser(DEMO_REQUESTER_EMAIL, 'Jane Requester');
+  const approver = await upsertUser(DEMO_APPROVER_EMAIL, 'Bob Approver');
+  const identity: DemoIdentityWithoutVendors = {
+    organizationId,
+    adminId: admin.id,
+    requesterId: requester.id,
+    approverId: approver.id,
+    engineeringDepartmentId: engineeringDepartment.id,
+    marketingDepartmentId: marketingDepartment.id,
+    parentEntityId: parentEntity.id,
+  };
+
+  await reconcileDemoUserRoles(tx, identity);
+  const vendorIds = await reconcileDemoVendors(tx, identity);
+
+  const resolvedIdentity: DemoIdentity = {
+    ...identity,
+    vendorIds,
+  };
+  const vendorFixtures = demoVendorFixtures(identity);
+  for (const [index, fixture] of vendorFixtures.entries()) {
+    const vendorId = vendorIds[index];
+    if (!vendorId) throw new Error(`Failed to resolve demo vendor ${fixture.code}`);
+    const [vendor] = await tx
+      .update(vendors)
+      .set({
+        entityId: fixture.entityId,
+        name: fixture.name,
+        code: fixture.code,
+        taxId: fixture.taxId,
+        paymentTerms: fixture.paymentTerms,
+        address: fixture.address,
+        contactInfo: fixture.contactInfo,
+        status: fixture.status,
+        onboardingStatus: fixture.onboardingStatus,
+        onboardingRiskScore: fixture.onboardingRiskScore,
+        onboardingRiskLevel: fixture.onboardingRiskLevel,
+        onboardingApprovedAt: fixture.onboardingApprovedAt,
+        onboardingLastSubmittedAt: fixture.onboardingLastSubmittedAt,
+        punchoutEnabled: fixture.punchoutEnabled,
+        punchoutConfig: fixture.punchoutConfig,
+        diversityCategories: fixture.diversityCategories,
+        esgRating: fixture.esgRating,
+        carbonFootprintTons: fixture.carbonFootprintTons,
+        sustainabilityCertifications: fixture.sustainabilityCertifications,
+        esgNotes: fixture.esgNotes,
+        diversityVerifiedAt: fixture.diversityVerifiedAt,
+        sanctionsStatus: fixture.sanctionsStatus,
+        sanctionsCheckedAt: fixture.sanctionsCheckedAt,
+        sanctionsNote: fixture.sanctionsNote,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
+      .returning({ id: vendors.id });
+    if (!vendor) throw new Error(`Failed to update demo vendor ${fixture.code}`);
+  }
+
+  return resolvedIdentity;
 }

@@ -44,6 +44,7 @@ import { changedMaterialInvoiceFields, type MaterialInvoiceState } from './invoi
 import { calculateInvoiceLineAmounts } from './invoice-money';
 import type { AccessPolicy } from '../auth/access-policy';
 import { canViewRelatedRecord } from '../auth/related-record-access';
+import { resolveOrganizationAdminId } from '../../common/demo-identity';
 import {
   permissionScopePredicate,
   requireAnyPermission,
@@ -128,7 +129,6 @@ function invoiceReportScopePredicate(access: AccessPolicy | undefined, organizat
 
 export type { UpdateInvoiceInput } from '@betterspend/shared';
 
-const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 
 export interface CreateInvoiceInput {
   entityId?: string;
@@ -1118,16 +1118,19 @@ export class InvoicesService {
       if (matchSt === 'exception') {
         this.webhookEvents.emit(organizationId, 'invoice.exception', { invoice: created });
         if (this.notifications) {
-          this.notifications
-            .create(
-              organizationId,
-              DEMO_ADMIN_USER_ID,
-              'invoice_exception',
-              'Invoice Match Exception',
-              `Invoice ${(created as any).internalNumber} has a 3-way match exception and requires review.`,
-              'invoice',
-              invoiceId,
-            )
+          void resolveOrganizationAdminId(this.db, organizationId)
+            .then((adminId) => {
+              if (!adminId) return;
+              return this.notifications!.create(
+                organizationId,
+                adminId,
+                'invoice_exception',
+                'Invoice Match Exception',
+                `Invoice ${(created as any).internalNumber} has a 3-way match exception and requires review.`,
+                'invoice',
+                invoiceId,
+              );
+            })
             .catch(() => {});
         }
       } else {
@@ -1692,16 +1695,19 @@ export class InvoicesService {
       })
       .catch(() => {});
     if (this.notifications) {
-      this.notifications
-        .create(
-          organizationId,
-          DEMO_ADMIN_USER_ID,
-          'invoice_approved',
-          'Invoice Approved',
-          `Invoice ${(approved as any).internalNumber} has been approved for payment.`,
-          'invoice',
-          id,
-        )
+      void resolveOrganizationAdminId(this.db, organizationId)
+        .then((adminId) => {
+          if (!adminId) return;
+          return this.notifications!.create(
+            organizationId,
+            adminId,
+            'invoice_approved',
+            'Invoice Approved',
+            `Invoice ${(approved as any).internalNumber} has been approved for payment.`,
+            'invoice',
+            id,
+          );
+        })
         .catch(() => {});
     }
     void this.glExport.enqueue(organizationId, id, 'qbo').catch(() => {});

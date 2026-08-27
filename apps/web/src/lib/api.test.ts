@@ -203,3 +203,73 @@ test('shared API methods omit authorization when no token cookie exists', async 
   assert.equal(headers.has('authorization'), false);
   assert.equal(headers.has('x-org-id'), false);
 });
+
+test('message lists accept RFC-compatible database UUIDs', async () => {
+  const messages = [
+    {
+      id: 'a115230f-ec95-4544-b83a-76fe1e9c9202',
+      organizationId: '5d3c6e3a-0f46-49f3-9d3f-f70f73f2c1a1',
+      threadType: 'po',
+      threadId: '40290e17-8d21-47ba-bef4-5b1f14ea5552',
+      senderType: 'user',
+      senderId: '7c827b75-5df5-468b-bb11-1a03dd7f65d8',
+      vendorId: null,
+      recipientVendorId: null,
+      authorName: 'Jane Requester',
+      body: 'Please confirm the synthetic delivery window.',
+      attachments: [],
+      createdAt: '2026-08-27T12:00:00.000Z',
+    },
+    {
+      id: 'b8a8cc55-3a50-4aa4-a531-b6e3ac7d8157',
+      organizationId: '5d3c6e3a-0f46-49f3-9d3f-f70f73f2c1a1',
+      threadType: 'po',
+      threadId: '40290e17-8d21-47ba-bef4-5b1f14ea5552',
+      senderType: 'vendor',
+      senderId: null,
+      vendorId: '56737f63-ed92-43ec-91e2-245bc36f1182',
+      recipientVendorId: null,
+      authorName: 'Demo supplier contact',
+      body: 'Synthetic supplier reply. No email was sent.',
+      attachments: [],
+      createdAt: '2026-08-29T12:00:00.000Z',
+    },
+  ];
+
+  const { result } = await runWithMockedRequest(jsonResponse(messages), () =>
+    api.messages.list('po', '40290e17-8d21-47ba-bef4-5b1f14ea5552'),
+  );
+
+  assert.deepEqual(result, messages);
+});
+
+test('risk screening lists accept migrated demo vendor UUIDs', async () => {
+  const vendors = [
+    {
+      id: '38f59a8c-ef89-42d0-9a41-19e3b4af1a23',
+      name: 'Acme Supplies Inc.',
+      status: 'active',
+      onboardingStatus: 'not_started',
+      sanctionsStatus: 'untested',
+      sanctionsCheckedAt: null,
+      sanctionsNote: null,
+      contactInfo: {},
+    },
+    {
+      id: '9d07a2e6-7b5c-4f31-b8c9-6e204a5fd712',
+      name: 'TechParts Global',
+      status: 'active',
+      onboardingStatus: 'not_started',
+      sanctionsStatus: 'untested',
+      sanctionsCheckedAt: null,
+      sanctionsNote: null,
+      contactInfo: {},
+    },
+  ];
+
+  const { result } = await runWithMockedRequest(jsonResponse(vendors), () =>
+    api.riskScreening.list(),
+  );
+
+  assert.deepEqual(result, vendors);
+});

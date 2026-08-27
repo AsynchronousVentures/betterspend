@@ -5,8 +5,8 @@ import type { Db } from '@betterspend/db';
 import { spendGuardAlerts } from '@betterspend/db';
 import type { ResourceScope } from '@betterspend/shared';
 import { NotificationsService } from '../notifications/notifications.service';
+import { resolveOrganizationAdminId } from '../../common/demo-identity';
 
-const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
 const DUPLICATE_LOOKBACK_DAYS = 30;
 const NEAR_DUPLICATE_TOLERANCE = 0.05;
 const SPLIT_REQ_WINDOW_HOURS = 6;
@@ -368,17 +368,20 @@ export class SpendGuardService {
       .returning();
 
     if (this.notifications) {
-      await this.notifications
-        .create(
-          orgId,
-          DEMO_ADMIN_USER_ID,
-          'spend_guard_alert',
-          'Spend Guard Alert',
-          `${this.humanize(input.alertType)} detected on ${input.recordType}.`,
-          input.recordType,
-          input.recordId,
-        )
-        .catch(() => {});
+      const adminId = await resolveOrganizationAdminId(this.db, orgId).catch(() => null);
+      if (adminId) {
+        await this.notifications
+          .create(
+            orgId,
+            adminId,
+            'spend_guard_alert',
+            'Spend Guard Alert',
+            `${this.humanize(input.alertType)} detected on ${input.recordType}.`,
+            input.recordType,
+            input.recordId,
+          )
+          .catch(() => {});
+      }
     }
 
     return created;

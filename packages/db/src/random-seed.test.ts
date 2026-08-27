@@ -22,6 +22,7 @@ import { materializeEmailIntakeTokens, materializeWebhookSecrets } from './rando
 import {
   DEMO_APPROVER_ID,
   DEMO_ORG_ID,
+  DEMO_TEST_IDENTITY,
   DEMO_USER_ROLE_FIXTURES,
   DEMO_VENDOR_FIXTURES,
   DEMO_VENDOR_IDS,
@@ -96,6 +97,32 @@ test('generates identical graphs for the same seed and count', () => {
   assert.deepEqual(first, second);
   assert.equal(first.requisitions.length, 12);
   assert.equal(first.requisitionLines.length > first.requisitions.length, true);
+});
+
+test('generates workload rows for the resolved demo identity', () => {
+  const identity = {
+    ...DEMO_TEST_IDENTITY,
+    organizationId: '5d3c6e3a-0f46-49f3-9d3f-f70f73f2c1a1',
+    adminId: '6ed423e0-4097-4d9c-9de8-0d6f32635242',
+    requesterId: '7c827b75-5df5-468b-bb11-1a03dd7f65d8',
+    approverId: '8e1be4dc-bb5e-4dc0-b14a-3c5bb70c1d7b',
+    engineeringDepartmentId: '9f7f77cf-a49c-435c-9d0d-99eaef97f9d0',
+    marketingDepartmentId: 'a6bc4e7e-7020-4d63-9c6f-319a90ce55d8',
+    parentEntityId: 'b8c4a115-3a2b-4c44-8d3f-e8aa0ccf65bd',
+    vendorIds: [
+      'c5b6a8f5-9653-4d44-9e6e-1c9f4b8250e4',
+      'd48fb0cc-d681-46e5-a4dd-7b5dbd15a989',
+    ] as const,
+  };
+  const dataset = generateRandomSeedDataset({ count: 4, seed: 'resolved-identity' }, identity);
+
+  assert.equal(dataset.requisitions[0]?.organizationId, identity.organizationId);
+  assert.equal(dataset.requisitions[0]?.requesterId, identity.requesterId);
+  assert.equal(dataset.vendors[0]?.organizationId, identity.organizationId);
+  assert.equal(
+    dataset.notifications.some((notification) => notification.userId === identity.approverId),
+    true,
+  );
 });
 
 test('seeds representative requisition, purchase order, and invoice approvals', () => {
@@ -538,7 +565,7 @@ test('keeps generated money references and vendor fixture reconciliation keys co
   );
   assert.equal(
     roleByKey.get(demoUserRoleNaturalKey(DEMO_USER_ROLE_FIXTURES[0])),
-    '00000000-0000-0000-0000-000000000040',
+    DEMO_USER_ROLE_FIXTURES[0]?.id,
   );
 });
 

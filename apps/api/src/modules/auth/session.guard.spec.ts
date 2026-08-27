@@ -19,8 +19,21 @@ function contextFor(controller: object, handler: object, request: Record<string,
   };
 }
 
-function createGuard(auth = { api: { getSession: jest.fn(async () => null) } }) {
-  return new SessionGuard(auth as never, {} as never, {} as never);
+function createGuard(
+  auth = { api: { getSession: jest.fn(async () => null) } },
+  db = {
+    select: jest.fn(() => ({
+      from: jest.fn(() => ({
+        where: jest.fn(() => ({
+          limit: jest.fn().mockResolvedValueOnce([{ id: 'demo-org' }]).mockResolvedValueOnce([
+            { id: 'demo-user' },
+          ]),
+        })),
+      })),
+    })),
+  },
+) {
+  return new SessionGuard(auth as never, db as never, {} as never);
 }
 
 describe('SessionGuard', () => {

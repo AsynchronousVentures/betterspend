@@ -32,8 +32,7 @@ import {
   requisitions,
   vendors,
 } from '@betterspend/db';
-
-const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
+import { resolveOrganizationAdminId } from '../../common/demo-identity';
 import { z } from 'zod';
 
 const createPoSchema = z
@@ -833,16 +832,19 @@ export class PurchaseOrdersService {
     const budgetEnforcement = outcome.budgetEnforcement;
     this.webhookEvents.emit(organizationId, 'po.issued', { purchaseOrder: updated });
     if (this.notifications) {
-      this.notifications
-        .create(
-          organizationId,
-          DEMO_ADMIN_USER_ID,
-          'po_issued',
-          'Purchase Order Issued',
-          `Purchase Order ${updated.number} has been issued to the vendor.`,
-          'purchase_order',
-          id,
-        )
+      void resolveOrganizationAdminId(this.db, organizationId)
+        .then((adminId) => {
+          if (!adminId) return;
+          return this.notifications!.create(
+            organizationId,
+            adminId,
+            'po_issued',
+            'Purchase Order Issued',
+            `Purchase Order ${updated.number} has been issued to the vendor.`,
+            'purchase_order',
+            id,
+          );
+        })
         .catch(() => {});
     }
     return { ...updated, budgetEnforcement };
