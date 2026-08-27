@@ -267,6 +267,8 @@ test('shortcuts use a labelled, constrained shared dialog and restore focus afte
   try {
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]');
     assert.ok(dialog);
+    const overlay = dialog.previousElementSibling;
+    assert.ok(overlay);
     const titleId = dialog.getAttribute('aria-labelledby');
     const descriptionId = dialog.getAttribute('aria-describedby');
     assert.ok(titleId);
@@ -275,6 +277,8 @@ test('shortcuts use a labelled, constrained shared dialog and restore focus afte
     assert.match(document.getElementById(descriptionId)?.textContent ?? '', /Global navigation/);
     assert.equal(dialog.classList.contains('max-h-[calc(100dvh-2rem)]'), true);
     assert.equal(dialog.classList.contains('overflow-y-auto'), true);
+    assert.equal(dialog.classList.contains('z-[120]'), true);
+    assert.equal(overlay.classList.contains('z-[120]'), true);
 
     const escape = dispatchKeyInAct(dialog, 'Escape');
     assert.equal(escape.defaultPrevented, true);

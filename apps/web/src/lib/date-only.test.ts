@@ -16,3 +16,13 @@ test('keeps a west-of-UTC date-only due date on its local calendar day', () => {
     else process.env.TZ = previousTimezone;
   }
 });
+
+test('accepts four-digit years below 100 without remapping them to the twentieth century', () => {
+  const today = new Date(2026, 7, 26, 12);
+
+  assert.notEqual(formatDateOnly('0000-01-01'), '—');
+  assert.notEqual(formatDateOnly('0099-12-31'), '—');
+  assert.equal(isDateOnlyBeforeToday('0000-01-01', today), true);
+  assert.equal(isDateOnlyBeforeToday('0099-12-31', today), true);
+  assert.equal(isDateOnlyBeforeToday('0099-02-29', today), false);
+});
