@@ -77,6 +77,9 @@ const scalarReferenceWorkload = {
   approvalDelegationId: '10000000-0000-4000-8000-000000000083',
   notificationPreferenceId: '10000000-0000-4000-8000-000000000084',
   sequenceId: '10000000-0000-4000-8000-000000000085',
+  organizationSettingsAuditId: '10000000-0000-4000-8000-000000000097',
+  sanctionsRegistryAuditId: '10000000-0000-4000-8000-000000000098',
+  otherOrganizationSettingsAuditId: '10000000-0000-4000-8000-000000000099',
 };
 
 const inPlaceIdentityWorkload = {
@@ -124,6 +127,13 @@ const temporarilyDeferredConstraints = [
   'workflow_definitions_updated_by_org_fk',
   'workflow_runtime_publications_request_org_fk',
 ] as const;
+
+// migrate.ts adds these two contracts after SQL migrations. PGlite exercises
+// this migration by itself, so it has the remaining catalog constraints.
+const pgliteDeferredConstraints = temporarilyDeferredConstraints.filter(
+  (constraint) =>
+    constraint !== 'user_roles_custom_role_org_fk' && constraint !== 'user_roles_user_org_fk',
+);
 
 function resolverGraph(
   resolverUserId: string,
@@ -788,6 +798,21 @@ test('rekeys a legacy demo graph without losing workload references', async () =
             '${scalarReferenceWorkload.otherAuditId}', '${migrationWorkload.otherOrganizationId}',
             '${legacyIdentity.adminId}', 'vendor', '${legacyIdentity.vendorIds[0]}',
             'other_organization_identity_reference'
+          ),
+          (
+            '${scalarReferenceWorkload.organizationSettingsAuditId}', '${legacyIdentity.organizationId}',
+            '${legacyIdentity.adminId}', 'organization_settings', '${legacyIdentity.organizationId}',
+            'settings_changed'
+          ),
+          (
+            '${scalarReferenceWorkload.sanctionsRegistryAuditId}', '${legacyIdentity.organizationId}',
+            '${legacyIdentity.adminId}', 'sanctions_registry', '${legacyIdentity.organizationId}',
+            'registry_refreshed'
+          ),
+          (
+            '${scalarReferenceWorkload.otherOrganizationSettingsAuditId}', '${migrationWorkload.otherOrganizationId}',
+            '${migrationWorkload.otherUserId}', 'organization_settings', '${legacyIdentity.organizationId}',
+            'other_organization_settings'
           );
       INSERT INTO documents (
         id, organization_id, uploaded_by, filename, content_type, size_bytes,
@@ -893,6 +918,11 @@ test('rekeys a legacy demo graph without losing workload references', async () =
       WHERE conname IN (${temporarilyDeferredConstraints.map((name) => `'${name}'`).join(', ')})
       ORDER BY conname
     `);
+    assert.deepEqual(
+      constraintsBeforeMigration.rows.map(({ conname }) => conname),
+      [...pgliteDeferredConstraints].sort(),
+      'PGlite must expose every SQL-migration composite organization constraint',
+    );
 
     const migration = await readFile(join(migrationDirectory, upgradeMigration), 'utf8');
     await database.exec(migration);
@@ -1401,6 +1431,9 @@ test('rekeys a legacy demo graph without losing workload references', async () =
       preferenceOrganizationId: string;
       preferenceUserId: string;
       sequenceOrganizationId: string;
+      sequenceEntityType: string;
+      sequenceYear: number;
+      sequenceLastValue: number;
       ocrOrganizationId: string;
       ocrUploadedBy: string;
       otherOcrOrganizationId: string;
@@ -1438,6 +1471,9 @@ test('rekeys a legacy demo graph without losing workload references', async () =
         preference.organization_id AS "preferenceOrganizationId",
         preference.user_id AS "preferenceUserId",
         sequence.organization_id AS "sequenceOrganizationId",
+        sequence.entity_type AS "sequenceEntityType",
+        sequence.year AS "sequenceYear",
+        sequence.last_value AS "sequenceLastValue",
         ocr.organization_id AS "ocrOrganizationId",
         ocr.uploaded_by AS "ocrUploadedBy",
         other_ocr.organization_id AS "otherOcrOrganizationId",
@@ -1505,6 +1541,9 @@ test('rekeys a legacy demo graph without losing workload references', async () =
       preferenceOrganizationId: identity.organizationId,
       preferenceUserId: identity.adminId,
       sequenceOrganizationId: identity.organizationId,
+      sequenceEntityType: 'requisition',
+      sequenceYear: 2026,
+      sequenceLastValue: 1,
       ocrOrganizationId: identity.organizationId,
       ocrUploadedBy: identity.adminId,
       otherOcrOrganizationId: migrationWorkload.otherOrganizationId,
@@ -1610,6 +1649,43 @@ test('rekeys a legacy demo graph without losing workload references', async () =
         organizationId: identity.organizationId,
         actorId: identity.adminId,
         entityId: identity.primaryVendorId,
+      },
+    ]);
+
+    const organizationAuditReferences = await database.query<{
+      kind: string;
+      organizationId: string;
+      actorId: string;
+      entityId: string;
+    }>(`
+      SELECT 'organization_settings' AS kind, organization_id AS "organizationId", user_id AS "actorId", entity_id AS "entityId"
+      FROM audit_log WHERE id = '${scalarReferenceWorkload.organizationSettingsAuditId}'
+      UNION ALL
+      SELECT 'sanctions_registry', organization_id, user_id, entity_id
+      FROM audit_log WHERE id = '${scalarReferenceWorkload.sanctionsRegistryAuditId}'
+      UNION ALL
+      SELECT 'other_organization_settings', organization_id, user_id, entity_id
+      FROM audit_log WHERE id = '${scalarReferenceWorkload.otherOrganizationSettingsAuditId}'
+      ORDER BY kind
+    `);
+    assert.deepEqual(organizationAuditReferences.rows, [
+      {
+        kind: 'organization_settings',
+        organizationId: identity.organizationId,
+        actorId: identity.adminId,
+        entityId: identity.organizationId,
+      },
+      {
+        kind: 'other_organization_settings',
+        organizationId: migrationWorkload.otherOrganizationId,
+        actorId: migrationWorkload.otherUserId,
+        entityId: legacyIdentity.organizationId,
+      },
+      {
+        kind: 'sanctions_registry',
+        organizationId: identity.organizationId,
+        actorId: identity.adminId,
+        entityId: identity.organizationId,
       },
     ]);
 
@@ -1719,6 +1795,10 @@ test('rekeys a legacy demo graph without losing workload references', async () =
                   user_id IN ('${legacyIdentity.requesterId}', '${legacyIdentity.adminId}', '${legacyIdentity.approverId}')
                   OR changes ->> 'requesterId' = '${legacyIdentity.requesterId}'
                   OR metadata ->> 'ownerId' = '${legacyIdentity.adminId}'
+                  OR (
+                    entity_type IN ('organization_settings', 'sanctions_registry')
+                    AND entity_id = '${legacyIdentity.organizationId}'
+                  )
                 )
               ))
         + (SELECT count(*) FROM requisition_templates

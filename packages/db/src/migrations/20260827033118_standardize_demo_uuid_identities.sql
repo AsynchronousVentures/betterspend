@@ -702,6 +702,13 @@ BEGIN
   WHERE audit.organization_id = migrated_org
     AND audit.entity_type = map.kind
     AND audit.entity_id = map.old_id;
+  -- These service-specific audit entity types also point at the organization,
+  -- rather than at a settings or sanctions table row.
+  UPDATE audit_log
+  SET entity_id = migrated_org
+  WHERE organization_id = migrated_org
+    AND entity_id = legacy_org
+    AND entity_type IN ('organization_settings', 'sanctions_registry');
   UPDATE documents AS document
   SET entity_id = map.new_id
   FROM _demo_uuid_map AS map
