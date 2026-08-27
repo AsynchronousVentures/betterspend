@@ -1,13 +1,15 @@
 import { createParamDecorator, ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import type { Request } from 'express';
-import { DEMO_ORG_ID, isDemoModeEnabled } from '../demo-mode';
+import { isDemoModeEnabled } from '../demo-mode';
 
 export function resolveCurrentOrgId(req: Request): string {
   if (req.authUser?.organizationId) return req.authUser.organizationId;
   if (!isDemoModeEnabled()) throw new UnauthorizedException('Authentication required');
 
   const header = req.headers['x-org-id'];
-  return typeof header === 'string' && header ? header : DEMO_ORG_ID;
+  if (typeof header === 'string' && header) return header;
+  if (req.demoOrganizationId) return req.demoOrganizationId;
+  throw new UnauthorizedException('Demo organization is not seeded');
 }
 
 export const CurrentOrgId = createParamDecorator(

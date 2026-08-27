@@ -35,4 +35,16 @@ describe('current request identity', () => {
     expect(resolveCurrentOrgId(request)).toBe('demo-org');
     expect(resolveCurrentUserId(request)).toBe('demo-user');
   });
+
+  it('uses the database-backed demo identity when no headers are provided', () => {
+    process.env.DEMO_MODE = 'true';
+    const request = {
+      headers: {},
+      demoOrganizationId: 'db-org',
+      demoUserId: 'db-user',
+    } as never;
+
+    expect(resolveCurrentOrgId(request)).toBe('db-org');
+    expect(resolveCurrentUserId(request)).toBe('db-user');
+  });
 });

@@ -4,9 +4,11 @@ export const MESSAGE_THREAD_TYPES = ['po', 'rfq', 'grn', 'invoice'] as const;
 
 export const messageThreadTypeSchema = z.enum(MESSAGE_THREAD_TYPES);
 
+const uuidSchema = z.string().uuid();
+
 export const messageAttachmentSchema = z
   .object({
-    documentId: z.string().uuid().optional(),
+    documentId: uuidSchema.optional(),
     url: z.string().url().optional(),
     name: z.string().max(255).optional(),
   })
@@ -17,18 +19,18 @@ export const messageAttachmentSchema = z
 export const postMessageSchema = z.object({
   body: z.string().trim().min(1).max(10_000),
   attachments: z.array(messageAttachmentSchema).max(20).optional(),
-  recipientVendorId: z.string().uuid().optional(),
+  recipientVendorId: uuidSchema.optional(),
 });
 
 export const messageSchema = z.object({
-  id: z.string().uuid(),
-  organizationId: z.string().uuid(),
+  id: uuidSchema,
+  organizationId: uuidSchema,
   threadType: messageThreadTypeSchema,
-  threadId: z.string().uuid(),
+  threadId: uuidSchema,
   senderType: z.enum(['user', 'vendor']),
-  senderId: z.string().uuid().nullable(),
-  vendorId: z.string().uuid().nullable(),
-  recipientVendorId: z.string().uuid().nullable(),
+  senderId: uuidSchema.nullable(),
+  vendorId: uuidSchema.nullable(),
+  recipientVendorId: uuidSchema.nullable(),
   authorName: z.string(),
   body: z.string(),
   attachments: z.array(messageAttachmentSchema),

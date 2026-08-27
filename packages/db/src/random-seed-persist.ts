@@ -1,7 +1,7 @@
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { and, count, eq, like, sql } from 'drizzle-orm';
 import { db, type DbTransaction } from './client';
-import { DEMO_ORG_ID, upsertDemoFixtures } from './demo-fixtures';
+import { upsertDemoFixtures } from './demo-fixtures';
 import { materializeEmailIntakeTokens, materializeWebhookSecrets } from './random-seed-secrets';
 import {
   approvalActions,
@@ -109,13 +109,17 @@ async function insertBatches<T extends PgTable>(
   }
 }
 
-async function countExistingSeedRequisitions(tx: DbTransaction, seed: string): Promise<number> {
+async function countExistingSeedRequisitions(
+  tx: DbTransaction,
+  seed: string,
+  organizationId: string,
+): Promise<number> {
   const [result] = await tx
     .select({ count: count() })
     .from(requisitions)
     .where(
       and(
-        eq(requisitions.organizationId, DEMO_ORG_ID),
+        eq(requisitions.organizationId, organizationId),
         like(requisitions.number, `${randomSeedRequisitionPrefix(seed)}%`),
       ),
     );
@@ -127,33 +131,39 @@ export async function persistRandomSeed(
   options: Parameters<typeof generateRandomSeedDataset>[0],
 ): Promise<RandomSeedDataset['summary']> {
   assertRandomSeedAllowed();
-  const dataset = generateRandomSeedDataset(options);
-
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     const metadataKey = randomSeedMetadataKey(options.seed);
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${metadataKey}, 0))`);
+    const identity = await upsertDemoFixtures(tx);
+    const dataset = generateRandomSeedDataset(options, identity);
     let needsMetadata = false;
     const [metadata] = await tx
       .select({ value: systemSettings.value })
       .from(systemSettings)
       .where(
-        and(eq(systemSettings.organizationId, DEMO_ORG_ID), eq(systemSettings.key, metadataKey)),
+        and(
+          eq(systemSettings.organizationId, identity.organizationId),
+          eq(systemSettings.key, metadataKey),
+        ),
       );
     if (metadata) {
       assertRandomSeedMetadataMatches(options.seed, options.count, metadata.value);
     } else {
-      const existingCount = await countExistingSeedRequisitions(tx, options.seed);
+      const existingCount = await countExistingSeedRequisitions(
+        tx,
+        options.seed,
+        identity.organizationId,
+      );
       assertRandomSeedCountMatches(options.seed, options.count, existingCount);
       needsMetadata = true;
     }
 
-    await upsertDemoFixtures(tx);
     if (needsMetadata) {
       await tx
         .insert(systemSettings)
         .values({
           id: stableUuid(options.seed, 'seed-metadata', 0),
-          organizationId: DEMO_ORG_ID,
+          organizationId: identity.organizationId,
           key: metadataKey,
           value: encodeRandomSeedMetadata(options.count),
         })
@@ -236,9 +246,9 @@ export async function persistRandomSeed(
     await insertBatches(tx, integrationConnections, dataset.integrationConnections);
     await insertBatches(tx, syncRecords, dataset.syncRecords);
     await insertBatches(tx, approvalDelegations, dataset.approvalDelegations);
-  });
 
-  return dataset.summary;
+    return dataset.summary;
+  });
 }
 
 export async function seedRandomWorkload(

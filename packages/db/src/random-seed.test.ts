@@ -20,14 +20,16 @@ import {
 } from './random-seed';
 import { materializeEmailIntakeTokens, materializeWebhookSecrets } from './random-seed-secrets';
 import {
-  DEMO_APPROVER_ID,
-  DEMO_ORG_ID,
+  DEMO_TEST_IDENTITY,
   DEMO_USER_ROLE_FIXTURES,
   DEMO_VENDOR_FIXTURES,
-  DEMO_VENDOR_IDS,
   demoUserRoleNaturalKey,
   demoVendorNaturalKey,
 } from './demo-fixtures';
+
+function generateTestDataset(options: Parameters<typeof generateRandomSeedDataset>[0]) {
+  return generateRandomSeedDataset(options, DEMO_TEST_IDENTITY);
+}
 
 test('parses defaults and explicit workload options', () => {
   assert.deepEqual(parseRandomSeedArgs([]), {
@@ -91,15 +93,41 @@ test('keeps seeded fractions in a half-open interval', () => {
 });
 
 test('generates identical graphs for the same seed and count', () => {
-  const first = generateRandomSeedDataset({ count: 12, seed: '42' });
-  const second = generateRandomSeedDataset({ count: 12, seed: '42' });
+  const first = generateTestDataset({ count: 12, seed: '42' });
+  const second = generateTestDataset({ count: 12, seed: '42' });
   assert.deepEqual(first, second);
   assert.equal(first.requisitions.length, 12);
   assert.equal(first.requisitionLines.length > first.requisitions.length, true);
 });
 
+test('generates workload rows for the resolved demo identity', () => {
+  const identity = {
+    ...DEMO_TEST_IDENTITY,
+    organizationId: '5d3c6e3a-0f46-49f3-9d3f-f70f73f2c1a1',
+    adminId: '6ed423e0-4097-4d9c-9de8-0d6f32635242',
+    requesterId: '7c827b75-5df5-468b-bb11-1a03dd7f65d8',
+    approverId: '8e1be4dc-bb5e-4dc0-b14a-3c5bb70c1d7b',
+    engineeringDepartmentId: '9f7f77cf-a49c-435c-9d0d-99eaef97f9d0',
+    marketingDepartmentId: 'a6bc4e7e-7020-4d63-9c6f-319a90ce55d8',
+    parentEntityId: 'b8c4a115-3a2b-4c44-8d3f-e8aa0ccf65bd',
+    vendorIds: [
+      'c5b6a8f5-9653-4d44-9e6e-1c9f4b8250e4',
+      'd48fb0cc-d681-46e5-a4dd-7b5dbd15a989',
+    ] as const,
+  };
+  const dataset = generateRandomSeedDataset({ count: 4, seed: 'resolved-identity' }, identity);
+
+  assert.equal(dataset.requisitions[0]?.organizationId, identity.organizationId);
+  assert.equal(dataset.requisitions[0]?.requesterId, identity.requesterId);
+  assert.equal(dataset.vendors[0]?.organizationId, identity.organizationId);
+  assert.equal(
+    dataset.notifications.some((notification) => notification.userId === identity.approverId),
+    true,
+  );
+});
+
 test('seeds representative requisition, purchase order, and invoice approvals', () => {
-  const dataset = generateRandomSeedDataset({ count: 500, seed: 'approval-fixtures' });
+  const dataset = generateTestDataset({ count: 500, seed: 'approval-fixtures' });
   const pendingTypes = new Set(
     dataset.approvalRequests
       .filter((request) => request.status === 'pending')
@@ -122,14 +150,14 @@ test('seeds representative requisition, purchase order, and invoice approvals', 
 });
 
 test('changes generated values for a different seed', () => {
-  const first = generateRandomSeedDataset({ count: 8, seed: 'alpha' });
-  const second = generateRandomSeedDataset({ count: 8, seed: 'beta' });
+  const first = generateTestDataset({ count: 8, seed: 'alpha' });
+  const second = generateTestDataset({ count: 8, seed: 'beta' });
   assert.notEqual(first.requisitions[0]?.id, second.requisitions[0]?.id);
   assert.notEqual(first.requisitions[0]?.number, second.requisitions[0]?.number);
 });
 
 test('keeps IDs and business numbers unique', () => {
-  const dataset = generateRandomSeedDataset({ count: 50, seed: 'unique-test' });
+  const dataset = generateTestDataset({ count: 50, seed: 'unique-test' });
   const ids = dataset.requisitions.map((row) => row.id as string);
   const numbers = dataset.requisitions.map((row) => row.number as string);
   assert.equal(new Set(ids).size, ids.length);
@@ -140,7 +168,7 @@ test('keeps IDs and business numbers unique', () => {
 });
 
 test('keeps requisition totals and cross references coherent', () => {
-  const dataset = generateRandomSeedDataset({ count: 30, seed: 'integrity-test' });
+  const dataset = generateTestDataset({ count: 30, seed: 'integrity-test' });
   for (const requisition of dataset.requisitions) {
     const lines = dataset.requisitionLines.filter((line) => line.requisitionId === requisition.id);
     const total = lines.reduce((sum, line) => sum + Number(line.totalPrice), 0);
@@ -163,13 +191,13 @@ test('keeps requisition totals and cross references coherent', () => {
 
 test('uses migration-safe budget enforcement modes', () => {
   const allowedModes = new Set(['hard_stop', 'owner_approval', 'visibility_only']);
-  const dataset = generateRandomSeedDataset({ count: 12, seed: 'budget-mode-test' });
+  const dataset = generateTestDataset({ count: 12, seed: 'budget-mode-test' });
   for (const budget of dataset.budgets)
     assert.equal(allowedModes.has(budget.enforcementMode ?? ''), true);
 });
 
 test('materializes webhook secrets outside the deterministic graph', () => {
-  const dataset = generateRandomSeedDataset({ count: 4, seed: 'webhook-secret-test' });
+  const dataset = generateTestDataset({ count: 4, seed: 'webhook-secret-test' });
   const source = dataset.webhookEndpoints[0];
   assert.ok(source);
   assert.equal(Object.prototype.hasOwnProperty.call(source, 'secret'), false);
@@ -179,7 +207,7 @@ test('materializes webhook secrets outside the deterministic graph', () => {
 });
 
 test('materializes email intake tokens outside the deterministic graph', () => {
-  const dataset = generateRandomSeedDataset({ count: 4, seed: 'email-token-test' });
+  const dataset = generateTestDataset({ count: 4, seed: 'email-token-test' });
   const source = dataset.emailIntakeAddresses[0];
   assert.ok(source);
   assert.equal(Object.prototype.hasOwnProperty.call(source, 'token'), false);
@@ -191,7 +219,7 @@ test('materializes email intake tokens outside the deterministic graph', () => {
 });
 
 test('keeps core lifecycle timestamps and money allocations coherent', () => {
-  const dataset = generateRandomSeedDataset({ count: 500, seed: 'temporal-money-test' });
+  const dataset = generateTestDataset({ count: 500, seed: 'temporal-money-test' });
   const requisitionsById = new Map(dataset.requisitions.map((row) => [row.id, row]));
   const purchaseOrdersById = new Map(dataset.purchaseOrders.map((row) => [row.id, row]));
   const receiptsByPoId = new Map(dataset.goodsReceipts.map((row) => [row.purchaseOrderId, row]));
@@ -332,7 +360,7 @@ test('keeps core lifecycle timestamps and money allocations coherent', () => {
 });
 
 test('normalizes every generated created and updated timestamp pair', () => {
-  const dataset = generateRandomSeedDataset({ count: 250, seed: 'timestamp-pairs' });
+  const dataset = generateTestDataset({ count: 250, seed: 'timestamp-pairs' });
   for (const tableRows of Object.values(dataset)) {
     if (!Array.isArray(tableRows)) continue;
     for (const row of tableRows) {
@@ -344,7 +372,7 @@ test('normalizes every generated created and updated timestamp pair', () => {
 });
 
 test('keeps RFQ award state consistent with cancellation and responses', () => {
-  const dataset = generateRandomSeedDataset({ count: 120, seed: 'rfq-state-test' });
+  const dataset = generateTestDataset({ count: 120, seed: 'rfq-state-test' });
   for (const rfq of dataset.rfqRequests) {
     const responses = dataset.rfqResponses.filter((response) => response.rfqId === rfq.id);
     const awardedResponses = responses.filter((response) => response.awarded);
@@ -363,7 +391,7 @@ test('keeps RFQ award state consistent with cancellation and responses', () => {
 });
 
 test('keeps generated money references and vendor fixture reconciliation keys coherent', () => {
-  const dataset = generateRandomSeedDataset({ count: 500, seed: 'secondary-coherence-test' });
+  const dataset = generateTestDataset({ count: 500, seed: 'secondary-coherence-test' });
   const cents = (value: string | number | null | undefined): number =>
     Math.round(Number(value ?? 0) * 100);
   const toBaseCents = (amountCents: number, currency: string): number =>
@@ -463,7 +491,9 @@ test('keeps generated money references and vendor fixture reconciliation keys co
     assert.ok(requisition);
     assert.equal(
       notification.userId,
-      requisition.status === 'pending_approval' ? DEMO_APPROVER_ID : requisition.requesterId,
+      requisition.status === 'pending_approval'
+        ? DEMO_TEST_IDENTITY.approverId
+        : requisition.requesterId,
     );
   }
 
@@ -498,7 +528,7 @@ test('keeps generated money references and vendor fixture reconciliation keys co
     if (invoice.status === 'pending_approval') {
       assert.equal(notification.type, 'approval_request');
       assert.equal(notification.title, 'Approval needed for invoice');
-      assert.equal(notification.userId, DEMO_APPROVER_ID);
+      assert.equal(notification.userId, DEMO_TEST_IDENTITY.approverId);
     } else if (invoice.status === 'pending_match') {
       assert.equal(notification.type, 'invoice_exception');
       assert.equal(notification.title, 'Invoice match requires review');
@@ -526,24 +556,24 @@ test('keeps generated money references and vendor fixture reconciliation keys co
   assert.equal(
     vendorByKey.get(
       demoVendorNaturalKey({
-        organizationId: DEMO_ORG_ID,
+        organizationId: DEMO_TEST_IDENTITY.organizationId,
         code: 'ACME-SUP',
         name: 'legacy vendor row',
       }),
     ),
-    DEMO_VENDOR_IDS[0],
+    DEMO_TEST_IDENTITY.vendorIds[0],
   );
   const roleByKey = new Map(
     DEMO_USER_ROLE_FIXTURES.map((role) => [demoUserRoleNaturalKey(role), role.id]),
   );
   assert.equal(
     roleByKey.get(demoUserRoleNaturalKey(DEMO_USER_ROLE_FIXTURES[0])),
-    '00000000-0000-0000-0000-000000000040',
+    DEMO_USER_ROLE_FIXTURES[0]?.id,
   );
 });
 
 test('keeps minimum spend guard alerts linked to a generated requisition', () => {
-  const dataset = generateRandomSeedDataset({ count: 1, seed: 'spend-guard-count-one' });
+  const dataset = generateTestDataset({ count: 1, seed: 'spend-guard-count-one' });
   const requisitionIds = new Set(dataset.requisitions.map((row) => row.id));
   assert.equal(dataset.spendGuardAlerts.length >= 8, true);
   for (const alert of dataset.spendGuardAlerts)
@@ -551,7 +581,7 @@ test('keeps minimum spend guard alerts linked to a generated requisition', () =>
 });
 
 test('converts payable invoices to base-currency payment amounts and omits empty runs', () => {
-  const dataset = generateRandomSeedDataset({ count: 500, seed: 'payment-currency-test' });
+  const dataset = generateTestDataset({ count: 500, seed: 'payment-currency-test' });
   const invoicesById = new Map(dataset.invoices.map((invoice) => [invoice.id, invoice]));
   const cents = (value: string | number | null | undefined): number =>
     Math.round(Number(value ?? 0) * 100);
@@ -575,7 +605,7 @@ test('converts payable invoices to base-currency payment amounts and omits empty
     );
   }
 
-  const noPayables = generateRandomSeedDataset({ count: 1, seed: 'payment-empty-test' });
+  const noPayables = generateTestDataset({ count: 1, seed: 'payment-empty-test' });
   assert.equal(noPayables.paymentRuns.length, 0);
   assert.equal(noPayables.paymentRunInvoices.length, 0);
 });

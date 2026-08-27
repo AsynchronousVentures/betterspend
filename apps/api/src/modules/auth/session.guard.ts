@@ -12,7 +12,9 @@ import type { AuthInstance, AuthSession, AuthUser } from '../../auth/auth.instan
 import { DB_TOKEN } from '../../database/database.module';
 import { and, eq, gt } from 'drizzle-orm';
 import * as schema from '@betterspend/db';
+import type { Db } from '@betterspend/db';
 import { isDemoModeEnabled } from '../../common/demo-mode';
+import { MissingDemoIdentityError, resolveDemoIdentity } from '../../common/demo-identity';
 import { AccessPolicyService, type AccessPolicy } from './access-policy';
 
 // Extend Express Request to carry our user type
@@ -23,6 +25,8 @@ declare global {
       authSessionId?: string;
       authUser?: AuthUser;
       authAccess?: AccessPolicy;
+      demoOrganizationId?: string;
+      demoUserId?: string;
     }
   }
 }
@@ -31,8 +35,7 @@ declare global {
 export class SessionGuard implements CanActivate {
   constructor(
     @Inject(AUTH_INSTANCE) private readonly auth: AuthInstance,
-    @Inject(DB_TOKEN)
-    private readonly db: ReturnType<typeof import('drizzle-orm/postgres-js').drizzle>,
+    @Inject(DB_TOKEN) private readonly db: Db,
     private readonly accessPolicy: AccessPolicyService,
   ) {}
 
@@ -43,7 +46,7 @@ export class SessionGuard implements CanActivate {
     const req = ctx.switchToHttp().getRequest<Request>();
     const token = this.extractToken(req);
 
-    const db = this.db as any;
+    const db = this.db;
     let session: AuthSession | undefined;
     let user: AuthUser | undefined;
     if (token) {
@@ -63,7 +66,19 @@ export class SessionGuard implements CanActivate {
       }
       const cookieSession = await this.auth.api.getSession({ headers });
       if (!cookieSession) {
-        if (isDemoModeEnabled()) return true;
+        if (isDemoModeEnabled()) {
+          try {
+            const identity = await resolveDemoIdentity(this.db);
+            req.demoOrganizationId = identity.organizationId;
+            req.demoUserId = identity.userId;
+          } catch (error) {
+            if (error instanceof MissingDemoIdentityError) {
+              throw new UnauthorizedException('Demo identity is not seeded');
+            }
+            throw error;
+          }
+          return true;
+        }
         throw new UnauthorizedException('Authentication required');
       }
       session = cookieSession.session;

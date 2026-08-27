@@ -18,6 +18,7 @@ import {
   purchaseOrders,
   systemSettings,
 } from '@betterspend/db';
+import { resolveOrganizationAdminId } from '../../common/demo-identity';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ApprovalDelegationsService } from '../approval-delegations/approval-delegations.service';
@@ -90,10 +91,6 @@ function uuidArray(ids: string[]) {
     sql`, `,
   )}]::uuid[]`;
 }
-
-const DEMO_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
-// System user ID used for auto-approval actions (must be a valid UUID in users table)
-const SYSTEM_USER_ID = DEMO_ADMIN_USER_ID;
 
 export interface RequiredApproval {
   approverId: string;
@@ -496,25 +493,34 @@ export class ApprovalEngineService {
       .sort((left, right) => left.stepOrder - right.stepOrder)[0];
     const resolvedInitialApproverId =
       'initialApproverId' in result ? result.initialApproverId : undefined;
-    const initialApproverId =
-      resolvedInitialApproverId ??
-      firstRuleStep?.approverId ??
-      (hasRuleStep ? DEMO_ADMIN_USER_ID : requiredApproval?.approverId);
-    if (!initialApproverId) return;
     const approvalDescription = hasRuleStep
       ? `A ${entityLabel.toLowerCase()} requires your approval (rule: ${result.rule!.name}).`
       : (requiredApproval?.reason ?? 'Approval is required.');
-    this.notifications
-      .create(
-        organizationId,
-        initialApproverId,
-        'approval_request',
-        `Approval Required: ${entityLabel}`,
-        approvalDescription,
-        entityType,
-        entityId,
-      )
-      .catch(() => {});
+    const notify = (initialApproverId: string) =>
+      this.notifications!
+        .create(
+          organizationId,
+          initialApproverId,
+          'approval_request',
+          `Approval Required: ${entityLabel}`,
+          approvalDescription,
+          entityType,
+          entityId,
+        )
+        .catch(() => {});
+    const initialApproverId =
+      resolvedInitialApproverId ?? firstRuleStep?.approverId ?? requiredApproval?.approverId;
+    if (initialApproverId) {
+      void notify(initialApproverId);
+      return;
+    }
+    if (hasRuleStep) {
+      void resolveOrganizationAdminId(this.db, organizationId)
+        .then((adminId) => {
+          if (adminId) return notify(adminId);
+        })
+        .catch(() => {});
+    }
   }
 
   private runInTransaction<T>(
@@ -704,6 +710,10 @@ export class ApprovalEngineService {
 
     // Create an approval request in auto-approved state and record the action
     const requestId = await this.runInTransaction(transaction, async (tx) => {
+      const systemUserId = await resolveOrganizationAdminId(tx, organizationId);
+      if (!systemUserId) {
+        throw new BadRequestException('No active organization administrator is configured');
+      }
       await beforePersist?.(tx);
       const [req] = await tx
         .insert(approvalRequests)
@@ -731,7 +741,7 @@ export class ApprovalEngineService {
       await tx.insert(approvalActions).values({
         approvalRequestId: req.id,
         stepOrder: 1,
-        approverId: SYSTEM_USER_ID,
+        approverId: systemUserId,
         action: 'approved',
         comment: notifyManager ? note : 'Auto-approved: below configured threshold',
       });

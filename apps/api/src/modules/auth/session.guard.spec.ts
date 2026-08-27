@@ -19,8 +19,28 @@ function contextFor(controller: object, handler: object, request: Record<string,
   };
 }
 
-function createGuard(auth = { api: { getSession: jest.fn(async () => null) } }) {
-  return new SessionGuard(auth as never, {} as never, {} as never);
+function createGuard(
+  auth = { api: { getSession: jest.fn(async () => null) } },
+  db = demoIdentityDatabase(),
+) {
+  return new SessionGuard(auth as never, db as never, {} as never);
+}
+
+function selectResult(rows: unknown[]) {
+  return {
+    from: jest.fn(() => ({
+      where: jest.fn(() => ({ limit: jest.fn().mockResolvedValue(rows) })),
+    })),
+  };
+}
+
+function demoIdentityDatabase() {
+  return {
+    select: jest
+      .fn()
+      .mockReturnValueOnce(selectResult([{ id: 'demo-org' }]))
+      .mockReturnValueOnce(selectResult([{ id: 'demo-user' }])),
+  };
 }
 
 describe('SessionGuard', () => {
@@ -63,6 +83,41 @@ describe('SessionGuard', () => {
         }) as never,
       ),
     ).resolves.toBe(true);
+  });
+
+  it('rejects a missing demo identity as unauthorized', async () => {
+    process.env.DEMO_MODE = 'true';
+    const guard = createGuard(undefined, {
+      select: jest.fn(() => selectResult([])),
+    });
+
+    await expect(
+      guard.canActivate(
+        contextFor(UnclassifiedController, UnclassifiedController.prototype.handler, {
+          headers: {},
+        }) as never,
+      ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('preserves database failures while resolving the demo identity', async () => {
+    process.env.DEMO_MODE = 'true';
+    const databaseError = new Error('database unavailable');
+    const guard = createGuard(undefined, {
+      select: jest.fn(() => ({
+        from: jest.fn(() => ({
+          where: jest.fn(() => ({ limit: jest.fn().mockRejectedValue(databaseError) })),
+        })),
+      })),
+    });
+
+    await expect(
+      guard.canActivate(
+        contextFor(UnclassifiedController, UnclassifiedController.prototype.handler, {
+          headers: {},
+        }) as never,
+      ),
+    ).rejects.toBe(databaseError);
   });
 
   it('rejects an inactive user for an otherwise valid bearer session', async () => {

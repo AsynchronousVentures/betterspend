@@ -5,6 +5,7 @@ import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { aiProviderConnections, aiProviderOauthStates } from '@betterspend/db';
 import { AuditService } from '../audit/audit.service';
+import { resolveOrganizationAdminId } from '../../common/demo-identity';
 import { CredentialCryptoService } from './credential-crypto.service';
 import {
   PROVIDER_DEFINITIONS,
@@ -300,9 +301,16 @@ export class AiProvidersService {
       .set({ consumedAt: new Date() })
       .where(eq(aiProviderOauthStates.id, oauthState.id));
 
+    const createdBy =
+      oauthState.createdBy ??
+      (await resolveOrganizationAdminId(this.db, oauthState.organizationId)) ??
+      (() => {
+        throw new BadRequestException('No active organization administrator is configured');
+      })();
+
     await this.saveApiKey(
       oauthState.organizationId,
-      oauthState.createdBy ?? '00000000-0000-0000-0000-000000000002',
+      createdBy,
       'openrouter',
       { apiKey: data.key },
       'oauth',
