@@ -2,6 +2,47 @@
 -- Parents are cloned first, then foreign-key references move to the clones.
 -- This keeps non-deferrable constraints valid throughout the migration.
 
+-- Workflow documents have a few nested resolver references. This remaps only
+-- exact userId values, never free-form strings or arbitrary JSON keys.
+CREATE OR REPLACE FUNCTION pg_temp.remap_workflow_resolver_user_id(
+  document jsonb,
+  old_id text,
+  new_id text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+STRICT
+AS $function$
+BEGIN
+  CASE jsonb_typeof(document)
+    WHEN 'object' THEN
+      RETURN COALESCE(
+        (
+          SELECT jsonb_object_agg(
+            entry.key,
+            CASE
+              WHEN entry.key = 'userId' AND entry.value = to_jsonb(old_id) THEN to_jsonb(new_id)
+              ELSE pg_temp.remap_workflow_resolver_user_id(entry.value, old_id, new_id)
+            END
+          )
+          FROM jsonb_each(document) AS entry(key, value)
+        ),
+        '{}'::jsonb
+      );
+    WHEN 'array' THEN
+      RETURN COALESCE(
+        (
+          SELECT jsonb_agg(pg_temp.remap_workflow_resolver_user_id(entry.value, old_id, new_id))
+          FROM jsonb_array_elements(document) AS entry(value)
+        ),
+        '[]'::jsonb
+      );
+    ELSE
+      RETURN document;
+  END CASE;
+END;
+$function$;
+
 DO $migration$
 DECLARE
   legacy_org uuid := '00000000-0000-0000-0000-000000000001';
@@ -326,6 +367,13 @@ BEGIN
   ALTER TABLE email_intake_attachments
     ALTER CONSTRAINT email_intake_attachments_message_org_fk DEFERRABLE INITIALLY IMMEDIATE,
     ALTER CONSTRAINT email_intake_attachments_item_org_fk DEFERRABLE INITIALLY IMMEDIATE;
+  ALTER TABLE sync_records
+    ALTER CONSTRAINT sync_records_connection_org_fk DEFERRABLE INITIALLY IMMEDIATE;
+  ALTER TABLE budget_commitment_events
+    ALTER CONSTRAINT budget_commitment_events_budget_org_fk DEFERRABLE INITIALLY IMMEDIATE,
+    ALTER CONSTRAINT budget_commitment_events_requisition_org_fk DEFERRABLE INITIALLY IMMEDIATE,
+    ALTER CONSTRAINT budget_commitment_events_purchase_order_org_fk DEFERRABLE INITIALLY IMMEDIATE,
+    ALTER CONSTRAINT budget_commitment_events_invoice_org_fk DEFERRABLE INITIALLY IMMEDIATE;
   ALTER TABLE workflow_definitions
     ALTER CONSTRAINT workflow_definitions_published_version_org_fk DEFERRABLE INITIALLY IMMEDIATE;
   ALTER TABLE workflow_definition_versions
@@ -344,6 +392,11 @@ BEGIN
   SET CONSTRAINTS
     email_intake_attachments_message_org_fk,
     email_intake_attachments_item_org_fk,
+    sync_records_connection_org_fk,
+    budget_commitment_events_budget_org_fk,
+    budget_commitment_events_requisition_org_fk,
+    budget_commitment_events_purchase_order_org_fk,
+    budget_commitment_events_invoice_org_fk,
     workflow_definitions_published_version_org_fk,
     workflow_definition_versions_definition_org_fk,
     workflow_definition_versions_published_by_org_fk,
@@ -446,9 +499,65 @@ BEGIN
     uuid_cases
   );
 
+  -- Only workflow resolver userId fields may contain nested fixture identities.
+  -- The version trigger remains disabled until this guarded rewrite is complete.
+  FOR map_record IN
+    SELECT old_id, new_id
+    FROM _demo_uuid_map
+    WHERE old_id IN (
+      '00000000-0000-0000-0000-000000000002'::uuid,
+      '00000000-0000-0000-0000-000000000003'::uuid,
+      '00000000-0000-0000-0000-000000000004'::uuid
+    )
+  LOOP
+    UPDATE workflow_definitions
+    SET current_draft = pg_temp.remap_workflow_resolver_user_id(
+      current_draft,
+      map_record.old_id::text,
+      map_record.new_id::text
+    )
+    WHERE organization_id = migrated_org
+      AND current_draft IS DISTINCT FROM pg_temp.remap_workflow_resolver_user_id(
+        current_draft,
+        map_record.old_id::text,
+        map_record.new_id::text
+      );
+
+    UPDATE workflow_definition_versions
+    SET
+      graph_json = pg_temp.remap_workflow_resolver_user_id(
+        graph_json,
+        map_record.old_id::text,
+        map_record.new_id::text
+      ),
+      executable_json = pg_temp.remap_workflow_resolver_user_id(
+        executable_json,
+        map_record.old_id::text,
+        map_record.new_id::text
+      )
+    WHERE organization_id = migrated_org
+      AND (
+        graph_json IS DISTINCT FROM pg_temp.remap_workflow_resolver_user_id(
+          graph_json,
+          map_record.old_id::text,
+          map_record.new_id::text
+        )
+        OR executable_json IS DISTINCT FROM pg_temp.remap_workflow_resolver_user_id(
+          executable_json,
+          map_record.old_id::text,
+          map_record.new_id::text
+        )
+      );
+  END LOOP;
+
   SET CONSTRAINTS
     email_intake_attachments_message_org_fk,
     email_intake_attachments_item_org_fk,
+    sync_records_connection_org_fk,
+    budget_commitment_events_budget_org_fk,
+    budget_commitment_events_requisition_org_fk,
+    budget_commitment_events_purchase_order_org_fk,
+    budget_commitment_events_invoice_org_fk,
     workflow_definitions_published_version_org_fk,
     workflow_definition_versions_definition_org_fk,
     workflow_definition_versions_published_by_org_fk,
@@ -466,6 +575,13 @@ BEGIN
   ALTER TABLE email_intake_attachments
     ALTER CONSTRAINT email_intake_attachments_message_org_fk NOT DEFERRABLE,
     ALTER CONSTRAINT email_intake_attachments_item_org_fk NOT DEFERRABLE;
+  ALTER TABLE sync_records
+    ALTER CONSTRAINT sync_records_connection_org_fk NOT DEFERRABLE;
+  ALTER TABLE budget_commitment_events
+    ALTER CONSTRAINT budget_commitment_events_budget_org_fk NOT DEFERRABLE,
+    ALTER CONSTRAINT budget_commitment_events_requisition_org_fk NOT DEFERRABLE,
+    ALTER CONSTRAINT budget_commitment_events_purchase_order_org_fk NOT DEFERRABLE,
+    ALTER CONSTRAINT budget_commitment_events_invoice_org_fk NOT DEFERRABLE;
   ALTER TABLE workflow_definitions
     ALTER CONSTRAINT workflow_definitions_published_version_org_fk NOT DEFERRABLE;
   ALTER TABLE workflow_definition_versions
