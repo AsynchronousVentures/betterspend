@@ -11,7 +11,7 @@ export function isPublicPath(pathname: string): boolean {
   );
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Allow public auth pages
@@ -32,5 +32,7 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   // Run on all routes except Next.js internals and public static files
-  matcher: ['/((?!_next/static|_next/image|favicon\\.ico|manifest\\.json|sw\\.js|icon-.*\\.png).*)'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon\\.ico|manifest\\.json|sw\\.js|icon-.*\\.png).*)',
+  ],
 };

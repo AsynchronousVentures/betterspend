@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { use, useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
@@ -125,8 +125,8 @@ function statusVariant(status: string) {
   return 'secondary';
 }
 
-export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const [id, setId] = useState('');
+export default function PurchaseOrderDetailPage(props: { params: Promise<{ id: string }> }) {
+  const { id } = use(props.params);
   const [po, setPo] = useState<PurchaseOrder | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -147,31 +147,28 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
   const releaseDialogTriggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    params.then(({ id: pid }) => {
-      setId(pid);
-      api.purchaseOrders
-        .get(pid)
-        .then((data) => {
-          setPo(data);
-          if (data.poType === 'blanket') {
-            api.purchaseOrders
-              .releases(pid)
-              .then(setReleases)
-              .catch(() => {});
-          }
+    api.purchaseOrders
+      .get(id)
+      .then((data) => {
+        setPo(data);
+        if (data.poType === 'blanket') {
           api.purchaseOrders
-            .receivingSummary(pid)
-            .then(setReceivingLines)
+            .releases(id)
+            .then(setReleases)
             .catch(() => {});
-          api.purchaseOrders
-            .complianceReport(pid)
-            .then(setComplianceReport)
-            .catch(() => {});
-        })
-        .catch(() => setPo(null))
-        .finally(() => setLoading(false));
-    });
-  }, [params]);
+        }
+        api.purchaseOrders
+          .receivingSummary(id)
+          .then(setReceivingLines)
+          .catch(() => {});
+        api.purchaseOrders
+          .complianceReport(id)
+          .then(setComplianceReport)
+          .catch(() => {});
+      })
+      .catch(() => setPo(null))
+      .finally(() => setLoading(false));
+  }, [id]);
 
   async function refresh() {
     const updated = await api.purchaseOrders.get(id);

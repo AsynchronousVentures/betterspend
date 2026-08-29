@@ -1,6 +1,8 @@
 # Next.js 16 migration
 
-Status: ready for implementation
+Status: implemented
+
+Validation: Next.js 16.3.3 Turbopack build, 48 web tests, full preflight, Docker preflight, and standalone container smoke all passed.
 
 ## Goal
 
@@ -43,8 +45,8 @@ The web application uses the App Router exclusively under `apps/web/src/app`; th
 - `apps/web/next.config.ts` contains only `output: 'standalone'`, `outputFileTracingRoot`, and `transpilePackages`. It has no custom Webpack config, `experimental.turbopack`, image config, runtime config, PPR, Cache Components, AMP, or removed `devIndicators` options.
 - `docker/web.Dockerfile` packages `.next/standalone`, `.next/static`, and `public`. The production Turbopack build must preserve this layout.
 - `apps/web/src/middleware.ts` performs token-gated redirects and exports a matcher. `apps/web/src/middleware.test.ts` imports its `isPublicPath` helper. Both names and the exported function need to move to the Proxy convention.
-- Ten dynamic App Router pages accept `params: Promise<{ id: string }>`: approvals, budgets, catalog, contracts, invoices, purchase orders, receiving, requisitions, RFQs, and software licenses. The RFQ page awaits `params`; the client pages resolve it with `.then`. These sites are already compatible with the mandatory async request API.
-- Twelve client pages use `useSearchParams()`. That client hook is not the `searchParams` page prop and needs no async migration.
+- Ten dynamic App Router pages accept `params: Promise<{ id: string }>`: approvals, budgets, catalog, contracts, invoices, purchase orders, receiving, requisitions, RFQs, and software licenses. The RFQ page awaits `params`; nine client detail pages currently resolve it with `.then` and need the manual `use(props.params)` conversion described below.
+- Thirteen client pages use `useSearchParams()`: account verification, addons, GL mappings, inventory, login, payment runs, punchout catalog, new receiving, new requisitions, password reset, search, vendor portal, and workspace settings. That client hook is not the `searchParams` page prop and needs no async migration.
 - There are no imports from `next/headers` or `next/cache`, and no calls to `cookies()`, `headers()`, `draftMode()`, `revalidateTag()`, `cacheLife()`, or `cacheTag()`.
 - `apps/web/src/app/runtime-version/route.ts` explicitly uses `dynamic = 'force-dynamic'` and `revalidate = 0`. Those settings remain valid because this plan leaves Cache Components off.
 - There are no sitemap generators, generated metadata image routes, parallel route slots, Server Actions, or `next/image` imports.
@@ -77,7 +79,7 @@ Apply the mechanical rename, then make the repository names consistent:
 
 Next.js 16 removes the temporary synchronous access supported by Next.js 15 for `params`, `searchParams`, `cookies()`, `headers()`, and `draftMode()`. Metadata image and sitemap generator parameters also become async. See the [async request API migration](https://nextjs.org/docs/app/guides/upgrading/version-16#async-request-apis-breaking-change), [async metadata image parameters](https://nextjs.org/docs/app/guides/upgrading/version-16#async-parameters-for-icon-and-open-graph-image-breaking-change), and [async sitemap IDs](https://nextjs.org/docs/app/guides/upgrading/version-16#async-id-parameter-for-sitemap-breaking-change).
 
-No source change is expected because all ten dynamic page props are already promises and the other request APIs and generators are absent. Still run the async codemod in dry-run mode and search for unresolved codemod markers. Generate route types and let the Next 16 build validate every App Router signature.
+The server RFQ route already awaits `params`. The nine client detail pages need a manual `use(props.params)` conversion. The dry-run async codemod identifies those pages, but its output cannot be applied verbatim because the existing components still call `.then()` on the promise after the wrapper change. Use the dry run as an inventory, convert each stale callback to the resolved params value, and search for unresolved codemod markers. Generate route types and let the Next 16 build validate every App Router signature.
 
 ### ESLint and build behavior
 

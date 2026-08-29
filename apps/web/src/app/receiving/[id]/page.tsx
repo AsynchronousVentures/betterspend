@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { ClipboardCheck, PackageCheck, XCircle } from 'lucide-react';
@@ -35,23 +35,20 @@ function statusVariant(status: string) {
   return 'secondary';
 }
 
-export default function GRNDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const [id, setId] = useState('');
+export default function GRNDetailPage(props: { params: Promise<{ id: string }> }) {
+  const { id } = use(props.params);
   const [grn, setGrn] = useState<ReceivingDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    params.then(({ id: pid }) => {
-      setId(pid);
-      api.receiving
-        .get(pid)
-        .then((data) => setGrn(data))
-        .catch(() => setGrn(null))
-        .finally(() => setLoading(false));
-    });
-  }, [params]);
+    api.receiving
+      .get(id)
+      .then((data) => setGrn(data))
+      .catch(() => setGrn(null))
+      .finally(() => setLoading(false));
+  }, [id]);
 
   async function confirmGRN() {
     setError('');

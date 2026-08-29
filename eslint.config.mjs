@@ -1,13 +1,10 @@
 import { defineConfig, globalIgnores } from 'eslint/config';
-import { FlatCompat } from '@eslint/eslintrc';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import nextCoreWebVitals from 'eslint-config-next/core-web-vitals';
+import nextTypescript from 'eslint-config-next/typescript';
 import tseslint from 'typescript-eslint';
 
-const compat = new FlatCompat({
-  baseDirectory: dirname(fileURLToPath(import.meta.url)),
-});
 const webFiles = ['apps/web/**/*.{js,jsx,ts,tsx}'];
+const scopeNextConfig = (config) => ('ignores' in config ? config : { ...config, files: webFiles });
 
 export default defineConfig([
   globalIgnores([
@@ -17,9 +14,8 @@ export default defineConfig([
     'packages/db/src/migrations/**',
   ]),
   ...tseslint.configs.recommended,
-  ...compat
-    .extends('next/core-web-vitals', 'next/typescript')
-    .map((config) => ({ ...config, files: webFiles })),
+  ...nextCoreWebVitals.map(scopeNextConfig),
+  ...nextTypescript.map(scopeNextConfig),
   {
     // The applications predate this lint baseline. Keep these known classes of
     // legacy debt explicit while enforcing the rest of the recommended rules.
@@ -46,6 +42,15 @@ export default defineConfig([
     ],
     rules: {
       'react-hooks/exhaustive-deps': 'off',
+    },
+  },
+  {
+    // React Hooks 7, included by Next.js 16, flags the existing client
+    // data-loading effects that set state. Migrating those effects is a
+    // separate behavior-sensitive refactor, so keep this exception web-scoped.
+    files: webFiles,
+    rules: {
+      'react-hooks/set-state-in-effect': 'off',
     },
   },
   {

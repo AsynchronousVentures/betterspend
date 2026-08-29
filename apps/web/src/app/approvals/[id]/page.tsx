@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { api } from '../../../lib/api';
@@ -41,8 +41,8 @@ interface ApprovalRequest {
   entitySummary?: ApprovalEntitySummary | null;
 }
 
-export default function ApprovalDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const [id, setId] = useState('');
+export default function ApprovalDetailPage(props: { params: Promise<{ id: string }> }) {
+  const { id } = use(props.params);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [comment, setComment] = useState('');
@@ -50,15 +50,12 @@ export default function ApprovalDetailPage({ params }: { params: Promise<{ id: s
   const [error, setError] = useState('');
 
   useEffect(() => {
-    params.then(({ id: pid }) => {
-      setId(pid);
-      api.approvals
-        .get(pid)
-        .then((data) => setApproval(data))
-        .catch(() => setApproval(null))
-        .finally(() => setLoading(false));
-    });
-  }, [params]);
+    api.approvals
+      .get(id)
+      .then((data) => setApproval(data))
+      .catch(() => setApproval(null))
+      .finally(() => setLoading(false));
+  }, [id]);
 
   async function doAction(action: 'approve' | 'reject') {
     setError('');

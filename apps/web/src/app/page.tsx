@@ -396,7 +396,7 @@ export default function HomePage() {
             </CardHeader>
             <CardContent className="space-y-3">
               {expiringContracts.slice(0, 5).map((contract: any) => {
-                const daysLeft = contract.endDate ? Math.ceil((new Date(contract.endDate).getTime() - Date.now()) / 86400000) : null;
+                const daysLeft = contract.endDate ? Math.ceil((new Date(contract.endDate).getTime() - relativeNow) / 86400000) : null;
                 return (
                   <Link
                     key={contract.id}

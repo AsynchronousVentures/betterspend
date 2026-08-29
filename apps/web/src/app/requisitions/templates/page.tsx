@@ -57,10 +57,6 @@ export default function RequisitionTemplatesPage() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    void load();
-  }, []);
-
   async function load() {
     setLoading(true);
     setError('');
@@ -73,6 +69,10 @@ export default function RequisitionTemplatesPage() {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    void load();
+  }, []);
 
   async function handleDelete(id: string, name: string) {
     if (!window.confirm(`Delete template "${name}"? This cannot be undone.`)) return;

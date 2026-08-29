@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import {
@@ -51,12 +51,10 @@ function statusTone(status: string) {
   return 'secondary';
 }
 
-export default function SoftwareLicenseDetailPage({
-  params,
-}: {
+export default function SoftwareLicenseDetailPage(props: {
   params: Promise<{ id: string }>;
 }) {
-  const [id, setId] = useState('');
+  const { id } = use(props.params);
   const [license, setLicense] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -64,15 +62,12 @@ export default function SoftwareLicenseDetailPage({
   const [actionNote, setActionNote] = useState('');
 
   useEffect(() => {
-    params.then(({ id: value }) => {
-      setId(value);
-      api.softwareLicenses
-        .get(value)
-        .then((data) => setLicense(data))
-        .catch(() => setError('Failed to load software license.'))
-        .finally(() => setLoading(false));
-    });
-  }, [params]);
+    api.softwareLicenses
+      .get(id)
+      .then((data) => setLicense(data))
+      .catch(() => setError('Failed to load software license.'))
+      .finally(() => setLoading(false));
+  }, [id]);
 
   async function applyAction(action: 'renew' | 'renegotiate' | 'cancel') {
     if (!id) return;

@@ -200,7 +200,7 @@ export function GlobalSearch({
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const searchRequestController = useRef(createSearchRequestController()).current;
+  const [searchRequestController] = useState(createSearchRequestController);
   const visibleProductResults = useMemo(
     () => productSearchResults(query, permissions),
     [permissions, query],

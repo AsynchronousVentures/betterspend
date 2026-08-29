@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { use, useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { RefreshCw } from 'lucide-react';
@@ -112,8 +112,8 @@ function scrollToInvoiceSection(sectionId: string) {
   document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-export default function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const [id, setId] = useState('');
+export default function InvoiceDetailPage(props: { params: Promise<{ id: string }> }) {
+  const { id } = use(props.params);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -151,38 +151,35 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
 
   useEffect(() => {
     let cancelled = false;
-    void params.then(({ id: pid }) => {
-      if (cancelled) return;
-      activeInvoiceId.current = pid;
-      exportJobsRequestId.current += 1;
-      setId(pid);
-      setInvoice(null);
-      setGlJobs([]);
-      setGlJobsError(null);
-      setShowExternalPayment(false);
-      setPaymentDate(localDateInputValue());
-      setPaymentMethod('ach');
-      setPaymentReference('');
-      setLoading(true);
-      api.invoices
-        .get(pid)
-        .then((data) => {
-          if (cancelled || activeInvoiceId.current !== pid) return;
-          setInvoice(data);
-          void refreshExportJobs(pid);
-        })
-        .catch(() => {
-          if (!cancelled && activeInvoiceId.current === pid) setInvoice(null);
-        })
-        .finally(() => {
-          if (!cancelled && activeInvoiceId.current === pid) setLoading(false);
-        });
-    });
+    if (cancelled) return;
+    activeInvoiceId.current = id;
+    exportJobsRequestId.current += 1;
+    setInvoice(null);
+    setGlJobs([]);
+    setGlJobsError(null);
+    setShowExternalPayment(false);
+    setPaymentDate(localDateInputValue());
+    setPaymentMethod('ach');
+    setPaymentReference('');
+    setLoading(true);
+    api.invoices
+      .get(id)
+      .then((data) => {
+        if (cancelled || activeInvoiceId.current !== id) return;
+        setInvoice(data);
+        void refreshExportJobs(id);
+      })
+      .catch(() => {
+        if (!cancelled && activeInvoiceId.current === id) setInvoice(null);
+      })
+      .finally(() => {
+        if (!cancelled && activeInvoiceId.current === id) setLoading(false);
+      });
     return () => {
       cancelled = true;
       exportJobsRequestId.current += 1;
     };
-  }, [params, refreshExportJobs]);
+  }, [id, refreshExportJobs]);
 
   async function refresh() {
     const updated = await api.invoices.get(id);
