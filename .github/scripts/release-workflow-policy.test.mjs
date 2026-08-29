@@ -219,10 +219,10 @@ test('restores the API when deployment exits during the final migration sweep', 
     deployScript,
     /\[ "\$api_quiesced" = true \] && \[ "\$new_stack_started" != true \][\s\S]*?compose start api/,
   );
-  assert.match(
-    deployScript,
-    /if ! compose start api; then[\s\S]*?if ! compose up -d api; then[\s\S]*?fi[\s\S]*?fi/,
-  );
+  const recoveryEnd = deployScript.indexOf('\n}\n\ntrap restore_api_on_exit', trap);
+  const recovery = deployScript.slice(trap, recoveryEnd);
+  assert.doesNotMatch(recovery, /compose up -d/);
+  assert.match(recovery, /Failed to restart the existing API container/);
   assert.match(deployScript, /local exit_status=\$\?[\s\S]*?exit "\$exit_status"/);
 });
 

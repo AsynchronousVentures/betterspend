@@ -45,10 +45,7 @@ restore_api_on_exit() {
   if [ "$api_quiesced" = true ] && [ "$new_stack_started" != true ]; then
     echo "Deployment exited before the new stack started; restarting the existing API container..." >&2
     if ! compose start api; then
-      echo "The existing API container is unavailable; recreating it..." >&2
-      if ! compose up -d api; then
-        echo "Failed to recreate the API container." >&2
-      fi
+      echo "Failed to restart the existing API container; refusing to recreate it with the new image." >&2
     fi
   fi
 
