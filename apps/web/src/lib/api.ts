@@ -2,12 +2,41 @@ import {
   messageSchema,
   sanctionsIngestResultSchema,
   screenAllVendorsResultSchema,
+  type CreateRequisitionInput,
   type MessageThreadType,
   type EffectiveAccessDocument,
   vendorScreeningResultSchema,
   vendorScreeningStatusSchema,
 } from '@betterspend/shared';
 import { apiUrl } from './api-url';
+import type {
+  InvoicesApi,
+  InvoiceAgingReport,
+  InvoiceBulkApprovalResult,
+  InvoiceCashFlowWeek,
+  InvoiceDetail,
+  InvoiceInput,
+  InvoiceListItem,
+  InvoiceMatchResponse,
+  InvoiceRecord,
+  PurchaseOrderComplianceReport,
+  PurchaseOrderComplianceResult,
+  PurchaseOrderDetail,
+  PurchaseOrderInput,
+  PurchaseOrderIssueResponse,
+  PurchaseOrderListItem,
+  PurchaseOrderRecord,
+  PurchaseOrderResponse,
+  PurchaseOrdersApi,
+  PurchaseOrderReceivingLine,
+  PurchaseOrderVersion,
+  BlanketRelease,
+  RequisitionDetail,
+  RequisitionListItem,
+  RequisitionRecord,
+  RequisitionsApi,
+  RequisitionSubmission,
+} from './api-contracts';
 import type { ReceivingDetail, ReceivingListItem } from './receiving';
 
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
@@ -298,6 +327,102 @@ export interface VendorDiversitySummary {
     esgRating: string | null;
   }>;
 }
+
+const requisitionsApi = {
+  list: () => apiFetch<RequisitionListItem[]>('/requisitions'),
+  get: (id: string) => apiFetch<RequisitionDetail>(`/requisitions/${id}`),
+  create: (data: CreateRequisitionInput) =>
+    apiFetch<RequisitionDetail>('/requisitions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  submit: (id: string) =>
+    apiFetch<RequisitionSubmission>(`/requisitions/${id}/submit`, { method: 'POST' }),
+  cancel: (id: string) =>
+    apiFetch<RequisitionRecord>(`/requisitions/${id}/cancel`, { method: 'POST' }),
+} satisfies RequisitionsApi;
+
+const purchaseOrdersApi = {
+  list: () => apiFetch<PurchaseOrderListItem[]>(appendEntityId('/purchase-orders')),
+  get: (id: string) => apiFetch<PurchaseOrderDetail>(`/purchase-orders/${id}`),
+  create: (data: PurchaseOrderInput) =>
+    apiFetch<PurchaseOrderResponse>('/purchase-orders', {
+      method: 'POST',
+      body: JSON.stringify(withEntityBody(data)),
+    }),
+  issue: (id: string) =>
+    apiFetch<PurchaseOrderIssueResponse>(`/purchase-orders/${id}/issue`, { method: 'POST' }),
+  cancel: (id: string) =>
+    apiFetch<PurchaseOrderRecord>(`/purchase-orders/${id}/cancel`, { method: 'POST' }),
+  changeOrder: (id: string, data: Parameters<PurchaseOrdersApi['changeOrder']>[1]) =>
+    apiFetch<PurchaseOrderDetail>(`/purchase-orders/${id}/change-order`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  versions: (id: string) => apiFetch<PurchaseOrderVersion[]>(`/purchase-orders/${id}/versions`),
+  releases: (id: string) => apiFetch<BlanketRelease[]>(`/purchase-orders/${id}/releases`),
+  createRelease: (id: string, data: { amount: number; description?: string }) =>
+    apiFetch<BlanketRelease>(`/purchase-orders/${id}/releases`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  cancelRelease: (id: string, releaseId: string) =>
+    apiFetch<BlanketRelease>(`/purchase-orders/${id}/releases/${releaseId}`, {
+      method: 'DELETE',
+    }),
+  receivingSummary: (id: string) =>
+    apiFetch<PurchaseOrderReceivingLine[]>(`/purchase-orders/${id}/receiving-summary`),
+  complianceReport: (id: string) =>
+    apiFetch<PurchaseOrderComplianceReport>(`/purchase-orders/${id}/compliance-report`),
+  checkCompliance: (data: Parameters<PurchaseOrdersApi['checkCompliance']>[0]) =>
+    apiFetch<PurchaseOrderComplianceResult>('/purchase-orders/check-compliance', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  pdf: (id: string) => {
+    const token = getCookie('bs_token');
+    return fetch(apiUrl(`/api/v1/purchase-orders/${id}/pdf`), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  },
+} satisfies PurchaseOrdersApi;
+
+const invoicesApi = {
+  list: () => apiFetch<InvoiceListItem[]>(appendEntityId('/invoices')),
+  get: (id: string) => apiFetch<InvoiceDetail>(`/invoices/${id}`),
+  create: (data: InvoiceInput) =>
+    apiFetch<InvoiceDetail>('/invoices', {
+      method: 'POST',
+      body: JSON.stringify(withEntityBody(data)),
+    }),
+  approve: (id: string) => apiFetch<InvoiceDetail>(`/invoices/${id}/approve`, { method: 'PATCH' }),
+  resolveException: (id: string, data?: { reason?: string }) =>
+    apiFetch<InvoiceDetail>(`/invoices/${id}/resolve-exception`, {
+      method: 'PATCH',
+      body: JSON.stringify(data ?? {}),
+    }),
+  bulkApprove: (ids: string[]) =>
+    apiFetch<InvoiceBulkApprovalResult[]>('/invoices/bulk-approve', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
+  markPaid: (
+    id: string,
+    data: { paymentReference: string; paymentDate: string; paymentMethod: string },
+  ) =>
+    apiFetch<InvoiceDetail>(`/invoices/${id}/mark-paid`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  rerunMatch: (id: string) =>
+    apiFetch<InvoiceMatchResponse>(`/invoices/${id}/match`, { method: 'POST' }),
+  aging: () => apiFetch<InvoiceAgingReport>('/invoices/aging'),
+  cashFlowForecast: () => apiFetch<InvoiceCashFlowWeek[]>('/invoices/cash-flow-forecast'),
+  earlyPaymentOpportunities: () =>
+    apiFetch<Array<InvoiceRecord & { vendor: { id: string; name: string } | null }>>(
+      '/invoices/early-payment-opportunities',
+    ),
+} satisfies InvoicesApi;
 
 export const api = {
   me: {
@@ -604,17 +729,12 @@ export const api = {
     remove: (id: string) => apiFetch<any>(`/tax-codes/${id}`, { method: 'DELETE' }),
   },
   requisitions: {
-    list: () => apiFetch<any[]>('/requisitions'),
-    get: (id: string) => apiFetch<any>(`/requisitions/${id}`),
-    create: (data: unknown) =>
-      apiFetch<any>('/requisitions', { method: 'POST', body: JSON.stringify(data) }),
+    ...requisitionsApi,
     aiParse: (text: string) =>
       apiFetch<AiRequisitionParseResponse>('/requisitions/ai-parse', {
         method: 'POST',
         body: JSON.stringify({ text }),
       }),
-    submit: (id: string) => apiFetch<any>(`/requisitions/${id}/submit`, { method: 'POST' }),
-    cancel: (id: string) => apiFetch<any>(`/requisitions/${id}/cancel`, { method: 'POST' }),
   },
   concierge: {
     policies: () => apiFetch<any[]>('/intake/concierge/policies'),
@@ -648,75 +768,8 @@ export const api = {
         body: JSON.stringify(data ?? {}),
       }),
   },
-  purchaseOrders: {
-    list: () => apiFetch<any[]>(appendEntityId('/purchase-orders')),
-    get: (id: string) => apiFetch<any>(`/purchase-orders/${id}`),
-    create: (data: unknown) =>
-      apiFetch<any>('/purchase-orders', {
-        method: 'POST',
-        body: JSON.stringify(withEntityBody(data)),
-      }),
-    issue: (id: string) => apiFetch<any>(`/purchase-orders/${id}/issue`, { method: 'POST' }),
-    cancel: (id: string) => apiFetch<any>(`/purchase-orders/${id}/cancel`, { method: 'POST' }),
-    changeOrder: (id: string, data: unknown) =>
-      apiFetch<any>(`/purchase-orders/${id}/change-order`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
-    versions: (id: string) => apiFetch<any[]>(`/purchase-orders/${id}/versions`),
-    releases: (id: string) => apiFetch<any[]>(`/purchase-orders/${id}/releases`),
-    createRelease: (id: string, data: { amount: number; description?: string }) =>
-      apiFetch<any>(`/purchase-orders/${id}/releases`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
-    cancelRelease: (id: string, releaseId: string) =>
-      apiFetch<any>(`/purchase-orders/${id}/releases/${releaseId}`, { method: 'DELETE' }),
-    receivingSummary: (id: string) => apiFetch<any[]>(`/purchase-orders/${id}/receiving-summary`),
-    complianceReport: (id: string) => apiFetch<any>(`/purchase-orders/${id}/compliance-report`),
-    checkCompliance: (data: {
-      vendorId: string;
-      unitPrice: number;
-      catalogItemId?: string;
-      description?: string;
-    }) =>
-      apiFetch<any>('/purchase-orders/check-compliance', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
-    pdf: (id: string) => {
-      const token = getCookie('bs_token');
-      return fetch(apiUrl(`/api/v1/purchase-orders/${id}/pdf`), {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-    },
-  },
-  invoices: {
-    list: () => apiFetch<any[]>(appendEntityId('/invoices')),
-    get: (id: string) => apiFetch<any>(`/invoices/${id}`),
-    create: (data: unknown) =>
-      apiFetch<any>('/invoices', { method: 'POST', body: JSON.stringify(withEntityBody(data)) }),
-    approve: (id: string) => apiFetch<any>(`/invoices/${id}/approve`, { method: 'PATCH' }),
-    resolveException: (id: string, data?: { reason?: string }) =>
-      apiFetch<any>(`/invoices/${id}/resolve-exception`, {
-        method: 'PATCH',
-        body: JSON.stringify(data ?? {}),
-      }),
-    bulkApprove: (ids: string[]) =>
-      apiFetch<any[]>('/invoices/bulk-approve', { method: 'POST', body: JSON.stringify({ ids }) }),
-    markPaid: (
-      id: string,
-      data: { paymentReference: string; paymentDate: string; paymentMethod: string },
-    ) =>
-      apiFetch<any>(`/invoices/${id}/mark-paid`, {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      }),
-    rerunMatch: (id: string) => apiFetch<any>(`/invoices/${id}/match`, { method: 'POST' }),
-    aging: () => apiFetch<any>('/invoices/aging'),
-    cashFlowForecast: () => apiFetch<any[]>('/invoices/cash-flow-forecast'),
-    earlyPaymentOpportunities: () => apiFetch<any[]>('/invoices/early-payment-opportunities'),
-  },
+  purchaseOrders: purchaseOrdersApi,
+  invoices: invoicesApi,
   paymentRuns: {
     list: (params?: { status?: string }) =>
       apiFetch<any[]>(

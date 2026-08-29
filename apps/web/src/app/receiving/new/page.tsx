@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ClipboardCheck, PackageCheck } from 'lucide-react';
 import { api } from '../../../lib/api';
+import type { PurchaseOrderListItem } from '../../../lib/api-contracts';
 import { PageHeader } from '../../../components/page-header';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Button } from '../../../components/ui/button';
@@ -27,27 +28,13 @@ import {
 } from '../../../components/ui/table';
 import { Textarea } from '../../../components/ui/textarea';
 
-interface PO {
-  id: string;
-  number: string;
-  status: string;
-  vendor: { name: string } | null;
-  lines: Array<{
-    id: string;
-    lineNumber: string;
-    description: string;
-    quantity: string;
-    quantityReceived: string;
-  }>;
-}
-
 function NewGRNForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const preSelectedPoId = searchParams.get('poId') ?? '';
 
-  const [pos, setPOs] = useState<PO[]>([]);
-  const [selectedPO, setSelectedPO] = useState<PO | null>(null);
+  const [pos, setPOs] = useState<PurchaseOrderListItem[]>([]);
+  const [selectedPO, setSelectedPO] = useState<PurchaseOrderListItem | null>(null);
   const [receivedDate, setReceivedDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
   const [lineQtys, setLineQtys] = useState<Record<string, { received: string; rejected: string }>>({});
@@ -58,7 +45,7 @@ function NewGRNForm() {
     api.purchaseOrders
       .list()
       .then((data) => {
-        const eligible = (Array.isArray(data) ? data : (data as any).data ?? []).filter((po: PO) =>
+        const eligible = data.filter((po) =>
           ['approved', 'issued', 'partially_received'].includes(po.status),
         );
         setPOs(eligible);
@@ -75,7 +62,7 @@ function NewGRNForm() {
       setLineQtys({});
       return;
     }
-    const po = (await api.purchaseOrders.get(poId)) as PO;
+    const po = await api.purchaseOrders.get(poId);
     setSelectedPO(po);
     const qtys: Record<string, { received: string; rejected: string }> = {};
     (po.lines ?? []).forEach((line) => {

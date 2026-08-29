@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api } from '../../../lib/api';
+import type { RequisitionDetail } from '../../../lib/api-contracts';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { DetailActionMenu } from '../../../components/detail-action-menu';
 import { LifecycleStrip } from '../../../components/lifecycle-strip';
@@ -41,35 +42,6 @@ import {
 import { Textarea } from '../../../components/ui/textarea';
 import { restoreFocus } from '../../../lib/accessibility';
 
-interface RequisitionLine {
-  id: string;
-  description: string;
-  qty: string | number;
-  uom: string;
-  unitPrice: string | number;
-}
-
-interface Requisition {
-  id: string;
-  number: string;
-  title: string;
-  description: string | null;
-  status: string;
-  priority: string;
-  currency: string;
-  totalAmount: string | null;
-  neededBy: string | null;
-  createdAt: string;
-  lines: RequisitionLine[];
-  activeApproval?: { id: string; currentStep: number; status: string } | null;
-  purchaseOrders?: { id: string; number: string; status: string }[];
-  commitmentEvents?: {
-    id: string;
-    budgetId: string;
-    budget?: { id: string; name: string } | null;
-  }[];
-}
-
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
   pending_approval: 'Pending Approval',
@@ -95,7 +67,7 @@ function formatCurrency(amount: string | number | null, currency = 'USD') {
 export default function RequisitionDetailPage(props: { params: Promise<{ id: string }> }) {
   const { id } = use(props.params);
   const router = useRouter();
-  const [req, setReq] = useState<Requisition | null>(null);
+  const [req, setReq] = useState<RequisitionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -142,18 +114,18 @@ export default function RequisitionDetailPage(props: { params: Promise<{ id: str
     try {
       const lines = (req.lines ?? []).map((line) => ({
         description: line.description,
-        quantity: Number(line.qty) || 1,
-        unitOfMeasure: line.uom || 'each',
+        quantity: Number(line.quantity) || 1,
+        unitOfMeasure: line.unitOfMeasure || 'each',
         unitPrice: Number(line.unitPrice) || 0,
         requisitionLineId: line.id,
       }));
-      const po = (await api.purchaseOrders.create({
+      const po = await api.purchaseOrders.create({
         vendorId: poVendorId,
         requisitionId: req.id,
         paymentTerms: poPaymentTerms || undefined,
         currency: req.currency,
         lines,
-      })) as any;
+      });
       router.push(`/purchase-orders/${po.id}`);
     } catch (err) {
       setPoError(err instanceof Error ? err.message : 'PO creation failed');
@@ -414,15 +386,15 @@ export default function RequisitionDetailPage(props: { params: Promise<{ id: str
               </TableHeader>
               <TableBody>
                 {lines.map((line, index) => {
-                  const lineTotal = (Number(line.qty) || 0) * (Number(line.unitPrice) || 0);
+                  const lineTotal = (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
                   return (
                     <TableRow key={line.id}>
                       <TableCell className="text-muted-foreground">{index + 1}</TableCell>
                       <TableCell className="font-medium text-foreground">
                         {line.description}
                       </TableCell>
-                      <TableCell>{Number(line.qty)}</TableCell>
-                      <TableCell>{line.uom}</TableCell>
+                      <TableCell>{Number(line.quantity)}</TableCell>
+                      <TableCell>{line.unitOfMeasure}</TableCell>
                       <TableCell>{formatCurrency(line.unitPrice, req.currency)}</TableCell>
                       <TableCell className="font-medium text-foreground">
                         {formatCurrency(lineTotal, req.currency)}

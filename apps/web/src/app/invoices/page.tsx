@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, Download, FileSpreadsheet, Inbox, Plus, Upload } from 'lucide-react';
 import { api, loadFailureState } from '../../lib/api';
+import type { InvoiceListItem } from '../../lib/api-contracts';
 import { PageHeader } from '../../components/page-header';
 import { RelatedRecordLink } from '../../components/related-records';
 import { ListState } from '../../components/resource-state';
@@ -21,20 +22,6 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-
-interface Invoice {
-  id: string;
-  internalNumber: string;
-  invoiceNumber: string;
-  status: string;
-  matchStatus: string;
-  totalAmount: string;
-  currency: string;
-  invoiceDate: string;
-  dueDate: string | null;
-  vendor: { id: string; name: string } | null;
-  purchaseOrder: { id: string; number: string } | null;
-}
 
 function formatCurrency(amount: string | number | null, currency = 'USD') {
   if (amount == null) return '—';
@@ -57,7 +44,7 @@ async function downloadCsv(type: string) {
 }
 
 export default function InvoicesPage() {
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [statusFilter, setStatusFilter] = useState('');
@@ -137,8 +124,8 @@ export default function InvoicesPage() {
     setBulkResult(null);
     try {
       const results = await api.invoices.bulkApprove(approvableSelected);
-      const success = results.filter((result: any) => result.success).length;
-      const failed = results.filter((result: any) => !result.success).length;
+      const success = results.filter((result) => result.success).length;
+      const failed = results.filter((result) => !result.success).length;
       setBulkResult({ success, failed });
       setSelected(new Set());
       await load();

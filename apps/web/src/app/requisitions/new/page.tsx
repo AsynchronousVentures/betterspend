@@ -4,6 +4,7 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Bot, FileStack, Plus, Sparkles } from 'lucide-react';
+import type { CreateRequisitionInput } from '@betterspend/shared';
 import { api } from '../../../lib/api';
 import { PageHeader } from '../../../components/page-header';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
@@ -166,7 +167,7 @@ function NewRequisitionContent() {
   const searchParams = useSearchParams();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [priority, setPriority] = useState('normal');
+  const [priority, setPriority] = useState<CreateRequisitionInput['priority']>('normal');
   const [currency, setCurrency] = useState('USD');
   const [neededBy, setNeededBy] = useState('');
   const [templateBanner, setTemplateBanner] = useState('');
@@ -431,7 +432,9 @@ function NewRequisitionContent() {
               <Field label="Priority">
                 <Select
                   value={priority}
-                  onChange={(event) => setPriority(event.target.value)}
+                  onChange={(event) =>
+                    setPriority(event.target.value as CreateRequisitionInput['priority'])
+                  }
                   className="w-full"
                 >
                   <option value="low">Low</option>

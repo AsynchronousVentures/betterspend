@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ClipboardList, Plus } from 'lucide-react';
 import { api, loadFailureState } from '../../lib/api';
+import type { RequisitionListItem } from '../../lib/api-contracts';
 import { PageHeader } from '../../components/page-header';
 import { ListState } from '../../components/resource-state';
 import { StatusBadge } from '../../components/status-badge';
@@ -18,17 +19,6 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-
-interface Requisition {
-  id: string;
-  number: string;
-  title: string;
-  status: string;
-  priority: string;
-  currency: string;
-  totalAmount: string | null;
-  createdAt: string;
-}
 
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
@@ -45,7 +35,7 @@ function formatCurrency(amount: string | number | null, currency = 'USD') {
 }
 
 export default function RequisitionsPage() {
-  const [requisitions, setRequisitions] = useState<Requisition[]>([]);
+  const [requisitions, setRequisitions] = useState<RequisitionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [statusFilter, setStatusFilter] = useState('');
@@ -55,7 +45,7 @@ export default function RequisitionsPage() {
     setLoadError(null);
     try {
       const data = await api.requisitions.list();
-      setRequisitions(Array.isArray(data) ? data : ((data as any).data ?? []));
+      setRequisitions(data);
     } catch (error) {
       setLoadError(error);
     } finally {
