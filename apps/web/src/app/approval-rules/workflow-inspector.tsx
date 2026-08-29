@@ -4,9 +4,17 @@ import { AlertTriangle, Plus, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import type {
   WorkflowCanvasNote,
+  WorkflowEdge,
   WorkflowNode,
   WorkflowValidationIssue,
 } from '@betterspend/shared';
+import {
+  buildWorkflowConditionEdge,
+  WORKFLOW_CONDITION_FIELDS,
+  WORKFLOW_CONDITION_OPERATORS,
+  type WorkflowConditionField,
+  type WorkflowConditionOperator,
+} from './workflow-edge-config';
 import { WORKFLOW_NODE_REGISTRY, type WorkflowConfigField } from './workflow-node-registry';
 
 const inputClass =
@@ -15,6 +23,149 @@ const labelClass =
   'grid gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500';
 
 type FormField = Extract<WorkflowNode, { type: 'collect_form' }>['config']['fields'][number];
+
+function ConditionEdgeConfig({
+  edge,
+  source,
+  target,
+  onChange,
+}: {
+  edge: WorkflowEdge;
+  source: WorkflowNode;
+  target: WorkflowNode;
+  onChange: (edge: WorkflowEdge) => void;
+}) {
+  const leafCondition = edge.condition && 'field' in edge.condition ? edge.condition : null;
+  const initialField = WORKFLOW_CONDITION_FIELDS.some(
+    (candidate) => candidate.value === leafCondition?.field,
+  )
+    ? (leafCondition?.field as WorkflowConditionField)
+    : 'totalAmount';
+  const initialOperator = WORKFLOW_CONDITION_OPERATORS.some(
+    (candidate) => candidate.value === leafCondition?.operator,
+  )
+    ? (leafCondition?.operator as WorkflowConditionOperator)
+    : '>=';
+  const [defaultRoute, setDefaultRoute] = useState(
+    edge.isDefault || edge.sourceHandle === 'default',
+  );
+  const [field, setField] = useState<WorkflowConditionField>(initialField);
+  const [operator, setOperator] = useState<WorkflowConditionOperator>(initialOperator);
+  const [rawValue, setRawValue] = useState(
+    leafCondition?.value === undefined || leafCondition.value === null
+      ? ''
+      : String(leafCondition.value),
+  );
+  const [priority, setPriority] = useState(edge.priority ?? 0);
+  const [error, setError] = useState<string | null>(null);
+
+  const apply = () => {
+    const result = buildWorkflowConditionEdge({
+      edge,
+      defaultRoute,
+      field,
+      operator,
+      rawValue,
+      priority,
+    });
+    if (!result.success) {
+      setError(result.error);
+      return;
+    }
+    setError(null);
+    onChange(result.edge);
+  };
+
+  return (
+    <div className="grid gap-4 p-4">
+      <div className="border border-white/10 bg-black p-3 text-[10px] leading-5 text-zinc-400">
+        <span className="text-white">{source.name}</span> to{' '}
+        <span className="text-white">{target.name}</span>
+      </div>
+      <label className="flex items-center gap-2 text-xs text-zinc-300">
+        <input
+          type="checkbox"
+          checked={defaultRoute}
+          onChange={(event) => setDefaultRoute(event.target.checked)}
+          className="accent-orange-400"
+        />
+        Default route
+      </label>
+      {!defaultRoute ? (
+        <>
+          <label className={labelClass}>
+            Field
+            <select
+              value={field}
+              onChange={(event) => setField(event.target.value as WorkflowConditionField)}
+              className={inputClass}
+            >
+              {WORKFLOW_CONDITION_FIELDS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={labelClass}>
+            Comparison
+            <select
+              value={operator}
+              onChange={(event) => setOperator(event.target.value as WorkflowConditionOperator)}
+              className={inputClass}
+            >
+              {WORKFLOW_CONDITION_OPERATORS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={labelClass}>
+            Value
+            <input
+              type={field === 'totalAmount' ? 'number' : 'text'}
+              value={rawValue}
+              onChange={(event) => setRawValue(event.target.value)}
+              placeholder={
+                field === 'totalAmount' ? '25000' : field === 'currency' ? 'USD' : 'Department ID'
+              }
+              className={inputClass}
+            />
+          </label>
+          <label className={labelClass}>
+            Route order
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={priority}
+              onChange={(event) => setPriority(Number(event.target.value))}
+              className={inputClass}
+            />
+          </label>
+          {edge.condition && !leafCondition ? (
+            <p className="text-[10px] leading-4 text-amber-200">
+              This route has a compound condition. Applying replaces it with the condition above.
+            </p>
+          ) : null}
+        </>
+      ) : (
+        <p className="text-[10px] leading-4 text-zinc-500">
+          Used when no earlier condition matches.
+        </p>
+      )}
+      {error ? <p className="text-[10px] text-rose-300">{error}</p> : null}
+      <button
+        type="button"
+        onClick={apply}
+        className="h-9 bg-white text-xs font-semibold text-black"
+      >
+        Apply route
+      </button>
+    </div>
+  );
+}
 
 function configValue(node: WorkflowNode, path: string): unknown {
   return path.split('.').reduce<unknown>((value, segment) => {
@@ -397,33 +548,45 @@ function SchemaConfigFields({
 
 export function WorkflowInspector({
   node,
+  edge,
   note,
   nodes,
   issues,
   onClose,
   onReplaceNode,
+  onReplaceEdge,
   onUpdateNote,
   onRemoveNode,
+  onRemoveEdge,
   onRemoveNote,
 }: {
   node: WorkflowNode | null;
+  edge: WorkflowEdge | null;
   note: WorkflowCanvasNote | null;
   nodes: WorkflowNode[];
   issues: WorkflowValidationIssue[];
   onClose: () => void;
   onReplaceNode: (node: WorkflowNode) => void;
+  onReplaceEdge: (edge: WorkflowEdge) => void;
   onUpdateNote: (noteId: string, text: string) => void;
   onRemoveNode: (nodeId: string) => void;
+  onRemoveEdge: (edgeId: string) => void;
   onRemoveNote: (noteId: string) => void;
 }) {
-  const title = node?.name ?? (note ? 'Sticky note' : 'Inspector');
+  const sourceNode = edge
+    ? (nodes.find((candidate) => candidate.id === edge.sourceNodeId) ?? null)
+    : null;
+  const targetNode = edge
+    ? (nodes.find((candidate) => candidate.id === edge.targetNodeId) ?? null)
+    : null;
+  const title = node?.name ?? (edge ? 'Route' : note ? 'Sticky note' : 'Inspector');
   return (
     <aside className="w-[320px] shrink-0 overflow-y-auto border-l border-white/15 bg-[#080808] text-white">
       <div className="flex min-h-12 items-center border-b border-white/12 px-4 py-2">
         <div className="min-w-0">
           <div className="truncate text-xs font-semibold">{title}</div>
           <div className="font-mono text-[9px] text-zinc-600">
-            {node?.type ?? note?.id ?? 'Nothing selected'}
+            {node?.type ?? edge?.id ?? note?.id ?? 'Nothing selected'}
           </div>
         </div>
         <button
@@ -486,6 +649,33 @@ export function WorkflowInspector({
             </button>
           ) : null}
         </div>
+      ) : null}
+
+      {edge && sourceNode && targetNode ? (
+        <>
+          {sourceNode.type === 'condition' ? (
+            <ConditionEdgeConfig
+              key={`${edge.id}-${JSON.stringify(edge.condition)}-${edge.isDefault}`}
+              edge={edge}
+              source={sourceNode}
+              target={targetNode}
+              onChange={onReplaceEdge}
+            />
+          ) : (
+            <div className="p-4 text-xs text-zinc-500">
+              {sourceNode.name} to {targetNode.name}
+            </div>
+          )}
+          <div className="px-4 pb-4">
+            <button
+              type="button"
+              onClick={() => onRemoveEdge(edge.id)}
+              className="flex h-9 w-full items-center justify-center gap-2 border border-rose-400/30 text-xs text-rose-200 hover:border-rose-300"
+            >
+              <Trash2 className="size-3.5" /> Delete route
+            </button>
+          </div>
+        </>
       ) : null}
 
       {note ? (

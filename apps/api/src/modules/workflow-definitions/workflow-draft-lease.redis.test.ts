@@ -22,8 +22,13 @@ describe('WorkflowDraftLeaseService Redis integration', () => {
     try {
       await redis.connect();
       await redis.ping();
-    } catch {
+    } catch (error) {
       redis.disconnect();
+      if (process.env.REQUIRE_REDIS_TEST === 'true') {
+        throw new Error(`Required Redis integration is unavailable at ${redisUrl}`, {
+          cause: error,
+        });
+      }
       t.skip(
         `Redis is unavailable at ${redisUrl}; set REDIS_TEST_URL to run this integration test`,
       );

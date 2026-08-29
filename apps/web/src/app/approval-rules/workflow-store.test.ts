@@ -183,4 +183,81 @@ describe('workflow builder store', () => {
     assert.equal(next?.graph.edges[1]?.sourceNodeId, insertedId);
     assert.equal(next?.graph.edges[1]?.targetNodeId, 'approved');
   });
+
+  it('selects a new condition branch for explicit configuration instead of inventing criteria', () => {
+    const branchingDraft: WorkflowDraft = {
+      graph: {
+        schemaVersion: 1,
+        domain: 'requisition',
+        entryNodeId: 'trigger',
+        nodes: [
+          draft.graph.nodes[0]!,
+          {
+            id: 'condition',
+            name: 'Route request',
+            type: 'condition',
+            disabled: false,
+            config: { mode: 'first_true' },
+          },
+          draft.graph.nodes[1]!,
+          {
+            id: 'rejected',
+            name: 'Rejected',
+            type: 'reject',
+            disabled: false,
+            config: { reasonRequired: true },
+          },
+        ],
+        edges: [
+          {
+            id: 'to-condition',
+            sourceNodeId: 'trigger',
+            sourceHandle: 'out',
+            targetNodeId: 'condition',
+            targetHandle: 'in',
+            isDefault: false,
+          },
+          {
+            id: 'default-reject',
+            sourceNodeId: 'condition',
+            sourceHandle: 'default',
+            targetNodeId: 'rejected',
+            targetHandle: 'in',
+            isDefault: true,
+          },
+        ],
+      },
+      positions: {},
+      notes: [],
+    };
+    useWorkflowBuilderStore.getState().loadDraft(branchingDraft);
+
+    const edgeId = useWorkflowBuilderStore.getState().connect({
+      source: 'condition',
+      sourceHandle: 'branch',
+      target: 'approved',
+      targetHandle: 'in',
+    });
+    const added = useWorkflowBuilderStore
+      .getState()
+      .draft?.graph.edges.find((edge) => edge.id === edgeId);
+
+    assert.ok(added);
+    assert.equal(added.condition, undefined);
+    assert.deepEqual(useWorkflowBuilderStore.getState().selection, { kind: 'edge', id: edgeId });
+
+    assert.equal(
+      useWorkflowBuilderStore.getState().replaceEdge({
+        ...added,
+        condition: { field: 'departmentId', operator: 'eq', value: 'finance' },
+        priority: 0,
+      }),
+      true,
+    );
+    assert.deepEqual(
+      useWorkflowBuilderStore.getState().draft?.graph.edges.find((edge) => edge.id === edgeId)
+        ?.condition,
+      { field: 'departmentId', operator: 'eq', value: 'finance' },
+    );
+  });
 });

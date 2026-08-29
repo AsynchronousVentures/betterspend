@@ -20,6 +20,7 @@ import {
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 import {
   WORKFLOW_NODE_PORTS,
+  WORKFLOW_NODE_DOMAINS,
   approvedNodeSchema,
   approverGroupNodeSchema,
   autoApproveNodeSchema,
@@ -220,8 +221,6 @@ export const WorkflowNoteCard = memo(
   (previous, next) => previous.selected === next.selected && previous.data.note === next.data.note,
 );
 
-const ALL_DOMAINS: readonly WorkflowDomain[] = ['requisition', 'invoice', 'po_change'];
-
 export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefinition> = {
   trigger: {
     type: 'trigger',
@@ -232,7 +231,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     schema: triggerNodeSchema,
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.trigger,
-    domains: ALL_DOMAINS,
+    domains: WORKFLOW_NODE_DOMAINS.trigger,
     configFields: [{ path: 'event', label: 'Event', kind: 'readonly' }],
     create: (id, domain) => {
       const event =
@@ -259,7 +258,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     schema: conditionNodeSchema,
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.condition,
-    domains: ALL_DOMAINS,
+    domains: WORKFLOW_NODE_DOMAINS.condition,
     configFields: [
       {
         path: 'mode',
@@ -288,7 +287,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     schema: matchCheckNodeSchema,
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.match_check,
-    domains: ['invoice'],
+    domains: WORKFLOW_NODE_DOMAINS.match_check,
     configFields: [],
     create: (id) => ({
       id,
@@ -307,7 +306,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     schema: budgetCheckNodeSchema,
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.budget_check,
-    domains: ['requisition', 'po_change'],
+    domains: WORKFLOW_NODE_DOMAINS.budget_check,
     configFields: [{ path: 'policy', label: 'Policy', kind: 'readonly' }],
     create: (id) => ({
       id,
@@ -326,7 +325,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     schema: approverGroupNodeSchema,
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.approver_group,
-    domains: ALL_DOMAINS,
+    domains: WORKFLOW_NODE_DOMAINS.approver_group,
     configFields: [
       {
         path: 'execution',
@@ -378,7 +377,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     schema: resolverNodeSchema,
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.resolver,
-    domains: ALL_DOMAINS,
+    domains: WORKFLOW_NODE_DOMAINS.resolver,
     configFields: [
       {
         path: 'resolvers',
@@ -413,7 +412,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     schema: delegationNodeSchema,
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.delegation,
-    domains: ALL_DOMAINS,
+    domains: WORKFLOW_NODE_DOMAINS.delegation,
     configFields: [
       {
         path: 'mode',
@@ -443,7 +442,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     schema: escalationTimerNodeSchema,
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.escalation_timer,
-    domains: ALL_DOMAINS,
+    domains: WORKFLOW_NODE_DOMAINS.escalation_timer,
     configFields: [
       { path: 'parentNodeId', label: 'Approval step', kind: 'approval_node' },
       { path: 'slaHours', label: 'SLA hours', kind: 'number', min: 1 },
@@ -486,7 +485,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     schema: collectFormNodeSchema,
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.collect_form,
-    domains: ALL_DOMAINS,
+    domains: WORKFLOW_NODE_DOMAINS.collect_form,
     configFields: [{ path: 'fields', label: 'Requested fields', kind: 'form_fields' }],
     create: (id) => ({
       id,
@@ -507,7 +506,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     schema: notifyNodeSchema,
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.notify,
-    domains: ALL_DOMAINS,
+    domains: WORKFLOW_NODE_DOMAINS.notify,
     configFields: [
       {
         path: 'channels',
@@ -545,7 +544,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     schema: autoApproveNodeSchema,
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.auto_approve,
-    domains: ALL_DOMAINS,
+    domains: WORKFLOW_NODE_DOMAINS.auto_approve,
     configFields: [{ path: 'reason', label: 'Reason', kind: 'text' }],
     create: (id) => ({
       id,
@@ -564,7 +563,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     schema: rejectNodeSchema,
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.reject,
-    domains: ALL_DOMAINS,
+    domains: WORKFLOW_NODE_DOMAINS.reject,
     configFields: [
       { path: 'reasonRequired', label: 'Require a rejection reason', kind: 'boolean' },
       {
@@ -592,7 +591,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     schema: approvedNodeSchema,
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.approved,
-    domains: ALL_DOMAINS,
+    domains: WORKFLOW_NODE_DOMAINS.approved,
     configFields: [],
     create: (id) => ({
       id,

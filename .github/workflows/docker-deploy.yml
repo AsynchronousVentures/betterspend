@@ -124,8 +124,34 @@ jobs:
         if: needs.change-scope.outputs.runtime == 'true'
         run: pnpm install --frozen-lockfile
 
+      - name: Start Redis for lease integration
+        if: needs.change-scope.outputs.runtime == 'true'
+        run: |
+          docker run --detach --name betterspend-fast-ci-redis \
+            --publish 6379:6379 \
+            --health-cmd "redis-cli ping" \
+            --health-interval 10s \
+            --health-timeout 5s \
+            --health-retries 10 \
+            redis:7-alpine
+          for attempt in {1..30}; do
+            status="$(docker inspect --format '{{.State.Health.Status}}' betterspend-fast-ci-redis)"
+            if [ "$status" = "healthy" ]; then
+              exit 0
+            fi
+            if [ "$status" = "unhealthy" ]; then
+              break
+            fi
+            sleep 1
+          done
+          docker logs betterspend-fast-ci-redis
+          exit 1
+
       - name: Run local CI preflight
         if: needs.change-scope.outputs.runtime == 'true'
+        env:
+          REDIS_TEST_URL: redis://127.0.0.1:6379
+          REQUIRE_REDIS_TEST: 'true'
         run: pnpm ci:preflight
 
   full-ci-proof:

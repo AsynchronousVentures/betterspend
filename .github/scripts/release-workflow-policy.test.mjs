@@ -177,7 +177,11 @@ test('deploys the validated release tag and runs the shared preflight in fast CI
   );
   assert.match(
     workflow,
-    /name: Run local CI preflight\n        if: needs\.change-scope\.outputs\.runtime == 'true'\n        run: pnpm ci:preflight/,
+    /name: Start Redis for lease integration[\s\S]*?--health-cmd "redis-cli ping"[\s\S]*?redis:7-alpine/,
+  );
+  assert.match(
+    workflow,
+    /name: Run local CI preflight\n        if: needs\.change-scope\.outputs\.runtime == 'true'\n        env:\n          REDIS_TEST_URL: redis:\/\/127\.0\.0\.1:6379\n          REQUIRE_REDIS_TEST: 'true'\n        run: pnpm ci:preflight/,
   );
 });
 

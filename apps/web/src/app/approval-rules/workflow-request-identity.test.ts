@@ -22,4 +22,36 @@ describe('workflow request identity', () => {
       false,
     );
   });
+
+  it('does not let a late acquire response replace a newer takeover token', async () => {
+    let latestRequestId = 0;
+    let committedToken: string | null = null;
+    const run = async (requestId: number, token: string, delay: Promise<void>) => {
+      await delay;
+      if (
+        isCurrentWorkflowRequest('definition-a', latestRequestId, {
+          definitionId: 'definition-a',
+          requestId,
+        })
+      )
+        committedToken = token;
+    };
+    let finishAcquire: (() => void) | undefined;
+    let finishTakeover: (() => void) | undefined;
+    const acquireDelay = new Promise<void>((resolve) => {
+      finishAcquire = resolve;
+    });
+    const takeoverDelay = new Promise<void>((resolve) => {
+      finishTakeover = resolve;
+    });
+
+    const acquire = run(++latestRequestId, 'acquire-token', acquireDelay);
+    const takeover = run(++latestRequestId, 'takeover-token', takeoverDelay);
+    finishTakeover?.();
+    await takeover;
+    finishAcquire?.();
+    await acquire;
+
+    assert.equal(committedToken, 'takeover-token');
+  });
 });

@@ -6,17 +6,20 @@ import {
   WORKFLOW_NODE_PORTS,
   applyWorkflowGraphPatch,
   workflowDraftSchema,
+  workflowEdgeSchema,
   type WorkflowAssistantProposalResponse,
   type WorkflowAssistantSnapshot,
   type WorkflowCanvasNote,
   type WorkflowDraft,
+  type WorkflowEdge,
   type WorkflowNode,
   type WorkflowNodePosition,
   type WorkflowNodeType,
 } from '@betterspend/shared';
 import { WORKFLOW_NODE_REGISTRY } from './workflow-node-registry';
 
-export type WorkflowSelection = { kind: 'node'; id: string } | { kind: 'note'; id: string } | null;
+export type WorkflowSelection =
+  { kind: 'node'; id: string } | { kind: 'edge'; id: string } | { kind: 'note'; id: string } | null;
 
 export interface PendingAssistantProposal {
   response: WorkflowAssistantProposalResponse;
@@ -36,7 +39,8 @@ type WorkflowBuilderState = {
   insertNodeOnEdge: (edgeId: string, type: WorkflowNodeType) => string | null;
   replaceNode: (node: WorkflowNode) => boolean;
   removeNode: (nodeId: string) => void;
-  connect: (connection: Connection) => void;
+  connect: (connection: Connection) => string | null;
+  replaceEdge: (edge: WorkflowEdge) => boolean;
   removeEdge: (edgeId: string) => void;
   moveNode: (nodeId: string, position: WorkflowNodePosition) => void;
   setPositions: (positions: WorkflowDraft['positions']) => void;
@@ -99,9 +103,6 @@ function newEdge(draft: WorkflowDraft, connection: Connection) {
   const source = draft.graph.nodes.find((node) => node.id === connection.source);
   if (!source || !connection.sourceHandle || !connection.targetHandle) return null;
 
-  const branchEdges = draft.graph.edges.filter(
-    (edge) => edge.sourceNodeId === source.id && edge.sourceHandle === 'branch',
-  );
   return {
     id: nextId('edge'),
     sourceNodeId: connection.source,
@@ -111,8 +112,9 @@ function newEdge(draft: WorkflowDraft, connection: Connection) {
     isDefault: source.type === 'condition' && connection.sourceHandle === 'default',
     ...(source.type === 'condition' && connection.sourceHandle === 'branch'
       ? {
-          condition: { field: 'totalAmount', operator: '>=' as const, value: 1_000 },
-          priority: branchEdges.length,
+          priority: draft.graph.edges.filter(
+            (edge) => edge.sourceNodeId === source.id && edge.sourceHandle === 'branch',
+          ).length,
         }
       : {}),
   };
@@ -256,25 +258,55 @@ export const useWorkflowBuilderStore = create<WorkflowBuilderState>((set, get) =
 
   connect: (connection) => {
     const state = get();
-    if (!state.draft || !isValidWorkflowConnection(state.draft, connection)) return;
+    if (!state.draft || !isValidWorkflowConnection(state.draft, connection)) return null;
     const edge = newEdge(state.draft, connection);
-    if (!edge) return;
+    if (!edge) return null;
+    mutateDraft(
+      set,
+      state,
+      {
+        ...state.draft,
+        graph: { ...state.draft.graph, edges: [...state.draft.graph.edges, edge] },
+      },
+      { kind: 'edge', id: edge.id },
+    );
+    return edge.id;
+  },
+
+  replaceEdge: (edge) => {
+    const state = get();
+    if (!state.draft) return false;
+    const parsed = workflowEdgeSchema.safeParse(edge);
+    if (!parsed.success) return false;
+    const exists = state.draft.graph.edges.some((candidate) => candidate.id === edge.id);
+    if (!exists) return false;
     mutateDraft(set, state, {
       ...state.draft,
-      graph: { ...state.draft.graph, edges: [...state.draft.graph.edges, edge] },
+      graph: {
+        ...state.draft.graph,
+        edges: state.draft.graph.edges.map((candidate) =>
+          candidate.id === edge.id ? parsed.data : candidate,
+        ),
+      },
     });
+    return true;
   },
 
   removeEdge: (edgeId) => {
     const state = get();
     if (!state.draft) return;
-    mutateDraft(set, state, {
-      ...state.draft,
-      graph: {
-        ...state.draft.graph,
-        edges: state.draft.graph.edges.filter((edge) => edge.id !== edgeId),
+    mutateDraft(
+      set,
+      state,
+      {
+        ...state.draft,
+        graph: {
+          ...state.draft.graph,
+          edges: state.draft.graph.edges.filter((edge) => edge.id !== edgeId),
+        },
       },
-    });
+      state.selection?.kind === 'edge' && state.selection.id === edgeId ? null : state.selection,
+    );
   },
 
   moveNode: (nodeId, position) => {

@@ -97,7 +97,10 @@ function BuilderCanvas({
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantError, setAssistantError] = useState<string | null>(null);
   const [leaseStatus, setLeaseStatus] = useState<WorkflowDraftLeaseStatus | null>(null);
+  const [leaseBusy, setLeaseBusy] = useState(true);
   const leaseTokenRef = useRef<string | null>(null);
+  const leaseBusyRef = useRef(true);
+  const leaseRequestIdRef = useRef(0);
   const restoreLockRef = useRef(false);
   const activeDefinitionIdRef = useRef<string | null>(definition.id);
   const saveRequestIdRef = useRef(0);
@@ -108,6 +111,8 @@ function BuilderCanvas({
   useEffect(
     () => () => {
       activeDefinitionIdRef.current = null;
+      leaseRequestIdRef.current += 1;
+      leaseBusyRef.current = false;
       saveRequestIdRef.current += 1;
       proposalRequestIdRef.current += 1;
     },
@@ -117,6 +122,11 @@ function BuilderCanvas({
   useEffect(() => {
     let active = true;
     let openedToken: string | null = null;
+    const request = {
+      definitionId: definition.id,
+      requestId: ++leaseRequestIdRef.current,
+    };
+    leaseBusyRef.current = true;
     openWorkflowDraftAccess(definition.id, {
       status: api.workflowDefinitions.lease.status,
       acquire: api.workflowDefinitions.lease.acquire,
@@ -133,6 +143,14 @@ function BuilderCanvas({
               .catch(() => undefined);
           return;
         }
+        if (
+          !isCurrentWorkflowRequest(
+            activeDefinitionIdRef.current,
+            leaseRequestIdRef.current,
+            request,
+          )
+        )
+          return;
         if (authoritative) {
           saveRequestIdRef.current += 1;
           proposalRequestIdRef.current += 1;
@@ -142,9 +160,30 @@ function BuilderCanvas({
         leaseTokenRef.current = openedToken;
       })
       .catch((accessError: unknown) => {
-        if (!active) return;
+        if (
+          !active ||
+          !isCurrentWorkflowRequest(
+            activeDefinitionIdRef.current,
+            leaseRequestIdRef.current,
+            request,
+          )
+        )
+          return;
         setError(messageFor(accessError));
         setLeaseStatus({ state: 'available' });
+      })
+      .finally(() => {
+        if (
+          !active ||
+          !isCurrentWorkflowRequest(
+            activeDefinitionIdRef.current,
+            leaseRequestIdRef.current,
+            request,
+          )
+        )
+          return;
+        leaseBusyRef.current = false;
+        setLeaseBusy(false);
       });
     return () => {
       active = false;
@@ -156,9 +195,21 @@ function BuilderCanvas({
   useEffect(() => {
     if (leaseStatus?.state !== 'owned') return;
     const timer = window.setInterval(() => {
+      const request = {
+        definitionId: definition.id,
+        requestId: ++leaseRequestIdRef.current,
+      };
       api.workflowDefinitions.lease
         .renew(definition.id, leaseStatus.leaseToken)
         .then((status) => {
+          if (
+            !isCurrentWorkflowRequest(
+              activeDefinitionIdRef.current,
+              leaseRequestIdRef.current,
+              request,
+            )
+          )
+            return;
           setLeaseStatus(status);
           leaseTokenRef.current = status.state === 'owned' ? status.leaseToken : null;
           if (status.state !== 'owned') {
@@ -173,6 +224,14 @@ function BuilderCanvas({
           }
         })
         .catch(() => {
+          if (
+            !isCurrentWorkflowRequest(
+              activeDefinitionIdRef.current,
+              leaseRequestIdRef.current,
+              request,
+            )
+          )
+            return;
           leaseTokenRef.current = null;
           restoreLockRef.current = false;
           saveRequestIdRef.current += 1;
@@ -197,6 +256,15 @@ function BuilderCanvas({
     for (const issue of validation.issues) {
       for (const nodeId of issue.nodeIds ?? []) {
         result.set(nodeId, [...(result.get(nodeId) ?? []), issue]);
+      }
+    }
+    return result;
+  }, [validation]);
+  const issuesByEdge = useMemo(() => {
+    const result = new Map<string, typeof validation.issues>();
+    for (const issue of validation.issues) {
+      for (const edgeId of issue.edgeIds ?? []) {
+        result.set(edgeId, [...(result.get(edgeId) ?? []), issue]);
       }
     }
     return result;
@@ -231,8 +299,17 @@ function BuilderCanvas({
             target: edge.targetNodeId,
             sourceHandle: edge.sourceHandle,
             targetHandle: edge.targetHandle,
+            selected: selection?.kind === 'edge' && selection.id === edge.id,
             markerEnd: { type: MarkerType.ArrowClosed, color: '#71717a', width: 14, height: 14 },
-            style: { stroke: '#71717a', strokeWidth: 1.25 },
+            style: {
+              stroke:
+                selection?.kind === 'edge' && selection.id === edge.id
+                  ? '#fdba74'
+                  : issuesByEdge.has(edge.id)
+                    ? '#fcd34d'
+                    : '#71717a',
+              strokeWidth: selection?.kind === 'edge' && selection.id === edge.id ? 2 : 1.25,
+            },
             label:
               edge.condition && 'field' in edge.condition
                 ? `${edge.condition.field} ${edge.condition.operator}`
@@ -241,7 +318,7 @@ function BuilderCanvas({
             data: { onInsert: setInsertEdgeId, canInsert: canEdit },
           }))
         : [],
-    [canEdit, draft],
+    [canEdit, draft, issuesByEdge, selection],
   );
 
   useEffect(() => {
@@ -345,7 +422,15 @@ function BuilderCanvas({
     selection?.kind === 'note'
       ? (draft.notes.find((note) => note.id === selection.id) ?? null)
       : null;
-  const selectedIssues = selectedNode ? (issuesByNode.get(selectedNode.id) ?? []) : [];
+  const selectedEdge =
+    selection?.kind === 'edge'
+      ? (draft.graph.edges.find((edge) => edge.id === selection.id) ?? null)
+      : null;
+  const selectedIssues = selectedNode
+    ? (issuesByNode.get(selectedNode.id) ?? [])
+    : selectedEdge
+      ? (issuesByEdge.get(selectedEdge.id) ?? [])
+      : [];
 
   const publish = async () => {
     if (!validation.valid || !canEdit || restoreLockRef.current || leaseStatus?.state !== 'owned')
@@ -431,6 +516,13 @@ function BuilderCanvas({
   };
 
   const takeOverEditing = async () => {
+    if (leaseBusyRef.current) return;
+    const request = {
+      definitionId: definition.id,
+      requestId: ++leaseRequestIdRef.current,
+    };
+    leaseBusyRef.current = true;
+    setLeaseBusy(true);
     restoreLockRef.current = false;
     setError(null);
     saveRequestIdRef.current += 1;
@@ -449,6 +541,10 @@ function BuilderCanvas({
             .catch(() => undefined);
         return;
       }
+      if (
+        !isCurrentWorkflowRequest(activeDefinitionIdRef.current, leaseRequestIdRef.current, request)
+      )
+        return;
       if (status.state !== 'owned') {
         setLeaseStatus(status);
         leaseTokenRef.current = null;
@@ -458,7 +554,14 @@ function BuilderCanvas({
       leaseTokenRef.current = status.leaseToken;
       try {
         const authoritative = await api.workflowDefinitions.get(definition.id);
-        if (activeDefinitionIdRef.current !== definition.id) return;
+        if (
+          !isCurrentWorkflowRequest(
+            activeDefinitionIdRef.current,
+            leaseRequestIdRef.current,
+            request,
+          )
+        )
+          return;
         store.loadDraft(authoritative.currentDraft);
         onDefinitionChange(authoritative);
         setLeaseStatus(status);
@@ -471,7 +574,17 @@ function BuilderCanvas({
         throw loadError;
       }
     } catch (leaseError) {
-      if (activeDefinitionIdRef.current === definition.id) setError(messageFor(leaseError));
+      if (
+        isCurrentWorkflowRequest(activeDefinitionIdRef.current, leaseRequestIdRef.current, request)
+      )
+        setError(messageFor(leaseError));
+    } finally {
+      if (
+        isCurrentWorkflowRequest(activeDefinitionIdRef.current, leaseRequestIdRef.current, request)
+      ) {
+        leaseBusyRef.current = false;
+        setLeaseBusy(false);
+      }
     }
   };
 
@@ -539,9 +652,10 @@ function BuilderCanvas({
             <button
               type="button"
               onClick={() => void takeOverEditing()}
+              disabled={leaseBusy}
               className="h-8 border border-amber-300/30 px-2.5 text-[10px] text-amber-200 hover:text-white"
             >
-              Take over editing
+              {leaseBusy ? 'Checking access' : 'Take over editing'}
             </button>
           ) : null}
           <button
@@ -593,6 +707,7 @@ function BuilderCanvas({
                   : { kind: 'node', id: node.id },
               )
             }
+            onEdgeClick={(_, edge) => store.select({ kind: 'edge', id: edge.id })}
             onPaneClick={() => store.select(null)}
             onNodesChange={(changes: NodeChange[]) => {
               if (!canEdit || restoreLockRef.current) return;
@@ -720,6 +835,7 @@ function BuilderCanvas({
         {selection && canEdit ? (
           <WorkflowInspector
             node={selectedNode}
+            edge={selectedEdge}
             note={selectedNote}
             nodes={draft.graph.nodes}
             issues={selectedIssues}
@@ -727,11 +843,17 @@ function BuilderCanvas({
             onReplaceNode={(node) => {
               if (canEdit && !restoreLockRef.current) store.replaceNode(node);
             }}
+            onReplaceEdge={(edge) => {
+              if (canEdit && !restoreLockRef.current) store.replaceEdge(edge);
+            }}
             onUpdateNote={(noteId, text) => {
               if (canEdit && !restoreLockRef.current) store.updateNote(noteId, text);
             }}
             onRemoveNode={(nodeId) => {
               if (canEdit && !restoreLockRef.current) store.removeNode(nodeId);
+            }}
+            onRemoveEdge={(edgeId) => {
+              if (canEdit && !restoreLockRef.current) store.removeEdge(edgeId);
             }}
             onRemoveNote={(noteId) => {
               if (canEdit && !restoreLockRef.current) store.removeNote(noteId);

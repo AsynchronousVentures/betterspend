@@ -5,7 +5,12 @@ import type {
   SeparationOfDuties,
   WorkflowNode,
 } from './node-types';
-import { isApprovalNode, TERMINAL_NODE_TYPES, WORKFLOW_NODE_PORTS } from './node-types';
+import {
+  isApprovalNode,
+  TERMINAL_NODE_TYPES,
+  WORKFLOW_NODE_DOMAINS,
+  WORKFLOW_NODE_PORTS,
+} from './node-types';
 import type { WorkflowEdge, WorkflowGraph } from './graph';
 import { workflowGraphSchema } from './graph';
 
@@ -31,6 +36,7 @@ export const WORKFLOW_VALIDATION_CODES = [
   'invalid_quorum',
   'invalid_separation_of_duties',
   'domain_trigger_mismatch',
+  'node_domain_mismatch',
   'missing_parent_node',
   'invalid_parent_node',
   'dead_end',
@@ -259,6 +265,17 @@ export function validateWorkflowGraph(input: unknown): WorkflowValidationResult 
   }
 
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  for (const node of graph.nodes) {
+    const domains = WORKFLOW_NODE_DOMAINS[node.type] as readonly WorkflowGraph['domain'][];
+    if (!domains.includes(graph.domain)) {
+      issues.push({
+        code: 'node_domain_mismatch',
+        message: `Workflow node ${node.id} (${node.type}) is not available for ${graph.domain} workflows`,
+        path: ['nodes', node.id, 'type'],
+        nodeIds: [node.id],
+      });
+    }
+  }
   const triggerNodes = graph.nodes.filter((node) => node.type === 'trigger' && !node.disabled);
   if (triggerNodes.length === 0) {
     issues.push({
@@ -544,10 +561,7 @@ export function validateWorkflowGraph(input: unknown): WorkflowValidationResult 
       targetNodeId,
     })),
   );
-  const { order, cyclePaths } = topologicalSort(
-    [...enabledNodeIds],
-    enabledEdges,
-  );
+  const { order, cyclePaths } = topologicalSort([...enabledNodeIds], enabledEdges);
   for (const cyclePath of cyclePaths) {
     issues.push({
       code: 'cycle',

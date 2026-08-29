@@ -144,4 +144,65 @@ describe('WorkflowAssistantService', () => {
       (error: unknown) => error instanceof BadRequestException,
     );
   });
+
+  it('marks a typed but domain-incompatible proposal invalid', async () => {
+    const { service } = serviceWith(
+      JSON.stringify({
+        summary: 'Add invoice matching.',
+        operations: [
+          { type: 'remove_edge', edgeId: 'trigger-to-approved' },
+          {
+            type: 'add_node',
+            node: { id: 'match', name: 'Invoice match', type: 'match_check', config: {} },
+            position: { x: 150, y: 0 },
+          },
+          {
+            type: 'add_node',
+            node: {
+              id: 'rejected',
+              name: 'Rejected',
+              type: 'reject',
+              config: { reasonRequired: true },
+            },
+            position: { x: 300, y: 120 },
+          },
+          {
+            type: 'add_edge',
+            edge: {
+              id: 'to-match',
+              sourceNodeId: 'trigger',
+              sourceHandle: 'out',
+              targetNodeId: 'match',
+              targetHandle: 'in',
+            },
+          },
+          {
+            type: 'add_edge',
+            edge: {
+              id: 'match-approved',
+              sourceNodeId: 'match',
+              sourceHandle: 'within_tolerance',
+              targetNodeId: 'approved',
+              targetHandle: 'in',
+            },
+          },
+          {
+            type: 'add_edge',
+            edge: {
+              id: 'match-rejected',
+              sourceNodeId: 'match',
+              sourceHandle: 'exception',
+              targetNodeId: 'rejected',
+              targetHandle: 'in',
+            },
+          },
+        ],
+      }),
+    );
+
+    const response = await service.propose('organization-1', request);
+
+    assert.equal(response.validation.valid, false);
+    assert.ok(response.validation.issues.some((issue) => issue.code === 'node_domain_mismatch'));
+  });
 });
