@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { isQboMappingPrototypePath } from './lib/qbo-mapping-prototype-access';
 
 const PUBLIC_PATH_PREFIXES = ['/login', '/signup', '/punchout'];
 const PUBLIC_EXACT_PATHS = new Set(['/runtime-version']);
@@ -15,7 +16,7 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Allow public auth pages
-  if (isPublicPath(pathname)) {
+  if (isPublicPath(pathname) || isQboMappingPrototypePath(pathname)) {
     return NextResponse.next();
   }
 

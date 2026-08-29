@@ -12,6 +12,10 @@ import {
 import { usePathname } from 'next/navigation';
 import type { EffectiveAccessDocument } from '@betterspend/shared';
 import { api } from '../lib/api';
+import {
+  isQboMappingPrototypePath,
+  QBO_MAPPING_PROTOTYPE_ACCESS,
+} from '../lib/qbo-mapping-prototype-access';
 
 const PUBLIC_PATH_PREFIXES = [
   '/login',
@@ -39,7 +43,8 @@ const AccessContext = createContext<AccessContextValue | null>(null);
 
 export function AccessProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const publicPath = isPublicPath(pathname);
+  const prototypePath = isQboMappingPrototypePath(pathname);
+  const publicPath = isPublicPath(pathname) || prototypePath;
   const [access, setAccess] = useState<EffectiveAccessDocument | null>(null);
   const [error, setError] = useState<unknown | null>(null);
   const [loading, setLoading] = useState(false);
@@ -95,8 +100,14 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
   }, [pathname, publicPath, refresh]);
 
   const value = useMemo(
-    () => ({ access, error, loading, resolved, refresh }),
-    [access, error, loading, resolved, refresh],
+    () => ({
+      access: prototypePath ? QBO_MAPPING_PROTOTYPE_ACCESS : access,
+      error,
+      loading,
+      resolved,
+      refresh,
+    }),
+    [access, error, loading, prototypePath, resolved, refresh],
   );
   return <AccessContext.Provider value={value}>{children}</AccessContext.Provider>;
 }

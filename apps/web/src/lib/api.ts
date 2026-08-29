@@ -53,6 +53,7 @@ import type {
   RequisitionSubmission,
 } from './api-contracts';
 import type { ReceivingDetail, ReceivingListItem } from './receiving';
+import { isQboMappingPrototypePath } from './qbo-mapping-prototype-access';
 
 export type {
   WorkflowDefinitionRecord,
@@ -140,6 +141,9 @@ function getCookie(name: string): string | undefined {
 }
 
 function clearAuthAndRedirect() {
+  if (typeof window !== 'undefined' && isQboMappingPrototypePath(window.location.pathname)) {
+    return;
+  }
   if (typeof document !== 'undefined') {
     document.cookie = 'bs_token=; Max-Age=0; path=/';
   }
