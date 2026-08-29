@@ -556,7 +556,6 @@ export default function PurchaseOrderDetailPage(props: { params: Promise<{ id: s
               </TableHeader>
               <TableBody>
                 {lines.map((line, index) => {
-                  const lineTotal = (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
                   return (
                     <TableRow key={line.id}>
                       <TableCell className="text-muted-foreground">{index + 1}</TableCell>
@@ -565,7 +564,7 @@ export default function PurchaseOrderDetailPage(props: { params: Promise<{ id: s
                       <TableCell>{line.unitOfMeasure}</TableCell>
                       <TableCell>{formatCurrency(line.unitPrice, po.currency)}</TableCell>
                       <TableCell className="font-medium text-foreground">
-                        {formatCurrency(lineTotal, po.currency)}
+                        {formatCurrency(line.totalPrice, po.currency)}
                       </TableCell>
                     </TableRow>
                   );

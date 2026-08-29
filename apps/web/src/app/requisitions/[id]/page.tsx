@@ -386,7 +386,6 @@ export default function RequisitionDetailPage(props: { params: Promise<{ id: str
               </TableHeader>
               <TableBody>
                 {lines.map((line, index) => {
-                  const lineTotal = (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
                   return (
                     <TableRow key={line.id}>
                       <TableCell className="text-muted-foreground">{index + 1}</TableCell>
@@ -397,7 +396,7 @@ export default function RequisitionDetailPage(props: { params: Promise<{ id: str
                       <TableCell>{line.unitOfMeasure}</TableCell>
                       <TableCell>{formatCurrency(line.unitPrice, req.currency)}</TableCell>
                       <TableCell className="font-medium text-foreground">
-                        {formatCurrency(lineTotal, req.currency)}
+                        {formatCurrency(line.totalPrice, req.currency)}
                       </TableCell>
                     </TableRow>
                   );
