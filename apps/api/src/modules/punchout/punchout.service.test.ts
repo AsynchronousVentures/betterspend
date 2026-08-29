@@ -15,6 +15,7 @@ import { PunchoutService } from './punchout.service';
 const vendorId = '00000000-0000-4000-8000-000000000001';
 const organizationId = '00000000-0000-4000-8000-000000000002';
 const adminId = '00000000-0000-4000-8000-000000000003';
+const fixtureSharedSecret = 'x'.repeat(32);
 
 const testInput = {
   setupUrl: 'https://supplier.example.test/punchout/setup',
@@ -24,7 +25,7 @@ const testInput = {
   toDomain: 'supplier.example',
   toIdentity: 'catalog',
   senderIdentity: 'betterspend',
-  sharedSecret: 'test-shared-secret',
+  sharedSecret: fixtureSharedSecret,
 };
 
 function storedEnvironment(secret = 'ciphertext') {
@@ -37,7 +38,7 @@ function storedEnvironment(secret = 'ciphertext') {
     toIdentity: testInput.toIdentity,
     senderIdentity: testInput.senderIdentity,
     encryptedSharedSecret: secret,
-    sharedSecretHint: '••••••••cret',
+    sharedSecretHint: '••••••••xxxx',
     status: 'unverified' as const,
     consecutiveAuthFailures: 0,
     lastCheckedAt: null,
@@ -168,12 +169,12 @@ test('stores shared secrets encrypted and returns only masked configuration', as
 
   assert.equal(response.enabled, false);
   assert.equal(response.environments.test.sharedSecretConfigured, true);
-  assert.equal(response.environments.test.sharedSecretMasked, '••••••••cret');
+  assert.equal(response.environments.test.sharedSecretMasked, '••••••••xxxx');
   assert.equal('sharedSecret' in response.environments.test, false);
   assert.equal('encryptedSharedSecret' in response.environments.test, false);
 
   const stored = state.getVendor().punchoutConfig as PunchoutStoredConfig;
-  assert.equal(stored.environments.test.encryptedSharedSecret, 'encrypted:test-shared-secret');
+  assert.equal(stored.environments.test.encryptedSharedSecret, `encrypted:${fixtureSharedSecret}`);
   assert.equal(audits.length, 1);
   assert.equal(audits[0]?.[4], 'punchout_config_updated');
   assert.equal(state.transactionExecutors.includes(audits[0]?.[7]), true);
@@ -185,7 +186,7 @@ test('stores shared secrets encrypted and returns only masked configuration', as
   assert.equal(
     (state.getVendor().punchoutConfig as PunchoutStoredConfig).environments.test
       .encryptedSharedSecret,
-    'encrypted:test-shared-secret',
+    `encrypted:${fixtureSharedSecret}`,
   );
   assert.equal(audits.length, 2);
   assert.equal(state.transactionExecutors.includes(audits[1]?.[7]), true);

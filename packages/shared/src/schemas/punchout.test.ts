@@ -6,6 +6,9 @@ import {
   punchoutStoredConfigSchema,
 } from './punchout';
 
+const fixtureSharedSecret = 'x'.repeat(32);
+const productionFixtureSharedSecret = 'y'.repeat(32);
+
 const environment = {
   setupUrl: 'https://supplier.example.test/punchout/setup',
   orderUrl: 'https://supplier.example.test/punchout/order',
@@ -14,7 +17,7 @@ const environment = {
   toDomain: 'supplier.example',
   toIdentity: 'catalog',
   senderIdentity: 'betterspend',
-  sharedSecret: 'test-shared-secret',
+  sharedSecret: fixtureSharedSecret,
 };
 
 test('accepts independent test and production PunchOut credentials', () => {
@@ -24,12 +27,12 @@ test('accepts independent test and production PunchOut credentials', () => {
     activeEnvironment: 'test',
     environments: {
       test: environment,
-      production: { ...environment, sharedSecret: 'production-shared-secret' },
+      production: { ...environment, sharedSecret: productionFixtureSharedSecret },
     },
   });
 
-  assert.equal(parsed.environments?.test?.sharedSecret, 'test-shared-secret');
-  assert.equal(parsed.environments?.production?.sharedSecret, 'production-shared-secret');
+  assert.equal(parsed.environments?.test?.sharedSecret, fixtureSharedSecret);
+  assert.equal(parsed.environments?.production?.sharedSecret, productionFixtureSharedSecret);
 });
 
 test('does not accept persisted secret fields at the write boundary', () => {
