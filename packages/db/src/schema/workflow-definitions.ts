@@ -77,6 +77,7 @@ export const workflowDefinitionVersions = pgTable(
       .$type<WorkflowDraft['positions']>()
       .notNull()
       .default({}),
+    notesJson: jsonb('notes_json').$type<WorkflowDraft['notes']>().notNull().default([]),
     executableJson: jsonb('executable_json').$type<ExecutableDefinition>().notNull(),
     publishedBy: uuid('published_by').notNull(),
     publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow(),

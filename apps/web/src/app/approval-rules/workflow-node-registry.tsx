@@ -1,6 +1,6 @@
 'use client';
 
-import type { ComponentType } from 'react';
+import { memo, type ComponentType } from 'react';
 import {
   BadgeCheck,
   Bell,
@@ -39,7 +39,7 @@ import {
   type WorkflowNodeType,
   type WorkflowValidationIssue,
 } from '@betterspend/shared';
-import type { z } from 'zod';
+import { z } from 'zod';
 
 export type WorkflowNodeData = {
   domainNode: WorkflowNode;
@@ -119,7 +119,7 @@ function handleOffset(index: number, length: number): string {
   return `${((index + 1) / (length + 1)) * 100}%`;
 }
 
-export function WorkflowNodeCard({ data, selected }: NodeProps<WorkflowFlowNode>) {
+function WorkflowNodeCardView({ data, selected }: NodeProps<WorkflowFlowNode>) {
   const definition = WORKFLOW_NODE_REGISTRY[data.domainNode.type];
   const Icon = definition.icon;
   const disabled = data.domainNode.disabled;
@@ -185,7 +185,20 @@ export function WorkflowNodeCard({ data, selected }: NodeProps<WorkflowFlowNode>
   );
 }
 
-export function WorkflowNoteCard({ data, selected }: NodeProps<WorkflowNoteFlowNode>) {
+export const WorkflowNodeCard = memo(
+  WorkflowNodeCardView,
+  (previous, next) =>
+    previous.selected === next.selected &&
+    previous.data.domainNode === next.data.domainNode &&
+    previous.data.issues.length === next.data.issues.length &&
+    previous.data.issues.every(
+      (issue, index) =>
+        issue.code === next.data.issues[index]?.code &&
+        issue.message === next.data.issues[index]?.message,
+    ),
+);
+
+function WorkflowNoteCardView({ data, selected }: NodeProps<WorkflowNoteFlowNode>) {
   return (
     <div
       className={`w-52 -rotate-1 border bg-[#211d08] p-3 text-amber-50 shadow-[4px_4px_0_rgba(0,0,0,0.5)] ${
@@ -201,6 +214,11 @@ export function WorkflowNoteCard({ data, selected }: NodeProps<WorkflowNoteFlowN
     </div>
   );
 }
+
+export const WorkflowNoteCard = memo(
+  WorkflowNoteCardView,
+  (previous, next) => previous.selected === next.selected && previous.data.note === next.data.note,
+);
 
 const ALL_DOMAINS: readonly WorkflowDomain[] = ['requisition', 'invoice', 'po_change'];
 
@@ -585,6 +603,35 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     }),
   },
 };
+
+export function workflowNodeConfigSchemaKeys(definition: WorkflowNodeDefinition): string[] {
+  if (!(definition.schema instanceof z.ZodObject)) {
+    throw new Error(`Workflow node ${definition.type} must use a Zod object schema`);
+  }
+  const configSchema = definition.schema.shape.config;
+  if (!(configSchema instanceof z.ZodObject)) {
+    throw new Error(`Workflow node ${definition.type} config must use a Zod object schema`);
+  }
+  return Object.keys(configSchema.shape).sort();
+}
+
+/** Keeps the small field renderer exhaustive without introducing a second config schema. */
+export function assertWorkflowNodeConfigFields(): void {
+  for (const definition of Object.values(WORKFLOW_NODE_REGISTRY)) {
+    const schemaKeys = workflowNodeConfigSchemaKeys(definition);
+    const fieldKeys = definition.configFields.map((field) => field.path.split('.')[0] ?? '').sort();
+    if (
+      schemaKeys.length !== fieldKeys.length ||
+      schemaKeys.some((key, index) => key !== fieldKeys[index])
+    ) {
+      throw new Error(
+        `Workflow node ${definition.type} config fields must match its Zod schema: expected ${schemaKeys.join(', ') || '(none)'}`,
+      );
+    }
+  }
+}
+
+assertWorkflowNodeConfigFields();
 
 export const WORKFLOW_FLOW_NODE_TYPES = { workflow: WorkflowNodeCard, note: WorkflowNoteCard };
 

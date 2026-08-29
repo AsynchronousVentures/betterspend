@@ -138,7 +138,7 @@ export class WorkflowDefinitionsService {
     organizationId: string,
     userId: string,
     draft: WorkflowDraft,
-    leaseToken?: string,
+    leaseToken: string,
   ) {
     await this.db.transaction(async (tx) => {
       const [definition] = await tx
@@ -192,7 +192,7 @@ export class WorkflowDefinitionsService {
     return this.findOne(id, organizationId);
   }
 
-  async publish(id: string, organizationId: string, userId: string, leaseToken?: string) {
+  async publish(id: string, organizationId: string, userId: string, leaseToken: string) {
     const published = await this.db.transaction(async (tx) => {
       const [definition] = await tx
         .select()
@@ -236,6 +236,7 @@ export class WorkflowDefinitionsService {
           version: (latest?.version ?? 0) + 1,
           graphJson: compilation.graph,
           positionsJson: definition.currentDraft.positions,
+          notesJson: definition.currentDraft.notes,
           executableJson: compilation.executable,
           publishedBy: userId,
         })
@@ -286,7 +287,7 @@ export class WorkflowDefinitionsService {
     versionId: string,
     organizationId: string,
     userId: string,
-    leaseToken?: string,
+    leaseToken: string,
   ) {
     const restored = await this.db.transaction(async (tx) => {
       const [definition] = await tx
@@ -318,6 +319,7 @@ export class WorkflowDefinitionsService {
       const draft = workflowDraftSchema.parse({
         graph: version.graphJson,
         positions: version.positionsJson,
+        notes: version.notesJson,
       });
       const [updated] = await tx
         .update(workflowDefinitions)
@@ -530,9 +532,9 @@ export class WorkflowDefinitionsService {
     organizationId: string,
     userId: string,
     expectedFence: number,
-    leaseToken?: string,
+    leaseToken: string,
   ) {
-    const lease = await this.leases.assertOwned(id, organizationId, userId, leaseToken ?? '');
+    const lease = await this.leases.assertOwned(id, organizationId, userId, leaseToken);
     if (lease.fence !== expectedFence) {
       throw new ConflictException('Workflow draft lease fence is stale');
     }

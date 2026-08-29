@@ -289,6 +289,7 @@ export interface WorkflowDefinitionVersionRecord {
   version: number;
   graphJson: WorkflowGraph;
   positionsJson: WorkflowDraft['positions'];
+  notesJson: WorkflowDraft['notes'];
   publishedBy: string;
   publishedAt: string;
 }

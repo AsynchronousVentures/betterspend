@@ -31,6 +31,7 @@ const EXPECTED_COLUMNS = [
   { table: 'users', column: 'manager_id' },
   { table: 'workflow_definitions', column: 'draft_fence' },
   { table: 'workflow_definition_versions', column: 'organization_id' },
+  { table: 'workflow_definition_versions', column: 'notes_json' },
   { table: 'workflow_runtime_publications', column: 'outcome_status' },
 ] as const;
 

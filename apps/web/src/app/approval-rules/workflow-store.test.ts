@@ -65,8 +65,9 @@ describe('workflow builder store', () => {
 
   it('increments the local revision and refuses a stale assistant proposal', () => {
     const store = useWorkflowBuilderStore.getState();
+    const proposalRevision = store.draftRevision;
     store.setAssistantProposal({
-      draftRevision: 0,
+      draftRevision: proposalRevision,
       snapshot: { graph: draft.graph, positions: draft.positions },
       response: {
         summary: 'Rename the terminal step.',
@@ -88,7 +89,7 @@ describe('workflow builder store', () => {
     });
     store.addNote({ x: 100, y: 100 });
 
-    assert.equal(useWorkflowBuilderStore.getState().draftRevision, 1);
+    assert.equal(useWorkflowBuilderStore.getState().draftRevision, proposalRevision + 1);
     assert.equal(useWorkflowBuilderStore.getState().applyAssistantProposal(), false);
     assert.equal(
       useWorkflowBuilderStore.getState().draft?.graph.nodes.find((node) => node.id === 'approved')
@@ -100,7 +101,7 @@ describe('workflow builder store', () => {
   it('refuses an assistant proposal that does not pass graph validation', () => {
     const store = useWorkflowBuilderStore.getState();
     store.setAssistantProposal({
-      draftRevision: 0,
+      draftRevision: store.draftRevision,
       snapshot: { graph: draft.graph, positions: draft.positions },
       response: {
         summary: 'Remove the terminal step.',
@@ -120,6 +121,52 @@ describe('workflow builder store', () => {
 
     assert.equal(store.applyAssistantProposal(), false);
     assert.equal(useWorkflowBuilderStore.getState().draft?.graph.nodes.length, 2);
+  });
+
+  it('advances identity on authoritative load and rejects a late proposal for the old draft', () => {
+    const store = useWorkflowBuilderStore.getState();
+    const oldRevision = store.draftRevision;
+    const lateProposal = {
+      draftRevision: oldRevision,
+      snapshot: { graph: draft.graph, positions: draft.positions },
+      response: {
+        summary: 'Rename the terminal step.',
+        operations: [
+          {
+            type: 'update_node' as const,
+            nodeId: 'approved',
+            node: {
+              id: 'approved',
+              name: 'Completed',
+              type: 'approved' as const,
+              disabled: false,
+              config: {},
+            },
+          },
+        ],
+        validation: { valid: true as const, issues: [] },
+      },
+    };
+
+    store.loadDraft({
+      ...draft,
+      graph: {
+        ...draft.graph,
+        nodes: draft.graph.nodes.map((node) =>
+          node.id === 'approved' ? { ...node, name: 'Restored approval' } : node,
+        ),
+      },
+    });
+    assert.ok(useWorkflowBuilderStore.getState().draftRevision > oldRevision);
+    assert.equal(useWorkflowBuilderStore.getState().assistantProposal, null);
+
+    useWorkflowBuilderStore.getState().setAssistantProposal(lateProposal);
+    assert.equal(useWorkflowBuilderStore.getState().applyAssistantProposal(), false);
+    assert.equal(
+      useWorkflowBuilderStore.getState().draft?.graph.nodes.find((node) => node.id === 'approved')
+        ?.name,
+      'Restored approval',
+    );
   });
 
   it('inserts a one-output node without changing the edge endpoints', () => {

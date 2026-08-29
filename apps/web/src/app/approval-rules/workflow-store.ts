@@ -127,11 +127,14 @@ export const useWorkflowBuilderStore = create<WorkflowBuilderState>((set, get) =
 
   loadDraft: (input) => {
     const draft = workflowDraftSchema.parse(input);
+    const nextRevision = get().draftRevision + 1;
     set({
       draft,
       selection: draft.graph.nodes[0] ? { kind: 'node', id: draft.graph.nodes[0].id } : null,
       dirty: false,
-      draftRevision: 0,
+      // Authoritative loads advance the identity so a late async proposal can never
+      // become current merely because both drafts happened to be locally clean.
+      draftRevision: nextRevision,
       assistantProposal: null,
     });
   },

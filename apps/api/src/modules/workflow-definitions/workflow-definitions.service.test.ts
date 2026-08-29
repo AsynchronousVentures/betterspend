@@ -39,6 +39,7 @@ function validDraft() {
       ],
     },
     positions: { trigger: { x: 0, y: 0 }, approved: { x: 200, y: 0 } },
+    notes: [{ id: 'review-note', text: 'Confirm finance routing', position: { x: 80, y: 220 } }],
   });
 }
 
@@ -115,11 +116,17 @@ describe('WorkflowDefinitionsService', () => {
     } as unknown as AuditService;
     const service = new WorkflowDefinitionsService(db, entities, audit, leases);
 
-    const result = await service.publish('definition-1', 'organization-1', 'publisher-1');
+    const result = await service.publish(
+      'definition-1',
+      'organization-1',
+      'publisher-1',
+      'publisher-lease-token',
+    );
 
     assert.equal(result.version, 2);
     assert.equal(inserted[0]?.definitionId, 'definition-1');
     assert.deepEqual(inserted[0]?.positionsJson, definition.currentDraft.positions);
+    assert.deepEqual(inserted[0]?.notesJson, definition.currentDraft.notes);
     assert.deepEqual(
       (inserted[0]?.executableJson as { steps: Array<{ node: { id: string } }> }).steps.map(
         (step) => step.node.id,
@@ -156,7 +163,7 @@ describe('WorkflowDefinitionsService', () => {
     const service = new WorkflowDefinitionsService(db, entities, audit, leases);
 
     await assert.rejects(
-      service.publish('definition-1', 'organization-1', 'publisher-1'),
+      service.publish('definition-1', 'organization-1', 'publisher-1', 'publisher-lease-token'),
       /not publishable/,
     );
   });
@@ -176,6 +183,7 @@ describe('WorkflowDefinitionsService', () => {
             version: 1,
             graphJson: draft.graph,
             positionsJson: draft.positions,
+            notesJson: draft.notes,
           }),
         },
       },
@@ -197,6 +205,7 @@ describe('WorkflowDefinitionsService', () => {
       'version-1',
       'organization-1',
       'editor-1',
+      'editor-lease-token',
     );
 
     assert.equal(result.restoredFromVersion, 1);
