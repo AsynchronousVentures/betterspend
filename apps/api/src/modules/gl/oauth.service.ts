@@ -429,16 +429,26 @@ export class OAuthService {
         'QBO connection was stored, but the initial sync queue is unavailable',
       );
     }
+    const jobId = `qbo-initial-sync-${organizationId}`;
     try {
+      const existing = await this.qboSyncQueue.getJob(jobId);
+      if (existing) {
+        if ((await existing.getState()) === 'failed') {
+          await existing.remove();
+        } else {
+          return;
+        }
+      }
+
       await this.qboSyncQueue.add(
         'initial-sync',
         { kind: 'initial', organizationId },
         {
           attempts: 3,
           backoff: { type: 'exponential', delay: 2_000 },
-          jobId: `qbo-initial-sync-${organizationId}`,
+          jobId,
           removeOnComplete: true,
-          removeOnFail: 100,
+          removeOnFail: true,
         },
       );
     } catch (error: unknown) {

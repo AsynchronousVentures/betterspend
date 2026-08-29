@@ -10,9 +10,20 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { externalEntityMappings, integrationConnections, type Db } from '@betterspend/db';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  auditLog,
+  departments,
+  externalEntityMappings,
+  integrationConnections,
+  projects,
+  taxCodes,
+  type Db,
+  type DbTransaction,
+  vendors,
+} from '@betterspend/db';
 import {
   QBO_CATALOG_ENTITY_TYPES,
   QBO_TAX_ENTITY_TYPES,
@@ -24,6 +35,7 @@ import { DB_TOKEN } from '../../../database/database.module';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { resolveOrganizationAdminId } from '../../../common/demo-identity';
 import { QboClientService } from '../../gl/qbo-client.service';
+import { OAuthRedisService } from '../../gl/oauth-redis.service';
 
 export type QboCatalogEntity = (typeof QBO_CATALOG_ENTITY_TYPES)[number];
 export type QboTaxEntity = (typeof QBO_TAX_ENTITY_TYPES)[number];
@@ -50,6 +62,7 @@ const QUERY_PAGE_SIZE = 1000;
 const DEFAULT_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const MAX_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const MAX_LOOKBACK_DAYS = 30;
+const QBO_ACTIVE_ENTITY_TYPES = new Set<QboSyncEntity>(QBO_CATALOG_ENTITY_TYPES);
 
 type QboObject = Record<string, unknown>;
 
@@ -116,6 +129,10 @@ type MappingUpsert = {
   entity: QboObject;
   deleted: boolean;
   mergedIntoExternalId?: string | null;
+  localId?: string | null;
+  autoCreated?: boolean;
+  auditSource?: 'snapshot' | 'cdc' | 'webhook' | 'merge';
+  auditReason?: string;
 };
 
 /**
@@ -133,6 +150,7 @@ export class QboInboundService implements OnModuleInit {
     private readonly notifications: NotificationsService,
     @InjectQueue('qbo-sync-in') private readonly syncQueue: Queue<QboSyncJobData>,
     @InjectQueue('qbo-cdc') private readonly cdcQueue: Queue<QboCdcJobData>,
+    private readonly oauthRedis: OAuthRedisService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -153,16 +171,20 @@ export class QboInboundService implements OnModuleInit {
     organizationId: string,
     entityTypes: readonly QboSyncEntity[] = [...QBO_CATALOG_ENTITY_TYPES, ...QBO_TAX_ENTITY_TYPES],
   ): Promise<{ queued: true; jobId: string | undefined }> {
+    const options = {
+      attempts: 3,
+      backoff: { type: 'exponential' as const, delay: 2_000 },
+      jobId: `qbo-initial-sync-${organizationId}`,
+      removeOnComplete: true,
+      removeOnFail: true,
+    };
+    const existing = await this.existingQueueJob(this.syncQueue, options.jobId);
+    if (existing) return { queued: true, jobId: existing.id };
+
     const job = await this.syncQueue.add(
       'initial-sync',
       { kind: 'initial', organizationId, entityTypes },
-      {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 2_000 },
-        jobId: `qbo-initial-sync-${organizationId}`,
-        removeOnComplete: true,
-        removeOnFail: 100,
-      },
+      options,
     );
     return { queued: true, jobId: job.id };
   }
@@ -182,15 +204,19 @@ export class QboInboundService implements OnModuleInit {
     organizationId: string,
     lookbackDays = MAX_LOOKBACK_DAYS,
   ): Promise<{ queued: true; jobId: string | undefined }> {
+    const jobId = `qbo-cdc-sweep-${organizationId}-${new Date().toISOString().slice(0, 10)}`;
+    const existing = await this.existingQueueJob(this.cdcQueue, jobId);
+    if (existing) return { queued: true, jobId: existing.id };
+
     const job = await this.cdcQueue.add(
       'cdc-sweep',
       { kind: 'cdc-sweep', organizationId, lookbackDays },
       {
         attempts: 3,
         backoff: { type: 'exponential', delay: 2_000 },
-        jobId: `qbo-cdc-sweep-${organizationId}-${new Date().toISOString().slice(0, 10)}`,
+        jobId,
         removeOnComplete: true,
-        removeOnFail: 100,
+        removeOnFail: true,
       },
     );
     return { queued: true, jobId: job.id };
@@ -209,137 +235,183 @@ export class QboInboundService implements OnModuleInit {
     });
   }
 
-  async linkMapping(mappingId: string, organizationId: string, input: QboMappingLinkInput) {
-    const mapping = await this.db.query.externalEntityMappings.findFirst({
-      where: (row, { and, eq }) =>
-        and(
-          eq(row.id, mappingId),
-          eq(row.organizationId, organizationId),
-          eq(row.provider, 'qbo'),
-          eq(row.direction, 'inbound'),
-        ),
-    });
-    if (!mapping) throw new NotFoundException(`QBO mapping ${mappingId} not found`);
+  async linkMapping(
+    mappingId: string,
+    organizationId: string,
+    input: QboMappingLinkInput,
+    userId?: string,
+  ) {
+    return this.db.transaction(async (transaction) => {
+      const mapping = await transaction.query.externalEntityMappings.findFirst({
+        where: (row, { and, eq }) =>
+          and(
+            eq(row.id, mappingId),
+            eq(row.organizationId, organizationId),
+            eq(row.provider, 'qbo'),
+            eq(row.direction, 'inbound'),
+          ),
+      });
+      if (!mapping) throw new NotFoundException(`QBO mapping ${mappingId} not found`);
 
-    const [updated] = await this.db
-      .update(externalEntityMappings)
-      .set({
-        localId: input.localId,
-        autoCreated: input.autoCreated ?? mapping.autoCreated,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(externalEntityMappings.id, mappingId),
-          eq(externalEntityMappings.organizationId, organizationId),
-        ),
-      )
-      .returning();
-    return updated;
+      if (
+        input.localId !== null &&
+        !(await this.localRecordExists(
+          transaction,
+          mapping.localEntity,
+          input.localId,
+          organizationId,
+        ))
+      ) {
+        throw new BadRequestException(
+          `QBO ${mapping.externalEntity} mappings require a valid ${mapping.localEntity} record in this organization`,
+        );
+      }
+
+      const [updated] = await transaction
+        .update(externalEntityMappings)
+        .set({
+          localId: input.localId,
+          autoCreated: input.autoCreated ?? mapping.autoCreated,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(externalEntityMappings.id, mappingId),
+            eq(externalEntityMappings.organizationId, organizationId),
+            eq(externalEntityMappings.provider, 'qbo'),
+            eq(externalEntityMappings.direction, 'inbound'),
+          ),
+        )
+        .returning();
+      if (!updated) throw new NotFoundException(`QBO mapping ${mappingId} not found`);
+
+      await this.auditMappingMutation(transaction, {
+        organizationId,
+        userId: userId ?? null,
+        mappingId,
+        action: input.localId === null ? 'unlinked' : 'linked',
+        changes: {
+          localId: { from: mapping.localId, to: input.localId },
+          autoCreated: {
+            from: mapping.autoCreated,
+            to: input.autoCreated ?? mapping.autoCreated,
+          },
+        },
+        source: 'user',
+      });
+
+      return updated;
+    });
   }
 
   async syncNow(
     organizationId: string,
     entityTypes: readonly QboSyncEntity[] = [...QBO_CATALOG_ENTITY_TYPES, ...QBO_TAX_ENTITY_TYPES],
   ): Promise<QboSyncResult> {
-    const connection = await this.activeConnection(organizationId);
-    if (!connection) throw new ServiceUnavailableException('QBO is not connected');
+    return this.withOrganizationLock(organizationId, async () => {
+      const connection = await this.activeConnection(organizationId);
+      if (!connection) throw new ServiceUnavailableException('QBO is not connected');
 
-    const requested = new Set(entityTypes);
-    let imported = 0;
-    for (const entityName of QBO_CATALOG_ENTITY_TYPES) {
-      if (!requested.has(entityName)) continue;
-      imported += await this.syncCatalogEntity(organizationId, connection.id, entityName);
-    }
+      const requested = new Set(entityTypes);
+      let imported = 0;
+      for (const entityName of QBO_CATALOG_ENTITY_TYPES) {
+        if (!requested.has(entityName)) continue;
+        imported += await this.syncCatalogEntity(organizationId, connection.id, entityName);
+      }
 
-    // TaxCode and TaxRate are deliberately polled through the normal query
-    // endpoint. Intuit excludes them from CDC notifications.
-    for (const entityName of QBO_TAX_ENTITY_TYPES) {
-      if (!requested.has(entityName)) continue;
-      imported += await this.syncCatalogEntity(organizationId, connection.id, entityName);
-    }
+      // TaxCode and TaxRate are deliberately polled through the normal query
+      // endpoint. Intuit excludes them from CDC notifications.
+      for (const entityName of QBO_TAX_ENTITY_TYPES) {
+        if (!requested.has(entityName)) continue;
+        imported += await this.syncCatalogEntity(organizationId, connection.id, entityName);
+      }
 
-    const completedAt = await this.completeConnectionSync(connection.id, organizationId);
+      const completedAt = await this.completeConnectionSync(connection.id, organizationId);
 
-    return {
-      organizationId,
-      imported,
-      tombstones: 0,
-      completedAt: completedAt.toISOString(),
-    };
+      return {
+        organizationId,
+        imported,
+        tombstones: 0,
+        completedAt: completedAt.toISOString(),
+      };
+    });
   }
 
   async runCdcSweep(
     organizationId: string,
     lookbackDays = MAX_LOOKBACK_DAYS,
   ): Promise<QboSyncResult> {
-    const connection = await this.activeConnection(organizationId);
-    if (!connection) throw new ServiceUnavailableException('QBO is not connected');
+    return this.withOrganizationLock(organizationId, async () => {
+      const connection = await this.activeConnection(organizationId);
+      if (!connection) throw new ServiceUnavailableException('QBO is not connected');
 
-    const boundedLookback = Math.min(Math.max(1, Math.floor(lookbackDays)), MAX_LOOKBACK_DAYS);
-    const changedSince = new Date(Date.now() - boundedLookback * 24 * 60 * 60 * 1000);
-    let startPosition = 1;
-    let imported = 0;
-    let tombstones = 0;
+      const boundedLookback = Math.min(Math.max(1, Math.floor(lookbackDays)), MAX_LOOKBACK_DAYS);
+      const changedSince = new Date(Date.now() - boundedLookback * 24 * 60 * 60 * 1000);
+      let startPosition = 1;
+      let imported = 0;
+      let tombstones = 0;
 
-    while (true) {
-      const response = await this.qboClient.request<QboObject>({
-        organizationId,
-        method: 'GET',
-        path: 'cdc',
-        query: {
-          entities: CDC_ENTITY_TYPES.join(','),
-          changedSince: changedSince.toISOString(),
-          startposition: startPosition,
-          maxresults: CDC_PAGE_SIZE,
-        },
-      });
-      const entries = extractCdcEntries(response.data);
-      for (const entry of entries) {
-        if (isTaxEntity(entry.entityName)) continue;
+      while (true) {
+        const response = await this.qboClient.request<QboObject>({
+          organizationId,
+          method: 'GET',
+          path: 'cdc',
+          query: {
+            entities: CDC_ENTITY_TYPES.join(','),
+            changedSince: changedSince.toISOString(),
+            startposition: startPosition,
+            maxresults: CDC_PAGE_SIZE,
+          },
+        });
+        const entries = extractCdcEntries(response.data);
+        for (const entry of entries) {
+          if (isTaxEntity(entry.entityName)) continue;
 
-        if (entry.deleted) {
-          if (isSupportedCdcEntity(entry.entityName) && entry.entity.Id) {
-            await this.upsertMapping({
-              organizationId,
-              connectionId: connection.id,
-              entityName: entry.entityName,
-              entity: entry.entity,
-              deleted: true,
-            });
-            tombstones += 1;
+          if (entry.deleted) {
+            if (isSupportedCdcEntity(entry.entityName) && entry.entity.Id) {
+              await this.upsertMapping({
+                organizationId,
+                connectionId: connection.id,
+                entityName: entry.entityName,
+                entity: entry.entity,
+                deleted: true,
+                auditSource: 'cdc',
+              });
+              tombstones += 1;
+            }
+            continue;
           }
-          continue;
+
+          if (isCatalogEntity(entry.entityName)) {
+            const definition = ENTITY_DEFINITIONS[entry.entityName];
+            if (definition.shouldStore?.(entry.entity) === false) continue;
+            if (entry.entity.Id) {
+              await this.upsertMapping({
+                organizationId,
+                connectionId: connection.id,
+                entityName: entry.entityName,
+                entity: entry.entity,
+                deleted: false,
+                auditSource: 'cdc',
+              });
+              imported += 1;
+            }
+          }
         }
 
-        if (isCatalogEntity(entry.entityName)) {
-          const definition = ENTITY_DEFINITIONS[entry.entityName];
-          if (definition.shouldStore?.(entry.entity) === false) continue;
-          if (entry.entity.Id) {
-            await this.upsertMapping({
-              organizationId,
-              connectionId: connection.id,
-              entityName: entry.entityName,
-              entity: entry.entity,
-              deleted: false,
-            });
-            imported += 1;
-          }
-        }
+        if (entries.length < CDC_PAGE_SIZE) break;
+        startPosition += entries.length;
       }
 
-      if (entries.length < CDC_PAGE_SIZE) break;
-      startPosition += entries.length;
-    }
+      const completedAt = await this.completeConnectionSync(connection.id, organizationId);
 
-    const completedAt = await this.completeConnectionSync(connection.id, organizationId);
-
-    return {
-      organizationId,
-      imported,
-      tombstones,
-      completedAt: completedAt.toISOString(),
-    };
+      return {
+        organizationId,
+        imported,
+        tombstones,
+        completedAt: completedAt.toISOString(),
+      };
+    });
   }
 
   async receiveWebhook(rawBody: Buffer, signature: string | undefined) {
@@ -380,9 +452,20 @@ export class QboInboundService implements OnModuleInit {
   }
 
   async processWebhookEvent(event: QboWebhookEvent): Promise<void> {
-    const connection = await this.connectionForRealm(event.realmId);
-    if (!connection) return;
+    const connections = await this.connectionsForRealm(event.realmId);
+    await Promise.all(
+      connections.map((connection) =>
+        this.withOrganizationLock(connection.organizationId, async () => {
+          await this.processWebhookEventForConnection(connection, event);
+        }),
+      ),
+    );
+  }
 
+  private async processWebhookEventForConnection(
+    connection: { id: string; organizationId: string },
+    event: QboWebhookEvent,
+  ): Promise<void> {
     if (event.operation === 'merge' && event.entityName === 'Vendor') {
       await this.handleVendorMerge(connection.organizationId, connection.id, event);
       return;
@@ -395,6 +478,7 @@ export class QboInboundService implements OnModuleInit {
         entityName: event.entityName,
         entity: { ...event.payload, Id: event.entityId },
         deleted: true,
+        auditSource: 'webhook',
       });
       return;
     }
@@ -413,6 +497,7 @@ export class QboInboundService implements OnModuleInit {
         entityName: event.entityName,
         entity: { Id: event.entityId },
         deleted: true,
+        auditSource: 'webhook',
       });
       return;
     }
@@ -424,6 +509,7 @@ export class QboInboundService implements OnModuleInit {
       entityName: event.entityName,
       entity,
       deleted: false,
+      auditSource: 'webhook',
     });
   }
 
@@ -461,8 +547,81 @@ export class QboInboundService implements OnModuleInit {
     });
   }
 
-  private async connectionForRealm(realmId: string) {
-    return this.db.query.integrationConnections.findFirst({
+  private async localRecordExists(
+    transaction: DbTransaction,
+    localEntity: string,
+    localId: string,
+    organizationId: string,
+  ): Promise<boolean> {
+    switch (localEntity) {
+      case 'gl_account':
+        throw new BadRequestException(
+          'QBO Account links are not supported until the local chart of accounts is available',
+        );
+      case 'vendor':
+        return Boolean(
+          await transaction.query.vendors.findFirst({
+            where: (row, { and, eq }) =>
+              and(eq(row.id, localId), eq(row.organizationId, organizationId)),
+            columns: { id: true },
+          }),
+        );
+      case 'department':
+        return Boolean(
+          await transaction.query.departments.findFirst({
+            where: (row, { and, eq }) =>
+              and(eq(row.id, localId), eq(row.organizationId, organizationId)),
+            columns: { id: true },
+          }),
+        );
+      case 'project':
+        return Boolean(
+          await transaction.query.projects.findFirst({
+            where: (row, { and, eq }) =>
+              and(eq(row.id, localId), eq(row.organizationId, organizationId)),
+            columns: { id: true },
+          }),
+        );
+      case 'tax_code':
+        return Boolean(
+          await transaction.query.taxCodes.findFirst({
+            where: (row, { and, eq }) => and(eq(row.id, localId), eq(row.orgId, organizationId)),
+            columns: { id: true },
+          }),
+        );
+      case 'payment_term':
+      case 'tax_rate':
+      case 'qbo_transaction':
+        throw new BadRequestException(
+          `QBO ${localEntity} links are not supported by the current local data model`,
+        );
+      default:
+        throw new BadRequestException(`Unsupported QBO local entity ${localEntity}`);
+    }
+  }
+
+  private async existingQueueJob(
+    queue: Queue<QboSyncJobData> | Queue<QboCdcJobData>,
+    jobId: string,
+  ): Promise<{ id: string | undefined } | null> {
+    const existing = await queue.getJob(jobId);
+    if (!existing) return null;
+    if ((await existing.getState()) === 'failed') {
+      await existing.remove();
+      return null;
+    }
+    return { id: existing.id };
+  }
+
+  private async withOrganizationLock<T>(
+    organizationId: string,
+    callback: () => Promise<T>,
+  ): Promise<T> {
+    return this.oauthRedis.withLock(`qbo-sync:${organizationId}`, callback);
+  }
+
+  private async connectionsForRealm(realmId: string) {
+    return this.db.query.integrationConnections.findMany({
       where: (connection, { and, eq }) =>
         and(
           eq(connection.realmId, realmId),
@@ -495,19 +654,28 @@ export class QboInboundService implements OnModuleInit {
     entityName: QboSyncEntity,
   ): Promise<number> {
     const definition = ENTITY_DEFINITIONS[entityName];
-    const rows = await this.queryEntity(organizationId, entityName);
+    const rows = await this.queryEntity(
+      organizationId,
+      entityName,
+      QBO_ACTIVE_ENTITY_TYPES.has(entityName) ? 'Active IN (true, false)' : undefined,
+    );
     let imported = 0;
+    const snapshotIds = new Set<string>();
     for (const entity of rows) {
-      if (!entity.Id || definition.shouldStore?.(entity) === false) continue;
+      const externalId = stringValue(entity.Id);
+      if (!externalId || definition.shouldStore?.(entity) === false) continue;
+      snapshotIds.add(externalId);
       await this.upsertMapping({
         organizationId,
         connectionId,
         entityName,
         entity,
         deleted: false,
+        auditSource: 'snapshot',
       });
       imported += 1;
     }
+    await this.reconcileCatalogEntity(organizationId, connectionId, entityName, snapshotIds);
     return imported;
   }
 
@@ -542,12 +710,90 @@ export class QboInboundService implements OnModuleInit {
     return rows;
   }
 
+  private async reconcileCatalogEntity(
+    organizationId: string,
+    connectionId: string,
+    entityName: QboSyncEntity,
+    snapshotIds: ReadonlySet<string>,
+  ): Promise<void> {
+    await this.db.transaction(async (transaction) => {
+      const existing = await transaction.query.externalEntityMappings.findMany({
+        where: (mapping, { and, eq }) =>
+          and(
+            eq(mapping.organizationId, organizationId),
+            eq(mapping.connectionId, connectionId),
+            eq(mapping.provider, 'qbo'),
+            eq(mapping.direction, 'inbound'),
+            eq(mapping.externalEntity, entityName),
+            eq(mapping.isDeleted, false),
+          ),
+        columns: { id: true, externalId: true, isActive: true },
+      });
+
+      for (const mapping of existing) {
+        if (snapshotIds.has(mapping.externalId)) continue;
+        const [updated] = await transaction
+          .update(externalEntityMappings)
+          .set({ isActive: false, isDeleted: true, updatedAt: new Date() })
+          .where(
+            and(
+              eq(externalEntityMappings.id, mapping.id),
+              eq(externalEntityMappings.organizationId, organizationId),
+              eq(externalEntityMappings.connectionId, connectionId),
+              eq(externalEntityMappings.isDeleted, false),
+            ),
+          )
+          .returning({ id: externalEntityMappings.id });
+        if (!updated) continue;
+
+        await this.auditMappingMutation(transaction, {
+          organizationId,
+          userId: null,
+          mappingId: updated.id,
+          action: 'deleted',
+          changes: { isActive: { from: mapping.isActive, to: false }, isDeleted: true },
+          source: 'snapshot',
+          reason: 'missing_from_snapshot',
+        });
+      }
+    });
+  }
+
   private async upsertMapping(input: MappingUpsert): Promise<void> {
+    await this.db.transaction(async (transaction) => {
+      await this.upsertMappingInTransaction(transaction, input);
+    });
+  }
+
+  private async upsertMappingInTransaction(
+    transaction: DbTransaction,
+    input: MappingUpsert,
+  ): Promise<string | undefined> {
     const { organizationId, connectionId, entityName, entity, deleted, mergedIntoExternalId } =
       input;
     const externalId = stringValue(entity.Id);
-    if (!externalId) return;
+    if (!externalId) return undefined;
     const definition = isCatalogEntity(entityName) ? ENTITY_DEFINITIONS[entityName] : undefined;
+    const existing = await transaction.query.externalEntityMappings.findFirst({
+      where: (mapping, { and, eq }) =>
+        and(
+          eq(mapping.organizationId, organizationId),
+          eq(mapping.provider, 'qbo'),
+          eq(mapping.direction, 'inbound'),
+          eq(mapping.externalEntity, entityName),
+          eq(mapping.externalId, externalId),
+        ),
+      columns: {
+        id: true,
+        connectionId: true,
+        displayName: true,
+        syncToken: true,
+        isActive: true,
+        isDeleted: true,
+        mergedIntoExternalId: true,
+        payload: true,
+      },
+    });
     const now = new Date();
     const values = {
       organizationId,
@@ -558,8 +804,9 @@ export class QboInboundService implements OnModuleInit {
       displayName: definition?.displayName(entity) ?? displayNameFromQbo(entity),
       syncToken: stringValue(entity.SyncToken),
       localEntity: definition?.localEntity ?? 'qbo_transaction',
+      localId: input.localId ?? null,
       direction: 'inbound' as const,
-      autoCreated: false,
+      autoCreated: input.autoCreated ?? false,
       isActive: !deleted && entity.Active !== false,
       isDeleted: deleted,
       mergedIntoExternalId: mergedIntoExternalId ?? null,
@@ -568,7 +815,7 @@ export class QboInboundService implements OnModuleInit {
       updatedAt: now,
     };
 
-    await this.db
+    const [mapping] = await transaction
       .insert(externalEntityMappings)
       .values(values)
       .onConflictDoUpdate({
@@ -590,7 +837,67 @@ export class QboInboundService implements OnModuleInit {
           syncedAt: values.syncedAt,
           updatedAt: values.updatedAt,
         },
+      })
+      .returning({ id: externalEntityMappings.id });
+    if (!mapping) return undefined;
+
+    if (
+      !existing ||
+      existing.connectionId !== values.connectionId ||
+      existing.displayName !== values.displayName ||
+      existing.syncToken !== values.syncToken ||
+      existing.isActive !== values.isActive ||
+      existing.isDeleted !== values.isDeleted ||
+      existing.mergedIntoExternalId !== values.mergedIntoExternalId ||
+      !isDeepStrictEqual(existing.payload, values.payload)
+    ) {
+      await this.auditMappingMutation(transaction, {
+        organizationId,
+        userId: null,
+        mappingId: mapping.id,
+        action: deleted ? 'deleted' : 'synced',
+        changes: {
+          externalEntity: entityName,
+          externalId,
+          isActive: values.isActive,
+          isDeleted: values.isDeleted,
+          ...(input.localId !== undefined ? { localId: input.localId } : {}),
+        },
+        source: input.auditSource ?? 'cdc',
+        ...(input.auditReason || mergedIntoExternalId
+          ? { reason: input.auditReason ?? 'merged' }
+          : {}),
       });
+    }
+    return mapping.id;
+  }
+
+  private async auditMappingMutation(
+    transaction: DbTransaction,
+    input: {
+      organizationId: string;
+      userId: string | null;
+      mappingId: string;
+      action: string;
+      changes: Record<string, unknown>;
+      source: string;
+      reason?: string;
+    },
+  ): Promise<void> {
+    await transaction.insert(auditLog).values({
+      organizationId: input.organizationId,
+      userId: input.userId,
+      entityType: 'external_entity_mapping',
+      entityId: input.mappingId,
+      action: input.action,
+      changes: input.changes,
+      metadata: {
+        actor: input.userId ? 'user' : 'system',
+        provider: 'qbo',
+        source: input.source,
+        ...(input.reason ? { reason: input.reason } : {}),
+      },
+    });
   }
 
   private async handleVendorMerge(
@@ -619,54 +926,120 @@ export class QboInboundService implements OnModuleInit {
       return;
     }
 
-    const source = await this.db.query.externalEntityMappings.findFirst({
-      where: (mapping, { and, eq }) =>
-        and(
-          eq(mapping.organizationId, organizationId),
-          eq(mapping.provider, 'qbo'),
-          eq(mapping.direction, 'inbound'),
-          eq(mapping.externalEntity, 'Vendor'),
-          eq(mapping.externalId, sourceId),
-        ),
-    });
-    const target = await this.db.query.externalEntityMappings.findFirst({
-      where: (mapping, { and, eq }) =>
-        and(
-          eq(mapping.organizationId, organizationId),
-          eq(mapping.provider, 'qbo'),
-          eq(mapping.direction, 'inbound'),
-          eq(mapping.externalEntity, 'Vendor'),
-          eq(mapping.externalId, targetId),
-        ),
-    });
-
-    if (source) {
-      await this.db
-        .update(externalEntityMappings)
-        .set({
-          isActive: false,
-          isDeleted: true,
-          mergedIntoExternalId: targetId,
-          updatedAt: new Date(),
-        })
-        .where(eq(externalEntityMappings.id, source.id));
-    } else {
-      await this.upsertMapping({
-        organizationId,
-        connectionId,
-        entityName: 'Vendor',
-        entity: { Id: sourceId, Name: firstString(event.payload, ['Name', 'DisplayName']) },
-        deleted: true,
-        mergedIntoExternalId: targetId,
+    let sourceIdForNotification: string | undefined;
+    await this.db.transaction(async (transaction) => {
+      const source = await transaction.query.externalEntityMappings.findFirst({
+        where: (mapping, { and, eq }) =>
+          and(
+            eq(mapping.organizationId, organizationId),
+            eq(mapping.provider, 'qbo'),
+            eq(mapping.direction, 'inbound'),
+            eq(mapping.externalEntity, 'Vendor'),
+            eq(mapping.externalId, sourceId),
+          ),
       });
-    }
+      const target = await transaction.query.externalEntityMappings.findFirst({
+        where: (mapping, { and, eq }) =>
+          and(
+            eq(mapping.organizationId, organizationId),
+            eq(mapping.provider, 'qbo'),
+            eq(mapping.direction, 'inbound'),
+            eq(mapping.externalEntity, 'Vendor'),
+            eq(mapping.externalId, targetId),
+          ),
+      });
 
-    if (source?.localId && target && !target.localId) {
-      await this.db
-        .update(externalEntityMappings)
-        .set({ localId: source.localId, autoCreated: source.autoCreated, updatedAt: new Date() })
-        .where(eq(externalEntityMappings.id, target.id));
-    }
+      if (source) {
+        const [updated] = await transaction
+          .update(externalEntityMappings)
+          .set({
+            isActive: false,
+            isDeleted: true,
+            mergedIntoExternalId: targetId,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(externalEntityMappings.id, source.id),
+              eq(externalEntityMappings.organizationId, organizationId),
+              eq(externalEntityMappings.provider, 'qbo'),
+              eq(externalEntityMappings.direction, 'inbound'),
+            ),
+          )
+          .returning({ id: externalEntityMappings.id });
+        if (updated) {
+          sourceIdForNotification = source.id;
+          await this.auditMappingMutation(transaction, {
+            organizationId,
+            userId: null,
+            mappingId: updated.id,
+            action: 'merged',
+            changes: {
+              isActive: { from: source.isActive, to: false },
+              isDeleted: { from: source.isDeleted, to: true },
+              mergedIntoExternalId: { from: source.mergedIntoExternalId, to: targetId },
+            },
+            source: 'webhook',
+            reason: 'vendor_merge',
+          });
+        }
+      } else {
+        sourceIdForNotification = await this.upsertMappingInTransaction(transaction, {
+          organizationId,
+          connectionId,
+          entityName: 'Vendor',
+          entity: { Id: sourceId, Name: firstString(event.payload, ['Name', 'DisplayName']) },
+          deleted: true,
+          mergedIntoExternalId: targetId,
+          auditSource: 'merge',
+        });
+      }
+
+      if (source?.localId) {
+        if (target && !target.localId) {
+          const [updated] = await transaction
+            .update(externalEntityMappings)
+            .set({
+              localId: source.localId,
+              autoCreated: source.autoCreated,
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(externalEntityMappings.id, target.id),
+                eq(externalEntityMappings.organizationId, organizationId),
+                eq(externalEntityMappings.provider, 'qbo'),
+                eq(externalEntityMappings.direction, 'inbound'),
+                isNull(externalEntityMappings.localId),
+              ),
+            )
+            .returning({ id: externalEntityMappings.id });
+          if (updated) {
+            await this.auditMappingMutation(transaction, {
+              organizationId,
+              userId: null,
+              mappingId: updated.id,
+              action: 'linked',
+              changes: { localId: { from: null, to: source.localId } },
+              source: 'merge',
+              reason: 'vendor_merge',
+            });
+          }
+        } else if (!target) {
+          await this.upsertMappingInTransaction(transaction, {
+            organizationId,
+            connectionId,
+            entityName: 'Vendor',
+            entity: { Id: targetId },
+            deleted: false,
+            localId: source.localId,
+            autoCreated: source.autoCreated,
+            auditSource: 'merge',
+            auditReason: 'vendor_merge',
+          });
+        }
+      }
+    });
 
     const adminId = await resolveOrganizationAdminId(this.db, organizationId);
     if (adminId) {
@@ -678,7 +1051,7 @@ export class QboInboundService implements OnModuleInit {
         'QuickBooks vendor merged',
         `QuickBooks vendor ${sourceId} was merged into ${targetId}. Review the linked vendor mapping.`,
         'external_entity_mapping',
-        source?.id,
+        sourceIdForNotification,
       );
     }
   }

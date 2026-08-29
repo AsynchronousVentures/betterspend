@@ -172,8 +172,16 @@ function auditTransaction(captured: Array<Record<string, unknown>>) {
   };
 }
 
-function qboSyncQueue(error?: Error) {
+function qboSyncQueue(
+  error?: Error,
+  existingJob?: {
+    id?: string;
+    getState: jest.Mock<Promise<string>, []>;
+    remove: jest.Mock<Promise<void>, []>;
+  },
+) {
   return {
+    getJob: jest.fn(async () => existingJob ?? null),
     add: error
       ? jest.fn(async () => Promise.reject(error))
       : jest.fn(async () => ({ id: 'qbo-initial-sync-job' })),
@@ -281,6 +289,48 @@ describe('OAuthService', () => {
       expect.arrayContaining([
         expect.objectContaining({ provider: 'qbo', organizationId, realmId: 'realm-1' }),
       ]),
+    );
+  });
+
+  it('removes a failed initial-sync job before enqueueing a fresh import', async () => {
+    const failedJob = {
+      id: 'failed-initial-sync',
+      getState: jest.fn(async () => 'failed'),
+      remove: jest.fn(async () => undefined),
+    };
+    const stateStore = new FakeOAuthRedis();
+    const queue = qboSyncQueue(undefined, failedJob);
+    const service = new OAuthService(
+      insertCapturingDb([]),
+      crypto,
+      stateStore as never,
+      queue as never,
+    );
+    mockedAxios.post.mockResolvedValue({
+      data: {
+        access_token: 'plain-access-token',
+        refresh_token: 'plain-refresh-token',
+        expires_in: 3600,
+      },
+    });
+    const url = new URL(await service.getQboAuthUrl(organizationId, userId, sessionId));
+
+    await service.completeQboOAuth(
+      url.searchParams.get('state')!,
+      'authorization-code',
+      'realm-1',
+      userId,
+      sessionId,
+    );
+
+    expect(failedJob.remove).toHaveBeenCalledTimes(1);
+    expect(queue.add).toHaveBeenCalledWith(
+      'initial-sync',
+      { kind: 'initial', organizationId },
+      expect.objectContaining({
+        jobId: `qbo-initial-sync-${organizationId}`,
+        removeOnFail: true,
+      }),
     );
   });
 

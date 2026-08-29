@@ -6,8 +6,15 @@ import {
   type QboSyncJobData,
 } from './qbo-inbound.service';
 
-function queue() {
+type QueueJob = {
+  id?: string;
+  getState: jest.Mock<Promise<string>, []>;
+  remove: jest.Mock<Promise<void>, []>;
+};
+
+function queue(existingJob?: QueueJob) {
   return {
+    getJob: jest.fn(async () => existingJob ?? null),
     add: jest.fn(async (name: string, data: QboSyncJobData | QboCdcJobData) => ({
       id: `${name}-job`,
       data,
@@ -17,8 +24,10 @@ function queue() {
 
 function database(options: {
   connection?: Record<string, unknown>;
+  connections?: Record<string, unknown>[];
   mappings?: Record<string, unknown>[];
   adminId?: string;
+  localRecordExists?: boolean;
 }) {
   const inserted: Record<string, unknown>[] = [];
   const updates: Record<string, unknown>[] = [];
@@ -29,17 +38,23 @@ function database(options: {
     realmId: 'realm-1',
     status: 'active',
   };
+  const connections = options.connections ?? [connection];
+  const localRecordExists = options.localRecordExists ?? true;
   let mappingIndex = 0;
   const db = {
     query: {
       integrationConnections: {
         findFirst: jest.fn(async () => connection),
-        findMany: jest.fn(async () => [connection]),
+        findMany: jest.fn(async () => connections),
       },
       externalEntityMappings: {
         findFirst: jest.fn(async () => options.mappings?.[mappingIndex++] ?? null),
         findMany: jest.fn(async () => options.mappings ?? []),
       },
+      vendors: { findFirst: jest.fn(async () => (localRecordExists ? { id: 'local' } : null)) },
+      departments: { findFirst: jest.fn(async () => (localRecordExists ? { id: 'local' } : null)) },
+      projects: { findFirst: jest.fn(async () => (localRecordExists ? { id: 'local' } : null)) },
+      taxCodes: { findFirst: jest.fn(async () => (localRecordExists ? { id: 'local' } : null)) },
     },
     select: jest.fn(() => ({
       from: jest.fn(() => ({
@@ -54,7 +69,10 @@ function database(options: {
       values: jest.fn((values: Record<string, unknown>) => {
         inserted.push(values);
         return {
-          onConflictDoUpdate: jest.fn(async () => undefined),
+          onConflictDoUpdate: jest.fn(() => ({
+            returning: jest.fn(async () => [{ ...values, id: 'mapping-1' }]),
+          })),
+          returning: jest.fn(async () => [{ ...values, id: 'mapping-1' }]),
         };
       }),
     })),
@@ -62,36 +80,49 @@ function database(options: {
       set: jest.fn((values: Record<string, unknown>) => {
         updates.push(values);
         return {
-          where: jest.fn(async () => undefined),
-          returning: jest.fn(async () => [{ ...values, id: 'mapping-1' }]),
+          where: jest.fn(() => ({
+            returning: jest.fn(async () => [{ ...values, id: 'mapping-1' }]),
+          })),
         };
       }),
     })),
+    transaction: undefined as unknown as jest.Mock,
   };
+  db.transaction = jest.fn(async (callback: (transaction: unknown) => Promise<unknown>) =>
+    callback(db),
+  );
   return { db, inserted, updates };
 }
 
 function service(
   options: {
     connection?: Record<string, unknown>;
+    connections?: Record<string, unknown>[];
     mappings?: Record<string, unknown>[];
     adminId?: string;
     request?: jest.Mock;
+    localRecordExists?: boolean;
+    syncJob?: QueueJob;
+    cdcJob?: QueueJob;
   } = {},
 ) {
   const harness = database(options);
-  const syncQueue = queue();
-  const cdcQueue = queue();
+  const syncQueue = queue(options.syncJob);
+  const cdcQueue = queue(options.cdcJob);
   const request = options.request ?? jest.fn();
   const notifications = { createIdempotent: jest.fn(async () => undefined) };
+  const oauthRedis = {
+    withLock: jest.fn(async (_key: string, callback: () => Promise<unknown>) => callback()),
+  };
   const instance = new QboInboundService(
     harness.db as never,
     { request } as never,
     notifications as never,
     syncQueue as never,
     cdcQueue as never,
+    oauthRedis as never,
   );
-  return { ...harness, instance, request, syncQueue, cdcQueue, notifications };
+  return { ...harness, instance, request, syncQueue, cdcQueue, notifications, oauthRedis };
 }
 
 describe('QboInboundService', () => {
@@ -206,6 +237,92 @@ describe('QboInboundService', () => {
     expect(harness.cdcQueue.add).not.toHaveBeenCalled();
   });
 
+  it('retries an existing failed initial or CDC job after removing the failed job', async () => {
+    const failedInitialJob: QueueJob = {
+      id: 'failed-initial',
+      getState: jest.fn(async () => 'failed'),
+      remove: jest.fn(async () => undefined),
+    };
+    const failedCdcJob: QueueJob = {
+      id: 'failed-cdc',
+      getState: jest.fn(async () => 'failed'),
+      remove: jest.fn(async () => undefined),
+    };
+    const harness = service({ syncJob: failedInitialJob, cdcJob: failedCdcJob });
+
+    await harness.instance.enqueueInitialSync('organization-1', ['Vendor']);
+    await harness.instance.enqueueCdcSweep('organization-1');
+
+    expect(failedInitialJob.remove).toHaveBeenCalledTimes(1);
+    expect(failedCdcJob.remove).toHaveBeenCalledTimes(1);
+    expect(harness.syncQueue.add).toHaveBeenCalledWith(
+      'initial-sync',
+      { kind: 'initial', organizationId: 'organization-1', entityTypes: ['Vendor'] },
+      expect.objectContaining({
+        jobId: 'qbo-initial-sync-organization-1',
+        removeOnFail: true,
+      }),
+    );
+    expect(harness.cdcQueue.add).toHaveBeenCalledWith(
+      'cdc-sweep',
+      expect.objectContaining({ kind: 'cdc-sweep', organizationId: 'organization-1' }),
+      expect.objectContaining({ removeOnFail: true }),
+    );
+  });
+
+  it('fans one realm webhook out to every active organization connection', async () => {
+    const connections = [
+      {
+        id: 'connection-1',
+        organizationId: 'organization-1',
+        provider: 'qbo',
+        realmId: 'shared-realm',
+        status: 'active',
+      },
+      {
+        id: 'connection-2',
+        organizationId: 'organization-2',
+        provider: 'qbo',
+        realmId: 'shared-realm',
+        status: 'active',
+      },
+    ];
+    const request = jest.fn(async ({ organizationId }: { organizationId: string }) => ({
+      data: { Vendor: { Id: `vendor-${organizationId}`, Name: organizationId } },
+    }));
+    const harness = service({ connections, request });
+
+    await harness.instance.processWebhookEvent({
+      realmId: 'shared-realm',
+      entityName: 'Vendor',
+      entityId: 'vendor-1',
+      operation: 'update',
+      payload: {},
+    });
+
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls.map(([input]) => input.organizationId)).toEqual(
+      expect.arrayContaining(['organization-1', 'organization-2']),
+    );
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          organizationId: 'organization-1',
+          externalId: 'vendor-organization-1',
+        }),
+        expect.objectContaining({
+          organizationId: 'organization-2',
+          externalId: 'vendor-organization-2',
+        }),
+      ]),
+    );
+    expect(harness.oauthRedis.withLock).toHaveBeenCalledTimes(2);
+    expect(harness.oauthRedis.withLock.mock.calls.map(([key]) => key)).toEqual([
+      'qbo-sync:organization-1',
+      'qbo-sync:organization-2',
+    ]);
+  });
+
   it('fetches webhook entities by an encoded resource ID instead of building query text', async () => {
     const hostileId = "42' OR Id = '43";
     const request = jest.fn(
@@ -269,7 +386,17 @@ describe('QboInboundService', () => {
 
     const result = await harness.instance.syncNow('organization-1', ['Account', 'Vendor']);
 
+    const statements = request.mock.calls.map(([input]) =>
+      String((input as { query?: { query?: unknown } }).query?.query),
+    );
+
     expect(result.imported).toBe(2);
+    expect(statements).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('FROM Account WHERE Active IN (true, false)'),
+        expect.stringContaining('FROM Vendor WHERE Active IN (true, false)'),
+      ]),
+    );
     expect(harness.inserted).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -295,6 +422,66 @@ describe('QboInboundService', () => {
     expect(harness.updates).toEqual(
       expect.arrayContaining([expect.objectContaining({ lastSyncAt: expect.any(Date) })]),
     );
+    expect(harness.oauthRedis.withLock).toHaveBeenCalledWith(
+      'qbo-sync:organization-1',
+      expect.any(Function),
+    );
+  });
+
+  it('reconciles rows missing from a completed snapshot and audits the tombstone', async () => {
+    const staleMapping = {
+      id: 'stale-mapping',
+      externalId: 'vendor-stale',
+      isActive: true,
+      isDeleted: false,
+    };
+    const request = jest.fn(async () => ({ data: { QueryResponse: { Vendor: [] } } }));
+    const harness = service({ mappings: [staleMapping], request });
+
+    const result = await harness.instance.syncNow('organization-1', ['Vendor']);
+
+    expect(result.imported).toBe(0);
+    expect(harness.updates).toEqual(
+      expect.arrayContaining([expect.objectContaining({ isActive: false, isDeleted: true })]),
+    );
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entityType: 'external_entity_mapping',
+          action: 'deleted',
+          metadata: expect.objectContaining({
+            source: 'snapshot',
+            reason: 'missing_from_snapshot',
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it('does not audit an unchanged snapshot row', async () => {
+    const vendor = { Id: 'vendor-1', DisplayName: 'Acme', Active: true, SyncToken: '7' };
+    const harness = service({
+      mappings: [
+        {
+          id: 'mapping-1',
+          connectionId: 'connection-1',
+          externalId: 'vendor-1',
+          displayName: 'Acme',
+          syncToken: '7',
+          isActive: true,
+          isDeleted: false,
+          mergedIntoExternalId: null,
+          payload: vendor,
+        },
+      ],
+      request: jest.fn(async () => ({ data: { QueryResponse: { Vendor: [vendor] } } })),
+    });
+
+    await harness.instance.syncNow('organization-1', ['Vendor']);
+
+    expect(
+      harness.inserted.filter((values) => values.entityType === 'external_entity_mapping'),
+    ).toEqual([]);
   });
 
   it('polls CDC in 1000-object pages, excludes tax entities, and stores transaction tombstones', async () => {
@@ -339,6 +526,18 @@ describe('QboInboundService', () => {
           isActive: false,
         }),
       ]),
+    );
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entityType: 'external_entity_mapping',
+          metadata: expect.objectContaining({ source: 'cdc' }),
+        }),
+      ]),
+    );
+    expect(harness.oauthRedis.withLock).toHaveBeenCalledWith(
+      'qbo-sync:organization-1',
+      expect.any(Function),
     );
   });
 
@@ -482,5 +681,146 @@ describe('QboInboundService', () => {
         expect.objectContaining({ localId: localVendorId }),
       ]),
     );
+  });
+
+  it('carries a linked source vendor into a target mapping created by the merge event', async () => {
+    const localVendorId = '00000000-0000-4000-8000-000000000010';
+    const harness = service({
+      mappings: [
+        {
+          id: 'source-mapping',
+          externalId: 'vendor-source',
+          localId: localVendorId,
+          autoCreated: true,
+        },
+      ],
+    });
+
+    await harness.instance.processWebhookEvent({
+      realmId: 'realm-1',
+      entityName: 'Vendor',
+      entityId: 'vendor-target',
+      operation: 'merge',
+      payload: { deletedId: 'vendor-source' },
+    });
+
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          externalEntity: 'Vendor',
+          externalId: 'vendor-target',
+          localId: localVendorId,
+          autoCreated: true,
+          isDeleted: false,
+        }),
+      ]),
+    );
+    expect(
+      harness.inserted.filter(
+        (values) =>
+          values.entityType === 'external_entity_mapping' && values.entityId === 'mapping-1',
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          userId: null,
+          metadata: expect.objectContaining({ reason: 'vendor_merge' }),
+          changes: expect.objectContaining({ localId: localVendorId }),
+        }),
+      ]),
+    );
+  });
+
+  it('writes user link changes and audits them in the same transaction', async () => {
+    const localVendorId = '00000000-0000-4000-8000-000000000010';
+    const userId = '00000000-0000-4000-8000-000000000011';
+    const harness = service({
+      mappings: [
+        {
+          id: 'mapping-1',
+          organizationId: 'organization-1',
+          externalEntity: 'Vendor',
+          externalId: 'vendor-1',
+          localEntity: 'vendor',
+          localId: null,
+          autoCreated: false,
+        },
+      ],
+    });
+
+    await harness.instance.linkMapping(
+      'mapping-1',
+      'organization-1',
+      { localId: localVendorId, autoCreated: true },
+      userId,
+    );
+
+    expect(harness.db.transaction).toHaveBeenCalledTimes(1);
+    expect(harness.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ localId: localVendorId, autoCreated: true }),
+      ]),
+    );
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          userId,
+          entityType: 'external_entity_mapping',
+          entityId: 'mapping-1',
+          action: 'linked',
+          changes: expect.objectContaining({ localId: { from: null, to: localVendorId } }),
+          metadata: expect.objectContaining({ actor: 'user', source: 'user' }),
+        }),
+      ]),
+    );
+  });
+
+  it('rejects links to a missing local record without mutating or auditing the mapping', async () => {
+    const harness = service({
+      localRecordExists: false,
+      mappings: [
+        {
+          id: 'mapping-1',
+          organizationId: 'organization-1',
+          externalEntity: 'Vendor',
+          externalId: 'vendor-1',
+          localEntity: 'vendor',
+          localId: null,
+          autoCreated: false,
+        },
+      ],
+    });
+
+    await expect(
+      harness.instance.linkMapping('mapping-1', 'organization-1', {
+        localId: '00000000-0000-4000-8000-000000000010',
+      }),
+    ).rejects.toThrow('valid vendor record');
+    expect(harness.updates).toHaveLength(0);
+    expect(harness.inserted).toHaveLength(0);
+  });
+
+  it('rejects GL links until a local chart-of-accounts record exists', async () => {
+    const harness = service({
+      mappings: [
+        {
+          id: 'mapping-1',
+          organizationId: 'organization-1',
+          externalEntity: 'Account',
+          externalId: 'account-1',
+          localEntity: 'gl_account',
+          localId: null,
+          autoCreated: false,
+        },
+      ],
+    });
+
+    await expect(
+      harness.instance.linkMapping('mapping-1', 'organization-1', {
+        localId: '00000000-0000-0000-0000-000000000010',
+      }),
+    ).rejects.toThrow('chart of accounts');
+    expect(harness.updates).toHaveLength(0);
+    expect(harness.inserted).toHaveLength(0);
   });
 });

@@ -22,6 +22,7 @@ import {
   qboSyncRequestSchema,
 } from '@betterspend/shared';
 import { CurrentOrgId } from '../../../common/decorators/current-org-id.decorator';
+import { CurrentUserId } from '../../../common/decorators/current-user-id.decorator';
 import { Permissions } from '../../../common/decorators/permissions.decorator';
 import { Public } from '../../../common/decorators/public.decorator';
 import { QboInboundService } from './qbo-inbound.service';
@@ -63,10 +64,11 @@ export class QboInboundController {
   linkMapping(
     @Param('id', ParseUUIDPipe) mappingId: string,
     @CurrentOrgId() organizationId: string,
+    @CurrentUserId() userId: string,
     @Body() body: unknown,
   ) {
     const input = qboMappingLinkInputSchema.parse(body);
-    return this.qboInboundService.linkMapping(mappingId, organizationId, input);
+    return this.qboInboundService.linkMapping(mappingId, organizationId, input, userId);
   }
 
   @Post('sync')
