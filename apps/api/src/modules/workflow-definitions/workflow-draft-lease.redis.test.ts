@@ -138,9 +138,9 @@ describe('WorkflowDraftLeaseService Redis integration', () => {
       assert.deepEqual(await redis.keys(recoveryPattern), []);
     } finally {
       const recoveryKeys = await redis.keys(recoveryPattern);
-      assert.deepEqual(recoveryKeys, [], 'the lease protocol must not leave recovery journals');
       await redis.del(leaseKey, fenceKey, ...recoveryKeys);
       redis.disconnect();
+      assert.deepEqual(recoveryKeys, [], 'the lease protocol must not leave recovery journals');
     }
   });
 });
