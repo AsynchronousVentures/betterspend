@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { FileScan, Plus, ReceiptText, Upload } from 'lucide-react';
 import { api } from '../../../lib/api';
+import type { PurchaseOrderListItem } from '../../../lib/api-contracts';
 import { PageHeader } from '../../../components/page-header';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Button } from '../../../components/ui/button';
@@ -26,22 +27,6 @@ import {
   TableHeader,
   TableRow,
 } from '../../../components/ui/table';
-
-interface PO {
-  id: string;
-  number: string;
-  vendorId: string;
-  vendor: { id: string; name: string } | null;
-  currency?: string | null;
-  exchangeRate?: string | number | null;
-  lines: Array<{
-    id: string;
-    lineNumber: string;
-    description: string;
-    quantity: string;
-    unitPrice: string;
-  }>;
-}
 
 interface InvoiceLine {
   poLineId: string;
@@ -82,8 +67,8 @@ function createInlineStorageKey(filename: string) {
 
 export default function NewInvoicePage() {
   const router = useRouter();
-  const [pos, setPOs] = useState<PO[]>([]);
-  const [selectedPO, setSelectedPO] = useState<PO | null>(null);
+  const [pos, setPOs] = useState<PurchaseOrderListItem[]>([]);
+  const [selectedPO, setSelectedPO] = useState<PurchaseOrderListItem | null>(null);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
   const [vendorId, setVendorId] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -104,9 +89,7 @@ export default function NewInvoicePage() {
     Promise.allSettled([api.purchaseOrders.list(), api.exchangeRates.getBaseCurrency()])
       .then(([poResult, currencyResult]) => {
         if (poResult.status === 'fulfilled') {
-          const data = poResult.value;
-          const arr = Array.isArray(data) ? data : ((data as any).data ?? []);
-          setPOs(arr);
+          setPOs(poResult.value);
         }
 
         if (currencyResult.status === 'fulfilled') {
@@ -137,7 +120,7 @@ export default function NewInvoicePage() {
       return;
     }
 
-    const po = (await api.purchaseOrders.get(poId)) as PO;
+    const po = await api.purchaseOrders.get(poId);
     setSelectedPO(po);
     setVendorId(po.vendor?.id ?? po.vendorId);
     setCurrency((po.currency || baseCurrency).toUpperCase());
@@ -268,7 +251,7 @@ export default function NewInvoicePage() {
     setLoading(true);
     setError('');
     try {
-      const invoice = (await api.invoices.create({
+      const invoice = await api.invoices.create({
         purchaseOrderId: selectedPO?.id || undefined,
         vendorId,
         invoiceNumber,
@@ -285,7 +268,7 @@ export default function NewInvoicePage() {
           quantity: parseFloat(line.quantity),
           unitPrice: parseFloat(line.unitPrice),
         })),
-      })) as any;
+      });
       router.push(`/invoices/${invoice.id}`);
     } catch (err: any) {
       setError(err.message ?? 'Failed to create invoice.');

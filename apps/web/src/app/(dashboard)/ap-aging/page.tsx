@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, CalendarClock, CircleDollarSign, Percent, Wallet } from 'lucide-react';
 import { api } from '../../../lib/api';
+import type { InvoiceAgingReport, InvoiceListItem } from '../../../lib/api-contracts';
 import { localDateInputValue } from '../../../lib/date-input';
 import { PageHeader } from '../../../components/page-header';
 import { StatusBadge } from '../../../components/status-badge';
@@ -27,40 +28,12 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 
-interface AgingBucket {
-  count: number;
-  totalAmount: string;
-}
-
-interface AgingReport {
-  current: AgingBucket;
-  days_1_30: AgingBucket;
-  days_31_60: AgingBucket;
-  days_61_90: AgingBucket;
-  days_90_plus: AgingBucket;
-}
-
-interface Invoice {
-  id: string;
-  internalNumber: string;
-  invoiceNumber: string;
-  invoiceDate: string;
-  dueDate?: string;
-  totalAmount: string;
-  status: string;
-  paidAt?: string;
-  earlyPaymentDiscountPercent?: string;
-  earlyPaymentDiscountBy?: string;
-  paymentTerms?: string;
-  vendor?: { name: string };
-}
-
 function fmt(amount: string | number) {
   const n = typeof amount === 'string' ? parseFloat(amount) : amount;
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 }
 
-function daysOverdue(dueDateStr?: string) {
+function daysOverdue(dueDateStr?: string | null) {
   if (!dueDateStr) return 0;
   const due = new Date(dueDateStr);
   due.setHours(0, 0, 0, 0);
@@ -81,7 +54,7 @@ function RecordExternalPaymentModal({
   onClose,
   onSuccess,
 }: {
-  invoice: Invoice;
+  invoice: InvoiceListItem;
   onClose: () => void;
   onSuccess: () => void;
 }) {
@@ -208,12 +181,12 @@ function RecordExternalPaymentModal({
 }
 
 export default function ApAgingPage() {
-  const [aging, setAging] = useState<AgingReport | null>(null);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [aging, setAging] = useState<InvoiceAgingReport | null>(null);
+  const [invoices, setInvoices] = useState<InvoiceListItem[]>([]);
   const [earlyPayCount, setEarlyPayCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [markPaidInvoice, setMarkPaidInvoice] = useState<Invoice | null>(null);
+  const [markPaidInvoice, setMarkPaidInvoice] = useState<InvoiceListItem | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -225,12 +198,8 @@ export default function ApAgingPage() {
         api.invoices.earlyPaymentOpportunities(),
       ]);
       setAging(agingData);
-      setInvoices(
-        (allInvoices as Invoice[]).filter(
-          (invoice) => !invoice.paidAt && invoice.status !== 'paid',
-        ),
-      );
-      setEarlyPayCount((earlyPay as any[]).length);
+      setInvoices(allInvoices.filter((invoice) => !invoice.paidAt && invoice.status !== 'paid'));
+      setEarlyPayCount(earlyPay.length);
     } catch (err: any) {
       setError(err.message || 'Failed to load AP aging data');
     } finally {

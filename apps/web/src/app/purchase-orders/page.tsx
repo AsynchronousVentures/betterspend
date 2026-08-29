@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Download, FileSpreadsheet, Plus } from 'lucide-react';
 import { api, loadFailureState } from '../../lib/api';
+import type { PurchaseOrderListItem } from '../../lib/api-contracts';
 import { PageHeader } from '../../components/page-header';
 import { RelatedRecordLink } from '../../components/related-records';
 import { useAccess } from '../../components/access-provider';
@@ -20,19 +21,6 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-
-interface PurchaseOrder {
-  id: string;
-  number: string;
-  vendor: { id: string; name: string } | null;
-  version: number;
-  status: string;
-  currency: string;
-  totalAmount: string | null;
-  issuedAt: string | null;
-  createdAt: string;
-  poType: string;
-}
 
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
@@ -65,7 +53,7 @@ async function downloadCsv(type: string) {
 }
 
 export default function PurchaseOrdersPage() {
-  const [orders, setOrders] = useState<PurchaseOrder[]>([]);
+  const [orders, setOrders] = useState<PurchaseOrderListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [statusFilter, setStatusFilter] = useState('');
@@ -78,7 +66,7 @@ export default function PurchaseOrdersPage() {
     setLoadError(null);
     try {
       const data = await api.purchaseOrders.list();
-      setOrders(Array.isArray(data) ? data : ((data as any).data ?? []));
+      setOrders(data);
     } catch (error) {
       setLoadError(error);
     } finally {

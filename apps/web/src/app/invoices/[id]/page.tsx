@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { RefreshCw } from 'lucide-react';
 import { api, loadFailureState } from '../../../lib/api';
+import type { InvoiceDetail } from '../../../lib/api-contracts';
 import { localDateInputValue } from '../../../lib/date-input';
 import { formatDateOnly } from '../../../lib/date-only';
 import Breadcrumbs from '../../../components/breadcrumbs';
@@ -41,51 +42,6 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 
-interface MatchResult {
-  id: string;
-  priceMatch: boolean;
-  quantityMatch: boolean;
-  variancePct: string;
-  status: string;
-}
-
-interface InvoiceLine {
-  id: string;
-  lineNumber: string;
-  description: string;
-  quantity: string;
-  unitPrice: string;
-  totalPrice: string;
-  glAccount: string | null;
-  poLine: { lineNumber: string; description: string; unitPrice: string; quantity: string } | null;
-  matchResults: MatchResult[];
-}
-
-interface Invoice {
-  id: string;
-  internalNumber: string;
-  invoiceNumber: string;
-  status: string;
-  matchStatus: string;
-  invoiceDate: string;
-  dueDate: string | null;
-  subtotal: string;
-  taxAmount: string;
-  totalAmount: string;
-  currency: string;
-  vendor: { id: string; name: string } | null;
-  purchaseOrder: {
-    id: string;
-    number: string;
-    requisition?: { id: string; number: string } | null;
-    goodsReceipts?: { id: string; number: string; status: string }[];
-  } | null;
-  lines: InvoiceLine[];
-  approvedAt: string | null;
-  activeApproval?: { id: string; currentStep: number; status: string } | null;
-  paymentRuns?: { id: string; status: string }[];
-}
-
 interface GlExportJob {
   id: string;
   targetSystem: string;
@@ -114,7 +70,7 @@ function scrollToInvoiceSection(sectionId: string) {
 
 export default function InvoiceDetailPage(props: { params: Promise<{ id: string }> }) {
   const { id } = use(props.params);
-  const [invoice, setInvoice] = useState<Invoice | null>(null);
+  const [invoice, setInvoice] = useState<InvoiceDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -623,6 +579,9 @@ export default function InvoiceDetailPage(props: { params: Promise<{ id: string 
             <TableBody>
               {invoice.lines.map((line) => {
                 const match = line.matchResults?.[0];
+                const poLine = invoice.purchaseOrder?.lines.find(
+                  (candidate) => candidate.id === line.poLineId,
+                );
                 return (
                   <TableRow
                     key={line.id}
@@ -637,10 +596,10 @@ export default function InvoiceDetailPage(props: { params: Promise<{ id: string 
                     <TableCell className="text-muted-foreground">{line.lineNumber}</TableCell>
                     <TableCell>
                       <div className="font-medium text-foreground">{line.description}</div>
-                      {line.poLine ? (
+                      {poLine ? (
                         <div className="mt-1 text-xs text-muted-foreground">
-                          PO: {line.poLine.description} @{' '}
-                          {formatCurrency(line.poLine.unitPrice, invoice.currency)}
+                          PO: {poLine.description} @{' '}
+                          {formatCurrency(poLine.unitPrice, invoice.currency)}
                         </div>
                       ) : null}
                     </TableCell>

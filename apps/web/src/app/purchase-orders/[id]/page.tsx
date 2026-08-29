@@ -3,6 +3,12 @@
 import { use, useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
+import type {
+  BlanketRelease,
+  PurchaseOrderComplianceReport,
+  PurchaseOrderDetail,
+  PurchaseOrderReceivingLine,
+} from '../../../lib/api-contracts';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { DetailActionMenu } from '../../../components/detail-action-menu';
 import { LifecycleStrip } from '../../../components/lifecycle-strip';
@@ -43,75 +49,6 @@ import {
   DialogTitle,
 } from '../../../components/ui/dialog';
 
-interface POLine {
-  id: string;
-  lineNumber?: number;
-  description: string;
-  qty: string | number;
-  uom: string;
-  unitPrice: string | number;
-  matchedContract?: { id: string; contractNumber: string | null; title: string } | null;
-}
-
-interface POVersion {
-  id: string;
-  version: number;
-  changeReason: string | null;
-  createdAt: string;
-}
-
-interface BlanketRelease {
-  id: string;
-  releaseNumber: number;
-  amount: string;
-  description: string | null;
-  status: string;
-  createdAt: string;
-}
-
-interface ReceivingLine {
-  poLineId: string;
-  lineNumber: string;
-  description: string;
-  orderedQty: string;
-  uom: string;
-  receivedQty: string;
-  rejectedQty: string;
-  outstandingQty: string;
-  receivedPct: string;
-  grnCount: number;
-}
-
-interface PurchaseOrder {
-  id: string;
-  number: string;
-  vendor: { id: string; name: string } | null;
-  version: number;
-  status: string;
-  currency: string;
-  paymentTerms: string | null;
-  notes: string | null;
-  totalAmount: string | null;
-  issuedAt: string | null;
-  createdAt: string;
-  poType: string;
-  blanketStartDate: string | null;
-  blanketEndDate: string | null;
-  blanketTotalLimit: string | null;
-  blanketReleasedAmount: string | null;
-  lines: POLine[];
-  versions?: POVersion[];
-  requisition?: { id: string; number: string } | null;
-  activeApproval?: { id: string; currentStep: number; status: string } | null;
-  goodsReceipts?: { id: string; number: string; status: string }[];
-  invoices?: { id: string; internalNumber: string; invoiceNumber: string; status: string }[];
-  commitmentEvents?: {
-    id: string;
-    budgetId: string;
-    budget?: { id: string; name: string } | null;
-  }[];
-}
-
 function formatCurrency(amount: string | number | null, currency = 'USD') {
   if (amount == null) return '—';
   return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(amount));
@@ -127,7 +64,7 @@ function statusVariant(status: string) {
 
 export default function PurchaseOrderDetailPage(props: { params: Promise<{ id: string }> }) {
   const { id } = use(props.params);
-  const [po, setPo] = useState<PurchaseOrder | null>(null);
+  const [po, setPo] = useState<PurchaseOrderDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
@@ -136,9 +73,11 @@ export default function PurchaseOrderDetailPage(props: { params: Promise<{ id: s
   const [changeError, setChangeError] = useState('');
   const [changeSubmitting, setChangeSubmitting] = useState(false);
   const [releases, setReleases] = useState<BlanketRelease[]>([]);
-  const [receivingLines, setReceivingLines] = useState<ReceivingLine[]>([]);
+  const [receivingLines, setReceivingLines] = useState<PurchaseOrderReceivingLine[]>([]);
   const [releaseDialogOpen, setReleaseDialogOpen] = useState(false);
-  const [complianceReport, setComplianceReport] = useState<any>(null);
+  const [complianceReport, setComplianceReport] = useState<PurchaseOrderComplianceReport | null>(
+    null,
+  );
   const [releaseAmount, setReleaseAmount] = useState('');
   const [releaseDesc, setReleaseDesc] = useState('');
   const [releaseError, setReleaseError] = useState('');
@@ -617,16 +556,15 @@ export default function PurchaseOrderDetailPage(props: { params: Promise<{ id: s
               </TableHeader>
               <TableBody>
                 {lines.map((line, index) => {
-                  const lineTotal = (Number(line.qty) || 0) * (Number(line.unitPrice) || 0);
                   return (
                     <TableRow key={line.id}>
                       <TableCell className="text-muted-foreground">{index + 1}</TableCell>
                       <TableCell className="text-foreground">{line.description}</TableCell>
-                      <TableCell>{Number(line.qty)}</TableCell>
-                      <TableCell>{line.uom}</TableCell>
+                      <TableCell>{Number(line.quantity)}</TableCell>
+                      <TableCell>{line.unitOfMeasure}</TableCell>
                       <TableCell>{formatCurrency(line.unitPrice, po.currency)}</TableCell>
                       <TableCell className="font-medium text-foreground">
-                        {formatCurrency(lineTotal, po.currency)}
+                        {formatCurrency(line.totalPrice, po.currency)}
                       </TableCell>
                     </TableRow>
                   );
@@ -667,7 +605,7 @@ export default function PurchaseOrderDetailPage(props: { params: Promise<{ id: s
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {complianceReport.lines.map((line: any, index: number) => {
+                {complianceReport.lines.map((line, index) => {
                   const st = line.contractComplianceStatus ?? 'no_contract';
                   const delta = line.contractComplianceDeltaPercent
                     ? parseFloat(line.contractComplianceDeltaPercent)
