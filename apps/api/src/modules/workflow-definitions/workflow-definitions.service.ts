@@ -646,7 +646,7 @@ function sameWorkflowDraft(stored: unknown, expected: WorkflowDraft): boolean {
 }
 
 function sameJsonValue(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true;
+  if (left === right) return true;
   if (Array.isArray(left) || Array.isArray(right)) {
     return (
       Array.isArray(left) &&

@@ -68,6 +68,7 @@ describe('WorkflowDefinitionsService', () => {
     const updates: Array<Record<string, unknown>> = [];
     const auditExecutors: unknown[] = [];
     const reviewedDraft = validDraft();
+    reviewedDraft.positions.trigger = { x: -0, y: 0 };
     const definition = {
       id: 'definition-1',
       organizationId: 'organization-1',
@@ -76,7 +77,7 @@ describe('WorkflowDefinitionsService', () => {
         ...reviewedDraft,
         positions: {
           approved: reviewedDraft.positions.approved,
-          trigger: reviewedDraft.positions.trigger,
+          trigger: { x: 0, y: 0 },
         },
       },
     };
