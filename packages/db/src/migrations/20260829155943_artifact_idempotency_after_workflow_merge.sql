@@ -49,8 +49,4 @@ ALTER TABLE "artifact_operations" ADD CONSTRAINT "artifact_operations_organizati
 CREATE UNIQUE INDEX "artifact_notification_deliveries_operation_key_unique" ON "artifact_notification_deliveries" USING btree ("operation_id","delivery_key");--> statement-breakpoint
 CREATE INDEX "artifact_notification_deliveries_retry_idx" ON "artifact_notification_deliveries" USING btree ("status","lease_expires_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "artifact_operations_org_key_unique" ON "artifact_operations" USING btree ("organization_id","idempotency_key");--> statement-breakpoint
-CREATE INDEX "artifact_operations_org_status_idx" ON "artifact_operations" USING btree ("organization_id","operation_type","status","lease_expires_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "requisitions_org_idempotency_key_unique" ON "requisitions" USING btree ("organization_id","idempotency_key");--> statement-breakpoint
-CREATE UNIQUE INDEX "notifications_org_idempotency_key_unique" ON "notifications" USING btree ("organization_id","idempotency_key");--> statement-breakpoint
-CREATE UNIQUE INDEX "rfq_requests_org_idempotency_key_unique" ON "rfq_requests" USING btree ("organization_id","idempotency_key");--> statement-breakpoint
-CREATE UNIQUE INDEX "messages_org_idempotency_key_unique" ON "messages" USING btree ("organization_id","idempotency_key");
+CREATE INDEX "artifact_operations_org_status_idx" ON "artifact_operations" USING btree ("organization_id","operation_type","status","lease_expires_at");

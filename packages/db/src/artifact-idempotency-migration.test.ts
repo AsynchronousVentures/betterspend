@@ -40,10 +40,31 @@ test('artifact idempotency migration is recorded in migration history', async ()
 });
 
 test('artifact index inspection compares catalog names as text', async () => {
-  const source = await readFile(migrationRunner, 'utf8');
+  const [migration, source] = await Promise.all([
+    readFile(join(migrationsDirectory, `${migrationTag}.sql`), 'utf8'),
+    readFile(migrationRunner, 'utf8'),
+  ]);
+
+  for (const index of [
+    'requisitions_org_idempotency_key_unique',
+    'rfq_requests_org_idempotency_key_unique',
+    'messages_org_idempotency_key_unique',
+    'notifications_org_idempotency_key_unique',
+  ]) {
+    assert.doesNotMatch(
+      migration,
+      new RegExp(`CREATE UNIQUE INDEX "${index}"`),
+      `${index} must be built concurrently after transactional migrations`,
+    );
+    assert.match(source, new RegExp(`index: '${index}'`));
+  }
 
   assert.match(
     source,
     /array_agg\(attribute\.attname::text ORDER BY indexed\.ordinality\).*?= ARRAY\['organization_id', 'idempotency_key'\]::text\[\]/s,
+  );
+  assert.match(
+    source,
+    /CREATE UNIQUE INDEX CONCURRENTLY.*?\("organization_id", "idempotency_key"\)/s,
   );
 });
