@@ -79,7 +79,7 @@ async function projectAuditInput(
       COALESCE(${jsonParameter(changes)}::jsonb::text, 'null') AS "changesJson",
       COALESCE(${jsonParameter(metadata)}::jsonb::text, 'null') AS "metadataJson",
       to_char(
-        ${createdAt}::timestamptz AT TIME ZONE 'UTC',
+        ${createdAt.toISOString()}::timestamptz AT TIME ZONE 'UTC',
         ${AUDIT_HASH_TIMESTAMP_FORMAT}
       ) AS "createdAtText"
   `);

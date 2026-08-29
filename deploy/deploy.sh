@@ -64,6 +64,14 @@ compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gz
 echo "Running database migrations..."
 compose_with_migrate_profile run --rm migrator
 
+echo "Quiescing API writes for the final migration sweep..."
+compose stop api
+if ! compose_with_migrate_profile run --rm migrator; then
+  echo "Final migration sweep failed; restarting the existing API container..." >&2
+  compose start api
+  exit 1
+fi
+
 echo "Starting application stack..."
 compose up -d --remove-orphans
 

@@ -16,6 +16,7 @@ const releaseTagScript = readFileSync(
   'utf8',
 );
 const rollbackScript = readFileSync(new URL('../../deploy/rollback.sh', import.meta.url), 'utf8');
+const deployScript = readFileSync(new URL('../../deploy/deploy.sh', import.meta.url), 'utf8');
 
 test('accepts strict semantic version release tags only', () => {
   assert.equal(isValidReleaseTag('v0.2.4'), true);
@@ -183,6 +184,24 @@ test('deploys the validated release tag and runs the shared preflight in fast CI
     workflow,
     /name: Run local CI preflight\n        if: needs\.change-scope\.outputs\.runtime == 'true'\n        env:\n          REDIS_TEST_URL: redis:\/\/127\.0\.0\.1:6379\n          REQUIRE_REDIS_TEST: 'true'\n        run: pnpm ci:preflight/,
   );
+});
+
+test('quiesces API writes for a final migration sweep before replacing the stack', () => {
+  const onlineMigration = deployScript.indexOf('compose_with_migrate_profile run --rm migrator');
+  const stopApi = deployScript.indexOf('compose stop api');
+  const catchUpMigration = deployScript.indexOf(
+    'compose_with_migrate_profile run --rm migrator',
+    onlineMigration + 1,
+  );
+  const startStack = deployScript.indexOf('compose up -d --remove-orphans');
+
+  assert.ok(
+    onlineMigration > -1 &&
+      onlineMigration < stopApi &&
+      stopApi < catchUpMigration &&
+      catchUpMigration < startStack,
+  );
+  assert.match(deployScript.slice(stopApi, startStack), /compose start api/);
 });
 
 test('requires the Redis lease integration in both fast and full CI', () => {
