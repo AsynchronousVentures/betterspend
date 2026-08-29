@@ -222,6 +222,7 @@ export class ArtifactIdempotencyService {
         .where(
           and(
             eq(artifactNotificationDeliveries.id, row.id),
+            eq(artifactNotificationDeliveries.organizationId, organizationId),
             ne(artifactNotificationDeliveries.status, 'delivered'),
             or(
               isNull(artifactNotificationDeliveries.leaseExpiresAt),

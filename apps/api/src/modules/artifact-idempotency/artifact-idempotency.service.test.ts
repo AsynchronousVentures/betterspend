@@ -471,6 +471,41 @@ test('delivery retries reuse the same downstream identity after status persisten
   assert.match(identities[0]!, /^artifact-[a-f0-9]{64}@betterspend\.local$/);
 });
 
+test('delivery claim fails closed when its organization changes before mutation', async () => {
+  const store = new ArtifactOperationStore();
+  const service = new ArtifactIdempotencyService(store as unknown as Db);
+  store.beforeUpdate = (row, values) => {
+    if ('deliveryKey' in row && values.status === 'pending') row.organizationId = 'org-2';
+  };
+  const plan = createPlan(store, {
+    notify: async (_value, delivery) =>
+      delivery.once('vendor-email:vendor-1', async () => undefined),
+  });
+
+  await assert.rejects(service.execute(plan), /delivery is already in progress/);
+  assert.equal(store.deliveries[0]?.organizationId, 'org-2');
+  assert.equal(store.deliveries[0]?.attempts, 0);
+  assert.equal(store.deliveries[0]?.leaseToken, null);
+});
+
+test('delivery failure persistence fails closed when its organization changes', async () => {
+  const store = new ArtifactOperationStore();
+  const service = new ArtifactIdempotencyService(store as unknown as Db);
+  store.beforeUpdate = (row, values) => {
+    if ('deliveryKey' in row && values.status === 'failed') row.organizationId = 'org-2';
+  };
+  const plan = createPlan(store, {
+    notify: async (_value, delivery) =>
+      delivery.once('vendor-email:vendor-1', async () => {
+        throw new Error('delivery unavailable');
+      }),
+  });
+
+  await assert.rejects(service.execute(plan), /delivery unavailable/);
+  assert.equal(store.deliveries[0]?.organizationId, 'org-2');
+  assert.equal(store.deliveries[0]?.status, 'pending');
+});
+
 test('delivery recovery never loads a reservation from another organization', async () => {
   const store = new ArtifactOperationStore();
   const service = new ArtifactIdempotencyService(store as unknown as Db);
