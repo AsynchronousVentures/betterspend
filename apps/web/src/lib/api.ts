@@ -94,7 +94,7 @@ function clearAuthAndRedirect() {
     document.cookie = 'bs_token=; Max-Age=0; path=/';
   }
   if (typeof window !== 'undefined') {
-    window.location.replace('/login');
+    window.location.href = '/login';
   }
 }
 

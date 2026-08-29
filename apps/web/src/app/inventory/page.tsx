@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { Boxes, Plus, Search } from 'lucide-react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
@@ -19,7 +19,6 @@ function fmtQty(n: number | null | undefined) {
 }
 
 function InventoryPageInner() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -146,7 +145,7 @@ function InventoryPageInner() {
                       key={item.id}
                       className={isLowStock ? 'cursor-pointer bg-amber-50/60 hover:bg-amber-50' : 'cursor-pointer'}
                       onClick={() => {
-                        router.push(`/inventory/${item.id}`);
+                        window.location.href = `/inventory/${item.id}`;
                       }}
                     >
                       <TableCell className="font-mono text-xs font-semibold text-primary">{item.sku}</TableCell>

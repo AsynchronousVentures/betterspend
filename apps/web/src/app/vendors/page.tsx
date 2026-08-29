@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { Building2, Plus, Search } from 'lucide-react';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
@@ -14,7 +13,6 @@ import { Input } from '../../components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 
 export default function VendorsPage() {
-  const router = useRouter();
   const [vendors, setVendors] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -99,7 +97,7 @@ export default function VendorsPage() {
                     key={vendor.id}
                     className="cursor-pointer"
                     onClick={() => {
-                      router.push(`/vendors/${vendor.id}`);
+                      window.location.href = `/vendors/${vendor.id}`;
                     }}
                   >
                     <TableCell className="font-semibold text-foreground">{vendor.name}</TableCell>

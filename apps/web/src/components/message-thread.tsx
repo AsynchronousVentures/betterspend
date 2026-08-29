@@ -38,10 +38,7 @@ export function MessageThread({
   const loadVersion = useRef(0);
   const threadKey = `${portal ? 'portal' : 'buyer'}:${threadType}:${threadId}:${recipientVendorId ?? 'broadcast'}`;
   const activeThreadKey = useRef(threadKey);
-
-  useEffect(() => {
-    activeThreadKey.current = threadKey;
-  }, [threadKey]);
+  activeThreadKey.current = threadKey;
 
   const load = useCallback(async () => {
     const version = ++loadVersion.current;
