@@ -93,7 +93,8 @@ function canonicalJson(value: unknown): JsonValue {
 
 /** @internal Compute a digest for migration code without exposing canonicalization. */
 export function computeAuditEntryHash(fields: AuditHashFields): string {
-  // lgtm[js/insufficient-password-hash] This is an audit integrity digest, not password storage.
+  // This is an audit integrity digest, not password storage.
+  // codeql[js/insufficient-password-hash]
   return createHash('sha256').update(canonicalPayload(fields)).digest('hex');
 }
 
