@@ -152,6 +152,26 @@ function insertCapturingDb(captured: Array<Record<string, unknown>>): Db {
   return db as unknown as Db;
 }
 
+function auditTransaction(captured: Array<Record<string, unknown>>) {
+  return {
+    execute: jest.fn(async () => auditProjection),
+    select: jest.fn(() => ({
+      from: jest.fn(() => ({
+        where: jest.fn(() => ({
+          orderBy: jest.fn(() => ({ limit: jest.fn(async () => []) })),
+          limit: jest.fn(async () => []),
+        })),
+      })),
+    })),
+    insert: jest.fn(() => ({
+      values: jest.fn((values: Record<string, unknown>) => {
+        captured.push(values);
+        return { returning: jest.fn(async () => [values]) };
+      }),
+    })),
+  };
+}
+
 describe('OAuthService', () => {
   const organizationId = '00000000-0000-0000-0000-000000000001';
   const userId = '00000000-0000-0000-0000-000000000002';
@@ -707,6 +727,7 @@ describe('OAuthService', () => {
       updatedAt: new Date(),
     };
     const transaction = {
+      ...auditTransaction(audits),
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => {
           Object.assign(connection, values);
@@ -718,11 +739,6 @@ describe('OAuthService', () => {
               };
             }),
           };
-        }),
-      })),
-      insert: jest.fn(() => ({
-        values: jest.fn(async (values: Record<string, unknown>) => {
-          audits.push(values);
         }),
       })),
     };
@@ -822,6 +838,7 @@ describe('OAuthService', () => {
     mockedAxios.get.mockResolvedValue({ data: [{ tenantId: 'tenant-1', tenantName: 'Tenant 1' }] });
 
     const transaction = {
+      ...auditTransaction(audits),
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => {
           Object.assign(connection, values);
@@ -831,11 +848,6 @@ describe('OAuthService', () => {
               returning: jest.fn(async () => [{ id: connection.id }]),
             })),
           };
-        }),
-      })),
-      insert: jest.fn(() => ({
-        values: jest.fn(async (values: Record<string, unknown>) => {
-          audits.push(values);
         }),
       })),
     };
@@ -904,6 +916,7 @@ describe('OAuthService', () => {
       updatedAt: new Date(),
     };
     const transaction = {
+      ...auditTransaction(audits),
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => {
           events.push('persist');
@@ -913,11 +926,6 @@ describe('OAuthService', () => {
               returning: jest.fn(async () => [{ id: connection.id }]),
             })),
           };
-        }),
-      })),
-      insert: jest.fn(() => ({
-        values: jest.fn(async (values: Record<string, unknown>) => {
-          audits.push(values);
         }),
       })),
     };
@@ -986,6 +994,7 @@ describe('OAuthService', () => {
     };
     const audits: Array<Record<string, unknown>> = [];
     const transaction = {
+      ...auditTransaction(audits),
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => {
           Object.assign(connection, values);
@@ -994,11 +1003,6 @@ describe('OAuthService', () => {
               returning: jest.fn(async () => [{ id: connection.id }]),
             })),
           };
-        }),
-      })),
-      insert: jest.fn(() => ({
-        values: jest.fn(async (values: Record<string, unknown>) => {
-          audits.push(values);
         }),
       })),
     };
@@ -1051,6 +1055,7 @@ describe('OAuthService', () => {
     };
     const audits: Array<Record<string, unknown>> = [];
     const transaction = {
+      ...auditTransaction(audits),
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => {
           Object.assign(connection, values);
@@ -1059,11 +1064,6 @@ describe('OAuthService', () => {
               returning: jest.fn(async () => [{ id: connection.id }]),
             })),
           };
-        }),
-      })),
-      insert: jest.fn(() => ({
-        values: jest.fn(async (values: Record<string, unknown>) => {
-          audits.push(values);
         }),
       })),
     };

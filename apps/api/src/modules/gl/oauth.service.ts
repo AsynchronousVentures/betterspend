@@ -555,7 +555,7 @@ export class OAuthService {
         .returning({ id: integrationConnections.id });
       if (!updated) return false;
 
-      await transaction.insert(auditLog).values({
+      await appendAuditLog(transaction, {
         organizationId: connection.organizationId,
         userId: null,
         entityType: 'integration_connection',
@@ -778,7 +778,7 @@ export class OAuthService {
         .returning({ id: integrationConnections.id });
       if (!updated) return;
 
-      await transaction.insert(auditLog).values({
+      await appendAuditLog(transaction, {
         organizationId: connection.organizationId,
         userId: null,
         entityType: 'integration_connection',
