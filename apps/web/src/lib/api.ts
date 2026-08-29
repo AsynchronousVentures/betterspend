@@ -670,44 +670,60 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    saveDraft: (id: string, draft: WorkflowDraft, leaseToken: string) =>
+    saveDraft: (
+      id: string,
+      draft: WorkflowDraft,
+      credentials: { editorInstanceId: string; leaseToken: string },
+    ) =>
       apiFetch<WorkflowDefinitionRecord>(`/workflow-definitions/${id}/draft`, {
         method: 'PATCH',
-        body: JSON.stringify({ draft, leaseToken }),
+        body: JSON.stringify({ draft, ...credentials }),
       }),
     lease: {
-      status: (id: string) =>
-        apiFetch<WorkflowDraftLeaseStatus>(`/workflow-definitions/${id}/draft-lease`),
-      acquire: (id: string) =>
+      status: (id: string, editorInstanceId: string) =>
+        apiFetch<WorkflowDraftLeaseStatus>(
+          `/workflow-definitions/${id}/draft-lease?editorInstanceId=${encodeURIComponent(editorInstanceId)}`,
+        ),
+      acquire: (id: string, editorInstanceId: string) =>
         apiFetch<WorkflowDraftLeaseStatus>(`/workflow-definitions/${id}/draft-lease`, {
           method: 'POST',
+          body: JSON.stringify({ editorInstanceId }),
         }),
-      renew: (id: string, leaseToken: string) =>
+      renew: (id: string, credentials: { editorInstanceId: string; leaseToken: string }) =>
         apiFetch<WorkflowDraftLeaseStatus>(`/workflow-definitions/${id}/draft-lease/renew`, {
           method: 'POST',
-          body: JSON.stringify({ leaseToken }),
+          body: JSON.stringify(credentials),
         }),
-      release: (id: string, leaseToken: string) =>
+      release: (id: string, credentials: { editorInstanceId: string; leaseToken: string }) =>
         apiFetch<WorkflowDraftLeaseStatus>(`/workflow-definitions/${id}/draft-lease`, {
           method: 'DELETE',
-          body: JSON.stringify({ leaseToken }),
+          body: JSON.stringify(credentials),
         }),
-      takeover: (id: string) =>
+      takeover: (id: string, editorInstanceId: string) =>
         apiFetch<WorkflowDraftLeaseStatus>(`/workflow-definitions/${id}/draft-lease/takeover`, {
           method: 'POST',
+          body: JSON.stringify({ editorInstanceId }),
         }),
     },
-    publish: (id: string, leaseToken: string) =>
+    publish: (
+      id: string,
+      expectedDraft: WorkflowDraft,
+      credentials: { editorInstanceId: string; leaseToken: string },
+    ) =>
       apiFetch<WorkflowDefinitionVersionRecord>(`/workflow-definitions/${id}/publish`, {
         method: 'POST',
-        body: JSON.stringify({ leaseToken }),
+        body: JSON.stringify({ expectedDraft, ...credentials }),
       }),
     versions: (id: string) =>
       apiFetch<WorkflowDefinitionVersionRecord[]>(`/workflow-definitions/${id}/versions`),
-    restore: (id: string, versionId: string, leaseToken: string) =>
+    restore: (
+      id: string,
+      versionId: string,
+      credentials: { editorInstanceId: string; leaseToken: string },
+    ) =>
       apiFetch<{ definitionId: string; restoredFromVersion: number; draft: WorkflowDraft }>(
         `/workflow-definitions/${id}/versions/${versionId}/restore`,
-        { method: 'POST', body: JSON.stringify({ leaseToken }) },
+        { method: 'POST', body: JSON.stringify(credentials) },
       ),
     propose: (id: string, data: WorkflowAssistantProposalRequest) =>
       apiFetch<WorkflowAssistantProposalResponse>(

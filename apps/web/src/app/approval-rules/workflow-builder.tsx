@@ -23,7 +23,6 @@ import {
   Plus,
   Save,
   Upload,
-  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -48,7 +47,9 @@ import {
   ownsWorkflowDraftLease,
 } from './workflow-access';
 import { WORKFLOW_EDGE_TYPES, type WorkflowFlowEdge } from './workflow-edge';
+import { workflowEdgeLabel } from './workflow-edge-config';
 import { WorkflowInspector } from './workflow-inspector';
+import { WorkflowInsertDialog } from './workflow-insert-dialog';
 import { layoutWorkflow } from './workflow-layout';
 import {
   WORKFLOW_FLOW_NODE_TYPES,
@@ -58,6 +59,7 @@ import {
   type WorkflowNoteFlowNode,
 } from './workflow-node-registry';
 import { WORKFLOW_NODE_DRAG_TYPE, WorkflowPalette } from './workflow-palette';
+import { beginWorkflowOperation, endWorkflowOperation } from './workflow-operation-lock';
 import { isCurrentWorkflowRequest } from './workflow-request-identity';
 import { isValidWorkflowConnection, useWorkflowBuilderStore } from './workflow-store';
 
@@ -98,22 +100,33 @@ function BuilderCanvas({
   const [assistantError, setAssistantError] = useState<string | null>(null);
   const [leaseStatus, setLeaseStatus] = useState<WorkflowDraftLeaseStatus | null>(null);
   const [leaseBusy, setLeaseBusy] = useState(true);
+  const [editorInstanceId] = useState(() => crypto.randomUUID());
+  const insertDialogTriggerRef = useRef<HTMLElement | null>(null);
   const leaseTokenRef = useRef<string | null>(null);
   const leaseBusyRef = useRef(true);
   const leaseRequestIdRef = useRef(0);
+  const mutationLockRef = useRef(false);
   const restoreLockRef = useRef(false);
   const activeDefinitionIdRef = useRef<string | null>(definition.id);
   const saveRequestIdRef = useRef(0);
+  const publishRequestIdRef = useRef(0);
   const proposalRequestIdRef = useRef(0);
   const ownsLease = ownsWorkflowDraftLease(leaseStatus);
-  const canEdit = ownsLease && !restoring;
+  const canEdit = ownsLease && !restoring && !publishing;
+  const openInsertDialog = useCallback((edgeId: string) => {
+    insertDialogTriggerRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setInsertEdgeId(edgeId);
+  }, []);
 
   useEffect(
     () => () => {
       activeDefinitionIdRef.current = null;
       leaseRequestIdRef.current += 1;
       leaseBusyRef.current = false;
+      endWorkflowOperation(mutationLockRef);
       saveRequestIdRef.current += 1;
+      publishRequestIdRef.current += 1;
       proposalRequestIdRef.current += 1;
     },
     [],
@@ -128,9 +141,10 @@ function BuilderCanvas({
     };
     leaseBusyRef.current = true;
     openWorkflowDraftAccess(definition.id, {
-      status: api.workflowDefinitions.lease.status,
-      acquire: api.workflowDefinitions.lease.acquire,
-      release: api.workflowDefinitions.lease.release,
+      status: (id) => api.workflowDefinitions.lease.status(id, editorInstanceId),
+      acquire: (id) => api.workflowDefinitions.lease.acquire(id, editorInstanceId),
+      release: (id, leaseToken) =>
+        api.workflowDefinitions.lease.release(id, { editorInstanceId, leaseToken }),
       getDefinition: api.workflowDefinitions.get,
       isActive: () => active,
     })
@@ -139,7 +153,7 @@ function BuilderCanvas({
         if (!active) {
           if (openedToken)
             void api.workflowDefinitions.lease
-              .release(definition.id, openedToken)
+              .release(definition.id, { editorInstanceId, leaseToken: openedToken })
               .catch(() => undefined);
           return;
         }
@@ -188,9 +202,13 @@ function BuilderCanvas({
     return () => {
       active = false;
       const leaseToken = leaseTokenRef.current ?? openedToken;
-      if (leaseToken) void api.workflowDefinitions.lease.release(definition.id, leaseToken);
+      if (leaseToken)
+        void api.workflowDefinitions.lease.release(definition.id, {
+          editorInstanceId,
+          leaseToken,
+        });
     };
-  }, [definition.id]);
+  }, [definition.id, editorInstanceId]);
 
   useEffect(() => {
     if (leaseStatus?.state !== 'owned') return;
@@ -200,7 +218,7 @@ function BuilderCanvas({
         requestId: ++leaseRequestIdRef.current,
       };
       api.workflowDefinitions.lease
-        .renew(definition.id, leaseStatus.leaseToken)
+        .renew(definition.id, { editorInstanceId, leaseToken: leaseStatus.leaseToken })
         .then((status) => {
           if (
             !isCurrentWorkflowRequest(
@@ -214,9 +232,12 @@ function BuilderCanvas({
           leaseTokenRef.current = status.state === 'owned' ? status.leaseToken : null;
           if (status.state !== 'owned') {
             restoreLockRef.current = false;
+            endWorkflowOperation(mutationLockRef);
             saveRequestIdRef.current += 1;
+            publishRequestIdRef.current += 1;
             proposalRequestIdRef.current += 1;
             setSaving(false);
+            setPublishing(false);
             setRestoring(false);
             setAssistantBusy(false);
             setInsertEdgeId(null);
@@ -234,9 +255,12 @@ function BuilderCanvas({
             return;
           leaseTokenRef.current = null;
           restoreLockRef.current = false;
+          endWorkflowOperation(mutationLockRef);
           saveRequestIdRef.current += 1;
+          publishRequestIdRef.current += 1;
           proposalRequestIdRef.current += 1;
           setSaving(false);
+          setPublishing(false);
           setRestoring(false);
           setAssistantBusy(false);
           setLeaseStatus({ state: 'available' });
@@ -245,7 +269,7 @@ function BuilderCanvas({
         });
     }, 20_000);
     return () => window.clearInterval(timer);
-  }, [definition.id, leaseStatus]);
+  }, [definition.id, editorInstanceId, leaseStatus]);
 
   const validation = useMemo(
     () => (draft ? validateWorkflowGraph(draft.graph) : { valid: false as const, issues: [] }),
@@ -310,15 +334,12 @@ function BuilderCanvas({
                     : '#71717a',
               strokeWidth: selection?.kind === 'edge' && selection.id === edge.id ? 2 : 1.25,
             },
-            label:
-              edge.condition && 'field' in edge.condition
-                ? `${edge.condition.field} ${edge.condition.operator}`
-                : undefined,
+            label: workflowEdgeLabel(edge),
             labelStyle: { fill: '#a1a1aa', fontSize: 9 },
-            data: { onInsert: setInsertEdgeId, canInsert: canEdit },
+            data: { onInsert: openInsertDialog, canInsert: canEdit },
           }))
         : [],
-    [canEdit, draft, issuesByEdge, selection],
+    [canEdit, draft, issuesByEdge, openInsertDialog, selection],
   );
 
   useEffect(() => {
@@ -333,9 +354,19 @@ function BuilderCanvas({
   }, []);
 
   useEffect(() => {
-    if (!draft || !dirty || saving || restoring || leaseStatus?.state !== 'owned') return;
+    if (
+      !draft ||
+      !dirty ||
+      saving ||
+      restoring ||
+      publishing ||
+      mutationLockRef.current ||
+      leaseStatus?.state !== 'owned'
+    )
+      return;
     const revision = draftRevision;
     const timer = window.setTimeout(() => {
+      if (mutationLockRef.current) return;
       const request = {
         definitionId: definition.id,
         requestId: ++saveRequestIdRef.current,
@@ -343,7 +374,10 @@ function BuilderCanvas({
       setSaving(true);
       setError(null);
       api.workflowDefinitions
-        .saveDraft(definition.id, draft, leaseStatus.leaseToken)
+        .saveDraft(definition.id, draft, {
+          editorInstanceId,
+          leaseToken: leaseStatus.leaseToken,
+        })
         .then((saved) => {
           if (
             !isCurrentWorkflowRequest(
@@ -384,8 +418,10 @@ function BuilderCanvas({
     dirty,
     draft,
     draftRevision,
+    editorInstanceId,
     leaseStatus,
     onDefinitionChange,
+    publishing,
     restoring,
     saving,
     store,
@@ -393,7 +429,7 @@ function BuilderCanvas({
 
   const runLayout = useCallback(async () => {
     const leaseToken = leaseTokenRef.current;
-    if (!draft || !canEdit || !leaseToken) return;
+    if (!draft || !canEdit || !leaseToken || mutationLockRef.current) return;
     const measured = getNodes()
       .filter((node) => node.type === 'workflow')
       .map((node) => ({
@@ -406,6 +442,7 @@ function BuilderCanvas({
       const positions = await layoutWorkflow(draft, measured);
       if (activeDefinitionIdRef.current !== definition.id) return;
       if (leaseTokenRef.current !== leaseToken) return;
+      if (mutationLockRef.current) return;
       store.setPositions(positions);
       window.requestAnimationFrame(() => void fitView({ padding: 0.2, duration: 0 }));
     } catch (layoutError) {
@@ -433,39 +470,90 @@ function BuilderCanvas({
       : [];
 
   const publish = async () => {
-    if (!validation.valid || !canEdit || restoreLockRef.current || leaseStatus?.state !== 'owned')
+    if (
+      !validation.valid ||
+      !canEdit ||
+      saving ||
+      restoreLockRef.current ||
+      leaseStatus?.state !== 'owned' ||
+      !beginWorkflowOperation(mutationLockRef)
+    )
       return;
     const leaseToken = leaseStatus.leaseToken;
+    const reviewedDraft = draft;
+    const request = {
+      definitionId: definition.id,
+      requestId: ++publishRequestIdRef.current,
+    };
+    proposalRequestIdRef.current += 1;
+    setAssistantBusy(false);
+    setAssistantOpen(false);
     setPublishing(true);
     setError(null);
     try {
       if (dirty) {
         const revision = draftRevision;
-        const saved = await api.workflowDefinitions.saveDraft(definition.id, draft, leaseToken);
-        if (activeDefinitionIdRef.current !== definition.id) return;
+        const saved = await api.workflowDefinitions.saveDraft(definition.id, reviewedDraft, {
+          editorInstanceId,
+          leaseToken,
+        });
+        if (
+          !isCurrentWorkflowRequest(
+            activeDefinitionIdRef.current,
+            publishRequestIdRef.current,
+            request,
+          )
+        )
+          return;
         if (leaseTokenRef.current !== leaseToken) return;
         onDefinitionChange(saved);
         store.markSaved(revision);
       }
-      await api.workflowDefinitions.publish(definition.id, leaseToken);
+      await api.workflowDefinitions.publish(definition.id, reviewedDraft, {
+        editorInstanceId,
+        leaseToken,
+      });
       const [updated, nextVersions] = await Promise.all([
         api.workflowDefinitions.get(definition.id),
         api.workflowDefinitions.versions(definition.id),
       ]);
-      if (activeDefinitionIdRef.current !== definition.id) return;
+      if (
+        !isCurrentWorkflowRequest(
+          activeDefinitionIdRef.current,
+          publishRequestIdRef.current,
+          request,
+        )
+      )
+        return;
       if (leaseTokenRef.current !== leaseToken) return;
       onDefinitionChange(updated);
       onVersionsChange(nextVersions);
       setTray('versions');
     } catch (publishError) {
-      if (activeDefinitionIdRef.current === definition.id) setError(messageFor(publishError));
+      if (
+        isCurrentWorkflowRequest(
+          activeDefinitionIdRef.current,
+          publishRequestIdRef.current,
+          request,
+        )
+      )
+        setError(messageFor(publishError));
     } finally {
-      if (activeDefinitionIdRef.current === definition.id) setPublishing(false);
+      if (
+        isCurrentWorkflowRequest(
+          activeDefinitionIdRef.current,
+          publishRequestIdRef.current,
+          request,
+        )
+      ) {
+        endWorkflowOperation(mutationLockRef);
+        setPublishing(false);
+      }
     }
   };
 
   const requestProposal = async (prompt: string) => {
-    if (!canEdit || restoreLockRef.current) return;
+    if (!canEdit || restoreLockRef.current || mutationLockRef.current) return;
     const proposalRevision = draftRevision;
     const proposalSnapshot = { graph: draft.graph, positions: draft.positions };
     const request = {
@@ -524,8 +612,10 @@ function BuilderCanvas({
     leaseBusyRef.current = true;
     setLeaseBusy(true);
     restoreLockRef.current = false;
+    endWorkflowOperation(mutationLockRef);
     setError(null);
     saveRequestIdRef.current += 1;
+    publishRequestIdRef.current += 1;
     proposalRequestIdRef.current += 1;
     setSaving(false);
     setRestoring(false);
@@ -533,11 +623,11 @@ function BuilderCanvas({
     setInsertEdgeId(null);
     setAssistantOpen(false);
     try {
-      const status = await api.workflowDefinitions.lease.takeover(definition.id);
+      const status = await api.workflowDefinitions.lease.takeover(definition.id, editorInstanceId);
       if (activeDefinitionIdRef.current !== definition.id) {
         if (status.state === 'owned')
           await api.workflowDefinitions.lease
-            .release(definition.id, status.leaseToken)
+            .release(definition.id, { editorInstanceId, leaseToken: status.leaseToken })
             .catch(() => undefined);
         return;
       }
@@ -567,7 +657,7 @@ function BuilderCanvas({
         setLeaseStatus(status);
       } catch (loadError) {
         await api.workflowDefinitions.lease
-          .release(definition.id, status.leaseToken)
+          .release(definition.id, { editorInstanceId, leaseToken: status.leaseToken })
           .catch(() => undefined);
         leaseTokenRef.current = null;
         setLeaseStatus({ state: 'available' });
@@ -592,7 +682,8 @@ function BuilderCanvas({
     if (
       !canRestoreWorkflowDraft({ ownsLease, dirty, saving, publishing, restoring }) ||
       restoreLockRef.current ||
-      !ownsWorkflowDraftLease(leaseStatus)
+      !ownsWorkflowDraftLease(leaseStatus) ||
+      !beginWorkflowOperation(mutationLockRef)
     )
       return;
     const leaseToken = leaseStatus.leaseToken;
@@ -606,7 +697,10 @@ function BuilderCanvas({
     setRestoring(true);
     setError(null);
     try {
-      await api.workflowDefinitions.restore(definition.id, versionId, leaseToken);
+      await api.workflowDefinitions.restore(definition.id, versionId, {
+        editorInstanceId,
+        leaseToken,
+      });
       const authoritative = await api.workflowDefinitions.get(definition.id);
       if (activeDefinitionIdRef.current !== definition.id) return;
       if (leaseTokenRef.current !== leaseToken) return;
@@ -616,10 +710,14 @@ function BuilderCanvas({
       store.loadDraft(authoritative.currentDraft);
       onDefinitionChange(authoritative);
     } catch (restoreError) {
-      if (activeDefinitionIdRef.current === definition.id) setError(messageFor(restoreError));
+      if (activeDefinitionIdRef.current === definition.id && leaseTokenRef.current === leaseToken)
+        setError(messageFor(restoreError));
     } finally {
-      restoreLockRef.current = false;
-      if (activeDefinitionIdRef.current === definition.id) setRestoring(false);
+      if (activeDefinitionIdRef.current === definition.id && leaseTokenRef.current === leaseToken) {
+        restoreLockRef.current = false;
+        endWorkflowOperation(mutationLockRef);
+        setRestoring(false);
+      }
     }
   };
 
@@ -637,13 +735,15 @@ function BuilderCanvas({
             {leaseStatus === null
               ? 'Checking edit access'
               : ownsLease
-                ? restoring
-                  ? 'Restoring version'
-                  : saving
-                    ? 'Saving'
-                    : dirty
-                      ? 'Unsaved changes'
-                      : 'Saved'
+                ? publishing
+                  ? 'Publishing reviewed draft'
+                  : restoring
+                    ? 'Restoring version'
+                    : saving
+                      ? 'Saving'
+                      : dirty
+                        ? 'Unsaved changes'
+                        : 'Saved'
                 : leaseStatus.state === 'held'
                   ? `Read only, ${leaseStatus.lease.holderName} is editing`
                   : 'Edit lease unavailable'}
@@ -669,7 +769,7 @@ function BuilderCanvas({
           <button
             type="button"
             onClick={() => void publish()}
-            disabled={!validation.valid || publishing || !canEdit}
+            disabled={!validation.valid || publishing || saving || !canEdit}
             className="flex h-8 items-center gap-1.5 bg-white px-3 text-[10px] font-bold text-black disabled:opacity-35"
           >
             <Upload className="size-3" /> {publishing ? 'Publishing' : 'Publish'}
@@ -688,10 +788,12 @@ function BuilderCanvas({
           disabled={!canEdit}
           onToggle={() => setPaletteCollapsed((value) => !value)}
           onAdd={(type, position) => {
-            if (canEdit && !restoreLockRef.current) store.addNode(type, position);
+            if (canEdit && !restoreLockRef.current && !mutationLockRef.current)
+              store.addNode(type, position);
           }}
           onAddNote={() => {
-            if (canEdit && !restoreLockRef.current) store.addNote({ x: 180, y: 340 });
+            if (canEdit && !restoreLockRef.current && !mutationLockRef.current)
+              store.addNote({ x: 180, y: 340 });
           }}
         />
         <div className="relative min-w-0 flex-1 bg-black">
@@ -710,7 +812,7 @@ function BuilderCanvas({
             onEdgeClick={(_, edge) => store.select({ kind: 'edge', id: edge.id })}
             onPaneClick={() => store.select(null)}
             onNodesChange={(changes: NodeChange[]) => {
-              if (!canEdit || restoreLockRef.current) return;
+              if (!canEdit || restoreLockRef.current || mutationLockRef.current) return;
               for (const change of changes) {
                 if (change.type !== 'position' || !change.position) continue;
                 if (draft.notes.some((note) => note.id === change.id)) {
@@ -721,17 +823,18 @@ function BuilderCanvas({
               }
             }}
             onNodesDelete={(nodes: Node[]) => {
-              if (!canEdit || restoreLockRef.current) return;
+              if (!canEdit || restoreLockRef.current || mutationLockRef.current) return;
               nodes.forEach((node) =>
                 node.type === 'note' ? store.removeNote(node.id) : store.removeNode(node.id),
               );
             }}
             onEdgesDelete={(edges: Edge[]) => {
-              if (!canEdit || restoreLockRef.current) return;
+              if (!canEdit || restoreLockRef.current || mutationLockRef.current) return;
               edges.forEach((edge) => store.removeEdge(edge.id));
             }}
             onConnect={(connection: Connection) => {
-              if (canEdit && !restoreLockRef.current) store.connect(connection);
+              if (canEdit && !restoreLockRef.current && !mutationLockRef.current)
+                store.connect(connection);
             }}
             isValidConnection={(connection) =>
               canEdit &&
@@ -743,12 +846,12 @@ function BuilderCanvas({
               })
             }
             onDragOver={(event) => {
-              if (!canEdit || restoreLockRef.current) return;
+              if (!canEdit || restoreLockRef.current || mutationLockRef.current) return;
               event.preventDefault();
               event.dataTransfer.dropEffect = 'copy';
             }}
             onDrop={(event) => {
-              if (!canEdit || restoreLockRef.current) return;
+              if (!canEdit || restoreLockRef.current || mutationLockRef.current) return;
               event.preventDefault();
               const type = event.dataTransfer.getData(WORKFLOW_NODE_DRAG_TYPE) as WorkflowNodeType;
               if (WORKFLOW_NODE_REGISTRY[type])
@@ -780,57 +883,28 @@ function BuilderCanvas({
             onOpenChange={setAssistantOpen}
             onSubmit={(prompt) => void requestProposal(prompt)}
             onApply={() => {
-              if (!canEdit || restoreLockRef.current) return;
+              if (!canEdit || restoreLockRef.current || mutationLockRef.current) return;
               if (!store.applyAssistantProposal())
                 setAssistantError('The canvas changed. Regenerate this proposal.');
             }}
             onReject={() => store.setAssistantProposal(null)}
           />
-          {insertEdgeId && canEdit ? (
-            <div
-              className="absolute inset-0 z-30 grid place-items-center bg-black/75 p-4"
-              onClick={() => setInsertEdgeId(null)}
-            >
-              <div
-                className="w-full max-w-md border border-white/20 bg-[#080808]"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <div className="flex h-11 items-center border-b border-white/12 px-3 text-xs font-semibold">
-                  Insert step
-                  <button
-                    type="button"
-                    onClick={() => setInsertEdgeId(null)}
-                    className="ml-auto text-zinc-600 hover:text-white"
-                  >
-                    <X className="size-4" />
-                  </button>
-                </div>
-                <div className="grid max-h-80 grid-cols-2 overflow-y-auto">
-                  {availableNodeDefinitions(draft.graph.domain)
-                    .filter(
-                      (item) => item.ports.inputs.length > 0 && item.ports.outputs.length === 1,
-                    )
-                    .map((item) => (
-                      <button
-                        key={item.type}
-                        type="button"
-                        onClick={() => {
-                          if (!canEdit || restoreLockRef.current) return;
-                          store.insertNodeOnEdge(insertEdgeId, item.type);
-                          setInsertEdgeId(null);
-                        }}
-                        className="border-b border-r border-white/10 p-3 text-left hover:bg-white/[0.04]"
-                      >
-                        <span className="block text-xs font-medium">{item.label}</span>
-                        <span className="mt-1 block text-[10px] leading-4 text-zinc-600">
-                          {item.description}
-                        </span>
-                      </button>
-                    ))}
-                </div>
-              </div>
-            </div>
-          ) : null}
+          <WorkflowInsertDialog
+            open={Boolean(insertEdgeId && canEdit)}
+            onOpenChange={(open) => {
+              if (!open) setInsertEdgeId(null);
+            }}
+            items={availableNodeDefinitions(draft.graph.domain).filter(
+              (item) => item.ports.inputs.length > 0 && item.ports.outputs.length === 1,
+            )}
+            returnFocusRef={insertDialogTriggerRef}
+            onInsert={(type) => {
+              if (!insertEdgeId || !canEdit || restoreLockRef.current || mutationLockRef.current)
+                return;
+              store.insertNodeOnEdge(insertEdgeId, type);
+              setInsertEdgeId(null);
+            }}
+          />
         </div>
         {selection && canEdit ? (
           <WorkflowInspector
@@ -841,22 +915,28 @@ function BuilderCanvas({
             issues={selectedIssues}
             onClose={() => store.select(null)}
             onReplaceNode={(node) => {
-              if (canEdit && !restoreLockRef.current) store.replaceNode(node);
+              if (canEdit && !restoreLockRef.current && !mutationLockRef.current)
+                store.replaceNode(node);
             }}
             onReplaceEdge={(edge) => {
-              if (canEdit && !restoreLockRef.current) store.replaceEdge(edge);
+              if (canEdit && !restoreLockRef.current && !mutationLockRef.current)
+                store.replaceEdge(edge);
             }}
             onUpdateNote={(noteId, text) => {
-              if (canEdit && !restoreLockRef.current) store.updateNote(noteId, text);
+              if (canEdit && !restoreLockRef.current && !mutationLockRef.current)
+                store.updateNote(noteId, text);
             }}
             onRemoveNode={(nodeId) => {
-              if (canEdit && !restoreLockRef.current) store.removeNode(nodeId);
+              if (canEdit && !restoreLockRef.current && !mutationLockRef.current)
+                store.removeNode(nodeId);
             }}
             onRemoveEdge={(edgeId) => {
-              if (canEdit && !restoreLockRef.current) store.removeEdge(edgeId);
+              if (canEdit && !restoreLockRef.current && !mutationLockRef.current)
+                store.removeEdge(edgeId);
             }}
             onRemoveNote={(noteId) => {
-              if (canEdit && !restoreLockRef.current) store.removeNote(noteId);
+              if (canEdit && !restoreLockRef.current && !mutationLockRef.current)
+                store.removeNote(noteId);
             }}
           />
         ) : null}
@@ -909,6 +989,11 @@ function BuilderCanvas({
                   key={`${issue.code}-${issue.path.join('.')}`}
                   type="button"
                   onClick={() => {
+                    const edgeId = issue.edgeIds?.[0];
+                    if (edgeId) {
+                      store.select({ kind: 'edge', id: edgeId });
+                      return;
+                    }
                     const nodeId = issue.nodeIds?.[0];
                     if (nodeId) store.select({ kind: 'node', id: nodeId });
                   }}

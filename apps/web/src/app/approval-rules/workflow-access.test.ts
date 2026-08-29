@@ -32,6 +32,7 @@ const ownedLease: Extract<WorkflowDraftLeaseStatus, { state: 'owned' }> = {
   leaseToken: 'opaque-editor-token',
   lease: {
     definitionId: '00000000-0000-4000-8000-000000000001',
+    editorInstanceId: '00000000-0000-4000-8000-000000000003',
     holderUserId: '00000000-0000-4000-8000-000000000002',
     holderName: 'Editor',
     fence: 1,

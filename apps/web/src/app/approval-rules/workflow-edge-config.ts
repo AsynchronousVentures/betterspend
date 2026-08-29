@@ -30,6 +30,20 @@ type ConditionEdgeInput = {
 export type ConditionEdgeResult =
   { success: true; edge: WorkflowEdge } | { success: false; error: string };
 
+export function workflowEdgeLabel(edge: WorkflowEdge): string | undefined {
+  if (edge.isDefault || edge.sourceHandle === 'default') return 'Default';
+  const condition = edge.condition;
+  if (!condition) return undefined;
+  if (!('field' in condition)) return 'Compound condition';
+  const field =
+    WORKFLOW_CONDITION_FIELDS.find((candidate) => candidate.value === condition.field)?.label ??
+    condition.field;
+  const operator =
+    WORKFLOW_CONDITION_OPERATORS.find((candidate) => candidate.value === condition.operator)
+      ?.label ?? condition.operator;
+  return `${field} ${operator} ${String(condition.value)}`;
+}
+
 /** Builds one typed condition route while preserving the edge endpoints and identity. */
 export function buildWorkflowConditionEdge(input: ConditionEdgeInput): ConditionEdgeResult {
   const { condition: _condition, priority: _priority, ...base } = input.edge;

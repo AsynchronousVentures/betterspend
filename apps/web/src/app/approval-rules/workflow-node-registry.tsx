@@ -264,10 +264,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
         path: 'mode',
         label: 'Branch behavior',
         kind: 'select',
-        options: [
-          { value: 'first_true', label: 'First match' },
-          { value: 'all_true', label: 'All matches' },
-        ],
+        options: [{ value: 'first_true', label: 'First match' }],
       },
     ],
     create: (id) => ({
@@ -636,6 +633,10 @@ export const WORKFLOW_FLOW_NODE_TYPES = { workflow: WorkflowNodeCard, note: Work
 
 export function availableNodeDefinitions(domain: WorkflowDomain): WorkflowNodeDefinition[] {
   return Object.values(WORKFLOW_NODE_REGISTRY).filter(
-    (definition) => definition.category !== 'system' && definition.domains.includes(domain),
+    (definition) =>
+      definition.category !== 'system' &&
+      definition.type !== 'collect_form' &&
+      definition.type !== 'notify' &&
+      definition.domains.includes(domain),
   );
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { WorkflowEdge } from '@betterspend/shared';
-import { buildWorkflowConditionEdge } from './workflow-edge-config';
+import { buildWorkflowConditionEdge, workflowEdgeLabel } from './workflow-edge-config';
 
 const edge: WorkflowEdge = {
   id: 'route',
@@ -64,6 +64,20 @@ describe('workflow condition edge editor', () => {
     assert.equal(result.edge.isDefault, true);
     assert.equal(result.edge.condition, undefined);
     assert.equal(result.edge.priority, undefined);
+  });
+
+  it('describes condition and default routes on the canvas', () => {
+    assert.equal(
+      workflowEdgeLabel({
+        ...edge,
+        condition: { field: 'totalAmount', operator: '>=', value: 25_000 },
+      }),
+      'Amount is at least 25000',
+    );
+    assert.equal(
+      workflowEdgeLabel({ ...edge, sourceHandle: 'default', isDefault: true }),
+      'Default',
+    );
   });
 });
 

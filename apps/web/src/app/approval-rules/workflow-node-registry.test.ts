@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  availableNodeDefinitions,
   assertWorkflowNodeConfigFields,
   workflowNodeConfigSchemaKeys,
   WORKFLOW_NODE_REGISTRY,
@@ -22,5 +23,17 @@ describe('workflow node registry configuration', () => {
     for (const definition of Object.values(WORKFLOW_NODE_REGISTRY)) {
       assert.equal(definition.domains, WORKFLOW_NODE_DOMAINS[definition.type]);
     }
+  });
+
+  it('keeps runtime-unsupported steps and branch modes out of creation controls', () => {
+    const available = availableNodeDefinitions('requisition').map((definition) => definition.type);
+    const condition = WORKFLOW_NODE_REGISTRY.condition.configFields.find(
+      (field) => field.path === 'mode',
+    );
+
+    assert.ok(!available.includes('collect_form'));
+    assert.ok(!available.includes('notify'));
+    assert.ok(condition?.kind === 'select');
+    assert.deepEqual(condition.options, [{ value: 'first_true', label: 'First match' }]);
   });
 });
