@@ -6,8 +6,10 @@ import { auditLog } from './schema';
 /** @internal The hash payload version stays private to this module's public API. */
 export const AUDIT_HASH_VERSION = 1 as const;
 
-/** @internal Shared lock namespace used by appenders and the migration backfill. */
-export const AUDIT_HASH_LOCK_SEED = 0x41554449;
+/** @internal Stable signed bigint used by appenders and the migration backfill. */
+export function auditAdvisoryLockKey(organizationId: string): string {
+  return createHash('sha256').update(`audit-chain:${organizationId}`).digest().readBigInt64BE().toString();
+}
 
 export type AuditEntryInput = {
   id?: string;
@@ -90,8 +92,9 @@ export async function appendAuditLog(
   transaction: DbTransaction,
   input: AuditEntryInput,
 ): Promise<typeof auditLog.$inferSelect> {
+  const advisoryLockKey = auditAdvisoryLockKey(input.organizationId);
   await transaction.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${input.organizationId}, ${AUDIT_HASH_LOCK_SEED}))`,
+    sql`SELECT pg_advisory_xact_lock(${advisoryLockKey}::bigint)`,
   );
 
   const [previous] = await transaction
@@ -151,8 +154,9 @@ export async function appendAuditLogIfAbsent(
   transaction: DbTransaction,
   input: AuditEntryInput & { id: string },
 ): Promise<typeof auditLog.$inferSelect | undefined> {
+  const advisoryLockKey = auditAdvisoryLockKey(input.organizationId);
   await transaction.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${input.organizationId}, ${AUDIT_HASH_LOCK_SEED}))`,
+    sql`SELECT pg_advisory_xact_lock(${advisoryLockKey}::bigint)`,
   );
   const [existing] = await transaction
     .select()

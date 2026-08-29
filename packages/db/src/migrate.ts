@@ -3,7 +3,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import {
-  AUDIT_HASH_LOCK_SEED,
+  auditAdvisoryLockKey,
   computeAuditEntryHash,
   type AuditHashFields,
 } from './audit-integrity';
@@ -134,7 +134,8 @@ async function backfillAuditOrganization(
   acquireLock = true,
 ): Promise<void> {
   if (acquireLock) {
-    await transaction`SELECT pg_advisory_xact_lock(hashtextextended(${organizationId}, ${AUDIT_HASH_LOCK_SEED}))`;
+    const advisoryLockKey = auditAdvisoryLockKey(organizationId);
+    await transaction`SELECT pg_advisory_xact_lock(${advisoryLockKey}::bigint)`;
   }
 
   const rows = await transaction<AuditBackfillRow[]>`

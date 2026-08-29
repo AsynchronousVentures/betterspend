@@ -7,6 +7,7 @@ import type { DbTransaction } from './client';
 import {
   appendAuditLog,
   appendAuditLogIfAbsent,
+  auditAdvisoryLockKey,
   computeAuditEntryHash,
   verifyAuditChain,
   type AuditChainRow,
@@ -184,4 +185,11 @@ test('computeAuditEntryHash is independent of JSON object insertion order', () =
       metadata: { a: { b: false, y: true }, z: 1 },
     }),
   );
+});
+
+test('audit advisory lock keys are stable and tenant-specific signed bigints', () => {
+  const first = auditAdvisoryLockKey(organizationId);
+  assert.equal(first, auditAdvisoryLockKey(organizationId));
+  assert.notEqual(first, auditAdvisoryLockKey(otherOrganizationId));
+  assert.equal(BigInt(first).toString(), first);
 });
