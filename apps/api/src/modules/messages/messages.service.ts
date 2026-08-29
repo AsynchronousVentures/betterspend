@@ -278,7 +278,7 @@ export class MessagesService {
       },
       load: (artifact) => this.loadMessage(organizationId, artifact),
     });
-    return execution.value;
+    return withoutOwnerIdempotencyKey(execution.value);
   }
 
   private async findMessageArtifact(

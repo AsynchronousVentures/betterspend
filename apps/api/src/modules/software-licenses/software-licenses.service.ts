@@ -282,6 +282,16 @@ export class SoftwareLicensesService {
       return this.findOne(id, organizationId, access, 'software_licenses:manage');
     }
 
+    const legacyRef = currentCycleLegacyRenewalRef(license);
+    if (legacyRef) {
+      if (legacyRef.action !== action) {
+        throw new ConflictException(
+          `A ${legacyRef.action} artifact already exists for this renewal cycle`,
+        );
+      }
+      return this.findOne(id, organizationId, access, 'software_licenses:manage');
+    }
+
     const operationKey = licenseRenewalOperationKey(license);
     const execution = await this.artifactIdempotency.execute<RenewalRef>({
       organizationId,
@@ -690,6 +700,22 @@ export class SoftwareLicensesService {
 function licenseRenewalOperationKey(license: LicenseWithRelations): string {
   const renewalCycle = license.renewalDate?.toISOString() ?? 'unscheduled';
   return `license-renewal:${license.id}:${renewalCycle}`;
+}
+
+function currentCycleLegacyRenewalRef(license: LicenseWithRelations): RenewalRef | undefined {
+  const renewalDate = license.renewalDate ? new Date(license.renewalDate) : null;
+  if (!renewalDate) return undefined;
+  const cycleStart = new Date(renewalDate);
+  if (license.billingCycle === 'monthly') cycleStart.setUTCMonth(cycleStart.getUTCMonth() - 1);
+  else cycleStart.setUTCFullYear(cycleStart.getUTCFullYear() - 1);
+
+  return renewalRefsSchema
+    .parse(license.renewalRefs)
+    .filter((reference) => reference.action !== 'cancel')
+    .find((reference) => {
+      const createdAt = new Date(reference.at);
+      return !Number.isNaN(createdAt.getTime()) && createdAt >= cycleStart;
+    });
 }
 
 function licenseRenewalFingerprint(

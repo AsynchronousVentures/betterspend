@@ -192,6 +192,63 @@ test('same-cycle competing renewal intents conflict before creating a second art
   assert.equal(coordinator.plans[0]?.idempotencyKey, coordinator.plans[1]?.idempotencyKey);
 });
 
+test('a matching preexisting renewal ref is reused without reserving an operation', async () => {
+  const coordinator = new RecordingArtifactCoordinator();
+  const existingRef = {
+    action: 'renew' as const,
+    kind: 'requisition' as const,
+    id: 'legacy-requisition-1',
+    number: 'REQ-2026-0042',
+    at: '2026-08-01T00:00:00.000Z',
+  };
+  const existingLicense = { ...license, renewalRefs: [existingRef] };
+  const service = new SoftwareLicensesService(
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    coordinator as never,
+  );
+  (service as unknown as { findOne: () => Promise<typeof existingLicense> }).findOne = async () =>
+    existingLicense;
+
+  const result = await service.applyRenewalAction('license-1', 'org-1', 'user-1', 'renew');
+
+  assert.equal((result as typeof existingLicense).renewalRefs[0]?.id, existingRef.id);
+  assert.equal(coordinator.plans.length, 0);
+});
+
+test('a competing preexisting renewal ref conflicts before artifact creation', async () => {
+  const coordinator = new RecordingArtifactCoordinator();
+  const existingLicense = {
+    ...license,
+    renewalRefs: [
+      {
+        action: 'renew' as const,
+        kind: 'requisition' as const,
+        id: 'legacy-requisition-1',
+        number: 'REQ-2026-0042',
+        at: '2026-08-01T00:00:00.000Z',
+      },
+    ],
+  };
+  const service = new SoftwareLicensesService(
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    coordinator as never,
+  );
+  (service as unknown as { findOne: () => Promise<typeof existingLicense> }).findOne = async () =>
+    existingLicense;
+
+  await assert.rejects(
+    service.applyRenewalAction('license-1', 'org-1', 'user-1', 'renegotiate'),
+    (error: unknown) => error instanceof ConflictException,
+  );
+  assert.equal(coordinator.plans.length, 0);
+});
+
 test('advancing a license renewal date starts a new artifact cycle', async () => {
   const coordinator = new RecordingArtifactCoordinator();
   let createCalls = 0;
@@ -530,9 +587,10 @@ test('vendor message retries retain the caller key and do not duplicate notifica
   methods.loadMessage = async (_organizationId, artifact) => ({
     id: artifact.id,
     body: 'The shipment is scheduled',
+    idempotencyKey: 'artifact-operation:private',
   });
 
-  await service.postAsVendor('org-1', 'vendor-1', 'po', 'po-1', {
+  const first = await service.postAsVendor('org-1', 'vendor-1', 'po', 'po-1', {
     body: 'The shipment is scheduled',
     idempotencyKey: 'request-2',
   });
@@ -544,4 +602,5 @@ test('vendor message retries retain the caller key and do not duplicate notifica
   assert.equal(createCalls, 1);
   assert.equal(notificationCalls, 1);
   assert.equal(coordinator.plans[0]?.idempotencyKey, 'message:vendor:request-2');
+  assert.equal('idempotencyKey' in first, false);
 });
