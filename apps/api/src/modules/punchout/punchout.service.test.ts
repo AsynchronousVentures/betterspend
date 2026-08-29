@@ -55,8 +55,16 @@ function completeConfig(): PunchoutStoredConfig {
   });
 }
 
+type FakeVendor = {
+  id: string;
+  organizationId: string;
+  name: string;
+  punchoutEnabled: boolean;
+  punchoutConfig: PunchoutStoredConfig | null;
+};
+
 function fakeDatabase(initialConfig: PunchoutStoredConfig | null, enabled = false) {
-  let vendor = {
+  let vendor: FakeVendor = {
     id: vendorId,
     organizationId,
     name: 'Supplier One',
@@ -64,44 +72,61 @@ function fakeDatabase(initialConfig: PunchoutStoredConfig | null, enabled = fals
     punchoutConfig: initialConfig,
   };
   const updates: Array<Record<string, unknown>> = [];
+  const transactionExecutors: unknown[] = [];
 
-  const db = {
-    query: {
-      vendors: {
-        findFirst: async () => vendor,
+  function makeExecutor(state: { vendor: FakeVendor }) {
+    return {
+      query: {
+        vendors: {
+          findFirst: async () => state.vendor,
+        },
       },
-    },
-    update: () => ({
-      set: (values: Record<string, unknown>) => {
-        updates.push(values);
-        return {
+      update: () => ({
+        set: (values: Record<string, unknown>) => {
+          updates.push(values);
+          return {
+            where: () => ({
+              returning: async () => {
+                state.vendor = { ...state.vendor, ...values } as FakeVendor;
+                return [{ id: state.vendor.id, punchoutEnabled: state.vendor.punchoutEnabled }];
+              },
+            }),
+          };
+        },
+      }),
+      select: () => ({
+        from: () => ({
           where: () => ({
-            returning: async () => {
-              vendor = { ...vendor, ...values };
-              return [{ id: vendor.id, punchoutEnabled: vendor.punchoutEnabled }];
-            },
+            for: async () => [state.vendor],
+            limit: async () => [{ id: adminId }],
           }),
-        };
-      },
-    }),
-    transaction: async (callback: (transaction: unknown) => Promise<unknown>) => callback(db),
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          for: async () => [vendor],
-          limit: async () => [{ id: adminId }],
-        }),
-        innerJoin: () => ({
-          where: () => ({ limit: async () => [{ id: adminId }] }),
+          innerJoin: () => ({
+            where: () => ({ limit: async () => [{ id: adminId }] }),
+          }),
         }),
       }),
-    }),
+    };
+  }
+
+  const databaseState = { vendor };
+  const db = {
+    ...makeExecutor(databaseState),
+    transaction: async (callback: (transaction: unknown) => Promise<unknown>) => {
+      const transactionState = { vendor: databaseState.vendor };
+      const transactionExecutor = makeExecutor(transactionState);
+      transactionExecutors.push(transactionExecutor);
+      const result = await callback(transactionExecutor);
+      databaseState.vendor = transactionState.vendor;
+      vendor = databaseState.vendor;
+      return result;
+    },
   } as unknown as Db;
 
   return {
     db,
     getVendor: () => vendor,
     updates,
+    transactionExecutors,
   };
 }
 
@@ -111,9 +136,30 @@ function cryptoStub() {
   } as unknown as CredentialCryptoService;
 }
 
+function notificationsStub() {
+  return {
+    createIdempotent: async () => undefined,
+  } as unknown as NotificationsService;
+}
+
+function auditStub(audits: Array<unknown[]>, fail = false) {
+  return {
+    log: async (...args: unknown[]) => {
+      audits.push(args);
+      if (fail) throw new Error('audit failed');
+    },
+  } as unknown as AuditService;
+}
+
 test('stores shared secrets encrypted and returns only masked configuration', async () => {
   const state = fakeDatabase(null);
-  const service = new PunchoutService(state.db, cryptoStub());
+  const audits: Array<unknown[]> = [];
+  const service = new PunchoutService(
+    state.db,
+    cryptoStub(),
+    notificationsStub(),
+    auditStub(audits),
+  );
 
   const response = await service.updateConfig(vendorId, organizationId, adminId, {
     enabled: false,
@@ -128,6 +174,9 @@ test('stores shared secrets encrypted and returns only masked configuration', as
 
   const stored = state.getVendor().punchoutConfig as PunchoutStoredConfig;
   assert.equal(stored.environments.test.encryptedSharedSecret, 'encrypted:test-shared-secret');
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0]?.[4], 'punchout_config_updated');
+  assert.equal(state.transactionExecutors.includes(audits[0]?.[7]), true);
 
   const disabled = await service.updateConfig(vendorId, organizationId, adminId, {
     enabled: true,
@@ -138,17 +187,43 @@ test('stores shared secrets encrypted and returns only masked configuration', as
       .encryptedSharedSecret,
     'encrypted:test-shared-secret',
   );
+  assert.equal(audits.length, 2);
+  assert.equal(state.transactionExecutors.includes(audits[1]?.[7]), true);
 });
 
 test('does not enable an unconfigured vendor', async () => {
   const state = fakeDatabase(null);
-  const service = new PunchoutService(state.db, cryptoStub());
+  const service = new PunchoutService(state.db, cryptoStub(), notificationsStub(), auditStub([]));
 
   await assert.rejects(
     service.updateConfig(vendorId, organizationId, adminId, { enabled: true }),
     BadRequestException,
   );
   assert.equal(state.updates.length, 0);
+});
+
+test('rolls back a config mutation when its audit entry fails', async () => {
+  const state = fakeDatabase(null);
+  const audits: Array<unknown[]> = [];
+  const service = new PunchoutService(
+    state.db,
+    cryptoStub(),
+    notificationsStub(),
+    auditStub(audits, true),
+  );
+
+  await assert.rejects(
+    service.updateConfig(vendorId, organizationId, adminId, {
+      enabled: false,
+      environments: { test: testInput },
+    }),
+    /audit failed/,
+  );
+
+  assert.equal(state.getVendor().punchoutEnabled, false);
+  assert.equal(state.getVendor().punchoutConfig, null);
+  assert.equal(audits.length, 1);
+  assert.equal(state.transactionExecutors.includes(audits[0]?.[7]), true);
 });
 
 test('auto-disables after three failures, retains config, and notifies an admin once', async () => {
@@ -163,11 +238,7 @@ test('auto-disables after three failures, retains config, and notifies an admin 
         notifications.push(args);
       },
     } as unknown as NotificationsService,
-    {
-      log: async (...args: unknown[]) => {
-        audits.push(args);
-      },
-    } as unknown as AuditService,
+    auditStub(audits),
   );
 
   await service.recordAuthenticationFailure(vendorId, organizationId, 'test', 'supplier body');
@@ -191,8 +262,15 @@ test('auto-disables after three failures, retains config, and notifies an admin 
   assert.equal(notifications[0]?.[1], organizationId);
   assert.equal(notifications[0]?.[2], adminId);
   assert.equal(notifications[0]?.[3], 'punchout_auth_failed');
-  assert.equal(audits.length, 1);
-  assert.equal(audits[0]?.[4], 'punchout_auto_disabled');
+  assert.equal(audits.length, 4);
+  assert.equal(audits[0]?.[4], 'punchout_authentication_failed');
+  assert.equal(audits[1]?.[4], 'punchout_authentication_failed');
+  assert.equal(audits[2]?.[4], 'punchout_authentication_failed');
+  assert.equal(audits[3]?.[4], 'punchout_auto_disabled');
+  assert.equal(
+    audits.every((audit) => state.transactionExecutors.includes(audit[7])),
+    true,
+  );
 
   const retained = state.getVendor().punchoutConfig as PunchoutStoredConfig;
   assert.equal(retained.environments.test.encryptedSharedSecret, 'ciphertext');
@@ -210,4 +288,30 @@ test('auto-disables after three failures, retains config, and notifies an admin 
   assert.equal(healthy.environments.test.status, 'verified');
   assert.equal(healthy.environments.test.consecutiveAuthFailures, 0);
   assert.equal(healthy.environments.test.sharedSecretConfigured, true);
+  assert.equal(audits.length, 6);
+  assert.equal(audits[5]?.[4], 'punchout_authentication_succeeded');
+  assert.equal(state.transactionExecutors.includes(audits[5]?.[7]), true);
+});
+
+test('rolls back a health mutation when its audit entry fails', async () => {
+  const initialConfig = completeConfig();
+  const state = fakeDatabase(initialConfig, true);
+  const audits: Array<unknown[]> = [];
+  const service = new PunchoutService(
+    state.db,
+    cryptoStub(),
+    notificationsStub(),
+    auditStub(audits, true),
+  );
+
+  await assert.rejects(
+    service.recordAuthenticationSuccess(vendorId, organizationId, 'test'),
+    /audit failed/,
+  );
+
+  assert.deepEqual(state.getVendor().punchoutConfig, initialConfig);
+  assert.equal(state.getVendor().punchoutEnabled, true);
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0]?.[4], 'punchout_authentication_succeeded');
+  assert.equal(state.transactionExecutors.includes(audits[0]?.[7]), true);
 });

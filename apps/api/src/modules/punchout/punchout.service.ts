@@ -1,15 +1,8 @@
-import {
-  BadRequestException,
-  Inject,
-  Injectable,
-  Logger,
-  NotFoundException,
-  Optional,
-} from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import { randomBytes } from 'crypto';
 import { DB_TOKEN } from '../../database/database.module';
-import type { Db } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
 import { vendors } from '@betterspend/db';
 import {
   PUNCHOUT_AUTH_FAILURE_THRESHOLD,
@@ -48,9 +41,9 @@ export class PunchoutService {
 
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
-    @Optional() private readonly credentialCrypto?: CredentialCryptoService,
-    @Optional() private readonly notifications?: NotificationsService,
-    @Optional() private readonly audit?: AuditService,
+    private readonly credentialCrypto: CredentialCryptoService,
+    private readonly notifications: NotificationsService,
+    private readonly audit: AuditService,
   ) {}
 
   /** Return a vendor's PunchOut settings without exposing stored credentials. */
@@ -130,13 +123,19 @@ export class PunchoutService {
         .returning({ id: vendors.id, punchoutEnabled: vendors.punchoutEnabled });
 
       if (!updated) throw new NotFoundException(`Vendor ${vendorId} not found`);
+      await this.auditChange(
+        organizationId,
+        userId,
+        vendorId,
+        'punchout_config_updated',
+        {
+          enabled: updated.punchoutEnabled,
+          dialect: next.dialect,
+          activeEnvironment: next.activeEnvironment,
+        },
+        tx,
+      );
       return { next, enabled: updated.punchoutEnabled };
-    });
-
-    await this.auditChange(organizationId, userId, vendorId, 'punchout_config_updated', {
-      enabled: result.enabled,
-      dialect: result.next.dialect,
-      activeEnvironment: result.next.activeEnvironment,
     });
 
     return toPunchoutConfigResponse(vendorId, result.enabled, result.next);
@@ -194,6 +193,32 @@ export class PunchoutService {
 
       if (!updated) throw new NotFoundException(`Vendor ${vendorId} not found`);
 
+      await this.auditChange(
+        organizationId,
+        null,
+        vendorId,
+        'punchout_authentication_failed',
+        {
+          environment: parsedEnvironment,
+          consecutiveAuthFailures,
+          autoDisabled,
+        },
+        tx,
+      );
+      if (autoDisabled) {
+        await this.auditChange(
+          organizationId,
+          null,
+          vendorId,
+          'punchout_auto_disabled',
+          {
+            environment: parsedEnvironment,
+            consecutiveAuthFailures,
+          },
+          tx,
+        );
+      }
+
       return {
         vendorName: vendor.name,
         autoDisabled,
@@ -219,10 +244,6 @@ export class PunchoutService {
           }`,
         );
       }
-      await this.auditChange(organizationId, null, vendorId, 'punchout_auto_disabled', {
-        environment: parsedEnvironment,
-        consecutiveAuthFailures: result.consecutiveAuthFailures,
-      });
     }
 
     return result.response;
@@ -263,6 +284,17 @@ export class PunchoutService {
         .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)))
         .returning({ punchoutEnabled: vendors.punchoutEnabled });
       if (!updated) throw new NotFoundException(`Vendor ${vendorId} not found`);
+
+      await this.auditChange(
+        organizationId,
+        null,
+        vendorId,
+        'punchout_authentication_succeeded',
+        {
+          environment: parsedEnvironment,
+        },
+        tx,
+      );
 
       return toPunchoutConfigResponse(vendorId, updated.punchoutEnabled, next);
     });
@@ -435,9 +467,6 @@ export class PunchoutService {
       next.lastError = null;
     }
     if (sharedSecret !== undefined) {
-      if (!this.credentialCrypto) {
-        throw new BadRequestException('PunchOut credential encryption is unavailable');
-      }
       next.encryptedSharedSecret = this.credentialCrypto.encrypt(sharedSecret);
       next.sharedSecretHint = maskSharedSecret(sharedSecret);
       next.status = 'unverified';
@@ -477,7 +506,6 @@ export class PunchoutService {
     environment: PunchoutEnvironment,
     transitionId: string,
   ) {
-    if (!this.notifications) return;
     const adminId = await resolveOrganizationAdminId(this.db, organizationId);
     if (!adminId) return;
     const idempotencyKey = `punchout-auth-failed:${vendorId}:${environment}:${transitionId}`;
@@ -513,10 +541,18 @@ export class PunchoutService {
     vendorId: string,
     action: string,
     changes: Record<string, unknown>,
+    executor: Db | DbTransaction,
   ) {
-    await this.audit
-      ?.log(organizationId, userId, 'vendor', vendorId, action, changes)
-      .catch(() => {});
+    await this.audit.log(
+      organizationId,
+      userId,
+      'vendor',
+      vendorId,
+      action,
+      changes,
+      undefined,
+      executor,
+    );
   }
 }
 
