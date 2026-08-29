@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import {
+  AUDIT_HASH_TIMESTAMP_FORMAT,
   auditAdvisoryLockKeys,
   computeAuditEntryHash,
   type AuditHashFields,
@@ -119,9 +120,9 @@ type AuditBackfillRow = {
   entity_type: string;
   entity_id: string;
   action: string;
-  changes: unknown;
-  metadata: unknown;
-  created_at: Date;
+  changes_json: string;
+  metadata_json: string;
+  created_at_text: string;
   prev_hash: string | null;
   entry_hash: string | null;
 };
@@ -134,8 +135,8 @@ async function backfillAuditOrganizationBatch(
   const [lockKeyA, lockKeyB] = auditAdvisoryLockKeys(organizationId);
   await transaction`SELECT pg_advisory_xact_lock(${lockKeyA}, ${lockKeyB})`;
 
-  const [firstUnhashed] = await transaction<{ id: string; created_at: Date }[]>`
-    SELECT id, created_at
+  const [firstUnhashed] = await transaction<{ id: string }[]>`
+    SELECT id
     FROM audit_log
     WHERE organization_id = ${organizationId} AND entry_hash IS NULL
     ORDER BY created_at ASC, id ASC
@@ -147,7 +148,11 @@ async function backfillAuditOrganizationBatch(
     SELECT entry_hash
     FROM audit_log
     WHERE organization_id = ${organizationId}
-      AND (created_at, id) < (${firstUnhashed.created_at}, ${firstUnhashed.id}::uuid)
+      AND (created_at, id) < (
+        SELECT created_at, id
+        FROM audit_log
+        WHERE organization_id = ${organizationId} AND id = ${firstUnhashed.id}::uuid
+      )
     ORDER BY created_at DESC, id DESC
     LIMIT 1
   `;
@@ -163,14 +168,22 @@ async function backfillAuditOrganizationBatch(
       entity_type,
       entity_id,
       action,
-      changes,
-      metadata,
       created_at,
+      COALESCE(changes::text, 'null') AS changes_json,
+      COALESCE(metadata::text, 'null') AS metadata_json,
+      to_char(
+        created_at AT TIME ZONE 'UTC',
+        ${AUDIT_HASH_TIMESTAMP_FORMAT}
+      ) AS created_at_text,
       prev_hash,
       entry_hash
     FROM audit_log
     WHERE organization_id = ${organizationId}
-      AND (created_at, id) >= (${firstUnhashed.created_at}, ${firstUnhashed.id}::uuid)
+      AND (created_at, id) >= (
+        SELECT created_at, id
+        FROM audit_log
+        WHERE organization_id = ${organizationId} AND id = ${firstUnhashed.id}::uuid
+      )
     ORDER BY created_at ASC, id ASC
     LIMIT ${AUDIT_HASH_BACKFILL_BATCH_SIZE}
     FOR UPDATE
@@ -185,9 +198,9 @@ async function backfillAuditOrganizationBatch(
       entityType: row.entity_type,
       entityId: row.entity_id,
       action: row.action,
-      changes: row.changes,
-      metadata: row.metadata,
-      createdAt: row.created_at,
+      changesJson: row.changes_json,
+      metadataJson: row.metadata_json,
+      createdAtText: row.created_at_text,
       prevHash: previousHash,
     };
     const entryHash = computeAuditEntryHash(fields);
@@ -245,7 +258,9 @@ async function ensureAuditHashChain(client: postgres.Sql): Promise<void> {
 
 /** Build the audit chain traversal index without blocking writes. */
 async function prepareAuditHashIndex(client: postgres.Sql): Promise<void> {
-  const [state] = await client<{ tableExists: boolean; indexExists: boolean; indexIsValid: boolean }[]>`
+  const [state] = await client<
+    { tableExists: boolean; indexExists: boolean; indexIsValid: boolean }[]
+  >`
     SELECT
       to_regclass('public.audit_log') IS NOT NULL AS "tableExists",
       to_regclass('public.audit_log_organization_created_at_id_idx') IS NOT NULL AS "indexExists",

@@ -32,7 +32,7 @@ export type AuditEntryInput = {
   createdAt?: Date;
 };
 
-/** @internal Complete row shape consumed by the local hash implementation. */
+/** @internal Exact database projections consumed by the local hash implementation. */
 export type AuditHashFields = {
   id: string;
   organizationId: string;
@@ -40,33 +40,52 @@ export type AuditHashFields = {
   entityType: string;
   entityId: string;
   action: string;
-  changes: unknown;
-  metadata: unknown;
-  createdAt: Date;
+  changesJson: string;
+  metadataJson: string;
+  createdAtText: string;
   prevHash: string | null;
 };
 
-type JsonObject = { [key: string]: JsonValue };
-type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
+export const AUDIT_HASH_TIMESTAMP_FORMAT = 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"';
 
-function sortJson(value: unknown): JsonValue {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  if (Array.isArray(value)) return value.map(sortJson);
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === 'object') {
-    const object = value as Record<string, unknown>;
-    return Object.keys(object)
-      .sort()
-      .reduce<JsonObject>(
-        (sorted, key) => {
-          sorted[key] = sortJson(object[key]);
-          return sorted;
-        },
-        Object.create(null) as JsonObject,
-      );
+type AuditPersistedProjection = {
+  changesJson: string;
+  metadataJson: string;
+  createdAtText: string;
+};
+
+function rawQueryRows<T>(result: unknown): readonly T[] {
+  if (Array.isArray(result)) return result as T[];
+  if (typeof result === 'object' && result !== null && 'rows' in result) {
+    const rows = result.rows;
+    if (Array.isArray(rows)) return rows as T[];
   }
-  return null;
+  throw new Error('Audit entry projection returned an unexpected result');
+}
+
+function jsonParameter(value: unknown): string {
+  const serialized = JSON.stringify(value);
+  return serialized === undefined ? 'null' : serialized;
+}
+
+async function projectAuditInput(
+  transaction: DbTransaction,
+  changes: unknown,
+  metadata: unknown,
+  createdAt: Date,
+): Promise<AuditPersistedProjection> {
+  const result = await transaction.execute<AuditPersistedProjection>(sql`
+    SELECT
+      COALESCE(${jsonParameter(changes)}::jsonb::text, 'null') AS "changesJson",
+      COALESCE(${jsonParameter(metadata)}::jsonb::text, 'null') AS "metadataJson",
+      to_char(
+        ${createdAt}::timestamptz AT TIME ZONE 'UTC',
+        ${AUDIT_HASH_TIMESTAMP_FORMAT}
+      ) AS "createdAtText"
+  `);
+  const [projection] = rawQueryRows<AuditPersistedProjection>(result);
+  if (!projection) throw new Error('Audit entry projection was not returned');
+  return projection;
 }
 
 function canonicalPayload(fields: AuditHashFields): string {
@@ -78,17 +97,11 @@ function canonicalPayload(fields: AuditHashFields): string {
     entityType: fields.entityType,
     entityId: fields.entityId,
     action: fields.action,
-    changes: canonicalJson(fields.changes),
-    metadata: canonicalJson(fields.metadata),
-    createdAt: fields.createdAt.toISOString(),
+    changes: fields.changesJson,
+    metadata: fields.metadataJson,
+    createdAt: fields.createdAtText,
     prevHash: fields.prevHash,
   });
-}
-
-/** Match the JSON.stringify representation persisted by the PostgreSQL driver. */
-function canonicalJson(value: unknown): JsonValue {
-  const serialized = JSON.stringify(value);
-  return serialized === undefined ? null : sortJson(JSON.parse(serialized));
 }
 
 /** @internal Compute a digest for migration code without exposing canonicalization. */
@@ -132,6 +145,7 @@ export async function appendAuditLog(
   const prevHash = previous?.entryHash ?? null;
   const changes = input.changes === undefined ? {} : input.changes;
   const metadata = input.metadata === undefined ? {} : input.metadata;
+  const projection = await projectAuditInput(transaction, changes, metadata, createdAt);
   const entryHash = computeAuditEntryHash({
     id,
     organizationId: input.organizationId,
@@ -139,9 +153,7 @@ export async function appendAuditLog(
     entityType: input.entityType,
     entityId: input.entityId,
     action: input.action,
-    changes,
-    metadata,
-    createdAt,
+    ...projection,
     prevHash,
   });
 
@@ -177,7 +189,12 @@ export async function appendAuditLogIfAbsent(
     .from(auditLog)
     .where(and(eq(auditLog.id, input.id), eq(auditLog.organizationId, input.organizationId)))
     .limit(1);
-  if (existing) return existing;
+  if (existing) {
+    if (!existing.entryHash) {
+      throw new Error('Audit hash backfill is incomplete for this organization');
+    }
+    return existing;
+  }
   return appendAuditLog(transaction, input);
 }
 
@@ -187,6 +204,7 @@ async function lockAuditChain(transaction: DbTransaction, organizationId: string
 }
 
 export type AuditChainRow = AuditHashFields & {
+  createdAt: Date;
   entryHash: string | null;
 };
 

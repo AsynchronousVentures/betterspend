@@ -4,7 +4,9 @@ Every audit entry belongs to exactly one organization chain. The audit-integrity
 module appends an entry only inside the caller's transaction. It takes a
 transaction-scoped advisory lock for the organization, reads the latest entry,
 and stores `prev_hash` plus a SHA-256 `entry_hash` over the versioned row
-payload. Verification reads the chain in `(created_at, id)` order and returns
+payload. The payload uses PostgreSQL's canonical `jsonb::text` output and a
+UTC timestamp with six fractional digits, preserving the values stored in the
+database. Verification reads the chain in `(created_at, id)` order and returns
 the first broken link in the requested date range.
 
 The hash payload version and canonical JSON rules are private to the module.

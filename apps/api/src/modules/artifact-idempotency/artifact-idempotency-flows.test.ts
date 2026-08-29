@@ -10,6 +10,14 @@ import {
 } from '../software-licenses/software-licenses.service';
 import type { ArtifactOperationPlan, ArtifactReference } from './artifact-idempotency.service';
 
+const auditProjection = [
+  {
+    changesJson: '{}',
+    metadataJson: '{}',
+    createdAtText: '2026-08-29T00:00:00.000000Z',
+  },
+];
+
 type TestRenewalRef = {
   action: 'renew';
   kind: 'requisition';
@@ -431,7 +439,7 @@ test('license renewal requisitions keep decimal unit prices', async () => {
 test('linking a renewal artifact records the initiating user in the same transaction', async () => {
   const events: string[] = [];
   const transaction = {
-    execute: async () => [],
+    execute: async () => auditProjection,
     select: () => ({
       from: () => ({
         where: () => ({

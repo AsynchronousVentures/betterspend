@@ -1,8 +1,14 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { and, asc, desc, eq, lte } from 'drizzle-orm';
+import { and, asc, desc, eq, lte, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
-import { appendAuditLog, auditLog, verifyAuditChain, type AuditChainRange } from '@betterspend/db';
+import {
+  appendAuditLog,
+  auditLog,
+  AUDIT_HASH_TIMESTAMP_FORMAT,
+  verifyAuditChain,
+  type AuditChainRange,
+} from '@betterspend/db';
 
 @Injectable()
 export class AuditService {
@@ -36,11 +42,15 @@ export class AuditService {
         entityType: auditLog.entityType,
         entityId: auditLog.entityId,
         action: auditLog.action,
-        changes: auditLog.changes,
-        metadata: auditLog.metadata,
         prevHash: auditLog.prevHash,
         entryHash: auditLog.entryHash,
         createdAt: auditLog.createdAt,
+        changesJson: sql<string>`COALESCE(${auditLog.changes}::text, 'null')`,
+        metadataJson: sql<string>`COALESCE(${auditLog.metadata}::text, 'null')`,
+        createdAtText: sql<string>`to_char(
+          ${auditLog.createdAt} AT TIME ZONE 'UTC',
+          ${AUDIT_HASH_TIMESTAMP_FORMAT}
+        )`,
       })
       .from(auditLog)
       .where(

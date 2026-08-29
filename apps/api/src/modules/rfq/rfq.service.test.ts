@@ -6,6 +6,14 @@ import type { Db } from '@betterspend/db';
 import { RfqService, withoutOwnerIdempotencyKey } from './rfq.service';
 import { parseCreateRfqBody } from './rfq.controller';
 
+const auditProjection = [
+  {
+    changesJson: '{}',
+    metadataJson: '{}',
+    createdAtText: '2026-08-29T00:00:00.000000Z',
+  },
+];
+
 test('public RFQ input rejects private owner idempotency keys', () => {
   assert.throws(
     () =>
@@ -89,7 +97,7 @@ function createOpenFixture(input: { updateResult: unknown[]; existing?: { status
   let updateCondition: unknown;
   const audits: Array<Record<string, unknown>> = [];
   const transaction = {
-    execute: async () => [],
+    execute: async () => auditProjection,
     update: () => ({
       set: () => ({
         where: (condition: unknown) => {

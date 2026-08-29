@@ -4,12 +4,20 @@ import { messages } from '@betterspend/db';
 import type { Db } from '@betterspend/db';
 import { MessagesService } from './messages.service';
 
+const auditProjection = [
+  {
+    changesJson: '{}',
+    metadataJson: '{}',
+    createdAtText: '2026-08-29T00:00:00.000000Z',
+  },
+];
+
 test('message owner inserts target the organization-scoped idempotency key', async () => {
   const conflictTargets: unknown[][] = [];
   const db = {
     transaction: async <T>(callback: (tx: unknown) => Promise<T>) =>
       callback({
-        execute: async () => [],
+        execute: async () => auditProjection,
         select: () => ({
           from: () => ({
             where: () => ({

@@ -5,6 +5,14 @@ import type { MailOptions, MailService } from '../../common/mail/mail.service';
 import { CatalogService } from './catalog.service';
 import type { SettingsService } from '../settings/settings.service';
 
+const auditProjection = [
+  {
+    changesJson: '{}',
+    metadataJson: '{}',
+    createdAtText: '2026-08-29T00:00:00.000000Z',
+  },
+];
+
 describe('CatalogService price proposal emails', () => {
   it('uses the catalog item currency when formatting vendor notifications', async () => {
     const proposal = {
@@ -27,7 +35,7 @@ describe('CatalogService price proposal emails', () => {
     };
     const sent: MailOptions[] = [];
     const transaction = {
-      execute: async () => [],
+      execute: async () => auditProjection,
       select: () => ({
         from: () => ({
           where: () => ({

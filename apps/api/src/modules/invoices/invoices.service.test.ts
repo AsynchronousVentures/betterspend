@@ -16,6 +16,14 @@ import type { AccessPolicy } from '../auth/access-policy';
 import type { MatchingService } from './matching.service';
 import { InvoicesService } from './invoices.service';
 
+const auditProjection = [
+  {
+    changesJson: '{}',
+    metadataJson: '{}',
+    createdAtText: '2026-08-29T00:00:00.000000Z',
+  },
+];
+
 function createService(
   expenseInvoice: BudgetsService['expenseInvoice'] = async () => {},
   matchStatus = 'full_match',
@@ -83,7 +91,7 @@ function createService(
         ],
       },
     },
-    execute: async () => [],
+    execute: async () => auditProjection,
     select() {
       return {
         from() {
@@ -401,7 +409,7 @@ describe('InvoicesService creation audit', () => {
       matchStatus: 'unmatched',
     };
     const transaction = {
-      execute: async () => [],
+      execute: async () => auditProjection,
       select() {
         return {
           from() {
@@ -601,7 +609,7 @@ describe('InvoicesService material edits', () => {
               : { ...invoice, lines: [line], vendor: {}, entity: {} },
         },
       },
-      execute: async () => [],
+      execute: async () => auditProjection,
       select() {
         return {
           from() {

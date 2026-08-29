@@ -1,5 +1,10 @@
 export * from './schema';
-export { appendAuditLog, appendAuditLogIfAbsent, verifyAuditChain } from './audit-integrity';
+export {
+  appendAuditLog,
+  appendAuditLogIfAbsent,
+  AUDIT_HASH_TIMESTAMP_FORMAT,
+  verifyAuditChain,
+} from './audit-integrity';
 export type {
   AuditChainFailure,
   AuditChainRange,

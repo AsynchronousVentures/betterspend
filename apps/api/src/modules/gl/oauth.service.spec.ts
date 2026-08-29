@@ -7,6 +7,14 @@ import type { OAuthStateBinding, XeroPendingGrant } from './oauth-redis.service'
 
 jest.mock('axios');
 
+const auditProjection = [
+  {
+    changesJson: '{}',
+    metadataJson: '{}',
+    createdAtText: '2026-08-29T00:00:00.000000Z',
+  },
+];
+
 class FakeOAuthRedis {
   private readonly states = new Map<string, OAuthStateBinding>();
   private lockTail = Promise.resolve();
@@ -118,7 +126,7 @@ function insertCapturingDb(captured: Array<Record<string, unknown>>): Db {
     insert: jest.Mock;
     transaction: jest.Mock;
   };
-  db.execute = jest.fn(async () => undefined);
+  db.execute = jest.fn(async () => auditProjection);
   db.select = jest.fn(() => ({
     from: jest.fn(() => ({
       where: jest.fn(() => ({
@@ -362,7 +370,7 @@ describe('OAuthService', () => {
       updatedAt: new Date(),
     };
     const transaction = {
-      execute: jest.fn(async () => undefined),
+      execute: jest.fn(async () => auditProjection),
       select: jest.fn(() => ({
         from: jest.fn(() => ({
           where: jest.fn(() => ({
@@ -440,7 +448,7 @@ describe('OAuthService', () => {
       status: 'active',
     };
     const transaction = {
-      execute: jest.fn(async () => undefined),
+      execute: jest.fn(async () => auditProjection),
       select: jest.fn(() => ({
         from: jest.fn(() => ({
           where: jest.fn(() => ({

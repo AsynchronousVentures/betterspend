@@ -8,8 +8,10 @@ import {
   appendAuditLog,
   appendAuditLogIfAbsent,
   auditAdvisoryLockKeys,
+  AUDIT_HASH_TIMESTAMP_FORMAT,
   computeAuditEntryHash,
   verifyAuditChain,
+  type AuditHashFields,
   type AuditChainRow,
 } from './audit-integrity';
 import * as schema from './schema';
@@ -30,11 +32,47 @@ async function createDatabase() {
       changes jsonb DEFAULT '{}'::jsonb,
       metadata jsonb DEFAULT '{}'::jsonb,
       prev_hash varchar(64),
-      entry_hash varchar(64) NOT NULL,
+      entry_hash varchar(64),
       created_at timestamptz NOT NULL
     )
   `);
   return { database, db: drizzle(database, { schema }) };
+}
+
+const auditChainSelection = {
+  id: schema.auditLog.id,
+  organizationId: schema.auditLog.organizationId,
+  userId: schema.auditLog.userId,
+  entityType: schema.auditLog.entityType,
+  entityId: schema.auditLog.entityId,
+  action: schema.auditLog.action,
+  changes: schema.auditLog.changes,
+  metadata: schema.auditLog.metadata,
+  prevHash: schema.auditLog.prevHash,
+  entryHash: schema.auditLog.entryHash,
+  createdAt: schema.auditLog.createdAt,
+  changesJson: sql<string>`COALESCE(${schema.auditLog.changes}::text, 'null')`,
+  metadataJson: sql<string>`COALESCE(${schema.auditLog.metadata}::text, 'null')`,
+  createdAtText: sql<string>`to_char(
+    ${schema.auditLog.createdAt} AT TIME ZONE 'UTC',
+    ${AUDIT_HASH_TIMESTAMP_FORMAT}
+  )`,
+};
+
+function hashFields(overrides: Partial<AuditHashFields> = {}): AuditHashFields {
+  return {
+    id: '00000000-0000-4000-8000-000000000041',
+    organizationId,
+    userId: null,
+    entityType: 'invoice',
+    entityId: '00000000-0000-4000-8000-000000000042',
+    action: 'updated',
+    changesJson: '{"a":1,"b":2}',
+    metadataJson: '{"a":{"b":false,"y":true},"z":1}',
+    createdAtText: '2026-08-29T12:00:00.000000Z',
+    prevHash: null,
+    ...overrides,
+  };
 }
 
 function asTransaction(transaction: unknown): DbTransaction {
@@ -100,7 +138,7 @@ test('appendAuditLogIfAbsent makes stable retries a no-op', async () => {
     assert.ok(first);
     assert.deepEqual(retry, first);
     const rows = await db
-      .select()
+      .select(auditChainSelection)
       .from(schema.auditLog)
       .where(eq(schema.auditLog.organizationId, organizationId));
     assert.equal(rows.length, 1);
@@ -138,7 +176,7 @@ test('verifyAuditChain reports the first tampered entry in a date range', async 
       .where(eq(schema.auditLog.id, first.id));
 
     const rows = await db
-      .select()
+      .select(auditChainSelection)
       .from(schema.auditLog)
       .where(
         and(
@@ -164,26 +202,15 @@ test('verifyAuditChain reports the first tampered entry in a date range', async 
   }
 });
 
-test('computeAuditEntryHash is independent of JSON object insertion order', () => {
-  const fields = {
-    id: '00000000-0000-4000-8000-000000000041',
-    organizationId,
-    userId: null,
-    entityType: 'invoice',
-    entityId: '00000000-0000-4000-8000-000000000042',
-    action: 'updated',
-    metadata: { z: 1, a: { y: true, b: false } },
-    changes: { b: 2, a: 1 },
-    createdAt: new Date('2026-08-29T12:00:00.000Z'),
-    prevHash: null,
-  };
-  assert.equal(
-    computeAuditEntryHash(fields),
-    computeAuditEntryHash({
-      ...fields,
-      changes: { a: 1, b: 2 },
-      metadata: { a: { b: false, y: true }, z: 1 },
-    }),
+test('computeAuditEntryHash uses canonical persisted JSONB text', () => {
+  const fields = hashFields();
+  assert.equal(computeAuditEntryHash(fields), computeAuditEntryHash(hashFields()));
+});
+
+test('computeAuditEntryHash distinguishes neighboring persisted JSONB numbers', () => {
+  assert.notEqual(
+    computeAuditEntryHash(hashFields({ metadataJson: '{"value":9007199254740992}' })),
+    computeAuditEntryHash(hashFields({ metadataJson: '{"value":9007199254740993}' })),
   );
 });
 
@@ -197,12 +224,63 @@ test('hashes the same JSON representation that PostgreSQL persists', async () =>
       }),
     );
     const rows = await db
-      .select()
+      .select(auditChainSelection)
       .from(schema.auditLog)
       .where(eq(schema.auditLog.organizationId, organizationId));
 
     assert.deepEqual(rows[0]?.metadata, { ip: '127.0.0.1' });
     assert.equal(verifyAuditChain(rows as AuditChainRow[]).valid, true);
+  } finally {
+    await database.close();
+  }
+});
+
+test('verifyAuditChain detects sub-millisecond timestamp tampering', async () => {
+  const { database, db } = await createDatabase();
+  try {
+    const entry = await db.transaction((transaction) =>
+      appendAuditLog(asTransaction(transaction), input('00000000-0000-4000-8000-000000000061')),
+    );
+    await database.exec(
+      `UPDATE audit_log
+       SET created_at = created_at + INTERVAL '1 microsecond'
+       WHERE id = '${entry.id}'`,
+    );
+
+    const rows = await db
+      .select(auditChainSelection)
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.organizationId, organizationId))
+      .orderBy(asc(schema.auditLog.createdAt), asc(schema.auditLog.id));
+    const report = verifyAuditChain(rows as AuditChainRow[]);
+
+    assert.equal(report.valid, false);
+    assert.equal(report.firstBrokenLink?.entryId, entry.id);
+    assert.equal(report.firstBrokenLink?.reason, 'entry-hash-mismatch');
+  } finally {
+    await database.close();
+  }
+});
+
+test('appendAuditLogIfAbsent fails closed for a rollback-era NULL hash row', async () => {
+  const { database, db } = await createDatabase();
+  try {
+    const stableId = '00000000-0000-4000-8000-000000000071';
+    await database.exec(`
+      INSERT INTO audit_log (
+        id, organization_id, entity_type, entity_id, action, created_at
+      ) VALUES (
+        '${stableId}', '${organizationId}', 'requisition', '${stableId}',
+        'created', '2026-08-29T12:00:00.000000Z'
+      )
+    `);
+
+    await assert.rejects(
+      db.transaction((transaction) =>
+        appendAuditLogIfAbsent(asTransaction(transaction), input(stableId)),
+      ),
+      /Audit hash backfill is incomplete/,
+    );
   } finally {
     await database.close();
   }
