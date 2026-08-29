@@ -219,6 +219,11 @@ test('restores the API when deployment exits during the final migration sweep', 
     deployScript,
     /\[ "\$api_quiesced" = true \] && \[ "\$new_stack_started" != true \][\s\S]*?compose start api/,
   );
+  assert.match(
+    deployScript,
+    /if ! compose start api; then[\s\S]*?if ! compose up -d api; then[\s\S]*?fi[\s\S]*?fi/,
+  );
+  assert.match(deployScript, /local exit_status=\$\?[\s\S]*?exit "\$exit_status"/);
 });
 
 test('requires the Redis lease integration in both fast and full CI', () => {
