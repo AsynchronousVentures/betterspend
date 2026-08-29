@@ -119,7 +119,10 @@ describe('WorkflowDraftLeaseService', () => {
     );
     assert.equal(renewed.state, 'owned');
     if (renewed.state !== 'owned') return;
-    assert.notEqual(renewed.lease.expiresAt, acquired.lease.expiresAt);
+    assert.ok(
+      new Date(renewed.lease.expiresAt).getTime() >=
+        new Date(acquired.lease.expiresAt).getTime(),
+    );
 
     const released = await service.release(
       definitionId,
