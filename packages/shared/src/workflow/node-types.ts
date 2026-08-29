@@ -248,6 +248,23 @@ export const workflowNodeSchema = z.discriminatedUnion('type', [
 export type WorkflowNode = z.infer<typeof workflowNodeSchema>;
 export type WorkflowNodeType = WorkflowNode['type'];
 
+/** Domains where each node has meaningful runtime data and behavior. */
+export const WORKFLOW_NODE_DOMAINS = {
+  trigger: ['requisition', 'invoice', 'po_change'],
+  condition: ['requisition', 'invoice', 'po_change'],
+  match_check: ['invoice'],
+  budget_check: ['requisition', 'po_change'],
+  approver_group: ['requisition', 'invoice', 'po_change'],
+  resolver: ['requisition', 'invoice', 'po_change'],
+  delegation: ['requisition', 'invoice', 'po_change'],
+  escalation_timer: ['requisition', 'invoice', 'po_change'],
+  collect_form: ['requisition', 'invoice', 'po_change'],
+  notify: ['requisition', 'invoice', 'po_change'],
+  auto_approve: ['requisition', 'invoice', 'po_change'],
+  reject: ['requisition', 'invoice', 'po_change'],
+  approved: ['requisition', 'invoice', 'po_change'],
+} as const satisfies Record<WorkflowNodeType, readonly ('requisition' | 'invoice' | 'po_change')[]>;
+
 export const WORKFLOW_NODE_PORTS = {
   trigger: { inputs: [], outputs: ['out'] },
   condition: { inputs: ['in'], outputs: ['branch', 'default'] },

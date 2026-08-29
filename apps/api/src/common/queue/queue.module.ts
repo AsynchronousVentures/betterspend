@@ -1,7 +1,7 @@
 import { Module, Global } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 
-function getRedisConnection() {
+export function getRedisConnection() {
   if (!process.env.REDIS_HOST && process.env.REDIS_URL) {
     try {
       const url = new URL(process.env.REDIS_URL);

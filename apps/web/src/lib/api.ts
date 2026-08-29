@@ -2,9 +2,22 @@ import {
   messageSchema,
   sanctionsIngestResultSchema,
   screenAllVendorsResultSchema,
+  workflowDefinitionListResponseSchema,
+  workflowDefinitionRecordSchema,
+  workflowDefinitionRestoreResponseSchema,
+  workflowDefinitionVersionListResponseSchema,
+  workflowDefinitionVersionRecordSchema,
+  workflowDraftLeaseStatusSchema,
+  workflowAssistantProposalResponseSchema,
   type CreateRequisitionInput,
+  type CreateWorkflowDefinitionInput,
   type MessageThreadType,
   type EffectiveAccessDocument,
+  type WorkflowAssistantProposalRequest,
+  type WorkflowDomain,
+  type WorkflowDraft,
+  type WorkflowDefinitionRecord,
+  type WorkflowDefinitionVersionRecord,
   vendorScreeningResultSchema,
   vendorScreeningStatusSchema,
 } from '@betterspend/shared';
@@ -38,6 +51,11 @@ import type {
   RequisitionSubmission,
 } from './api-contracts';
 import type { ReceivingDetail, ReceivingListItem } from './receiving';
+
+export type {
+  WorkflowDefinitionRecord,
+  WorkflowDefinitionVersionRecord,
+} from '@betterspend/shared';
 
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 
@@ -184,6 +202,14 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (res.status === 204) return undefined as T;
   return res.json();
+}
+
+async function apiFetchParsed<T>(
+  schema: { parse(value: unknown): T },
+  path: string,
+  options?: RequestInit,
+): Promise<T> {
+  return schema.parse(await apiFetch<unknown>(path, options));
 }
 
 async function apiFetchForm<T>(path: string, options?: RequestInit): Promise<T> {
@@ -626,6 +652,94 @@ export const api = {
         body: JSON.stringify(withEntityBody(data)),
       }),
     remove: (id: string) => apiFetch<any>(`/approval-rules/${id}`, { method: 'DELETE' }),
+  },
+  workflowDefinitions: {
+    list: (domain?: WorkflowDomain) =>
+      apiFetchParsed(
+        workflowDefinitionListResponseSchema,
+        `/workflow-definitions${domain ? `?domain=${encodeURIComponent(domain)}` : ''}`,
+      ),
+    get: (id: string) =>
+      apiFetchParsed(workflowDefinitionRecordSchema, `/workflow-definitions/${id}`),
+    create: (data: CreateWorkflowDefinitionInput) =>
+      apiFetchParsed(workflowDefinitionRecordSchema, '/workflow-definitions', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    saveDraft: (
+      id: string,
+      draft: WorkflowDraft,
+      credentials: { editorInstanceId: string; leaseToken: string },
+    ) =>
+      apiFetchParsed(workflowDefinitionRecordSchema, `/workflow-definitions/${id}/draft`, {
+        method: 'PATCH',
+        body: JSON.stringify({ draft, ...credentials }),
+      }),
+    lease: {
+      status: (id: string, editorInstanceId: string) =>
+        apiFetchParsed(
+          workflowDraftLeaseStatusSchema,
+          `/workflow-definitions/${id}/draft-lease?editorInstanceId=${encodeURIComponent(editorInstanceId)}`,
+        ),
+      acquire: (id: string, editorInstanceId: string) =>
+        apiFetchParsed(workflowDraftLeaseStatusSchema, `/workflow-definitions/${id}/draft-lease`, {
+          method: 'POST',
+          body: JSON.stringify({ editorInstanceId }),
+        }),
+      renew: (id: string, credentials: { editorInstanceId: string; leaseToken: string }) =>
+        apiFetchParsed(
+          workflowDraftLeaseStatusSchema,
+          `/workflow-definitions/${id}/draft-lease/renew`,
+          {
+            method: 'POST',
+            body: JSON.stringify(credentials),
+          },
+        ),
+      release: (id: string, credentials: { editorInstanceId: string; leaseToken: string }) =>
+        apiFetchParsed(workflowDraftLeaseStatusSchema, `/workflow-definitions/${id}/draft-lease`, {
+          method: 'DELETE',
+          body: JSON.stringify(credentials),
+        }),
+      takeover: (id: string, editorInstanceId: string) =>
+        apiFetchParsed(
+          workflowDraftLeaseStatusSchema,
+          `/workflow-definitions/${id}/draft-lease/takeover`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ editorInstanceId }),
+          },
+        ),
+    },
+    publish: (
+      id: string,
+      expectedDraft: WorkflowDraft,
+      credentials: { editorInstanceId: string; leaseToken: string },
+    ) =>
+      apiFetchParsed(workflowDefinitionVersionRecordSchema, `/workflow-definitions/${id}/publish`, {
+        method: 'POST',
+        body: JSON.stringify({ expectedDraft, ...credentials }),
+      }),
+    versions: (id: string) =>
+      apiFetchParsed(
+        workflowDefinitionVersionListResponseSchema,
+        `/workflow-definitions/${id}/versions`,
+      ),
+    restore: (
+      id: string,
+      versionId: string,
+      credentials: { editorInstanceId: string; leaseToken: string },
+    ) =>
+      apiFetchParsed(
+        workflowDefinitionRestoreResponseSchema,
+        `/workflow-definitions/${id}/versions/${versionId}/restore`,
+        { method: 'POST', body: JSON.stringify(credentials) },
+      ),
+    propose: (id: string, data: WorkflowAssistantProposalRequest) =>
+      apiFetchParsed(
+        workflowAssistantProposalResponseSchema,
+        `/workflow-definitions/${id}/assistant/proposals`,
+        { method: 'POST', body: JSON.stringify(data) },
+      ),
   },
   catalog: {
     list: (params?: { vendorId?: string; category?: string; activeOnly?: boolean }) => {

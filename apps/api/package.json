@@ -9,6 +9,7 @@
     "auth:verify-integration": "tsx src/auth/verify-auth-integration.ts",
     "lint": "eslint src --max-warnings 0",
     "test": "jest && tsx --test \"src/**/*.test.ts\"",
+    "test:redis": "tsx --test src/modules/workflow-definitions/workflow-draft-lease.redis.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
