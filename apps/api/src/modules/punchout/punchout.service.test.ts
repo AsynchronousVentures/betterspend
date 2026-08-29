@@ -309,11 +309,7 @@ test('does not auto-disable after three failures in an inactive environment', as
     auditStub(audits),
   );
 
-  const failed = await service.recordAuthenticationFailure(
-    vendorId,
-    organizationId,
-    'production',
-  );
+  const failed = await service.recordAuthenticationFailure(vendorId, organizationId, 'production');
   await service.recordAuthenticationFailure(vendorId, organizationId, 'production');
   const stillEnabled = await service.recordAuthenticationFailure(
     vendorId,
@@ -329,7 +325,51 @@ test('does not auto-disable after three failures in an inactive environment', as
   assert.equal(state.getVendor().punchoutEnabled, true);
   assert.equal(notifications.length, 0);
   assert.equal(audits.length, 3);
-  assert.equal(audits.some((audit) => audit[4] === 'punchout_auto_disabled'), false);
+  assert.equal(
+    audits.some((audit) => audit[4] === 'punchout_auto_disabled'),
+    false,
+  );
+});
+
+test('retries a failed disablement notification without separating it from the mutation', async () => {
+  const state = fakeDatabase(completeConfig(), true);
+  const notifications: Array<unknown[]> = [];
+  let failNotification = true;
+  const service = new PunchoutService(
+    state.db,
+    cryptoStub(),
+    {
+      createIdempotent: async (...args: unknown[]) => {
+        notifications.push(args);
+        if (failNotification) {
+          failNotification = false;
+          throw new Error('notification unavailable');
+        }
+      },
+    } as unknown as NotificationsService,
+    auditStub([]),
+  );
+
+  await service.recordAuthenticationFailure(vendorId, organizationId, 'test');
+  await service.recordAuthenticationFailure(vendorId, organizationId, 'test');
+  await assert.rejects(
+    service.recordAuthenticationFailure(vendorId, organizationId, 'test'),
+    /notification unavailable/,
+  );
+
+  assert.equal(state.getVendor().punchoutEnabled, true);
+  assert.equal(
+    (state.getVendor().punchoutConfig as PunchoutStoredConfig).environments.test
+      .consecutiveAuthFailures,
+    2,
+  );
+
+  const recovered = await service.recordAuthenticationFailure(vendorId, organizationId, 'test');
+  assert.equal(recovered.enabled, false);
+  assert.equal(recovered.environments.test.consecutiveAuthFailures, 3);
+  assert.equal(notifications.length, 2);
+  assert.equal(state.transactionExecutors.includes(notifications[0]?.[8]), true);
+  assert.equal(state.transactionExecutors.includes(notifications[1]?.[8]), true);
 });
 
 test('rolls back a health mutation when its audit entry fails', async () => {

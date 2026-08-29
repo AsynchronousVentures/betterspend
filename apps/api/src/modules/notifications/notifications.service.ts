@@ -58,8 +58,10 @@ export class NotificationsService {
     body?: string,
     entityType?: string,
     entityId?: string,
+    transaction?: DbTransaction,
   ) {
-    const [notification] = await this.db
+    const database = transaction ?? this.db;
+    const [notification] = await database
       .insert(notifications)
       .values({
         organizationId: orgId,
@@ -76,7 +78,7 @@ export class NotificationsService {
       })
       .returning();
     if (notification) return notification;
-    return this.db.query.notifications.findFirst({
+    return database.query.notifications.findFirst({
       where: (row, { and, eq }) =>
         and(eq(row.organizationId, orgId), eq(row.idempotencyKey, idempotencyKey)),
     });

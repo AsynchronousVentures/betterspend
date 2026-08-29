@@ -219,34 +219,20 @@ export class PunchoutService {
           },
           tx,
         );
-      }
-
-      return {
-        vendorName: vendor.name,
-        autoDisabled,
-        transitionId: now,
-        response: toPunchoutConfigResponse(vendorId, updated.punchoutEnabled, next),
-        consecutiveAuthFailures,
-      };
-    });
-
-    if (result.autoDisabled) {
-      try {
         await this.notifyAuthenticationFailure(
           organizationId,
           vendorId,
-          result.vendorName,
+          vendor.name,
           parsedEnvironment,
-          result.transitionId,
-        );
-      } catch (error) {
-        this.logger.warn(
-          `PunchOut authentication notification failed for vendor ${vendorId}: ${
-            error instanceof Error ? error.message : 'unknown error'
-          }`,
+          now,
+          tx,
         );
       }
-    }
+
+      return {
+        response: toPunchoutConfigResponse(vendorId, updated.punchoutEnabled, next),
+      };
+    });
 
     return result.response;
   }
@@ -507,8 +493,9 @@ export class PunchoutService {
     vendorName: string,
     environment: PunchoutEnvironment,
     transitionId: string,
+    transaction: DbTransaction,
   ) {
-    const adminId = await resolveOrganizationAdminId(this.db, organizationId);
+    const adminId = await resolveOrganizationAdminId(transaction, organizationId);
     if (!adminId) return;
     const idempotencyKey = `punchout-auth-failed:${vendorId}:${environment}:${transitionId}`;
     const title = 'PunchOut connection disabled';
@@ -523,6 +510,7 @@ export class PunchoutService {
         body,
         'vendor',
         vendorId,
+        transaction,
       );
       return;
     }
@@ -534,6 +522,7 @@ export class PunchoutService {
       body,
       'vendor',
       vendorId,
+      transaction,
     );
   }
 
