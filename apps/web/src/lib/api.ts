@@ -2,6 +2,11 @@ import {
   messageSchema,
   sanctionsIngestResultSchema,
   screenAllVendorsResultSchema,
+  workflowDefinitionListResponseSchema,
+  workflowDefinitionRecordSchema,
+  workflowDefinitionRestoreResponseSchema,
+  workflowDefinitionVersionListResponseSchema,
+  workflowDefinitionVersionRecordSchema,
   type CreateRequisitionInput,
   type CreateWorkflowDefinitionInput,
   type MessageThreadType,
@@ -11,7 +16,8 @@ import {
   type WorkflowDomain,
   type WorkflowDraft,
   type WorkflowDraftLeaseStatus,
-  type WorkflowGraph,
+  type WorkflowDefinitionRecord,
+  type WorkflowDefinitionVersionRecord,
   vendorScreeningResultSchema,
   vendorScreeningStatusSchema,
 } from '@betterspend/shared';
@@ -45,6 +51,11 @@ import type {
   RequisitionSubmission,
 } from './api-contracts';
 import type { ReceivingDetail, ReceivingListItem } from './receiving';
+
+export type {
+  WorkflowDefinitionRecord,
+  WorkflowDefinitionVersionRecord,
+} from '@betterspend/shared';
 
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 
@@ -193,6 +204,14 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+async function apiFetchParsed<T>(
+  schema: { parse(value: unknown): T },
+  path: string,
+  options?: RequestInit,
+): Promise<T> {
+  return schema.parse(await apiFetch<unknown>(path, options));
+}
+
 async function apiFetchForm<T>(path: string, options?: RequestInit): Promise<T> {
   const token = getCookie('bs_token');
   const headers = new Headers(options?.headers);
@@ -280,31 +299,6 @@ export interface AiProviderStatus {
 export interface AiProvidersStatusResponse {
   defaultProvider: AiProviderId | null;
   providers: AiProviderStatus[];
-}
-
-export interface WorkflowDefinitionVersionRecord {
-  id: string;
-  definitionId: string;
-  organizationId: string;
-  version: number;
-  graphJson: WorkflowGraph;
-  positionsJson: WorkflowDraft['positions'];
-  notesJson: WorkflowDraft['notes'];
-  publishedBy: string;
-  publishedAt: string;
-}
-
-export interface WorkflowDefinitionRecord {
-  id: string;
-  organizationId: string;
-  entityId: string | null;
-  domain: WorkflowDomain;
-  name: string;
-  currentDraft: WorkflowDraft;
-  publishedVersionId: string | null;
-  publishedVersion: WorkflowDefinitionVersionRecord | null;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface AiRequisitionParseLine {
@@ -661,12 +655,14 @@ export const api = {
   },
   workflowDefinitions: {
     list: (domain?: WorkflowDomain) =>
-      apiFetch<WorkflowDefinitionRecord[]>(
+      apiFetchParsed(
+        workflowDefinitionListResponseSchema,
         `/workflow-definitions${domain ? `?domain=${encodeURIComponent(domain)}` : ''}`,
       ),
-    get: (id: string) => apiFetch<WorkflowDefinitionRecord>(`/workflow-definitions/${id}`),
+    get: (id: string) =>
+      apiFetchParsed(workflowDefinitionRecordSchema, `/workflow-definitions/${id}`),
     create: (data: CreateWorkflowDefinitionInput) =>
-      apiFetch<WorkflowDefinitionRecord>('/workflow-definitions', {
+      apiFetchParsed(workflowDefinitionRecordSchema, '/workflow-definitions', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
@@ -675,7 +671,7 @@ export const api = {
       draft: WorkflowDraft,
       credentials: { editorInstanceId: string; leaseToken: string },
     ) =>
-      apiFetch<WorkflowDefinitionRecord>(`/workflow-definitions/${id}/draft`, {
+      apiFetchParsed(workflowDefinitionRecordSchema, `/workflow-definitions/${id}/draft`, {
         method: 'PATCH',
         body: JSON.stringify({ draft, ...credentials }),
       }),
@@ -710,18 +706,22 @@ export const api = {
       expectedDraft: WorkflowDraft,
       credentials: { editorInstanceId: string; leaseToken: string },
     ) =>
-      apiFetch<WorkflowDefinitionVersionRecord>(`/workflow-definitions/${id}/publish`, {
+      apiFetchParsed(workflowDefinitionVersionRecordSchema, `/workflow-definitions/${id}/publish`, {
         method: 'POST',
         body: JSON.stringify({ expectedDraft, ...credentials }),
       }),
     versions: (id: string) =>
-      apiFetch<WorkflowDefinitionVersionRecord[]>(`/workflow-definitions/${id}/versions`),
+      apiFetchParsed(
+        workflowDefinitionVersionListResponseSchema,
+        `/workflow-definitions/${id}/versions`,
+      ),
     restore: (
       id: string,
       versionId: string,
       credentials: { editorInstanceId: string; leaseToken: string },
     ) =>
-      apiFetch<{ definitionId: string; restoredFromVersion: number; draft: WorkflowDraft }>(
+      apiFetchParsed(
+        workflowDefinitionRestoreResponseSchema,
         `/workflow-definitions/${id}/versions/${versionId}/restore`,
         { method: 'POST', body: JSON.stringify(credentials) },
       ),

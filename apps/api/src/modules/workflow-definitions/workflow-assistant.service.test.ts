@@ -109,6 +109,46 @@ describe('WorkflowAssistantService', () => {
     });
   });
 
+  it('tracks updated edge endpoints across later node and edge operations', async () => {
+    const { service } = serviceWith(
+      JSON.stringify({
+        summary: 'Move and then remove the route.',
+        operations: [
+          {
+            type: 'add_node',
+            node: { id: 'review', name: 'Review', type: 'approved', config: {} },
+            position: { x: 150, y: 0 },
+          },
+          {
+            type: 'update_edge',
+            edgeId: 'trigger-to-approved',
+            edge: {
+              id: 'trigger-to-approved',
+              sourceNodeId: 'trigger',
+              sourceHandle: 'out',
+              targetNodeId: 'review',
+              targetHandle: 'in',
+            },
+          },
+          { type: 'remove_node', nodeId: 'review' },
+          {
+            type: 'update_edge',
+            edgeId: 'trigger-to-approved',
+            edge: {
+              id: 'trigger-to-approved',
+              sourceNodeId: 'trigger',
+              sourceHandle: 'out',
+              targetNodeId: 'approved',
+              targetHandle: 'in',
+            },
+          },
+        ],
+      }),
+    );
+
+    await assert.rejects(service.propose('organization-1', request), /missing edge/);
+  });
+
   it('accepts a fenced JSON object but rejects extra model fields', async () => {
     const fenced = serviceWith(
       '```json\n' +

@@ -123,7 +123,7 @@ export class WorkflowAssistantService {
     operations: readonly WorkflowGraphPatchOperation[],
   ): void {
     const nodeIds = new Set(snapshot.graph.nodes.map((node) => node.id));
-    const edgeIds = new Set(snapshot.graph.edges.map((edge) => edge.id));
+    const edges = new Map(snapshot.graph.edges.map((edge) => [edge.id, edge]));
 
     for (const operation of operations) {
       switch (operation.type) {
@@ -144,22 +144,22 @@ export class WorkflowAssistantService {
         case 'remove_node':
           this.requireReference(nodeIds, operation.nodeId, 'node');
           nodeIds.delete(operation.nodeId);
-          for (const edge of snapshot.graph.edges) {
+          for (const edge of edges.values()) {
             if (edge.sourceNodeId === operation.nodeId || edge.targetNodeId === operation.nodeId) {
-              edgeIds.delete(edge.id);
+              edges.delete(edge.id);
             }
           }
           break;
         case 'add_edge':
-          if (edgeIds.has(operation.edge.id)) {
+          if (edges.has(operation.edge.id)) {
             throw new BadRequestException(`Workflow edge ${operation.edge.id} already exists`);
           }
           this.requireReference(nodeIds, operation.edge.sourceNodeId, 'node');
           this.requireReference(nodeIds, operation.edge.targetNodeId, 'node');
-          edgeIds.add(operation.edge.id);
+          edges.set(operation.edge.id, operation.edge);
           break;
         case 'update_edge':
-          this.requireReference(edgeIds, operation.edgeId, 'edge');
+          this.requireReference(edges, operation.edgeId, 'edge');
           if (operation.edge.id !== operation.edgeId) {
             throw new BadRequestException(
               `Updated workflow edge ID must remain ${operation.edgeId}`,
@@ -167,10 +167,11 @@ export class WorkflowAssistantService {
           }
           this.requireReference(nodeIds, operation.edge.sourceNodeId, 'node');
           this.requireReference(nodeIds, operation.edge.targetNodeId, 'node');
+          edges.set(operation.edgeId, operation.edge);
           break;
         case 'remove_edge':
-          this.requireReference(edgeIds, operation.edgeId, 'edge');
-          edgeIds.delete(operation.edgeId);
+          this.requireReference(edges, operation.edgeId, 'edge');
+          edges.delete(operation.edgeId);
           break;
         case 'set_entry':
           this.requireReference(nodeIds, operation.nodeId, 'node');
@@ -179,7 +180,11 @@ export class WorkflowAssistantService {
     }
   }
 
-  private requireReference(values: Set<string>, id: string, kind: 'node' | 'edge'): void {
+  private requireReference(
+    values: ReadonlySet<string> | ReadonlyMap<string, unknown>,
+    id: string,
+    kind: 'node' | 'edge',
+  ): void {
     if (!values.has(id)) {
       throw new BadRequestException(`Workflow assistant referenced missing ${kind} ${id}`);
     }

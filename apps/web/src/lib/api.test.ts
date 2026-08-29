@@ -204,6 +204,58 @@ test('shared API methods omit authorization when no token cookie exists', async 
   assert.equal(headers.has('x-org-id'), false);
 });
 
+test('workflow definition responses are parsed at the API boundary', async () => {
+  const graph = {
+    schemaVersion: 1,
+    domain: 'requisition',
+    entryNodeId: 'trigger',
+    nodes: [
+      {
+        id: 'trigger',
+        name: 'Submitted',
+        type: 'trigger',
+        config: { event: 'requisition_submitted' },
+      },
+      { id: 'approved', name: 'Approved', type: 'approved', config: {} },
+    ],
+    edges: [
+      {
+        id: 'trigger-to-approved',
+        sourceNodeId: 'trigger',
+        sourceHandle: 'out',
+        targetNodeId: 'approved',
+        targetHandle: 'in',
+      },
+    ],
+  };
+  const response = {
+    id: '00000000-0000-4000-8000-000000000001',
+    organizationId: '00000000-0000-4000-8000-000000000002',
+    entityId: null,
+    domain: 'requisition',
+    name: 'Requisition approvals',
+    currentDraft: { graph, positions: {}, notes: [] },
+    draftFence: 1,
+    publishedVersionId: null,
+    publishedVersion: null,
+    createdBy: '00000000-0000-4000-8000-000000000003',
+    updatedBy: '00000000-0000-4000-8000-000000000003',
+    createdAt: '2026-08-29T12:00:00.000Z',
+    updatedAt: '2026-08-29T12:00:00.000Z',
+  };
+
+  const { result } = await runWithMockedRequest(jsonResponse(response), () =>
+    api.workflowDefinitions.get(response.id),
+  );
+  assert.equal(result.id, response.id);
+
+  await assert.rejects(
+    runWithMockedRequest(jsonResponse({ ...response, currentDraft: null }), () =>
+      api.workflowDefinitions.get(response.id),
+    ),
+  );
+});
+
 test('message lists accept RFC-compatible database UUIDs', async () => {
   const messages = [
     {

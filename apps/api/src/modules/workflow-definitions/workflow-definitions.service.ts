@@ -630,9 +630,13 @@ export class WorkflowDefinitionsService {
           eq(record.isActive, true),
         ),
     });
-    if (!user?.name) throw new NotFoundException('Current user not found');
-    return user.name;
+    if (!user) throw new NotFoundException('Current user not found');
+    return workflowLeaseHolderName(user.name, user.email);
   }
+}
+
+export function workflowLeaseHolderName(name: string, email: string): string {
+  return name.trim() || email.trim() || 'Unknown editor';
 }
 
 function sameWorkflowDraft(stored: unknown, expected: WorkflowDraft): boolean {
@@ -666,8 +670,7 @@ function sameJsonValue(left: unknown, right: unknown): boolean {
   return (
     leftKeys.length === rightKeys.length &&
     leftKeys.every(
-      (key) =>
-        Object.hasOwn(rightRecord, key) && sameJsonValue(leftRecord[key], rightRecord[key]),
+      (key) => Object.hasOwn(rightRecord, key) && sameJsonValue(leftRecord[key], rightRecord[key]),
     )
   );
 }

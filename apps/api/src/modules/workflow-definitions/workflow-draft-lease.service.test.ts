@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { WorkflowDraftLeaseRedis } from './workflow-draft-lease.service';
-import { WorkflowDraftLeaseService } from './workflow-draft-lease.service';
+import {
+  createWorkflowDraftLeaseRedis,
+  WORKFLOW_DRAFT_LEASE_LUA,
+  WORKFLOW_DRAFT_LEASE_REDIS_TIMEOUT_MS,
+  WorkflowDraftLeaseService,
+} from './workflow-draft-lease.service';
 
 const organizationId = '00000000-0000-4000-8000-000000000001';
 const otherOrganizationId = '00000000-0000-4000-8000-000000000002';
@@ -43,7 +48,7 @@ class FakeRedis implements WorkflowDraftLeaseRedis {
     const key = String(args[0]);
     const current = this.current(key);
 
-    if (script.includes('return {1, raw}')) {
+    if (script === WORKFLOW_DRAFT_LEASE_LUA.acquire) {
       const counterKey = String(args[1]);
       if (current) return [0, current.value];
       const prefix = String(args[2]);
@@ -57,7 +62,7 @@ class FakeRedis implements WorkflowDraftLeaseRedis {
       return [1, value];
     }
 
-    if (script.includes('return {previous, previousTtl, raw}')) {
+    if (script === WORKFLOW_DRAFT_LEASE_LUA.takeover) {
       const counterKey = String(args[1]);
       const previous = current?.value ?? '';
       const previousTtl = current ? current.expiresAt - Date.now() : -1;
@@ -73,7 +78,7 @@ class FakeRedis implements WorkflowDraftLeaseRedis {
       return [previous, previousTtl, value];
     }
 
-    if (script.includes("if ARGV[2] == ''")) {
+    if (script === WORKFLOW_DRAFT_LEASE_LUA.restore) {
       const expected = String(args[1]);
       if (current?.value !== expected) return 0;
       const previous = String(args[2]);
@@ -86,7 +91,7 @@ class FakeRedis implements WorkflowDraftLeaseRedis {
       return 1;
     }
 
-    if (script.includes('local prefix = ARGV[3]')) {
+    if (script === WORKFLOW_DRAFT_LEASE_LUA.renew) {
       const raw = String(args[1]);
       const ttl = Number(args[2]);
       const prefix = String(args[3]);
@@ -95,19 +100,22 @@ class FakeRedis implements WorkflowDraftLeaseRedis {
       return 1;
     }
 
-    if (script.includes("local current = redis.call('GET'")) {
+    if (script === WORKFLOW_DRAFT_LEASE_LUA.release) {
       const prefix = String(args[1]);
       if (!current || !current.value.startsWith(prefix)) return 0;
       this.values.delete(key);
       return 1;
     }
 
-    const expected = String(args[1]);
-    if (current?.value === expected) {
-      this.values.delete(key);
-      return 1;
+    if (script === WORKFLOW_DRAFT_LEASE_LUA.deleteIfUnchanged) {
+      const expected = String(args[1]);
+      if (current?.value === expected) {
+        this.values.delete(key);
+        return 1;
+      }
+      return 0;
     }
-    return 0;
+    throw new Error('FakeRedis received an unknown workflow lease script');
   }
 
   private current(key: string): StoredValue | null {
@@ -123,6 +131,25 @@ class FakeRedis implements WorkflowDraftLeaseRedis {
 }
 
 describe('WorkflowDraftLeaseService', () => {
+  it('bounds Redis operations that can run while a workflow row is locked', () => {
+    const redis = createWorkflowDraftLeaseRedis() as WorkflowDraftLeaseRedis & {
+      options: {
+        connectTimeout: number;
+        commandTimeout: number;
+        maxRetriesPerRequest: number;
+      };
+    };
+    assert.equal(redis.options.connectTimeout, WORKFLOW_DRAFT_LEASE_REDIS_TIMEOUT_MS);
+    assert.equal(redis.options.commandTimeout, WORKFLOW_DRAFT_LEASE_REDIS_TIMEOUT_MS);
+    assert.equal(redis.options.maxRetriesPerRequest, 1);
+    redis.disconnect();
+  });
+
+  it('rejects unknown Lua scripts instead of guessing their behavior', async () => {
+    const redis = new FakeRedis();
+    await assert.rejects(redis.eval('unknown script', 1, 'key'), /unknown workflow lease script/);
+  });
+
   it('atomically owns a lease, hides another holder token, and scopes keys by organization', async () => {
     const redis = new FakeRedis();
     const service = new WorkflowDraftLeaseService(redis);

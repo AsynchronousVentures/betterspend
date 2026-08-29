@@ -17,6 +17,7 @@ import { getRedisConnection } from '../../common/queue/queue.module';
 
 export const WORKFLOW_DRAFT_LEASE_TTL_MS = 60_000;
 export const WORKFLOW_DRAFT_LEASE_REDIS = Symbol('WORKFLOW_DRAFT_LEASE_REDIS');
+export const WORKFLOW_DRAFT_LEASE_REDIS_TIMEOUT_MS = 5_000;
 
 /** The small Redis surface used by the lease module, which keeps its tests in-process. */
 export interface WorkflowDraftLeaseRedis {
@@ -27,7 +28,13 @@ export interface WorkflowDraftLeaseRedis {
 }
 
 export function createWorkflowDraftLeaseRedis(): WorkflowDraftLeaseRedis {
-  const redis = new Redis({ ...getRedisConnection(), lazyConnect: true });
+  const redis = new Redis({
+    ...getRedisConnection(),
+    lazyConnect: true,
+    connectTimeout: WORKFLOW_DRAFT_LEASE_REDIS_TIMEOUT_MS,
+    commandTimeout: WORKFLOW_DRAFT_LEASE_REDIS_TIMEOUT_MS,
+    maxRetriesPerRequest: 1,
+  });
   return redis as unknown as WorkflowDraftLeaseRedis;
 }
 
@@ -106,6 +113,16 @@ end
 redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
 return 1
 `;
+
+/** Exact script identities shared with the in-process protocol test double. */
+export const WORKFLOW_DRAFT_LEASE_LUA = {
+  acquire: ACQUIRE_SCRIPT,
+  takeover: TAKEOVER_SCRIPT,
+  renew: RENEW_SCRIPT,
+  release: RELEASE_SCRIPT,
+  deleteIfUnchanged: DELETE_IF_UNCHANGED_SCRIPT,
+  restore: RESTORE_SCRIPT,
+} as const;
 
 type StoredLease = {
   token: string;
@@ -189,7 +206,7 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     const key = this.key(organizationId, definitionId);
     const rawResult = await this.redisCall(() =>
       this.redis.eval(
-        ACQUIRE_SCRIPT,
+        WORKFLOW_DRAFT_LEASE_LUA.acquire,
         2,
         key,
         this.fenceKey(organizationId, definitionId),
@@ -252,7 +269,7 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     const raw = encodeLease(token, lease);
     const renewed = await this.redisCall(() =>
       this.redis.eval(
-        RENEW_SCRIPT,
+        WORKFLOW_DRAFT_LEASE_LUA.renew,
         1,
         this.key(organizationId, definitionId),
         raw,
@@ -273,7 +290,7 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
   ): Promise<WorkflowDraftLeaseStatus> {
     await this.redisCall(() =>
       this.redis.eval(
-        RELEASE_SCRIPT,
+        WORKFLOW_DRAFT_LEASE_LUA.release,
         1,
         this.key(organizationId, definitionId),
         ownershipPrefix(token, holderUserId, editorInstanceId),
@@ -320,7 +337,7 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     const key = this.key(organizationId, definitionId);
     const rawResult = await this.redisCall(() =>
       this.redis.eval(
-        TAKEOVER_SCRIPT,
+        WORKFLOW_DRAFT_LEASE_LUA.takeover,
         2,
         key,
         this.fenceKey(organizationId, definitionId),
@@ -401,7 +418,9 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
       stored.lease.definitionId !== definitionId ||
       new Date(stored.lease.expiresAt).getTime() <= Date.now()
     ) {
-      await this.redisCall(() => this.redis.eval(DELETE_IF_UNCHANGED_SCRIPT, 1, key, raw));
+      await this.redisCall(() =>
+        this.redis.eval(WORKFLOW_DRAFT_LEASE_LUA.deleteIfUnchanged, 1, key, raw),
+      );
       return null;
     }
     return stored;
@@ -422,7 +441,14 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     previousTtl: number,
   ): Promise<boolean> {
     const restored = await this.redisCall(() =>
-      this.redis.eval(RESTORE_SCRIPT, 1, key, currentRaw, previousRaw, previousTtl),
+      this.redis.eval(
+        WORKFLOW_DRAFT_LEASE_LUA.restore,
+        1,
+        key,
+        currentRaw,
+        previousRaw,
+        previousTtl,
+      ),
     );
     return Number(restored) === 1;
   }

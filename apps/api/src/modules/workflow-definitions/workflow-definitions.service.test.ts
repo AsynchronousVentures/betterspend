@@ -11,7 +11,10 @@ import { workflowDraftSchema } from '@betterspend/shared';
 import type { AuditService } from '../audit/audit.service';
 import type { EntitiesService } from '../entities/entities.service';
 import type { WorkflowDraftLeaseService } from './workflow-draft-lease.service';
-import { WorkflowDefinitionsService } from './workflow-definitions.service';
+import {
+  workflowLeaseHolderName,
+  WorkflowDefinitionsService,
+} from './workflow-definitions.service';
 
 const editorInstanceId = '00000000-0000-4000-8000-000000000003';
 
@@ -63,6 +66,15 @@ function dependencies() {
 }
 
 describe('WorkflowDefinitionsService', () => {
+  it('uses a non-empty lease holder label when the account name is blank', () => {
+    assert.equal(workflowLeaseHolderName('   ', 'editor@example.com'), 'editor@example.com');
+    assert.equal(workflowLeaseHolderName('   ', '   '), 'Unknown editor');
+    assert.equal(
+      workflowLeaseHolderName('  Finance editor  ', 'editor@example.com'),
+      'Finance editor',
+    );
+  });
+
   it('publishes the next immutable version with a compiled artifact', async () => {
     const inserted: Array<Record<string, unknown>> = [];
     const updates: Array<Record<string, unknown>> = [];
