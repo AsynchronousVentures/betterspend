@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   ParseUUIDPipe,
   Post,
@@ -55,8 +56,12 @@ export class MessagesController {
     @Body() body: unknown,
     @Req() req: Request,
     @CurrentUserId() userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    const parsed = postMessageSchema.parse(body);
+    const parsed = postMessageSchema.parse({
+      ...(body && typeof body === 'object' ? body : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    });
     return this.messagesService.postAsUser(
       this.requireSession(req),
       userId,

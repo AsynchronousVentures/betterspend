@@ -6,6 +6,7 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
+import { createHash, randomUUID } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { DB_TOKEN } from '../../database/database.module';
@@ -27,6 +28,10 @@ import {
 import { NotificationsService } from '../notifications/notifications.service';
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
+import {
+  ArtifactIdempotencyService,
+  type ArtifactReference,
+} from '../artifact-idempotency/artifact-idempotency.service';
 
 export const THREAD_TYPES = MESSAGE_THREAD_TYPES;
 export type ThreadType = MessageThreadType;
@@ -43,6 +48,8 @@ interface ThreadContext {
   internalUserId: string | null;
 }
 
+type MessageTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
+
 @Injectable()
 export class MessagesService {
   private readonly logger = new Logger(MessagesService.name);
@@ -52,6 +59,7 @@ export class MessagesService {
     private readonly notificationsService: NotificationsService,
     private readonly mailService: MailService,
     private readonly settingsService: SettingsService,
+    private readonly artifactIdempotency: ArtifactIdempotencyService,
   ) {}
 
   async list(organizationId: string, threadType: ThreadType, threadId: string) {
@@ -127,36 +135,42 @@ export class MessagesService {
       recipientVendorId = input.recipientVendorId;
     }
 
-    const message = await this.db.transaction(async (tx) => {
-      const [created] = await tx
-        .insert(messages)
-        .values({
+    const operationKey = messageOperationKey('user', input.idempotencyKey);
+    const execution = await this.artifactIdempotency.execute({
+      organizationId,
+      operationType: 'message_post',
+      idempotencyKey: operationKey,
+      fingerprint: messageFingerprint({
+        senderType: 'user',
+        senderId: userId,
+        threadType,
+        threadId,
+        body: trimmedBody,
+        attachments: input.attachments ?? [],
+        recipientVendorId,
+      }),
+      findExisting: () => this.findMessageArtifact(organizationId, operationKey),
+      create: () =>
+        this.createUserMessage({
           organizationId,
+          userId,
           threadType,
           threadId,
-          senderType: 'user',
-          senderId: userId,
           recipientVendorId,
           authorName: user.name,
           body: trimmedBody,
           attachments: input.attachments ?? [],
-        })
-        .returning();
-      await tx.insert(auditLog).values({
-        organizationId,
-        userId,
-        entityType: 'message',
-        entityId: created.id,
-        action: 'created',
-        changes: { threadType, threadId },
-      });
-      return created;
+          idempotencyKey: operationKey,
+        }),
+      link: (artifact) => this.loadMessage(organizationId, artifact),
+      load: (artifact) => this.loadMessage(organizationId, artifact),
     });
+    const message = execution.value;
 
     // Email the addressed vendor on addressed RFQ messages; broadcast RFQ
     // messages go to every invited vendor. Other threads have a single
     // supplier counterpart resolved inside.
-    if (threadType === 'rfq' && recipientVendorId === null) {
+    if (!execution.replayed && threadType === 'rfq' && recipientVendorId === null) {
       const invitations = await this.db.query.rfqInvitations.findMany({
         where: (inv, { eq }) => eq(inv.rfqId, threadId),
       });
@@ -174,7 +188,7 @@ export class MessagesService {
           vendorIdToNotify,
         );
       }
-    } else {
+    } else if (!execution.replayed) {
       await this.emailVendorContact(
         organizationId,
         threadType,
@@ -210,32 +224,37 @@ export class MessagesService {
     });
     if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
 
-    const message = await this.db.transaction(async (tx) => {
-      const [created] = await tx
-        .insert(messages)
-        .values({
+    const operationKey = messageOperationKey('vendor', input.idempotencyKey);
+    const execution = await this.artifactIdempotency.execute({
+      organizationId,
+      operationType: 'message_post',
+      idempotencyKey: operationKey,
+      fingerprint: messageFingerprint({
+        senderType: 'vendor',
+        senderId: vendorId,
+        threadType,
+        threadId,
+        body: trimmedBody,
+        attachments: input.attachments ?? [],
+      }),
+      findExisting: () => this.findMessageArtifact(organizationId, operationKey),
+      create: () =>
+        this.createVendorMessage({
           organizationId,
+          vendorId,
           threadType,
           threadId,
-          senderType: 'vendor',
-          vendorId,
           authorName: vendor.name,
           body: trimmedBody,
           attachments: input.attachments ?? [],
-        })
-        .returning();
-      await tx.insert(auditLog).values({
-        organizationId,
-        userId: null,
-        entityType: 'message',
-        entityId: created.id,
-        action: 'created',
-        changes: { threadType, threadId, senderType: 'vendor', vendorId },
-      });
-      return created;
+          idempotencyKey: operationKey,
+        }),
+      link: (artifact) => this.loadMessage(organizationId, artifact),
+      load: (artifact) => this.loadMessage(organizationId, artifact),
     });
+    const message = execution.value;
 
-    if (context.internalUserId) {
+    if (!execution.replayed && context.internalUserId) {
       this.notificationsService
         .create(
           organizationId,
@@ -252,6 +271,163 @@ export class MessagesService {
           ),
         );
     }
+    return message;
+  }
+
+  private async findMessageArtifact(
+    organizationId: string,
+    idempotencyKey: string,
+  ): Promise<ArtifactReference | null> {
+    const [message] = await this.db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.organizationId, organizationId),
+          eq(messages.idempotencyKey, idempotencyKey),
+        ),
+      )
+      .limit(1);
+    return message ? { kind: 'message', id: message.id } : null;
+  }
+
+  private async loadMessage(organizationId: string, artifact: ArtifactReference) {
+    if (artifact.kind !== 'message')
+      throw new Error('Message operation references a non-message artifact');
+    const [message] = await this.db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.organizationId, organizationId), eq(messages.id, artifact.id)))
+      .limit(1);
+    if (!message) throw new NotFoundException(`Message ${artifact.id} not found`);
+    return message;
+  }
+
+  private async createUserMessage(input: {
+    organizationId: string;
+    userId: string;
+    threadType: ThreadType;
+    threadId: string;
+    recipientVendorId: string | null;
+    authorName: string;
+    body: string;
+    attachments: PostMessageInput['attachments'];
+    idempotencyKey: string;
+  }): Promise<ArtifactReference> {
+    const message = await this.db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(messages)
+        .values({
+          organizationId: input.organizationId,
+          threadType: input.threadType,
+          threadId: input.threadId,
+          senderType: 'user',
+          senderId: input.userId,
+          recipientVendorId: input.recipientVendorId,
+          authorName: input.authorName,
+          body: input.body,
+          attachments: input.attachments ?? [],
+          idempotencyKey: input.idempotencyKey,
+        })
+        .onConflictDoNothing()
+        .returning();
+      if (created) {
+        await tx.insert(auditLog).values({
+          organizationId: input.organizationId,
+          userId: input.userId,
+          entityType: 'message',
+          entityId: created.id,
+          action: 'created',
+          changes: { threadType: input.threadType, threadId: input.threadId },
+        });
+        return created;
+      }
+      const [existing] = await tx
+        .select({ id: messages.id })
+        .from(messages)
+        .where(
+          and(
+            eq(messages.organizationId, input.organizationId),
+            eq(messages.idempotencyKey, input.idempotencyKey),
+          ),
+        )
+        .limit(1);
+      if (!existing) throw new Error('Idempotent user message was not found after insert conflict');
+      return this.loadMessageInTransaction(tx, input.organizationId, existing.id);
+    });
+    return { kind: 'message', id: message.id };
+  }
+
+  private async createVendorMessage(input: {
+    organizationId: string;
+    vendorId: string;
+    threadType: ThreadType;
+    threadId: string;
+    authorName: string;
+    body: string;
+    attachments: PostMessageInput['attachments'];
+    idempotencyKey: string;
+  }): Promise<ArtifactReference> {
+    const message = await this.db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(messages)
+        .values({
+          organizationId: input.organizationId,
+          threadType: input.threadType,
+          threadId: input.threadId,
+          senderType: 'vendor',
+          vendorId: input.vendorId,
+          authorName: input.authorName,
+          body: input.body,
+          attachments: input.attachments ?? [],
+          idempotencyKey: input.idempotencyKey,
+        })
+        .onConflictDoNothing()
+        .returning();
+      if (created) {
+        await tx.insert(auditLog).values({
+          organizationId: input.organizationId,
+          userId: null,
+          entityType: 'message',
+          entityId: created.id,
+          action: 'created',
+          changes: {
+            threadType: input.threadType,
+            threadId: input.threadId,
+            senderType: 'vendor',
+            vendorId: input.vendorId,
+          },
+        });
+        return created;
+      }
+      const [existing] = await tx
+        .select({ id: messages.id })
+        .from(messages)
+        .where(
+          and(
+            eq(messages.organizationId, input.organizationId),
+            eq(messages.idempotencyKey, input.idempotencyKey),
+          ),
+        )
+        .limit(1);
+      if (!existing)
+        throw new Error('Idempotent vendor message was not found after insert conflict');
+      return this.loadMessageInTransaction(tx, input.organizationId, existing.id);
+    });
+    return { kind: 'message', id: message.id };
+  }
+
+  private async loadMessageInTransaction(
+    tx: MessageTransaction,
+    organizationId: string,
+    id: string,
+  ) {
+    const [message] = await tx
+      .select()
+      .from(messages)
+      .where(and(eq(messages.organizationId, organizationId), eq(messages.id, id)))
+      .limit(1);
+    if (!message) throw new NotFoundException(`Message ${id} not found`);
     return message;
   }
 
@@ -395,6 +571,42 @@ function extractContactEmail(contactInfo: unknown): string | undefined {
   if (typeof email !== 'string' || /[,;\r\n]/.test(email)) return undefined;
   const parsed = z.string().trim().email().safeParse(email);
   return parsed.success ? parsed.data : undefined;
+}
+
+function messageOperationKey(senderType: 'user' | 'vendor', key?: string): string {
+  const namespace = `message:${senderType}:`;
+  const supplied = key?.trim();
+  if (!supplied) return `${namespace}${randomUUID()}`;
+  const maxSuppliedLength = 255 - namespace.length;
+  const bounded =
+    supplied.length <= maxSuppliedLength
+      ? supplied
+      : createHash('sha256').update(supplied).digest('hex');
+  return `${namespace}${bounded}`;
+}
+
+function messageFingerprint(input: {
+  senderType: 'user' | 'vendor';
+  senderId: string;
+  threadType: ThreadType;
+  threadId: string;
+  body: string;
+  attachments: PostMessageInput['attachments'];
+  recipientVendorId?: string | null;
+}): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        senderType: input.senderType,
+        senderId: input.senderId,
+        threadType: input.threadType,
+        threadId: input.threadId,
+        body: input.body,
+        attachments: input.attachments ?? [],
+        recipientVendorId: input.recipientVendorId ?? null,
+      }),
+    )
+    .digest('hex');
 }
 
 function escapeHtml(value: string): string {

@@ -23,6 +23,9 @@ import {
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
 
+type RfqTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
+type RfqExecutor = Db | RfqTransaction;
+
 @Injectable()
 export class RfqService {
   constructor(
@@ -101,9 +104,9 @@ export class RfqService {
     );
   }
 
-  private async nextNumber(orgId: string): Promise<string> {
+  private async nextNumber(orgId: string, executor: RfqExecutor = this.db): Promise<string> {
     const year = new Date().getFullYear();
-    const [sequence] = await this.db
+    const [sequence] = await executor
       .insert(sequences)
       .values({ organizationId: orgId, entityType: 'rfq', year, lastValue: 1 })
       .onConflictDoUpdate({
@@ -283,6 +286,7 @@ export class RfqService {
         targetPrice?: number;
       }>;
       vendorIds?: string[];
+      idempotencyKey?: string;
     },
   ) {
     const vendorIds = [...new Set(dto.vendorIds ?? [])];
@@ -298,11 +302,23 @@ export class RfqService {
       }
     }
 
-    const number = await this.nextNumber(orgId);
+    const rfqId = await this.db.transaction(async (tx) => {
+      if (dto.idempotencyKey) {
+        const [existing] = await tx
+          .select({ id: rfqRequests.id })
+          .from(rfqRequests)
+          .where(
+            and(
+              eq(rfqRequests.organizationId, orgId),
+              eq(rfqRequests.idempotencyKey, dto.idempotencyKey),
+            ),
+          )
+          .limit(1);
+        if (existing) return existing.id;
+      }
 
-    const [rfq] = await this.db
-      .insert(rfqRequests)
-      .values({
+      const number = await this.nextNumber(orgId, tx);
+      const values = {
         organizationId: orgId,
         requesterId: userId,
         number,
@@ -311,29 +327,53 @@ export class RfqService {
         dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
         currency: dto.currency ?? 'USD',
         notes: dto.notes,
-      })
-      .returning();
+        idempotencyKey: dto.idempotencyKey,
+      };
+      const [rfq] = await (
+        dto.idempotencyKey
+          ? tx.insert(rfqRequests).values(values).onConflictDoNothing()
+          : tx.insert(rfqRequests).values(values)
+      ).returning();
 
-    if (dto.lines?.length) {
-      await this.db.insert(rfqLines).values(
-        dto.lines.map((l, i) => ({
-          rfqId: rfq.id,
-          lineNumber: i + 1,
-          description: l.description,
-          quantity: String(l.quantity),
-          unitOfMeasure: l.unitOfMeasure ?? 'each',
-          targetPrice: l.targetPrice != null ? String(l.targetPrice) : undefined,
-        })),
-      );
-    }
+      if (!rfq) {
+        if (!dto.idempotencyKey) throw new Error('RFQ was not created');
+        const [existing] = await tx
+          .select({ id: rfqRequests.id })
+          .from(rfqRequests)
+          .where(
+            and(
+              eq(rfqRequests.organizationId, orgId),
+              eq(rfqRequests.idempotencyKey, dto.idempotencyKey),
+            ),
+          )
+          .limit(1);
+        if (!existing) throw new Error('Idempotent RFQ was not found after insert conflict');
+        return existing.id;
+      }
 
-    if (vendorIds.length) {
-      await this.db
-        .insert(rfqInvitations)
-        .values(vendorIds.map((vendorId) => ({ rfqId: rfq.id, vendorId })));
-    }
+      if (dto.lines?.length) {
+        await tx.insert(rfqLines).values(
+          dto.lines.map((l, i) => ({
+            rfqId: rfq.id,
+            lineNumber: i + 1,
+            description: l.description,
+            quantity: String(l.quantity),
+            unitOfMeasure: l.unitOfMeasure ?? 'each',
+            targetPrice: l.targetPrice != null ? String(l.targetPrice) : undefined,
+          })),
+        );
+      }
 
-    return this.findOne(orgId, rfq.id);
+      if (vendorIds.length) {
+        await tx
+          .insert(rfqInvitations)
+          .values(vendorIds.map((vendorId) => ({ rfqId: rfq.id, vendorId })));
+      }
+
+      return rfq.id;
+    });
+
+    return this.findOne(orgId, rfqId);
   }
 
   async update(

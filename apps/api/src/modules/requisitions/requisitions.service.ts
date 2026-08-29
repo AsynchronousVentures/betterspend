@@ -94,22 +94,26 @@ export class RequisitionsService {
       },
     });
     if (!req) throw new NotFoundException(`Requisition ${id} not found`);
-    const activeApproval =
-      canViewRelatedRecord(access, 'approval', ['approvals:view', 'approvals:act'], {
+    const activeApproval = canViewRelatedRecord(
+      access,
+      'approval',
+      ['approvals:view', 'approvals:act'],
+      {
         departmentId: req.departmentId,
         projectId: req.projectId,
-      })
-        ? await this.db.query.approvalRequests.findFirst({
-            where: (approval, { and, eq }) =>
-              and(
-                eq(approval.organizationId, organizationId),
-                eq(approval.approvableType, 'requisition'),
-                eq(approval.approvableId, id),
-                eq(approval.status, 'pending'),
-              ),
-            columns: { id: true, currentStep: true, status: true },
-          })
-        : null;
+      },
+    )
+      ? await this.db.query.approvalRequests.findFirst({
+          where: (approval, { and, eq }) =>
+            and(
+              eq(approval.organizationId, organizationId),
+              eq(approval.approvableType, 'requisition'),
+              eq(approval.approvableId, id),
+              eq(approval.status, 'pending'),
+            ),
+          columns: { id: true, currentStep: true, status: true },
+        })
+      : null;
     const purchaseOrders = (req.purchaseOrders ?? [])
       .filter((purchaseOrder) =>
         canViewRelatedRecord(
@@ -147,9 +151,15 @@ export class RequisitionsService {
         return [];
       }
 
-      return [{ id: event.id, budgetId: event.budgetId, budget: { id: budget.id, name: budget.name } }];
+      return [
+        { id: event.id, budgetId: event.budgetId, budget: { id: budget.id, name: budget.name } },
+      ];
     });
-    const { purchaseOrders: _purchaseOrders, commitmentEvents: _commitmentEvents, ...requisition } = req;
+    const {
+      purchaseOrders: _purchaseOrders,
+      commitmentEvents: _commitmentEvents,
+      ...requisition
+    } = req;
     return { ...requisition, purchaseOrders, commitmentEvents, activeApproval };
   }
 
@@ -182,7 +192,7 @@ export class RequisitionsService {
   async create(
     organizationId: string,
     requesterId: string,
-    input: CreateRequisitionInput,
+    input: CreateRequisitionInput & { idempotencyKey?: string },
     access?: AccessPolicy,
   ) {
     requirePermission(access, 'requisitions:create');
@@ -190,28 +200,62 @@ export class RequisitionsService {
       departmentId: input.departmentId ?? null,
       projectId: input.projectId ?? null,
     });
-    const createdId = await this.db.transaction(async (tx) => {
+    const creation = await this.db.transaction(async (tx) => {
+      if (input.idempotencyKey) {
+        const [existing] = await tx
+          .select({ id: requisitions.id })
+          .from(requisitions)
+          .where(
+            and(
+              eq(requisitions.organizationId, organizationId),
+              eq(requisitions.idempotencyKey, input.idempotencyKey),
+            ),
+          )
+          .limit(1);
+        if (existing) return { id: existing.id, created: false };
+      }
+
       const number = await this.sequenceService.next(organizationId, 'requisition', tx);
       const totalAmount = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
 
-      const [req] = await tx
-        .insert(requisitions)
-        .values({
-          organizationId,
-          requesterId,
-          number,
-          title: input.title,
-          description: input.description,
-          departmentId: input.departmentId,
-          projectId: input.projectId,
-          priority: input.priority ?? 'normal',
-          neededBy: input.neededBy ? new Date(input.neededBy) : null,
-          currency: input.currency ?? 'USD',
-          totalAmount: String(totalAmount),
-          status: 'draft',
-          sourceType: 'manual',
-        })
-        .returning();
+      const values = {
+        organizationId,
+        requesterId,
+        number,
+        title: input.title,
+        description: input.description,
+        departmentId: input.departmentId,
+        projectId: input.projectId,
+        priority: input.priority ?? 'normal',
+        neededBy: input.neededBy ? new Date(input.neededBy) : null,
+        currency: input.currency ?? 'USD',
+        totalAmount: String(totalAmount),
+        status: 'draft' as const,
+        sourceType: 'manual',
+        idempotencyKey: input.idempotencyKey,
+      };
+      const [req] = await (
+        input.idempotencyKey
+          ? tx.insert(requisitions).values(values).onConflictDoNothing()
+          : tx.insert(requisitions).values(values)
+      ).returning();
+
+      if (!req) {
+        if (!input.idempotencyKey) throw new Error('Requisition was not created');
+        const [existing] = await tx
+          .select({ id: requisitions.id })
+          .from(requisitions)
+          .where(
+            and(
+              eq(requisitions.organizationId, organizationId),
+              eq(requisitions.idempotencyKey, input.idempotencyKey),
+            ),
+          )
+          .limit(1);
+        if (!existing)
+          throw new Error('Idempotent requisition was not found after insert conflict');
+        return { id: existing.id, created: false };
+      }
 
       await tx.insert(requisitionLines).values(
         input.lines.map((l, i) => ({
@@ -228,17 +272,19 @@ export class RequisitionsService {
         })),
       );
 
-      return req.id;
+      return { id: req.id, created: true };
     });
 
-    const created = await this.findOne(createdId, organizationId);
-    this.audit
-      .log(organizationId, requesterId, 'requisition', createdId, 'created', {
-        number: (created as any).number,
-        title: input.title,
-      })
-      .catch(() => {});
-    await this.spendGuard.analyzeRequisition(organizationId, createdId).catch(() => {});
+    const created = await this.findOne(creation.id, organizationId);
+    if (creation.created) {
+      this.audit
+        .log(organizationId, requesterId, 'requisition', creation.id, 'created', {
+          number: (created as any).number,
+          title: input.title,
+        })
+        .catch(() => {});
+      await this.spendGuard.analyzeRequisition(organizationId, creation.id).catch(() => {});
+    }
     return created;
   }
 

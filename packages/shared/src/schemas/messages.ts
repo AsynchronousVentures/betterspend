@@ -20,6 +20,7 @@ export const postMessageSchema = z.object({
   body: z.string().trim().min(1).max(10_000),
   attachments: z.array(messageAttachmentSchema).max(20).optional(),
   recipientVendorId: uuidSchema.optional(),
+  idempotencyKey: z.string().trim().min(1).max(255).optional(),
 });
 
 export const messageSchema = z.object({

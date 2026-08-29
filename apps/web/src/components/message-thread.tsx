@@ -36,6 +36,7 @@ export function MessageThread({
   const [error, setError] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const loadVersion = useRef(0);
+  const pendingIdempotencyKey = useRef<string | null>(null);
   const threadKey = `${portal ? 'portal' : 'buyer'}:${threadType}:${threadId}:${recipientVendorId ?? 'broadcast'}`;
   const activeThreadKey = useRef(threadKey);
   activeThreadKey.current = threadKey;
@@ -59,6 +60,7 @@ export function MessageThread({
     setDraft('');
     setError('');
     setSending(false);
+    pendingIdempotencyKey.current = null;
     load();
     const interval = setInterval(load, 30_000);
     return () => clearInterval(interval);
@@ -72,15 +74,18 @@ export function MessageThread({
     const body = draft.trim();
     if (!body || sending) return;
     const sendingThreadKey = threadKey;
+    const idempotencyKey = pendingIdempotencyKey.current ?? crypto.randomUUID();
+    pendingIdempotencyKey.current = idempotencyKey;
     setSending(true);
     setError('');
     try {
       if (portal) {
-        await api.vendorPortal.postMessage(threadType, threadId, body);
+        await api.vendorPortal.postMessage(threadType, threadId, body, idempotencyKey);
       } else {
-        await api.messages.post(threadType, threadId, body, recipientVendorId);
+        await api.messages.post(threadType, threadId, body, recipientVendorId, idempotencyKey);
       }
       if (activeThreadKey.current !== sendingThreadKey) return;
+      pendingIdempotencyKey.current = null;
       setDraft('');
       await load();
     } catch {

@@ -294,6 +294,7 @@ describe('supplier operational authorization regressions', () => {
       undefined as unknown as NotificationsService,
       undefined as unknown as RequisitionsService,
       undefined as unknown as RfqService,
+      undefined as never,
     );
 
     const result = await service.update(
