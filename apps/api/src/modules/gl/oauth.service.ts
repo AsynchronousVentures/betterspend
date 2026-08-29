@@ -15,6 +15,7 @@ import {
   OAuthRedisService,
   type OAuthProvider,
   type OAuthStateBinding,
+  type XeroPendingGrant,
 } from './oauth-redis.service';
 
 const QBO_AUTH_URL = 'https://appcenter.intuit.com/connect/oauth2';
@@ -23,6 +24,18 @@ const QBO_REVOKE_URL = 'https://developer.api.intuit.com/v2/oauth2/tokens/revoke
 const XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize';
 const XERO_TOKEN_URL = 'https://identity.xero.com/connect/token';
 const XERO_REVOKE_URL = 'https://identity.xero.com/connect/revocation';
+const XERO_CONNECTIONS_URL = 'https://api.xero.com/connections';
+
+export const XERO_SCOPES = [
+  'accounting.invoices',
+  'accounting.payments',
+  'accounting.contacts',
+  'accounting.settings',
+  'accounting.attachments',
+  'offline_access',
+] as const;
+export const XERO_SCOPE_STRING = XERO_SCOPES.join(' ');
+export const XERO_REFRESH_GRACE_MS = 30 * 60 * 1000;
 
 type TokenResponse = {
   access_token: string;
@@ -37,6 +50,22 @@ export type QboToken = {
   accessToken: string;
   realmId: string;
   connectionId: string;
+};
+
+export type XeroToken = {
+  accessToken: string;
+  tenantId: string;
+  connectionId: string;
+};
+
+export type XeroTenant = {
+  tenantId: string;
+  tenantName: string | null;
+};
+
+export type XeroOAuthResult = {
+  grantId: string;
+  tenants: readonly XeroTenant[];
 };
 
 @Injectable()
@@ -87,22 +116,118 @@ export class OAuthService {
     code: string,
     userId?: string,
     sessionId?: string,
-  ): Promise<void> {
+  ): Promise<XeroOAuthResult> {
     const binding = await this.consumeState('xero', state, userId, sessionId);
     if (!code) throw new BadRequestException('Xero callback is missing code');
 
     const token = await this.exchangeToken('xero', code);
-    const response = await axios.get<Array<{ tenantId: string; tenantName?: string }>>(
-      'https://api.xero.com/connections',
-      { headers: { Authorization: `Bearer ${token.access_token}` } },
-    );
-    const tenant = response.data[0];
-    if (!tenant?.tenantId) throw new BadRequestException('Xero returned no connected tenant');
+    const tenants = await this.fetchXeroTenants(token.access_token);
+    if (tenants.length === 0) throw new BadRequestException('Xero returned no connected tenant');
 
-    await this.saveConnection('xero', binding, tenant.tenantId, token, tenant.tenantName);
-    this.logger.log(
-      `Xero connection stored for org ${binding.organizationId}, tenantId=${tenant.tenantId}`,
-    );
+    const grant: XeroPendingGrant = {
+      binding,
+      accessTokenEncrypted: this.crypto.encrypt(token.access_token),
+      refreshTokenEncrypted: this.crypto.encrypt(token.refresh_token),
+      accessExpiresAt: new Date(Date.now() + token.expires_in * 1000).toISOString(),
+      scopes: this.scopesFor('xero', token.scope),
+      tenants,
+    };
+    const grantId = await this.oauthRedis.createXeroPendingGrant(grant);
+    return { grantId, tenants };
+  }
+
+  async getXeroPendingTenants(
+    grantId: string,
+    organizationId: string,
+    userId: string,
+    sessionId?: string,
+  ): Promise<readonly XeroTenant[]> {
+    const grant = await this.getAuthorizedXeroGrant(grantId, organizationId, userId, sessionId);
+    return grant.tenants;
+  }
+
+  /** Claims the selected tenant before saving it, then consumes the one-time grant. */
+  async selectXeroTenant(
+    grantId: string,
+    tenantId: string,
+    organizationId: string,
+    userId: string,
+    sessionId?: string,
+  ): Promise<void> {
+    await this.oauthRedis.withLock(`xero-grant:${grantId}`, async () => {
+      const grant = await this.getAuthorizedXeroGrant(grantId, organizationId, userId, sessionId);
+      const tenant = grant.tenants.find((candidate) => candidate.tenantId === tenantId);
+      if (!tenant) throw new BadRequestException('Xero tenant is not part of this grant');
+
+      const claim = await this.oauthRedis.claimXeroPendingTenant(grantId, tenant.tenantId);
+      if (claim === 'missing') throw new BadRequestException('Invalid or expired Xero grant');
+      if (claim === 'conflict') {
+        throw new BadRequestException('Xero tenant selection is already bound to another tenant');
+      }
+
+      await this.saveConnection(
+        'xero',
+        grant.binding,
+        tenant.tenantId,
+        {
+          access_token: this.crypto.decrypt(grant.accessTokenEncrypted),
+          refresh_token: this.crypto.decrypt(grant.refreshTokenEncrypted),
+          expires_in: Math.max(
+            1,
+            Math.floor((Date.parse(grant.accessExpiresAt) - Date.now()) / 1000),
+          ),
+          scope: grant.scopes,
+        },
+        tenant.tenantName ?? undefined,
+      );
+      const consumed = await this.oauthRedis.completeXeroPendingGrant(grantId, tenant.tenantId);
+      if (!consumed) {
+        this.logger.log(
+          `Xero connection stored for org ${organizationId}, but the pending grant expired`,
+        );
+        return;
+      }
+      this.logger.log(
+        `Xero connection stored for org ${organizationId}, tenantId=${tenant.tenantId}`,
+      );
+    });
+  }
+
+  private async getAuthorizedXeroGrant(
+    grantId: string,
+    organizationId: string,
+    userId: string,
+    sessionId?: string,
+  ): Promise<XeroPendingGrant> {
+    const grant = await this.oauthRedis.getXeroPendingGrant(grantId);
+    if (
+      !grant ||
+      grant.binding.provider !== 'xero' ||
+      grant.binding.organizationId !== organizationId ||
+      grant.binding.userId !== userId ||
+      (sessionId !== undefined && grant.binding.sessionId !== sessionId)
+    ) {
+      throw new BadRequestException('Invalid or expired Xero grant');
+    }
+    return grant;
+  }
+
+  private async fetchXeroTenants(accessToken: string): Promise<readonly XeroTenant[]> {
+    const response = await axios.get<unknown>(XERO_CONNECTIONS_URL, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+    });
+    if (!Array.isArray(response.data)) return [];
+    return response.data.flatMap((value): XeroTenant[] => {
+      if (!isRecord(value) || typeof value.tenantId !== 'string' || value.tenantId.length === 0) {
+        return [];
+      }
+      return [
+        {
+          tenantId: value.tenantId,
+          tenantName: typeof value.tenantName === 'string' ? value.tenantName : null,
+        },
+      ];
+    });
   }
 
   async getQboToken(organizationId: string): Promise<QboToken | null> {
@@ -136,16 +261,38 @@ export class OAuthService {
     await this.transitionToReconnectRequired(connection, 'second_401');
   }
 
-  async getXeroToken(
-    organizationId: string,
-  ): Promise<{ accessToken: string; tenantId: string; connectionId: string } | null> {
+  async getXeroToken(organizationId: string): Promise<XeroToken | null> {
     const connection = await this.getValidConnection(organizationId, 'xero');
-    if (!connection?.accessTokenEncrypted) return null;
-    return {
-      accessToken: this.crypto.decrypt(connection.accessTokenEncrypted),
-      tenantId: connection.realmId,
-      connectionId: connection.id,
-    };
+    return this.toXeroToken(connection);
+  }
+
+  /** Rotates one Xero grant, sharing the Redis-serialized refresh with all callers. */
+  async refreshXeroToken(
+    organizationId: string,
+    rejectedAccessToken: string,
+  ): Promise<XeroToken | null> {
+    const connection = await this.findConnection(organizationId, 'xero');
+    if (!connection || connection.status !== INTEGRATION_CONNECTION_STATUS.ACTIVE) return null;
+
+    await this.refreshConnection(connection.id, 'xero', rejectedAccessToken);
+    return this.toXeroToken(await this.findConnectionById(connection.id));
+  }
+
+  async markXeroReconnectRequired(
+    connectionId: string,
+    rejectedAccessToken: string,
+  ): Promise<void> {
+    const connection = await this.findConnectionById(connectionId);
+    if (
+      !connection?.accessTokenEncrypted ||
+      connection.provider !== 'xero' ||
+      connection.status !== INTEGRATION_CONNECTION_STATUS.ACTIVE ||
+      this.crypto.decrypt(connection.accessTokenEncrypted) !== rejectedAccessToken
+    ) {
+      return;
+    }
+
+    await this.transitionToReconnectRequired(connection, 'second_401');
   }
 
   async disconnectQbo(organizationId: string, userId: string): Promise<void> {
@@ -246,7 +393,7 @@ export class OAuthService {
       refreshTokenEncrypted: this.crypto.encrypt(token.refresh_token),
       accessExpiresAt: new Date(Date.now() + token.expires_in * 1000),
       status: INTEGRATION_CONNECTION_STATUS.ACTIVE,
-      scopes: token.scope ?? this.defaultScopes(provider),
+      scopes: this.scopesFor(provider, token.scope),
       connectedByUserId: binding.userId,
       updatedAt: new Date(),
     };
@@ -308,20 +455,50 @@ export class OAuthService {
       if (!connection.refreshTokenEncrypted)
         throw new BadRequestException('Connection has no refresh token');
 
+      const encryptedRefreshToken = connection.refreshTokenEncrypted;
       try {
-        const refreshToken = this.crypto.decrypt(connection.refreshTokenEncrypted);
+        const refreshToken = this.crypto.decrypt(encryptedRefreshToken);
         const response = await axios.post<TokenResponse>(
           provider === 'qbo' ? QBO_TOKEN_URL : XERO_TOKEN_URL,
           new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }),
           { headers: this.tokenHeaders(provider) },
         );
+        if (provider === 'xero') {
+          if (!response.data.refresh_token) {
+            throw new Error('Xero token refresh did not return a rotated refresh token');
+          }
+          const persisted = await this.persistXeroRefresh(
+            connection,
+            encryptedAccessToken,
+            encryptedRefreshToken,
+            response.data,
+          );
+          if (!persisted) return;
+
+          const tenants = await this.fetchXeroTenants(response.data.access_token);
+          const configuredTenantStillAvailable = tenants.some(
+            (tenant) => tenant.tenantId === connection.realmId,
+          );
+          if (!configuredTenantStillAvailable) {
+            const latest = await this.findConnectionById(connection.id);
+            if (latest) {
+              await this.transitionToRevoked(
+                latest,
+                tenants.length === 0 ? 'empty_connections' : 'configured_tenant_missing',
+              );
+            }
+            return;
+          }
+          return;
+        }
+
         await this.db
           .update(integrationConnections)
           .set({
             accessTokenEncrypted: this.crypto.encrypt(response.data.access_token),
             refreshTokenEncrypted: this.crypto.encrypt(response.data.refresh_token),
             accessExpiresAt: new Date(Date.now() + response.data.expires_in * 1000),
-            scopes: response.data.scope ?? connection.scopes,
+            scopes: this.scopesFor(provider, response.data.scope ?? connection.scopes),
             status: 'active',
             updatedAt: new Date(),
           })
@@ -333,16 +510,73 @@ export class OAuthService {
               encryptedAccessToken
                 ? eq(integrationConnections.accessTokenEncrypted, encryptedAccessToken)
                 : isNull(integrationConnections.accessTokenEncrypted),
+              eq(integrationConnections.refreshTokenEncrypted, encryptedRefreshToken),
             ),
           );
       } catch (error: unknown) {
         if (this.isInvalidRefreshToken(error)) {
+          if (await this.wasXeroRefreshRotatedRecently(connection, encryptedRefreshToken)) return;
           await this.transitionToReconnectRequired(connection, 'invalid_refresh_token');
           return;
         }
         throw error;
       }
     });
+  }
+
+  private async persistXeroRefresh(
+    connection: ConnectionRow,
+    encryptedAccessToken: string | null,
+    encryptedRefreshToken: string,
+    token: TokenResponse,
+  ): Promise<boolean> {
+    return this.db.transaction(async (transaction) => {
+      const [updated] = await transaction
+        .update(integrationConnections)
+        .set({
+          accessTokenEncrypted: this.crypto.encrypt(token.access_token),
+          refreshTokenEncrypted: this.crypto.encrypt(token.refresh_token),
+          accessExpiresAt: new Date(Date.now() + token.expires_in * 1000),
+          scopes: this.scopesFor('xero', token.scope ?? connection.scopes),
+          status: INTEGRATION_CONNECTION_STATUS.ACTIVE,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(integrationConnections.id, connection.id),
+            eq(integrationConnections.provider, 'xero'),
+            eq(integrationConnections.status, INTEGRATION_CONNECTION_STATUS.ACTIVE),
+            encryptedAccessToken
+              ? eq(integrationConnections.accessTokenEncrypted, encryptedAccessToken)
+              : isNull(integrationConnections.accessTokenEncrypted),
+            eq(integrationConnections.refreshTokenEncrypted, encryptedRefreshToken),
+          ),
+        )
+        .returning({ id: integrationConnections.id });
+      if (!updated) return false;
+
+      await transaction.insert(auditLog).values({
+        organizationId: connection.organizationId,
+        userId: null,
+        entityType: 'integration_connection',
+        entityId: connection.id,
+        action: 'token_refreshed',
+        changes: { accessTokenRotated: true, refreshTokenRotated: true },
+        metadata: { actor: 'system', provider: 'xero', reason: 'token_refresh' },
+      });
+      return true;
+    });
+  }
+
+  private async wasXeroRefreshRotatedRecently(
+    connection: ConnectionRow,
+    encryptedRefreshToken: string,
+  ): Promise<boolean> {
+    if (connection.provider !== 'xero') return false;
+    const latest = await this.findConnectionById(connection.id);
+    if (!latest || latest.status !== INTEGRATION_CONNECTION_STATUS.ACTIVE) return false;
+    if (latest.refreshTokenEncrypted === encryptedRefreshToken) return false;
+    return !latest.updatedAt || Date.now() - latest.updatedAt.getTime() <= XERO_REFRESH_GRACE_MS;
   }
 
   private async disconnect(
@@ -456,6 +690,21 @@ export class OAuthService {
     };
   }
 
+  private toXeroToken(connection: ConnectionRow | null | undefined): XeroToken | null {
+    if (
+      !connection?.accessTokenEncrypted ||
+      connection.provider !== 'xero' ||
+      connection.status !== INTEGRATION_CONNECTION_STATUS.ACTIVE
+    ) {
+      return null;
+    }
+    return {
+      accessToken: this.crypto.decrypt(connection.accessTokenEncrypted),
+      tenantId: connection.realmId,
+      connectionId: connection.id,
+    };
+  }
+
   private async transitionToReconnectRequired(
     connection: Pick<
       ConnectionRow,
@@ -498,6 +747,55 @@ export class OAuthService {
     });
   }
 
+  private async transitionToRevoked(
+    connection: Pick<
+      ConnectionRow,
+      'id' | 'organizationId' | 'provider' | 'accessTokenEncrypted' | 'status' | 'realmId'
+    >,
+    reason: 'empty_connections' | 'configured_tenant_missing',
+  ): Promise<void> {
+    const encryptedAccessToken = connection.accessTokenEncrypted;
+    if (!encryptedAccessToken || connection.status !== INTEGRATION_CONNECTION_STATUS.ACTIVE) return;
+
+    await this.db.transaction(async (transaction) => {
+      const [updated] = await transaction
+        .update(integrationConnections)
+        .set({
+          accessTokenEncrypted: null,
+          refreshTokenEncrypted: null,
+          accessExpiresAt: null,
+          status: INTEGRATION_CONNECTION_STATUS.REVOKED,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(integrationConnections.id, connection.id),
+            eq(integrationConnections.provider, 'xero'),
+            eq(integrationConnections.status, INTEGRATION_CONNECTION_STATUS.ACTIVE),
+            eq(integrationConnections.accessTokenEncrypted, encryptedAccessToken),
+          ),
+        )
+        .returning({ id: integrationConnections.id });
+      if (!updated) return;
+
+      await transaction.insert(auditLog).values({
+        organizationId: connection.organizationId,
+        userId: null,
+        entityType: 'integration_connection',
+        entityId: connection.id,
+        action: 'revoked',
+        changes: {
+          status: {
+            from: INTEGRATION_CONNECTION_STATUS.ACTIVE,
+            to: INTEGRATION_CONNECTION_STATUS.REVOKED,
+          },
+          realmId: connection.realmId,
+        },
+        metadata: { actor: 'system', provider: 'xero', reason },
+      });
+    });
+  }
+
   private redirectUri(provider: OAuthProvider): string {
     const apiUrl = (process.env.API_URL || 'http://localhost:4001').replace(/\/$/, '');
     const expected = `${apiUrl}/api/v1/gl/oauth/${provider}/callback`;
@@ -526,8 +824,17 @@ export class OAuthService {
   }
 
   private defaultScopes(provider: OAuthProvider): string {
-    return provider === 'qbo'
-      ? 'com.intuit.quickbooks.accounting'
-      : 'accounting.transactions accounting.contacts accounting.settings offline_access';
+    return provider === 'qbo' ? 'com.intuit.quickbooks.accounting' : XERO_SCOPE_STRING;
   }
+
+  private scopesFor(provider: OAuthProvider, grantedScopes?: string | null): string {
+    if (provider === 'qbo') return grantedScopes ?? this.defaultScopes(provider);
+    const granted = new Set((grantedScopes ?? '').split(/\s+/).filter(Boolean));
+    const scopes = XERO_SCOPES.filter((scope) => granted.size === 0 || granted.has(scope));
+    return scopes.length > 0 ? scopes.join(' ') : this.defaultScopes(provider);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }

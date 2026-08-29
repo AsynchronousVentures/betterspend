@@ -8,6 +8,7 @@ import { OAuthService } from './oauth.service';
 import { AiProvidersModule } from '../ai-providers/ai-providers.module';
 import { OAuthRedisService } from './oauth-redis.service';
 import { QboClientService } from './qbo-client.service';
+import { XeroClientService, XeroDailyBudgetLedger } from './xero-client.service';
 
 @Global()
 @Module({
@@ -20,7 +21,14 @@ import { QboClientService } from './qbo-client.service';
     OAuthService,
     OAuthRedisService,
     QboClientService,
+    {
+      provide: XeroDailyBudgetLedger,
+      useFactory: (oauthRedis: OAuthRedisService) =>
+        new XeroDailyBudgetLedger(undefined, undefined, oauthRedis),
+      inject: [OAuthRedisService],
+    },
+    XeroClientService,
   ],
-  exports: [GlExportService, OAuthService, QboClientService],
+  exports: [GlExportService, OAuthService, QboClientService, XeroClientService],
 })
 export class GlModule {}

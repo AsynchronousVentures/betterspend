@@ -118,6 +118,35 @@ test('authenticated requisition and supplier diversity methods use the shared re
   }
 });
 
+test('Xero tenant selection uses the pending grant endpoints', async () => {
+  const tenants = [
+    { tenantId: 'tenant-1', tenantName: 'Northwind' },
+    { tenantId: 'tenant-2', tenantName: null },
+  ];
+  const listRequest = await runWithMockedRequest(jsonResponse(tenants), () =>
+    api.gl.xeroConnections('grant / 1'),
+  );
+
+  assert.deepEqual(listRequest.result, tenants);
+  assert.equal(
+    listRequest.request.input,
+    apiUrl('/api/v1/gl/oauth/xero/connections?grantId=grant%20%2F%201'),
+  );
+  assert.equal(listRequest.request.init?.method ?? 'GET', 'GET');
+
+  const selectRequest = await runWithMockedRequest(new Response(null, { status: 204 }), () =>
+    api.gl.selectXeroConnection({ grantId: 'grant-1', tenantId: 'tenant-2' }),
+  );
+
+  assert.equal(selectRequest.result, undefined);
+  assert.equal(selectRequest.request.input, apiUrl('/api/v1/gl/oauth/xero/connections'));
+  assert.equal(selectRequest.request.init?.method, 'POST');
+  assert.deepEqual(JSON.parse(String(selectRequest.request.init?.body)), {
+    grantId: 'grant-1',
+    tenantId: 'tenant-2',
+  });
+});
+
 test('shared API errors are propagated for each organization-scoped method', async () => {
   const calls = [
     () => api.requisitions.aiParse('buy monitors'),
