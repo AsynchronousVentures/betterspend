@@ -19,6 +19,8 @@ describe('WorkflowDraftLeaseService Redis integration', () => {
       retryStrategy: () => null,
     });
     redis.on('error', () => undefined);
+    let bodyFailed = false;
+    let bodyError: unknown;
     try {
       await redis.connect();
       await redis.ping();
@@ -135,11 +137,35 @@ describe('WorkflowDraftLeaseService Redis integration', () => {
         firstOwner.leaseToken,
       );
       assert.equal(staleRenewal.state, 'held');
-    } finally {
-      const recoveryKeys = await redis.keys(recoveryPattern);
-      await redis.del(leaseKey, fenceKey, ...recoveryKeys);
-      redis.disconnect();
-      assert.deepEqual(recoveryKeys, [], 'the lease protocol must not leave recovery journals');
+    } catch (error) {
+      bodyFailed = true;
+      bodyError = error;
     }
+
+    let recoveryKeys: string[] | undefined;
+    let cleanupFailed = false;
+    let cleanupError: unknown;
+    try {
+      try {
+        recoveryKeys = await redis.keys(recoveryPattern);
+      } catch (error) {
+        cleanupFailed = true;
+        cleanupError = error;
+      }
+      if (recoveryKeys) {
+        try {
+          await redis.del(leaseKey, fenceKey, ...recoveryKeys);
+        } catch (error) {
+          if (!cleanupFailed) cleanupError = error;
+          cleanupFailed = true;
+        }
+      }
+    } finally {
+      redis.disconnect();
+    }
+
+    if (bodyFailed) throw bodyError;
+    if (cleanupFailed) throw cleanupError;
+    assert.deepEqual(recoveryKeys, [], 'the lease protocol must not leave recovery journals');
   });
 });
