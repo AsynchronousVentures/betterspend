@@ -21,6 +21,7 @@ type StoreRow = OperationRow | DeliveryRow;
 class ArtifactOperationStore {
   readonly rows: OperationRow[] = [];
   readonly deliveries: DeliveryRow[] = [];
+  readonly conflictTargets: Array<{ table: unknown; target: unknown[] | undefined }> = [];
   beforeUpdate?: (row: StoreRow, values: Record<string, unknown>) => void;
 
   async transaction<TResult>(callback: (tx: ArtifactOperationStore) => Promise<TResult>) {
@@ -46,10 +47,7 @@ class ArtifactOperationStore {
       const deliveryKey = String(values.deliveryKey);
       if (
         this.deliveries.some(
-          (row) =>
-            row.organizationId === organizationId &&
-            row.operationId === operationId &&
-            row.deliveryKey === deliveryKey,
+          (row) => row.operationId === operationId && row.deliveryKey === deliveryKey,
         )
       ) {
         return [];
@@ -144,7 +142,8 @@ class InsertBuilder {
     return this;
   }
 
-  onConflictDoNothing() {
+  onConflictDoNothing(config?: { target?: unknown[] }) {
+    this.store.conflictTargets.push({ table: this.table, target: config?.target });
     return this;
   }
 
@@ -277,6 +276,39 @@ test('artifact operation resumes linkage without creating a second artifact', as
   assert.equal(ownerIdempotencyKey, 'artifact-operation:operation-1');
   assert.equal(store.rows[0]?.status, 'completed');
   assert.equal(store.rows[0]?.artifactId, 'message-1');
+});
+
+test('reservations target only their organization-scoped idempotency constraints', async () => {
+  const store = new ArtifactOperationStore();
+  const service = new ArtifactIdempotencyService(store as unknown as Db);
+  const plan = createPlan(store, {
+    notify: async (_value, delivery) =>
+      delivery.once('vendor-email:vendor-1', async () => undefined),
+  });
+
+  await service.execute(plan);
+  const replay = await service.execute(plan);
+
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(store.conflictTargets, [
+    {
+      table: artifactOperations,
+      target: [artifactOperations.organizationId, artifactOperations.idempotencyKey],
+    },
+    {
+      table: artifactNotificationDeliveries,
+      target: [
+        artifactNotificationDeliveries.operationId,
+        artifactNotificationDeliveries.deliveryKey,
+      ],
+    },
+    {
+      table: artifactOperations,
+      target: [artifactOperations.organizationId, artifactOperations.idempotencyKey],
+    },
+  ]);
+  assert.equal(store.rows.length, 1);
+  assert.equal(store.deliveries.length, 1);
 });
 
 test('completed operations return the original result without rerunning linkage', async () => {
@@ -418,7 +450,7 @@ test('delivery retries reuse the same downstream identity after status persisten
   store.beforeUpdate = (row, values) => {
     if ('deliveryKey' in row && values.status === 'delivered' && rejectDeliveredStatus) {
       rejectDeliveredStatus = false;
-      row.leaseToken = 'lease-stolen';
+      row.organizationId = 'org-2';
     }
   };
   const plan = createPlan(store, {
@@ -429,12 +461,38 @@ test('delivery retries reuse the same downstream identity after status persisten
   });
 
   await assert.rejects(service.execute(plan), /Notification delivery lease was lost/);
+  assert.equal(store.deliveries[0]?.status, 'pending');
+  store.deliveries[0]!.organizationId = 'org-1';
   store.deliveries[0]!.leaseExpiresAt = new Date(0);
   await service.execute(plan);
 
   assert.equal(identities.length, 2);
   assert.equal(identities[0], identities[1]);
   assert.match(identities[0]!, /^artifact-[a-f0-9]{64}@betterspend\.local$/);
+});
+
+test('delivery recovery never loads a reservation from another organization', async () => {
+  const store = new ArtifactOperationStore();
+  const service = new ArtifactIdempotencyService(store as unknown as Db);
+  let failDelivery = true;
+  const plan = createPlan(store, {
+    notify: async (_value, delivery) =>
+      delivery.once('vendor-email:vendor-1', async () => {
+        if (failDelivery) {
+          failDelivery = false;
+          throw new Error('delivery temporarily unavailable');
+        }
+      }),
+  });
+
+  await assert.rejects(service.execute(plan), /delivery temporarily unavailable/);
+  store.rows[0]!.leaseExpiresAt = new Date(0);
+  store.deliveries[0]!.organizationId = 'org-2';
+
+  await assert.rejects(
+    service.execute(plan),
+    /Artifact notification delivery reservation was not found/,
+  );
 });
 
 test('an idempotency key cannot be reused for a different request', async () => {

@@ -184,7 +184,12 @@ export class ArtifactIdempotencyService {
       const [inserted] = await tx
         .insert(artifactNotificationDeliveries)
         .values({ organizationId, operationId, deliveryKey })
-        .onConflictDoNothing()
+        .onConflictDoNothing({
+          target: [
+            artifactNotificationDeliveries.operationId,
+            artifactNotificationDeliveries.deliveryKey,
+          ],
+        })
         .returning();
       const row =
         inserted ??
@@ -194,6 +199,7 @@ export class ArtifactIdempotencyService {
             .from(artifactNotificationDeliveries)
             .where(
               and(
+                eq(artifactNotificationDeliveries.organizationId, organizationId),
                 eq(artifactNotificationDeliveries.operationId, operationId),
                 eq(artifactNotificationDeliveries.deliveryKey, deliveryKey),
               ),
@@ -248,6 +254,7 @@ export class ArtifactIdempotencyService {
         .where(
           and(
             eq(artifactNotificationDeliveries.id, claim.id),
+            eq(artifactNotificationDeliveries.organizationId, organizationId),
             eq(artifactNotificationDeliveries.leaseToken, leaseToken),
           ),
         )
@@ -267,6 +274,7 @@ export class ArtifactIdempotencyService {
         .where(
           and(
             eq(artifactNotificationDeliveries.id, claim.id),
+            eq(artifactNotificationDeliveries.organizationId, organizationId),
             eq(artifactNotificationDeliveries.leaseToken, leaseToken),
           ),
         );
@@ -298,7 +306,9 @@ export class ArtifactIdempotencyService {
           idempotencyKey,
           requestHash,
         })
-        .onConflictDoNothing()
+        .onConflictDoNothing({
+          target: [artifactOperations.organizationId, artifactOperations.idempotencyKey],
+        })
         .returning();
       const operation =
         inserted ??

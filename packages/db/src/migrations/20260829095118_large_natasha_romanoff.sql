@@ -1,3 +1,5 @@
+SET LOCAL lock_timeout = '5s';--> statement-breakpoint
+SET LOCAL statement_timeout = '30s';--> statement-breakpoint
 ALTER TABLE "artifact_notification_deliveries" DROP CONSTRAINT "artifact_notification_deliveries_operation_id_artifact_operations_id_fk";
 --> statement-breakpoint
 ALTER TABLE "artifact_notification_deliveries" ADD COLUMN "organization_id" uuid;--> statement-breakpoint
