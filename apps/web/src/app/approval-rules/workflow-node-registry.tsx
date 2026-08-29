@@ -54,6 +54,22 @@ export type WorkflowNoteData = {
 
 export type WorkflowNoteFlowNode = Node<WorkflowNoteData, 'note'>;
 
+export type WorkflowConfigField = {
+  path: string;
+  label: string;
+  description?: string;
+  advanced?: boolean;
+} & (
+  | { kind: 'readonly' }
+  | { kind: 'text'; optional?: boolean; multiline?: boolean }
+  | { kind: 'number'; min?: number; max?: number }
+  | { kind: 'boolean' }
+  | { kind: 'select'; options: ReadonlyArray<{ value: string; label: string }> }
+  | { kind: 'approval_node' }
+  | { kind: 'form_fields' }
+  | { kind: 'json' }
+);
+
 export interface WorkflowNodeDefinition {
   type: WorkflowNodeType;
   label: string;
@@ -64,6 +80,7 @@ export interface WorkflowNodeDefinition {
   component: ComponentType<NodeProps<WorkflowFlowNode>>;
   ports: { inputs: readonly string[]; outputs: readonly string[] };
   domains: readonly WorkflowDomain[];
+  configFields: readonly WorkflowConfigField[];
   create: (id: string, domain: WorkflowDomain, nodes: WorkflowNode[]) => WorkflowNode;
 }
 
@@ -198,6 +215,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.trigger,
     domains: ALL_DOMAINS,
+    configFields: [{ path: 'event', label: 'Event', kind: 'readonly' }],
     create: (id, domain) => {
       const event =
         domain === 'requisition'
@@ -224,6 +242,17 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.condition,
     domains: ALL_DOMAINS,
+    configFields: [
+      {
+        path: 'mode',
+        label: 'Branch behavior',
+        kind: 'select',
+        options: [
+          { value: 'first_true', label: 'First match' },
+          { value: 'all_true', label: 'All matches' },
+        ],
+      },
+    ],
     create: (id) => ({
       id,
       name: 'Route request',
@@ -242,6 +271,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.match_check,
     domains: ['invoice'],
+    configFields: [],
     create: (id) => ({
       id,
       name: '3-way match',
@@ -260,6 +290,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.budget_check,
     domains: ['requisition', 'po_change'],
+    configFields: [{ path: 'policy', label: 'Policy', kind: 'readonly' }],
     create: (id) => ({
       id,
       name: 'Budget available?',
@@ -278,6 +309,35 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.approver_group,
     domains: ALL_DOMAINS,
+    configFields: [
+      {
+        path: 'execution',
+        label: 'Execution',
+        kind: 'select',
+        options: [
+          { value: 'serial', label: 'Serial' },
+          { value: 'parallel', label: 'Parallel' },
+        ],
+      },
+      {
+        path: 'resolvers',
+        label: 'Approvers',
+        kind: 'json',
+        description: 'Ordered role, user, or manager-chain resolvers.',
+      },
+      {
+        path: 'quorum',
+        label: 'Quorum',
+        kind: 'json',
+        description: 'Use all, majority, or a fixed count.',
+      },
+      {
+        path: 'separationOfDuties',
+        label: 'Separation of duties',
+        kind: 'json',
+        advanced: true,
+      },
+    ],
     create: (id) => ({
       id,
       name: 'Approval group',
@@ -301,6 +361,20 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.resolver,
     domains: ALL_DOMAINS,
+    configFields: [
+      {
+        path: 'resolvers',
+        label: 'Approvers',
+        kind: 'json',
+        description: 'Ordered role, user, or manager-chain resolvers.',
+      },
+      {
+        path: 'separationOfDuties',
+        label: 'Separation of duties',
+        kind: 'json',
+        advanced: true,
+      },
+    ],
     create: (id) => ({
       id,
       name: 'Manager approval',
@@ -322,6 +396,18 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.delegation,
     domains: ALL_DOMAINS,
+    configFields: [
+      {
+        path: 'mode',
+        label: 'Delegation mode',
+        kind: 'select',
+        options: [
+          { value: 'both', label: 'Standing and per request' },
+          { value: 'standing', label: 'Standing only' },
+          { value: 'per_instance', label: 'Per request only' },
+        ],
+      },
+    ],
     create: (id) => ({
       id,
       name: 'Apply delegation',
@@ -340,6 +426,24 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.escalation_timer,
     domains: ALL_DOMAINS,
+    configFields: [
+      { path: 'parentNodeId', label: 'Approval step', kind: 'approval_node' },
+      { path: 'slaHours', label: 'SLA hours', kind: 'number', min: 1 },
+      {
+        path: 'warningPercent',
+        label: 'Warning percent',
+        kind: 'number',
+        min: 1,
+        max: 99,
+        advanced: true,
+      },
+      {
+        path: 'action',
+        label: 'Escalation action',
+        kind: 'json',
+        description: 'Notify, reassign, auto-approve, or auto-reject.',
+      },
+    ],
     create: (id, _domain, nodes) => ({
       id,
       name: '48h escalation',
@@ -365,6 +469,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.collect_form,
     domains: ALL_DOMAINS,
+    configFields: [{ path: 'fields', label: 'Requested fields', kind: 'form_fields' }],
     create: (id) => ({
       id,
       name: 'Request details',
@@ -385,6 +490,22 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.notify,
     domains: ALL_DOMAINS,
+    configFields: [
+      {
+        path: 'channels',
+        label: 'Channels',
+        kind: 'json',
+        description: 'One or more of email, slack, or in_app.',
+      },
+      {
+        path: 'recipients',
+        label: 'Recipients',
+        kind: 'json',
+        description: 'Role, user, or manager-chain resolvers.',
+        advanced: true,
+      },
+      { path: 'message', label: 'Message', kind: 'text', multiline: true },
+    ],
     create: (id) => ({
       id,
       name: 'Notify watchers',
@@ -407,6 +528,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.auto_approve,
     domains: ALL_DOMAINS,
+    configFields: [{ path: 'reason', label: 'Reason', kind: 'text' }],
     create: (id) => ({
       id,
       name: 'Auto-approve',
@@ -425,6 +547,16 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.reject,
     domains: ALL_DOMAINS,
+    configFields: [
+      { path: 'reasonRequired', label: 'Require a rejection reason', kind: 'boolean' },
+      {
+        path: 'defaultReason',
+        label: 'Default reason',
+        kind: 'text',
+        optional: true,
+        advanced: true,
+      },
+    ],
     create: (id) => ({
       id,
       name: 'Rejected',
@@ -443,6 +575,7 @@ export const WORKFLOW_NODE_REGISTRY: Record<WorkflowNodeType, WorkflowNodeDefini
     component: WorkflowNodeCard,
     ports: WORKFLOW_NODE_PORTS.approved,
     domains: ALL_DOMAINS,
+    configFields: [],
     create: (id) => ({
       id,
       name: 'Approved',

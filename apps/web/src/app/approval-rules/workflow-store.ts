@@ -7,6 +7,7 @@ import {
   applyWorkflowGraphPatch,
   workflowDraftSchema,
   type WorkflowAssistantProposalResponse,
+  type WorkflowAssistantSnapshot,
   type WorkflowCanvasNote,
   type WorkflowDraft,
   type WorkflowNode,
@@ -20,6 +21,7 @@ export type WorkflowSelection = { kind: 'node'; id: string } | { kind: 'note'; i
 export interface PendingAssistantProposal {
   response: WorkflowAssistantProposalResponse;
   draftRevision: number;
+  snapshot: WorkflowAssistantSnapshot;
 }
 
 type WorkflowBuilderState = {
@@ -343,6 +345,7 @@ export const useWorkflowBuilderStore = create<WorkflowBuilderState>((set, get) =
     const state = get();
     if (!state.draft || !state.assistantProposal) return false;
     if (state.draftRevision !== state.assistantProposal.draftRevision) return false;
+    if (!state.assistantProposal.response.validation.valid) return false;
 
     const patched = applyWorkflowGraphPatch(
       { graph: state.draft.graph, positions: state.draft.positions },

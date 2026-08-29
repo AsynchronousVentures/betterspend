@@ -67,6 +67,7 @@ describe('workflow builder store', () => {
     const store = useWorkflowBuilderStore.getState();
     store.setAssistantProposal({
       draftRevision: 0,
+      snapshot: { graph: draft.graph, positions: draft.positions },
       response: {
         summary: 'Rename the terminal step.',
         operations: [
@@ -94,6 +95,31 @@ describe('workflow builder store', () => {
         ?.name,
       'Approved',
     );
+  });
+
+  it('refuses an assistant proposal that does not pass graph validation', () => {
+    const store = useWorkflowBuilderStore.getState();
+    store.setAssistantProposal({
+      draftRevision: 0,
+      snapshot: { graph: draft.graph, positions: draft.positions },
+      response: {
+        summary: 'Remove the terminal step.',
+        operations: [{ type: 'remove_node', nodeId: 'approved' }],
+        validation: {
+          valid: false,
+          issues: [
+            {
+              code: 'dead_end',
+              message: 'Workflow requires a terminal node',
+              path: ['nodes'],
+            },
+          ],
+        },
+      },
+    });
+
+    assert.equal(store.applyAssistantProposal(), false);
+    assert.equal(useWorkflowBuilderStore.getState().draft?.graph.nodes.length, 2);
   });
 
   it('inserts a one-output node without changing the edge endpoints', () => {

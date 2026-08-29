@@ -1,7 +1,8 @@
 'use client';
 
 import { Bot, Check, RefreshCw, Send, X } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { buildWorkflowPatchPreview } from './workflow-assistant-preview';
 import type { PendingAssistantProposal } from './workflow-store';
 
 export function WorkflowAssistant({
@@ -28,16 +29,13 @@ export function WorkflowAssistant({
   onReject: () => void;
 }) {
   const [prompt, setPrompt] = useState('');
-  if (!available) return null;
-
   const stale = proposal !== null && proposal.draftRevision !== currentRevision;
-  const counts = proposal?.response.operations.reduce<Record<string, number>>(
-    (result, operation) => {
-      result[operation.type] = (result[operation.type] ?? 0) + 1;
-      return result;
-    },
-    {},
+  const preview = useMemo(
+    () =>
+      proposal ? buildWorkflowPatchPreview(proposal.snapshot, proposal.response.operations) : [],
+    [proposal],
   );
+  if (!available) return null;
 
   return (
     <>
@@ -67,11 +65,44 @@ export function WorkflowAssistant({
             {proposal ? (
               <div className="space-y-3">
                 <p className="text-xs leading-5 text-zinc-200">{proposal.response.summary}</p>
-                <div className="border-y border-white/10 py-2 font-mono text-[9px] uppercase tracking-[0.1em] text-zinc-500">
-                  {Object.entries(counts ?? {}).map(([operation, count]) => (
-                    <div key={operation} className="flex justify-between py-1">
-                      <span>{operation.replaceAll('_', ' ')}</span>
-                      <span>{count}</span>
+                <div className="max-h-[46vh] space-y-2 overflow-y-auto border-y border-white/10 py-2">
+                  {preview.map((item) => (
+                    <div key={item.key} className="border border-white/10 bg-black p-2">
+                      <div className="flex items-center gap-2 text-[9px] font-semibold uppercase tracking-[0.1em]">
+                        <span
+                          className={item.action === 'Remove' ? 'text-rose-300' : 'text-orange-300'}
+                        >
+                          {item.action} {item.subject}
+                        </span>
+                        <span className="truncate font-mono normal-case tracking-normal text-zinc-400">
+                          {item.title}
+                        </span>
+                      </div>
+                      {item.before ? (
+                        <div className="mt-2">
+                          <div className="text-[8px] uppercase tracking-[0.12em] text-zinc-600">
+                            Before
+                          </div>
+                          <code className="mt-1 block break-all text-[9px] leading-4 text-rose-200/75">
+                            {item.before}
+                          </code>
+                        </div>
+                      ) : null}
+                      {item.after ? (
+                        <div className="mt-2">
+                          <div className="text-[8px] uppercase tracking-[0.12em] text-zinc-600">
+                            After
+                          </div>
+                          <code className="mt-1 block break-all text-[9px] leading-4 text-emerald-200/80">
+                            {item.after}
+                          </code>
+                        </div>
+                      ) : null}
+                      {item.consequence ? (
+                        <p className="mt-2 text-[9px] leading-4 text-rose-200">
+                          {item.consequence}
+                        </p>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -82,6 +113,13 @@ export function WorkflowAssistant({
                     ? 'Patch passes graph validation.'
                     : `${proposal.response.validation.issues.length} validation issue${proposal.response.validation.issues.length === 1 ? '' : 's'} remain.`}
                 </div>
+                {!proposal.response.validation.valid ? (
+                  <div className="space-y-1 text-[9px] leading-4 text-amber-100">
+                    {proposal.response.validation.issues.slice(0, 3).map((issue) => (
+                      <p key={`${issue.code}-${issue.path.join('.')}`}>{issue.message}</p>
+                    ))}
+                  </div>
+                ) : null}
                 {stale ? (
                   <div className="border border-amber-300/25 bg-amber-300/5 p-2 text-[10px] leading-4 text-amber-100">
                     The canvas changed after this proposal. Regenerate before applying.
@@ -108,7 +146,8 @@ export function WorkflowAssistant({
                     <button
                       type="button"
                       onClick={onApply}
-                      className="flex h-8 flex-1 items-center justify-center gap-1.5 bg-white text-[10px] font-semibold text-black"
+                      disabled={!proposal.response.validation.valid}
+                      className="flex h-8 flex-1 items-center justify-center gap-1.5 bg-white text-[10px] font-semibold text-black disabled:cursor-not-allowed disabled:opacity-35"
                     >
                       <Check className="size-3" /> Apply patch
                     </button>
