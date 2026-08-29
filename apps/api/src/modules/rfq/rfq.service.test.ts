@@ -134,7 +134,7 @@ test('opening an RFQ conditionally transitions draft status and records its init
     undefined as never,
   );
 
-  const opened = await service.open('org-1', 'rfq-1', 'user-1');
+  const opened = await service.open('00000000-0000-4000-8000-000000000001', 'rfq-1', 'user-1');
   const sql = new PgDialect().sqlToQuery(fixture.getUpdateCondition() as never).sql;
 
   assert.deepEqual(opened, { id: 'rfq-1', status: 'open' });
@@ -150,7 +150,7 @@ test('opening an RFQ conditionally transitions draft status and records its init
       changes: fixture.audits[0]?.changes,
     },
     {
-      organizationId: 'org-1',
+      organizationId: '00000000-0000-4000-8000-000000000001',
       userId: 'user-1',
       entityType: 'rfq',
       entityId: 'rfq-1',
@@ -174,7 +174,7 @@ test('a concurrent RFQ award prevents reopening the record', async () => {
   );
 
   await assert.rejects(
-    service.open('org-1', 'rfq-1', 'user-1'),
+    service.open('00000000-0000-4000-8000-000000000001', 'rfq-1', 'user-1'),
     (error: unknown) => error instanceof BadRequestException,
   );
   assert.deepEqual(fixture.audits, []);
@@ -190,7 +190,7 @@ test('opening an unknown RFQ reports not found', async () => {
   );
 
   await assert.rejects(
-    service.open('org-1', 'missing', 'user-1'),
+    service.open('00000000-0000-4000-8000-000000000001', 'missing', 'user-1'),
     (error: unknown) => error instanceof NotFoundException,
   );
 });

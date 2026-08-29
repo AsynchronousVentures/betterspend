@@ -6,9 +6,18 @@ import { auditLog } from './schema';
 /** @internal The hash payload version stays private to this module's public API. */
 export const AUDIT_HASH_VERSION = 1 as const;
 
-/** @internal Stable signed bigint used by appenders and the migration backfill. */
-export function auditAdvisoryLockKey(organizationId: string): string {
-  return createHash('sha256').update(`audit-chain:${organizationId}`).digest().readBigInt64BE().toString();
+/** @internal Stable signed lock pair used by appenders and the migration backfill. */
+export function auditAdvisoryLockKeys(organizationId: string): readonly [number, number] {
+  const normalized = organizationId.replaceAll('-', '');
+  if (!/^[0-9a-f]{32}$/i.test(normalized)) {
+    throw new TypeError('Audit organizationId must be a UUID');
+  }
+  return [toSignedInt32(normalized.slice(0, 8)), toSignedInt32(normalized.slice(24, 32))];
+}
+
+function toSignedInt32(hex: string): number {
+  const value = Number.parseInt(hex, 16);
+  return value > 0x7fffffff ? value - 0x100000000 : value;
 }
 
 export type AuditEntryInput = {
@@ -69,15 +78,22 @@ function canonicalPayload(fields: AuditHashFields): string {
     entityType: fields.entityType,
     entityId: fields.entityId,
     action: fields.action,
-    changes: sortJson(fields.changes),
-    metadata: sortJson(fields.metadata),
+    changes: canonicalJson(fields.changes),
+    metadata: canonicalJson(fields.metadata),
     createdAt: fields.createdAt.toISOString(),
     prevHash: fields.prevHash,
   });
 }
 
+/** Match the JSON.stringify representation persisted by the PostgreSQL driver. */
+function canonicalJson(value: unknown): JsonValue {
+  const serialized = JSON.stringify(value);
+  return serialized === undefined ? null : sortJson(JSON.parse(serialized));
+}
+
 /** @internal Compute a digest for migration code without exposing canonicalization. */
 export function computeAuditEntryHash(fields: AuditHashFields): string {
+  // lgtm[js/insufficient-password-hash] This is an audit integrity digest, not password storage.
   return createHash('sha256').update(canonicalPayload(fields)).digest('hex');
 }
 
@@ -92,10 +108,7 @@ export async function appendAuditLog(
   transaction: DbTransaction,
   input: AuditEntryInput,
 ): Promise<typeof auditLog.$inferSelect> {
-  const advisoryLockKey = auditAdvisoryLockKey(input.organizationId);
-  await transaction.execute(
-    sql`SELECT pg_advisory_xact_lock(${advisoryLockKey}::bigint)`,
-  );
+  await lockAuditChain(transaction, input.organizationId);
 
   const [previous] = await transaction
     .select({ id: auditLog.id, entryHash: auditLog.entryHash, createdAt: auditLog.createdAt })
@@ -103,6 +116,9 @@ export async function appendAuditLog(
     .where(eq(auditLog.organizationId, input.organizationId))
     .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
     .limit(1);
+  if (previous && !previous.entryHash) {
+    throw new Error('Audit hash backfill is incomplete for this organization');
+  }
 
   const id = input.id ?? randomUUID();
   const requestedCreatedAt = input.createdAt ?? new Date();
@@ -154,10 +170,7 @@ export async function appendAuditLogIfAbsent(
   transaction: DbTransaction,
   input: AuditEntryInput & { id: string },
 ): Promise<typeof auditLog.$inferSelect | undefined> {
-  const advisoryLockKey = auditAdvisoryLockKey(input.organizationId);
-  await transaction.execute(
-    sql`SELECT pg_advisory_xact_lock(${advisoryLockKey}::bigint)`,
-  );
+  await lockAuditChain(transaction, input.organizationId);
   const [existing] = await transaction
     .select()
     .from(auditLog)
@@ -165,6 +178,11 @@ export async function appendAuditLogIfAbsent(
     .limit(1);
   if (existing) return existing;
   return appendAuditLog(transaction, input);
+}
+
+async function lockAuditChain(transaction: DbTransaction, organizationId: string): Promise<void> {
+  const [lockKeyA, lockKeyB] = auditAdvisoryLockKeys(organizationId);
+  await transaction.execute(sql`SELECT pg_advisory_xact_lock(${lockKeyA}, ${lockKeyB})`);
 }
 
 export type AuditChainRow = AuditHashFields & {

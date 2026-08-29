@@ -7,7 +7,7 @@ import type { DbTransaction } from './client';
 import {
   appendAuditLog,
   appendAuditLogIfAbsent,
-  auditAdvisoryLockKey,
+  auditAdvisoryLockKeys,
   computeAuditEntryHash,
   verifyAuditChain,
   type AuditChainRow,
@@ -187,9 +187,31 @@ test('computeAuditEntryHash is independent of JSON object insertion order', () =
   );
 });
 
-test('audit advisory lock keys are stable and tenant-specific signed bigints', () => {
-  const first = auditAdvisoryLockKey(organizationId);
-  assert.equal(first, auditAdvisoryLockKey(organizationId));
-  assert.notEqual(first, auditAdvisoryLockKey(otherOrganizationId));
-  assert.equal(BigInt(first).toString(), first);
+test('hashes the same JSON representation that PostgreSQL persists', async () => {
+  const { database, db } = await createDatabase();
+  try {
+    await db.transaction((transaction) =>
+      appendAuditLog(asTransaction(transaction), {
+        ...input('00000000-0000-4000-8000-000000000051'),
+        metadata: { ip: '127.0.0.1', userAgent: undefined },
+      }),
+    );
+    const rows = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.organizationId, organizationId));
+
+    assert.deepEqual(rows[0]?.metadata, { ip: '127.0.0.1' });
+    assert.equal(verifyAuditChain(rows as AuditChainRow[]).valid, true);
+  } finally {
+    await database.close();
+  }
+});
+
+test('audit advisory lock keys are stable and tenant-specific signed integers', () => {
+  const first = auditAdvisoryLockKeys(organizationId);
+  assert.deepEqual(first, auditAdvisoryLockKeys(organizationId));
+  assert.notDeepEqual(first, auditAdvisoryLockKeys(otherOrganizationId));
+  assert.equal(first.every(Number.isInteger), true);
+  assert.throws(() => auditAdvisoryLockKeys('not-a-uuid'), TypeError);
 });

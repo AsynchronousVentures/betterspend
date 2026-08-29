@@ -3,7 +3,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import {
-  auditAdvisoryLockKey,
+  auditAdvisoryLockKeys,
   computeAuditEntryHash,
   type AuditHashFields,
 } from './audit-integrity';
@@ -110,7 +110,6 @@ type AuditHashColumnState = {
   tableExists: boolean;
   prevHashColumnExists: boolean;
   entryHashColumnExists: boolean;
-  entryHashIsNotNull: boolean;
 };
 
 type AuditBackfillRow = {
@@ -127,15 +126,33 @@ type AuditBackfillRow = {
   entry_hash: string | null;
 };
 
-/** Chain one tenant's rows using the same canonical hash implementation as new writes. */
-async function backfillAuditOrganization(
+/** Chain one bounded tenant batch using the same canonical hash implementation as new writes. */
+async function backfillAuditOrganizationBatch(
   transaction: postgres.TransactionSql,
   organizationId: string,
-  acquireLock = true,
-): Promise<void> {
-  if (acquireLock) {
-    const advisoryLockKey = auditAdvisoryLockKey(organizationId);
-    await transaction`SELECT pg_advisory_xact_lock(${advisoryLockKey}::bigint)`;
+): Promise<boolean> {
+  const [lockKeyA, lockKeyB] = auditAdvisoryLockKeys(organizationId);
+  await transaction`SELECT pg_advisory_xact_lock(${lockKeyA}, ${lockKeyB})`;
+
+  const [firstUnhashed] = await transaction<{ id: string; created_at: Date }[]>`
+    SELECT id, created_at
+    FROM audit_log
+    WHERE organization_id = ${organizationId} AND entry_hash IS NULL
+    ORDER BY created_at ASC, id ASC
+    LIMIT 1
+  `;
+  if (!firstUnhashed) return false;
+
+  const [previous] = await transaction<{ entry_hash: string | null }[]>`
+    SELECT entry_hash
+    FROM audit_log
+    WHERE organization_id = ${organizationId}
+      AND (created_at, id) < (${firstUnhashed.created_at}, ${firstUnhashed.id}::uuid)
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `;
+  if (previous && !previous.entry_hash) {
+    throw new Error(`Audit hash backfill found a broken prefix for organization ${organizationId}`);
   }
 
   const rows = await transaction<AuditBackfillRow[]>`
@@ -153,11 +170,13 @@ async function backfillAuditOrganization(
       entry_hash
     FROM audit_log
     WHERE organization_id = ${organizationId}
+      AND (created_at, id) >= (${firstUnhashed.created_at}, ${firstUnhashed.id}::uuid)
     ORDER BY created_at ASC, id ASC
+    LIMIT ${AUDIT_HASH_BACKFILL_BATCH_SIZE}
+    FOR UPDATE
   `;
 
-  let previousHash: string | null = null;
-  const updates: Array<{ id: string; prevHash: string | null; entryHash: string }> = [];
+  let previousHash = previous?.entry_hash ?? null;
   for (const row of rows) {
     const fields: AuditHashFields = {
       id: row.id,
@@ -173,24 +192,18 @@ async function backfillAuditOrganization(
     };
     const entryHash = computeAuditEntryHash(fields);
     if (row.prev_hash !== previousHash || row.entry_hash !== entryHash) {
-      updates.push({ id: row.id, prevHash: previousHash, entryHash });
+      await transaction`
+        UPDATE audit_log
+        SET prev_hash = ${previousHash}, entry_hash = ${entryHash}
+        WHERE id = ${row.id} AND organization_id = ${organizationId}
+      `;
     }
     previousHash = entryHash;
   }
-
-  for (let offset = 0; offset < updates.length; offset += AUDIT_HASH_BACKFILL_BATCH_SIZE) {
-    const batch = updates.slice(offset, offset + AUDIT_HASH_BACKFILL_BATCH_SIZE);
-    for (const update of batch) {
-      await transaction`
-        UPDATE audit_log
-        SET prev_hash = ${update.prevHash}, entry_hash = ${update.entryHash}
-        WHERE id = ${update.id} AND organization_id = ${organizationId}
-      `;
-    }
-  }
+  return true;
 }
 
-/** Expand, backfill, and contract audit hashes without racing tenant appenders. */
+/** Backfill nullable audit hash columns while preserving rollback compatibility. */
 async function ensureAuditHashChain(client: postgres.Sql): Promise<void> {
   const [state] = await client<AuditHashColumnState[]>`
     SELECT
@@ -208,14 +221,7 @@ async function ensureAuditHashChain(client: postgres.Sql): Promise<void> {
         WHERE attrelid = 'public.audit_log'::regclass
           AND attname = 'entry_hash'
           AND NOT attisdropped
-      ) AS "entryHashColumnExists",
-      COALESCE((
-        SELECT attnotnull
-        FROM pg_attribute
-        WHERE attrelid = 'public.audit_log'::regclass
-          AND attname = 'entry_hash'
-          AND NOT attisdropped
-      ), false) AS "entryHashIsNotNull"
+      ) AS "entryHashColumnExists"
   `;
   if (!state?.tableExists || !state.prevHashColumnExists || !state.entryHashColumnExists) return;
 
@@ -226,38 +232,37 @@ async function ensureAuditHashChain(client: postgres.Sql): Promise<void> {
     ORDER BY organization_id
   `;
   for (const { organization_id: organizationId } of organizations) {
-    await client.begin(async (transaction) => {
-      await transaction`SET LOCAL lock_timeout = '5s'`;
-      await transaction`SET LOCAL statement_timeout = '5min'`;
-      await backfillAuditOrganization(transaction, organizationId);
-    });
+    let hasMore = true;
+    while (hasMore) {
+      hasMore = await client.begin(async (transaction) => {
+        await transaction`SET LOCAL lock_timeout = '5s'`;
+        await transaction`SET LOCAL statement_timeout = '30s'`;
+        return backfillAuditOrganizationBatch(transaction, organizationId);
+      });
+    }
   }
+}
 
-  // Old application instances can still write nullable rows during the expand
-  // phase. Close that small race before contracting entry_hash to NOT NULL.
-  await client.begin(async (transaction) => {
-    await transaction`SET LOCAL lock_timeout = '5s'`;
-    await transaction`SET LOCAL statement_timeout = '5min'`;
-    await transaction`LOCK TABLE audit_log IN SHARE ROW EXCLUSIVE MODE`;
-
-    const remainingOrganizations = await transaction<{ organization_id: string }[]>`
-      SELECT DISTINCT organization_id
-      FROM audit_log
-      WHERE entry_hash IS NULL
-      ORDER BY organization_id
-    `;
-    for (const { organization_id: organizationId } of remainingOrganizations) {
-      await backfillAuditOrganization(transaction, organizationId, false);
-    }
-
-    const [remaining] = await transaction<{ exists: boolean }[]>`
-      SELECT EXISTS (SELECT 1 FROM audit_log WHERE entry_hash IS NULL) AS exists
-    `;
-    if (remaining?.exists) throw new Error('Audit hash backfill left rows without entry_hash');
-    if (!state.entryHashIsNotNull) {
-      await transaction`ALTER TABLE audit_log ALTER COLUMN entry_hash SET NOT NULL`;
-    }
-  });
+/** Build the audit chain traversal index without blocking writes. */
+async function prepareAuditHashIndex(client: postgres.Sql): Promise<void> {
+  const [state] = await client<{ tableExists: boolean; indexExists: boolean; indexIsValid: boolean }[]>`
+    SELECT
+      to_regclass('public.audit_log') IS NOT NULL AS "tableExists",
+      to_regclass('public.audit_log_organization_created_at_id_idx') IS NOT NULL AS "indexExists",
+      COALESCE(index_state.indisvalid, false) AS "indexIsValid"
+    FROM (VALUES (1)) AS singleton(value)
+    LEFT JOIN pg_class AS index_class
+      ON index_class.oid = to_regclass('public.audit_log_organization_created_at_id_idx')
+    LEFT JOIN pg_index AS index_state ON index_state.indexrelid = index_class.oid
+  `;
+  if (!state?.tableExists || state.indexIsValid) return;
+  if (state.indexExists) {
+    await client`DROP INDEX CONCURRENTLY "audit_log_organization_created_at_id_idx"`;
+  }
+  await client`
+    CREATE INDEX CONCURRENTLY "audit_log_organization_created_at_id_idx"
+    ON "audit_log" ("organization_id", "created_at", "id")
+  `;
 }
 
 /** Build the parent key without blocking writes before transactional migrations add its FK. */
@@ -810,6 +815,7 @@ async function main(): Promise<void> {
     await validateLegacyUserRoleOrganizations(client);
     const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
+    await prepareAuditHashIndex(client);
     await ensureAuditHashChain(client);
     await prepareArtifactOwnerIdempotencyIndexes(client);
     await prepareUserRoleAssignmentIndex(client);

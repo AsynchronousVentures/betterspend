@@ -9,7 +9,7 @@ describe('CatalogService price proposal emails', () => {
   it('uses the catalog item currency when formatting vendor notifications', async () => {
     const proposal = {
       id: 'proposal-1',
-      organizationId: 'org-1',
+      organizationId: '00000000-0000-4000-8000-000000000001',
       itemId: 'item-1',
       vendorId: 'vendor-1',
       proposedPrice: '1500.5',
@@ -81,7 +81,7 @@ describe('CatalogService price proposal emails', () => {
     } as unknown as SettingsService;
 
     const service = new CatalogService(db, mailService, settingsService);
-    await service.reviewPriceProposal('proposal-1', 'org-1', 'reviewer-1', { status: 'rejected' });
+    await service.reviewPriceProposal('proposal-1', '00000000-0000-4000-8000-000000000001', 'reviewer-1', { status: 'rejected' });
 
     assert.equal(sent.length, 1);
     assert.match(sent[0]?.html ?? '', /€1,234\.50/);

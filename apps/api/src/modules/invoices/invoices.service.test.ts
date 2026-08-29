@@ -30,7 +30,7 @@ function createService(
   const auditActions: string[] = [];
   const approved = {
     id: 'invoice-1',
-    organizationId: 'organization-1',
+    organizationId: '00000000-0000-4000-8000-000000000001',
     purchaseOrderId: 'po-1',
     entityId: null,
     status: 'approved',
@@ -178,7 +178,7 @@ function scopedInvoiceAccess(permission: 'invoices:manage' | 'invoices:approve')
   return {
     can: (candidate) => candidate === permission,
     scopeFor: (resource, candidate) => ({
-      organizationId: 'organization-1',
+      organizationId: '00000000-0000-4000-8000-000000000001',
       userId: 'actor-1',
       unrestricted: false,
       ownOnly: false,
@@ -195,20 +195,20 @@ describe('InvoicesService approval budget accounting', () => {
   it('authorizes scoped approval without exposing the linked purchase order', async () => {
     const { service } = createService();
     const access = scopedInvoiceAccess('invoices:approve');
-    const visibleInvoice = await service.findOne('invoice-1', 'organization-1', access);
+    const visibleInvoice = await service.findOne('invoice-1', '00000000-0000-4000-8000-000000000001', access);
 
     assert.equal(visibleInvoice.purchaseOrder, null);
     assert.equal('authorizationScope' in visibleInvoice, false);
-    await service.approve('invoice-1', 'organization-1', 'actor-1', access);
+    await service.approve('invoice-1', '00000000-0000-4000-8000-000000000001', 'actor-1', access);
   });
 
   it('authorizes scoped exception resolution without exposing the linked purchase order', async () => {
     const { service } = createService(async () => {}, 'exception');
     const access = scopedInvoiceAccess('invoices:manage');
-    const visibleInvoice = await service.findOne('invoice-1', 'organization-1', access);
+    const visibleInvoice = await service.findOne('invoice-1', '00000000-0000-4000-8000-000000000001', access);
 
     assert.equal(visibleInvoice.purchaseOrder, null);
-    await service.resolveException('invoice-1', 'organization-1', 'actor-1', {}, access);
+    await service.resolveException('invoice-1', '00000000-0000-4000-8000-000000000001', 'actor-1', {}, access);
   });
 
   it('does not bypass an active approval request through direct invoice approval', async () => {
@@ -218,7 +218,7 @@ describe('InvoicesService approval budget accounting', () => {
     });
 
     await assert.rejects(
-      service.approve('invoice-1', 'organization-1', 'approver-1'),
+      service.approve('invoice-1', '00000000-0000-4000-8000-000000000001', 'approver-1'),
       /active approval request.*Approvals queue/,
     );
   });
@@ -228,7 +228,7 @@ describe('InvoicesService approval budget accounting', () => {
     let receivedAmounts: { expense: string; release: string } | undefined;
     const { service, transaction } = createService(
       async (executor, organizationId, invoiceId, expense, release) => {
-        assert.equal(organizationId, 'organization-1');
+        assert.equal(organizationId, '00000000-0000-4000-8000-000000000001');
         assert.equal(invoiceId, 'invoice-1');
         receivedAmounts = { expense, release };
         receivedTransaction = executor;
@@ -237,7 +237,7 @@ describe('InvoicesService approval budget accounting', () => {
     );
 
     await assert.rejects(
-      service.approve('invoice-1', 'organization-1', 'approver-1'),
+      service.approve('invoice-1', '00000000-0000-4000-8000-000000000001', 'approver-1'),
       /budget update failed/,
     );
     assert.deepEqual(receivedAmounts, { expense: '200.00', release: '250.00' });
@@ -251,7 +251,7 @@ describe('InvoicesService approval budget accounting', () => {
     }, 'partial_match');
 
     await assert.rejects(
-      service.approve('invoice-1', 'organization-1', 'approver-1'),
+      service.approve('invoice-1', '00000000-0000-4000-8000-000000000001', 'approver-1'),
       /full three-way match/,
     );
     assert.equal(spendRecorded, false);
@@ -279,11 +279,11 @@ describe('InvoicesService approval budget accounting', () => {
       },
     );
 
-    await service.approve('invoice-1', 'organization-1', 'approver-1');
+    await service.approve('invoice-1', '00000000-0000-4000-8000-000000000001', 'approver-1');
 
     assert.deepEqual(expensed, {
       executor: transaction,
-      organizationId: 'organization-1',
+      organizationId: '00000000-0000-4000-8000-000000000001',
       invoiceId: 'invoice-1',
       expenseAmount: '200.00',
       commitmentReleaseAmount: '250.00',
@@ -301,7 +301,7 @@ describe('InvoicesService approval budget accounting', () => {
     );
 
     await assert.rejects(
-      service.approve('invoice-1', 'organization-1', 'maker-1'),
+      service.approve('invoice-1', '00000000-0000-4000-8000-000000000001', 'maker-1'),
       (error: unknown) => {
         assert.ok(error && typeof error === 'object' && 'getResponse' in error);
         const response = (error as { getResponse(): unknown }).getResponse();
@@ -328,7 +328,7 @@ describe('InvoicesService approval budget accounting', () => {
       { createdBy: 'maker-1', makerCheckerEnabled: false },
     );
 
-    await service.approve('invoice-1', 'organization-1', 'maker-1');
+    await service.approve('invoice-1', '00000000-0000-4000-8000-000000000001', 'maker-1');
 
     assert.equal(spendRecorded, true);
   });
@@ -344,7 +344,7 @@ describe('InvoicesService approval budget accounting', () => {
     );
 
     await assert.rejects(
-      service.approve('invoice-1', 'organization-1', 'approver-1'),
+      service.approve('invoice-1', '00000000-0000-4000-8000-000000000001', 'approver-1'),
       (error: unknown) => {
         assert.ok(error && typeof error === 'object' && 'getResponse' in error);
         const response = (error as { getResponse(): unknown }).getResponse();
@@ -371,7 +371,7 @@ describe('InvoicesService approval budget accounting', () => {
       { createdBy: null, submissionSource: 'vendor_portal' },
     );
 
-    await service.approve('invoice-1', 'organization-1', 'approver-1');
+    await service.approve('invoice-1', '00000000-0000-4000-8000-000000000001', 'approver-1');
 
     assert.equal(spendRecorded, true);
   });
@@ -383,7 +383,7 @@ describe('InvoicesService approval budget accounting', () => {
     });
 
     await assert.rejects(
-      service.approve('invoice-1', 'organization-1', 'maker-1'),
+      service.approve('invoice-1', '00000000-0000-4000-8000-000000000001', 'maker-1'),
       /audit write failed/,
     );
   });
@@ -395,7 +395,7 @@ describe('InvoicesService creation audit', () => {
     let invoiceLookup = 0;
     const createdInvoice = {
       id: 'invoice-1',
-      organizationId: 'organization-1',
+      organizationId: '00000000-0000-4000-8000-000000000001',
       invoiceNumber: 'VENDOR-100',
       totalAmount: '100.00',
       matchStatus: 'unmatched',
@@ -460,7 +460,7 @@ describe('InvoicesService creation audit', () => {
       undefined as unknown as WorkflowExecutionService,
     );
 
-    await service.create('organization-1', 'maker-1', {
+    await service.create('00000000-0000-4000-8000-000000000001', 'maker-1', {
       vendorId: 'vendor-1',
       invoiceNumber: 'VENDOR-100',
       invoiceDate: '2026-08-24',
@@ -486,7 +486,7 @@ describe('InvoicesService creation audit', () => {
         changes: auditValues.changes,
       },
       {
-        organizationId: 'organization-1',
+        organizationId: '00000000-0000-4000-8000-000000000001',
         userId: 'maker-1',
         entityType: 'invoice',
         entityId: 'invoice-1',
@@ -514,7 +514,7 @@ describe('InvoicesService material edits', () => {
   ) => {
     const invoice = {
       id: 'invoice-1',
-      organizationId: 'organization-1',
+      organizationId: '00000000-0000-4000-8000-000000000001',
       entityId: 'entity-1',
       purchaseOrderId: 'po-1',
       vendorId: 'vendor-1',
@@ -708,7 +708,7 @@ describe('InvoicesService material edits', () => {
   it('atomically reopens budget posting and restarts approval for an amount edit', async () => {
     const fixture = createEditService();
 
-    await fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+    await fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', {
       lines: [{ id: '00000000-0000-4000-8000-000000000101', quantity: 2 }],
     });
 
@@ -729,7 +729,7 @@ describe('InvoicesService material edits', () => {
   it('keeps approval intact for a description-only correction', async () => {
     const fixture = createEditService();
 
-    await fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+    await fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', {
       lines: [
         {
           id: '00000000-0000-4000-8000-000000000101',
@@ -753,7 +753,7 @@ describe('InvoicesService material edits', () => {
   it('cancels approval without restarting when the edited invoice no longer fully matches', async () => {
     const fixture = createEditService('approved', 'partial_match');
 
-    await fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+    await fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', {
       lines: [{ id: '00000000-0000-4000-8000-000000000101', quantity: 2 }],
     });
 
@@ -771,7 +771,7 @@ describe('InvoicesService material edits', () => {
   it('starts a fresh workflow for a materially edited rejected invoice', async () => {
     const fixture = createEditService('rejected');
 
-    await fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+    await fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', {
       lines: [{ id: '00000000-0000-4000-8000-000000000101', quantity: 2 }],
     });
 
@@ -789,7 +789,7 @@ describe('InvoicesService material edits', () => {
   it('falls back to manual reapproval when no workflow is configured', async () => {
     const fixture = createEditService('rejected', 'full_match', false, 'vendor-1', false);
 
-    await fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+    await fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', {
       lines: [{ id: '00000000-0000-4000-8000-000000000101', quantity: 2 }],
     });
 
@@ -801,7 +801,7 @@ describe('InvoicesService material edits', () => {
   it('starts reapproval when an edit restores a previously failed match', async () => {
     const fixture = createEditService('partial_match', 'full_match');
 
-    await fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+    await fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', {
       lines: [{ id: '00000000-0000-4000-8000-000000000101', quantity: 2 }],
     });
 
@@ -812,7 +812,7 @@ describe('InvoicesService material edits', () => {
   it('starts reapproval when a later rematch restores a full match', async () => {
     const fixture = createEditService('partial_match', 'full_match');
 
-    await fixture.service.runMatch('invoice-1', 'organization-1', 'editor-1');
+    await fixture.service.runMatch('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1');
 
     assert.equal(fixture.state().initiated, true);
     assert.equal(fixture.workflowStartedFromStatus(), 'pending_approval');
@@ -823,7 +823,7 @@ describe('InvoicesService material edits', () => {
     const fixture = createEditService('cancelled');
 
     await assert.rejects(
-      fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+      fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', {
         lines: [{ id: '00000000-0000-4000-8000-000000000101', quantity: 2 }],
       }),
       /Cancelled invoices cannot be edited/,
@@ -841,7 +841,7 @@ describe('InvoicesService material edits', () => {
     const fixture = createEditService();
 
     await assert.rejects(
-      fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+      fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', {
         vendorId: '00000000-0000-4000-8000-000000000202',
       }),
       /must match its purchase order vendor/,
@@ -860,7 +860,7 @@ describe('InvoicesService material edits', () => {
     const fixture = createEditService('approved', 'full_match', true, vendorId);
 
     await assert.rejects(
-      fixture.service.update('invoice-1', 'organization-1', 'editor-1', { vendorId }),
+      fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', { vendorId }),
       /Duplicate invoice: VENDOR-100 already exists for this vendor/,
     );
   });
@@ -869,7 +869,7 @@ describe('InvoicesService material edits', () => {
     const fixture = createEditService();
 
     await assert.rejects(
-      fixture.service.update('invoice-1', 'organization-1', 'editor-1', {
+      fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', {
         lines: [
           {
             id: '00000000-0000-4000-8000-000000000101',
@@ -941,7 +941,7 @@ describe('InvoicesService external payments', () => {
     const { service } = createPaymentService();
 
     await assert.rejects(
-      service.markPaid('invoice-1', 'organization-1', 'user-1', {
+      service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
         paymentDate: '',
         paymentMethod: 'ach',
         paymentReference: '',
@@ -950,7 +950,7 @@ describe('InvoicesService external payments', () => {
     );
 
     await assert.rejects(
-      service.markPaid('invoice-1', 'organization-1', 'user-1', {
+      service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
         paymentDate: '2026-02-30',
         paymentMethod: 'ach',
         paymentReference: 'ACH-123',
@@ -959,7 +959,7 @@ describe('InvoicesService external payments', () => {
     );
 
     await assert.rejects(
-      service.markPaid('invoice-1', 'organization-1', 'user-1', {
+      service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
         paymentDate: '2026-08-24',
         paymentMethod: 'ach',
         paymentReference: 123,
@@ -971,7 +971,7 @@ describe('InvoicesService external payments', () => {
   it('records external payment details in the invoice and audit trail', async () => {
     const { service, updates, auditEntries, emittedEvents } = createPaymentService();
 
-    await service.markPaid('invoice-1', 'organization-1', 'user-1', {
+    await service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
       paymentDate: '2026-08-24',
       paymentMethod: 'wire',
       paymentReference: 'WIRE-123',

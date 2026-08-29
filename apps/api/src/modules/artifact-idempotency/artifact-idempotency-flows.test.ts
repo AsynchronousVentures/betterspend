@@ -86,7 +86,7 @@ test('renewal fingerprints keep notes outside the cycle identity', () => {
 
 const license = {
   id: 'license-1',
-  organizationId: 'org-1',
+  organizationId: '00000000-0000-4000-8000-000000000001',
   vendorId: 'vendor-1',
   productName: 'Acme IDE',
   ownerUserId: 'user-1',
@@ -151,8 +151,8 @@ test('license renewal retries use the same artifact operation and do not recreat
     };
   };
 
-  await service.applyRenewalAction('license-1', 'org-1', 'user-1', 'renew');
-  await service.applyRenewalAction('license-1', 'org-1', 'user-1', 'renew');
+  await service.applyRenewalAction('license-1', '00000000-0000-4000-8000-000000000001', 'user-1', 'renew');
+  await service.applyRenewalAction('license-1', '00000000-0000-4000-8000-000000000001', 'user-1', 'renew');
 
   assert.equal(createCalls, 1);
   assert.equal(linkCalls, 1);
@@ -210,10 +210,10 @@ test('linked license renewal resumes its durable operation after notification fa
   };
 
   await assert.rejects(
-    service.applyRenewalAction('license-1', 'org-1', 'user-1', 'renew'),
+    service.applyRenewalAction('license-1', '00000000-0000-4000-8000-000000000001', 'user-1', 'renew'),
     /notification unavailable/,
   );
-  await service.applyRenewalAction('license-1', 'org-1', 'user-1', 'renew');
+  await service.applyRenewalAction('license-1', '00000000-0000-4000-8000-000000000001', 'user-1', 'renew');
 
   assert.equal(createCalls, 1);
   assert.equal(notificationCalls, 2);
@@ -269,9 +269,9 @@ test('same-cycle competing renewal intents conflict before creating a second art
     throw new Error(`Unexpected artifact kind ${artifact.kind}`);
   };
 
-  await service.applyRenewalAction('license-1', 'org-1', 'user-1', 'renew');
+  await service.applyRenewalAction('license-1', '00000000-0000-4000-8000-000000000001', 'user-1', 'renew');
   await assert.rejects(
-    service.applyRenewalAction('license-1', 'org-1', 'user-1', 'renegotiate'),
+    service.applyRenewalAction('license-1', '00000000-0000-4000-8000-000000000001', 'user-1', 'renegotiate'),
     (error: unknown) => error instanceof ConflictException,
   );
 
@@ -300,7 +300,7 @@ test('a matching preexisting renewal ref is reused without reserving an operatio
   (service as unknown as { findOne: () => Promise<typeof existingLicense> }).findOne = async () =>
     existingLicense;
 
-  const result = await service.applyRenewalAction('license-1', 'org-1', 'user-1', 'renew');
+  const result = await service.applyRenewalAction('license-1', '00000000-0000-4000-8000-000000000001', 'user-1', 'renew');
 
   assert.equal((result as typeof existingLicense).renewalRefs[0]?.id, existingRef.id);
   assert.equal(coordinator.plans.length, 0);
@@ -331,7 +331,7 @@ test('a competing preexisting renewal ref conflicts before artifact creation', a
     existingLicense;
 
   await assert.rejects(
-    service.applyRenewalAction('license-1', 'org-1', 'user-1', 'renegotiate'),
+    service.applyRenewalAction('license-1', '00000000-0000-4000-8000-000000000001', 'user-1', 'renegotiate'),
     (error: unknown) => error instanceof ConflictException,
   );
   assert.equal(coordinator.plans.length, 0);
@@ -376,9 +376,9 @@ test('advancing a license renewal date starts a new artifact cycle', async () =>
     };
   };
 
-  await service.applyRenewalAction('license-1', 'org-1', 'user-1', 'renew');
+  await service.applyRenewalAction('license-1', '00000000-0000-4000-8000-000000000001', 'user-1', 'renew');
   currentLicense = { ...currentLicense, renewalDate: new Date('2028-01-01T00:00:00.000Z') };
-  await service.applyRenewalAction('license-1', 'org-1', 'user-1', 'renew');
+  await service.applyRenewalAction('license-1', '00000000-0000-4000-8000-000000000001', 'user-1', 'renew');
 
   assert.equal(createCalls, 2);
   assert.equal(linkCalls, 2);
@@ -491,7 +491,7 @@ test('linking a renewal artifact records the initiating user in the same transac
 
   await methods.linkRenewalArtifact({
     id: 'license-1',
-    organizationId: 'org-1',
+    organizationId: '00000000-0000-4000-8000-000000000001',
     userId: 'user-1',
     action: 'renew',
     artifact: { kind: 'requisition', id: 'requisition-1', number: 'REQ-2027-0001' },
@@ -540,11 +540,11 @@ test('buyer message retries retain the caller key and return one message artifac
     emailCalls += 1;
   };
 
-  const first = await service.postAsUser('org-1', 'user-1', 'po', 'po-1', {
+  const first = await service.postAsUser('00000000-0000-4000-8000-000000000001', 'user-1', 'po', 'po-1', {
     body: 'Need a quote update',
     idempotencyKey: 'request-1',
   });
-  const second = await service.postAsUser('org-1', 'user-1', 'po', 'po-1', {
+  const second = await service.postAsUser('00000000-0000-4000-8000-000000000001', 'user-1', 'po', 'po-1', {
     body: 'Need a quote update',
     idempotencyKey: 'request-1',
   });
@@ -596,7 +596,7 @@ test('message responses never expose private owner idempotency keys', async () =
   (service as unknown as { assertThreadExists: () => Promise<void> }).assertThreadExists =
     async () => {};
 
-  const [message] = await service.list('org-1', 'po', 'po-1');
+  const [message] = await service.list('00000000-0000-4000-8000-000000000001', 'po', 'po-1');
 
   assert.equal('idempotencyKey' in message!, false);
 });
@@ -635,7 +635,7 @@ test('required vendor email failures reject with the same stable Message-ID', as
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await assert.rejects(
       methods.emailVendorContact(
-        'org-1',
+        '00000000-0000-4000-8000-000000000001',
         'po',
         'po-1',
         'Buyer',
@@ -691,11 +691,11 @@ test('vendor message retries retain the caller key and do not duplicate notifica
     idempotencyKey: 'artifact-operation:private',
   });
 
-  const first = await service.postAsVendor('org-1', 'vendor-1', 'po', 'po-1', {
+  const first = await service.postAsVendor('00000000-0000-4000-8000-000000000001', 'vendor-1', 'po', 'po-1', {
     body: 'The shipment is scheduled',
     idempotencyKey: 'request-2',
   });
-  await service.postAsVendor('org-1', 'vendor-1', 'po', 'po-1', {
+  await service.postAsVendor('00000000-0000-4000-8000-000000000001', 'vendor-1', 'po', 'po-1', {
     body: 'The shipment is scheduled',
     idempotencyKey: 'request-2',
   });

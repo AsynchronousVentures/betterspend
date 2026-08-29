@@ -13,12 +13,18 @@ entries are never reinterpreted silently.
 
 ## Migration and rollback
 
-The migration expands the table with nullable hash columns first. The database
+The migration expands the table with nullable hash columns. The database
 migrator then backfills each organization in bounded update batches while
-sharing the appender's advisory lock. A short table lock closes the race with
-old application writers before `entry_hash` is contracted to `NOT NULL`. The
-old application can still be rolled back after the expand step, because it does
-not know about or need the new columns.
+sharing the appender's advisory lock. This one-time backfill is the only
+approved exception to the audit table's no-update rule, and it may only fill
+`prev_hash` and `entry_hash`; application code still never updates or deletes
+audit rows.
+
+`entry_hash` remains nullable in this release so the previous application image
+can still write during a rollback. A later deployment may contract it to
+`NOT NULL` only after the compatibility window closes. Until then, every new
+writer supplies both hashes, and the appender fails closed if it encounters an
+unbackfilled legacy tail.
 
 ## Checkpoints and retention
 

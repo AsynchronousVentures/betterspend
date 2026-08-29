@@ -12,7 +12,7 @@ export const auditLog = pgTable(
     changes: jsonb('changes').default({}),
     metadata: jsonb('metadata').default({}),
     prevHash: varchar('prev_hash', { length: 64 }),
-    entryHash: varchar('entry_hash', { length: 64 }).notNull(),
+    entryHash: varchar('entry_hash', { length: 64 }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({

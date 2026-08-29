@@ -64,7 +64,7 @@ test('message owner inserts target the organization-scoped idempotency key', asy
   };
 
   await methods.createUserMessage({
-    organizationId: 'org-1',
+    organizationId: '00000000-0000-4000-8000-000000000001',
     userId: 'user-1',
     threadType: 'po',
     threadId: 'po-1',
@@ -75,7 +75,7 @@ test('message owner inserts target the organization-scoped idempotency key', asy
     ownerIdempotencyKey: 'artifact-operation:user',
   });
   await methods.createVendorMessage({
-    organizationId: 'org-1',
+    organizationId: '00000000-0000-4000-8000-000000000001',
     vendorId: 'vendor-1',
     threadType: 'po',
     threadId: 'po-1',

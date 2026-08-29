@@ -1,5 +1,5 @@
 {
-  "id": "2e249e30-8320-4fd3-a156-002f113c7a3b",
+  "id": "f5233eac-3742-4c41-b7d4-1128a0b107d5",
   "prevId": "cfe69b5e-5fb8-429a-baf4-75d9a6f942f6",
   "version": "7",
   "dialect": "postgresql",
@@ -1253,7 +1253,7 @@
           "name": "entry_hash",
           "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
