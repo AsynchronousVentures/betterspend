@@ -112,11 +112,26 @@ class ConcurrentXeroOAuthRedis extends FakeXeroOAuthRedis {
 }
 
 function insertCapturingDb(captured: Array<Record<string, unknown>>): Db {
-  const db = {} as { insert: jest.Mock; transaction: jest.Mock };
+  const db = {} as {
+    execute: jest.Mock;
+    select: jest.Mock;
+    insert: jest.Mock;
+    transaction: jest.Mock;
+  };
+  db.execute = jest.fn(async () => undefined);
+  db.select = jest.fn(() => ({
+    from: jest.fn(() => ({
+      where: jest.fn(() => ({
+        orderBy: jest.fn(() => ({ limit: jest.fn(async () => []) })),
+        limit: jest.fn(async () => []),
+      })),
+    })),
+  }));
   db.insert = jest.fn(() => ({
     values: jest.fn((values: Record<string, unknown>) => {
       captured.push(values);
       return {
+        returning: jest.fn(async () => [values]),
         onConflictDoUpdate: jest.fn(() => ({
           returning: jest.fn(async () => [{ id: '00000000-0000-0000-0000-000000000010' }]),
         })),
@@ -347,6 +362,15 @@ describe('OAuthService', () => {
       updatedAt: new Date(),
     };
     const transaction = {
+      execute: jest.fn(async () => undefined),
+      select: jest.fn(() => ({
+        from: jest.fn(() => ({
+          where: jest.fn(() => ({
+            orderBy: jest.fn(() => ({ limit: jest.fn(async () => []) })),
+            limit: jest.fn(async () => []),
+          })),
+        })),
+      })),
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => ({
           where: jest.fn(() => ({
@@ -357,7 +381,11 @@ describe('OAuthService', () => {
           })),
         })),
       })),
-      insert: jest.fn(() => ({ values: jest.fn(async () => undefined) })),
+      insert: jest.fn(() => ({
+        values: jest.fn((values: Record<string, unknown>) => ({
+          returning: jest.fn(async () => [values]),
+        })),
+      })),
     };
     const db = {
       query: {
@@ -412,6 +440,15 @@ describe('OAuthService', () => {
       status: 'active',
     };
     const transaction = {
+      execute: jest.fn(async () => undefined),
+      select: jest.fn(() => ({
+        from: jest.fn(() => ({
+          where: jest.fn(() => ({
+            orderBy: jest.fn(() => ({ limit: jest.fn(async () => []) })),
+            limit: jest.fn(async () => []),
+          })),
+        })),
+      })),
       update: jest.fn(() => ({
         set: jest.fn(() => ({
           where: jest.fn((condition: unknown) => ({
@@ -423,8 +460,9 @@ describe('OAuthService', () => {
         })),
       })),
       insert: jest.fn(() => ({
-        values: jest.fn(async (values: Record<string, unknown>) => {
+        values: jest.fn((values: Record<string, unknown>) => {
           audits.push(values);
+          return { returning: jest.fn(async () => [values]) };
         }),
       })),
     };

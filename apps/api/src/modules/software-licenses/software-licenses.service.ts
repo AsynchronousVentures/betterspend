@@ -10,7 +10,13 @@ import { and, asc, desc, eq, lte, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { auditLog, requisitions, rfqRequests, softwareLicenses, vendors } from '@betterspend/db';
+import {
+  appendAuditLog,
+  requisitions,
+  rfqRequests,
+  softwareLicenses,
+  vendors,
+} from '@betterspend/db';
 import { normalizeMoney, type PermissionKey } from '@betterspend/shared';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RequisitionsService } from '../requisitions/requisitions.service';
@@ -536,7 +542,7 @@ export class SoftwareLicensesService {
         )
         .returning({ id: softwareLicenses.id });
       if (!updated) throw new NotFoundException(`Software license ${input.id} not found`);
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId: input.organizationId,
         userId: input.userId,
         entityType: 'software_license',

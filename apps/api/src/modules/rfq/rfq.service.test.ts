@@ -89,6 +89,7 @@ function createOpenFixture(input: { updateResult: unknown[]; existing?: { status
   let updateCondition: unknown;
   const audits: Array<Record<string, unknown>> = [];
   const transaction = {
+    execute: async () => [],
     update: () => ({
       set: () => ({
         where: (condition: unknown) => {
@@ -99,13 +100,19 @@ function createOpenFixture(input: { updateResult: unknown[]; existing?: { status
     }),
     select: () => ({
       from: () => ({
-        where: () => ({ limit: async () => (input.existing ? [input.existing] : []) }),
+        where: () => ({
+          orderBy: () => ({ limit: async () => [] }),
+          limit: async () => (input.existing ? [input.existing] : []),
+        }),
       }),
     }),
     insert: () => ({
-      values: async (value: Record<string, unknown>) => {
-        audits.push(value);
-      },
+      values: (value: Record<string, unknown>) => ({
+        returning: async () => {
+          audits.push(value);
+          return [value];
+        },
+      }),
     }),
   };
   const db = {
@@ -132,7 +139,16 @@ test('opening an RFQ conditionally transitions draft status and records its init
 
   assert.deepEqual(opened, { id: 'rfq-1', status: 'open' });
   assert.match(sql, /"status" = \$\d+/);
-  assert.deepEqual(fixture.audits, [
+  assert.equal(fixture.audits.length, 1);
+  assert.deepEqual(
+    {
+      organizationId: fixture.audits[0]?.organizationId,
+      userId: fixture.audits[0]?.userId,
+      entityType: fixture.audits[0]?.entityType,
+      entityId: fixture.audits[0]?.entityId,
+      action: fixture.audits[0]?.action,
+      changes: fixture.audits[0]?.changes,
+    },
     {
       organizationId: 'org-1',
       userId: 'user-1',
@@ -141,7 +157,8 @@ test('opening an RFQ conditionally transitions draft status and records its init
       action: 'opened',
       changes: { previousStatus: 'draft', status: 'open' },
     },
-  ]);
+  );
+  assert.equal(typeof fixture.audits[0]?.entryHash, 'string');
 });
 
 test('a concurrent RFQ award prevents reopening the record', async () => {

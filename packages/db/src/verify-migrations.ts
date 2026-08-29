@@ -16,6 +16,8 @@ const EXPECTED_TABLES = [
 ] as const;
 
 const EXPECTED_COLUMNS = [
+  { table: 'audit_log', column: 'prev_hash' },
+  { table: 'audit_log', column: 'entry_hash' },
   { table: 'auth_accounts', column: 'issuer' },
   { table: 'auth_accounts', column: 'access_token_expires_at' },
   { table: 'auth_accounts', column: 'refresh_token_expires_at' },
@@ -36,6 +38,12 @@ const EXPECTED_COLUMNS = [
 ] as const;
 
 const EXPECTED_INDEXES = [
+  {
+    name: 'audit_log_organization_created_at_id_idx',
+    table: 'audit_log',
+    columns: ['organization_id', 'created_at', 'id'],
+    unique: false,
+  },
   {
     name: 'auth_accounts_user_id_idx',
     table: 'auth_accounts',

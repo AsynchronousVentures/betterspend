@@ -256,11 +256,22 @@ describe('EmailIntakeService attachment promotion', () => {
     const set = jest.fn().mockReturnValue({ where });
     const update = jest.fn().mockReturnValue({ set });
     const onConflictDoNothing = jest.fn().mockResolvedValue(undefined);
-    const values = jest.fn().mockReturnValue({ onConflictDoNothing });
+    const values = jest.fn().mockImplementation((value) => ({
+      onConflictDoNothing,
+      returning: jest.fn().mockResolvedValue([value]),
+    }));
     const insert = jest.fn().mockReturnValue({ values });
     const transaction = jest.fn(async (callback) =>
       callback({
         execute: jest.fn(),
+        select: jest.fn(() => ({
+          from: jest.fn(() => ({
+            where: jest.fn(() => ({
+              orderBy: jest.fn(() => ({ limit: jest.fn().mockResolvedValue([]) })),
+              limit: jest.fn().mockResolvedValue([]),
+            })),
+          })),
+        })),
         query: { emailIntakeAttachments: { findFirst, findMany } },
         insert,
         update,

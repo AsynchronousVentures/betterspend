@@ -22,7 +22,7 @@ import {
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
 import {
-  auditLog,
+  appendAuditLog,
   budgetCommitmentEvents,
   budgets,
   budgetPeriods,
@@ -137,8 +137,8 @@ function budgetRowMatchesScope(row: BudgetScopeRow, scope: ResourceScope | undef
   if (!scope || scope.unrestricted) return true;
   return Boolean(
     (row.budgetType === 'department' && scope.departmentIds.includes(row.scopeId)) ||
-      (row.budgetType === 'project' && scope.projectIds.includes(row.scopeId)) ||
-      (row.entityId && scope.entityIds.includes(row.entityId)),
+    (row.budgetType === 'project' && scope.projectIds.includes(row.scopeId)) ||
+    (row.entityId && scope.entityIds.includes(row.entityId)),
   );
 }
 
@@ -237,7 +237,13 @@ export class BudgetsService {
               },
             },
             invoice: {
-              columns: { id: true, internalNumber: true, invoiceNumber: true, createdBy: true, entityId: true },
+              columns: {
+                id: true,
+                internalNumber: true,
+                invoiceNumber: true,
+                createdBy: true,
+                entityId: true,
+              },
               with: {
                 purchaseOrder: {
                   columns: { entityId: true },
@@ -297,7 +303,10 @@ export class BudgetsService {
           'invoice',
           ['invoices:view_all', 'invoices:manage', 'invoices:approve'],
           {
-            ownerIds: [event.invoice.createdBy, event.invoice.purchaseOrder?.requisition?.requesterId],
+            ownerIds: [
+              event.invoice.createdBy,
+              event.invoice.purchaseOrder?.requisition?.requesterId,
+            ],
             departmentId: event.invoice.purchaseOrder?.requisition?.departmentId,
             projectId: event.invoice.purchaseOrder?.requisition?.projectId,
             entityId: event.invoice.entityId,
@@ -392,7 +401,7 @@ export class BudgetsService {
         );
       }
 
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId: actorId,
         entityType: 'budget',
@@ -488,7 +497,7 @@ export class BudgetsService {
             budgetScopeCondition(scope),
           ),
         )
-      .for('update');
+        .for('update');
       if (!locked) throw new NotFoundException(`Budget ${id} not found`);
       if (!budgetUpdateMatchesScope(locked, input, scope)) {
         throw new NotFoundException('Budget scope is outside your access');
@@ -549,7 +558,7 @@ export class BudgetsService {
           ),
         );
 
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId: actorId,
         entityType: 'budget',
@@ -829,7 +838,7 @@ export class BudgetsService {
         })
         .returning();
 
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId: actorId,
         entityType: 'budget_period',
@@ -879,7 +888,7 @@ export class BudgetsService {
         .delete(budgetPeriods)
         .where(and(eq(budgetPeriods.id, periodId), eq(budgetPeriods.budgetId, budgetId)));
 
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId: actorId,
         entityType: 'budget_period',
@@ -1094,11 +1103,7 @@ export class BudgetsService {
   /**
    * GET /budgets/forecast/summary — org-level budget forecast summary
    */
-  async getForecastSummary(
-    organizationId: string,
-    fiscalYear: number,
-    scope?: ResourceScope,
-  ) {
+  async getForecastSummary(organizationId: string, fiscalYear: number, scope?: ResourceScope) {
     const forecasts = await this.getForecast(organizationId, fiscalYear, scope);
 
     const totalBudgeted = forecasts.reduce((s, f) => s + f.totalAmount, 0);

@@ -1,4 +1,4 @@
-import { Controller, ForbiddenException, Get, Query } from '@nestjs/common';
+import { BadRequestException, Controller, ForbiddenException, Get, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { AuditService } from './audit.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
@@ -35,4 +35,36 @@ export class AuditController {
       limit: limit ? Number(limit) : undefined,
     });
   }
+
+  @Get('verify')
+  @ApiOperation({ summary: 'Verify the audit hash chain' })
+  @ApiQuery({ name: 'from', required: false, type: String })
+  @ApiQuery({ name: 'to', required: false, type: String })
+  verify(
+    @CurrentOrgId() orgId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    const reportScope = access?.scopeFor('report', 'reports:view');
+    if (!reportScope?.unrestricted) {
+      throw new ForbiddenException('Audit log access requires a global grant');
+    }
+
+    const range = {
+      from: parseDateQuery('from', from),
+      to: parseDateQuery('to', to),
+    };
+    if (range.from && range.to && range.from > range.to) {
+      throw new BadRequestException('Audit verification from must be before to');
+    }
+    return this.auditService.verifyChain(orgId, range);
+  }
+}
+
+function parseDateQuery(name: string, value?: string): Date | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw new BadRequestException(`Invalid audit ${name} date`);
+  return date;
 }

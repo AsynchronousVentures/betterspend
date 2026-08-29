@@ -9,8 +9,18 @@ test('message owner inserts target the organization-scoped idempotency key', asy
   const db = {
     transaction: async <T>(callback: (tx: unknown) => Promise<T>) =>
       callback({
+        execute: async () => [],
+        select: () => ({
+          from: () => ({
+            where: () => ({
+              orderBy: () => ({ limit: async () => [] }),
+              limit: async () => [],
+            }),
+          }),
+        }),
         insert: () => ({
           values: () => ({
+            returning: async () => [{ id: 'audit-1' }],
             onConflictDoNothing: (config?: { target?: unknown[] }) => {
               assert.ok(config?.target);
               conflictTargets.push(config.target);

@@ -4,7 +4,7 @@ import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import {
   invoices,
-  auditLog,
+  appendAuditLog,
   paymentRunEvents,
   paymentRunInvoices,
   paymentRuns,
@@ -473,7 +473,7 @@ export class PaymentRunsService {
           verificationStatus: 'pending',
         })
         .returning();
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId: orgId,
         userId,
         entityType: 'vendor_payment_account',

@@ -1,6 +1,7 @@
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { and, count, eq, like, sql } from 'drizzle-orm';
 import { db, type DbTransaction } from './client';
+import { appendAuditLog, appendAuditLogIfAbsent } from './audit-integrity';
 import { upsertDemoFixtures } from './demo-fixtures';
 import { materializeEmailIntakeTokens, materializeWebhookSecrets } from './random-seed-secrets';
 import {
@@ -109,6 +110,21 @@ async function insertBatches<T extends PgTable>(
   }
 }
 
+async function insertAuditRows(
+  tx: DbTransaction,
+  values: readonly Omit<typeof auditLog.$inferInsert, 'prevHash' | 'entryHash'>[] | undefined,
+): Promise<void> {
+  if (!values?.length) return;
+  for (const row of values) {
+    const id = row.id;
+    if (id) {
+      await appendAuditLogIfAbsent(tx, { ...row, id });
+    } else {
+      await appendAuditLog(tx, row);
+    }
+  }
+}
+
 async function countExistingSeedRequisitions(
   tx: DbTransaction,
   seed: string,
@@ -194,7 +210,7 @@ export async function persistRandomSeed(
     await insertBatches(tx, requisitionLines, dataset.requisitionLines);
     await insertBatches(tx, approvalRequests, dataset.approvalRequests);
     await insertBatches(tx, approvalActions, dataset.approvalActions);
-    await insertBatches(tx, auditLog, dataset.auditLog);
+    await insertAuditRows(tx, dataset.auditLog);
     await insertBatches(tx, purchaseOrders, dataset.purchaseOrders);
     await insertBatches(tx, poLines, dataset.poLines);
     await insertBatches(tx, poVersions, dataset.poVersions);

@@ -2,6 +2,11 @@ import path from 'path';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
+import {
+  AUDIT_HASH_LOCK_SEED,
+  computeAuditEntryHash,
+  type AuditHashFields,
+} from './audit-integrity';
 import { encryptCredential } from './credential-crypto';
 import { migrateBetterAuthAccounts } from './better-auth-migration';
 
@@ -92,6 +97,7 @@ type UserRoleOrganizationContractState = {
 };
 
 const USER_ROLE_BACKFILL_BATCH_SIZE = 500;
+const AUDIT_HASH_BACKFILL_BATCH_SIZE = 500;
 
 const ARTIFACT_OWNER_IDEMPOTENCY_INDEXES = [
   { table: 'requisitions', index: 'requisitions_org_idempotency_key_unique' },
@@ -99,6 +105,159 @@ const ARTIFACT_OWNER_IDEMPOTENCY_INDEXES = [
   { table: 'messages', index: 'messages_org_idempotency_key_unique' },
   { table: 'notifications', index: 'notifications_org_idempotency_key_unique' },
 ] as const;
+
+type AuditHashColumnState = {
+  tableExists: boolean;
+  prevHashColumnExists: boolean;
+  entryHashColumnExists: boolean;
+  entryHashIsNotNull: boolean;
+};
+
+type AuditBackfillRow = {
+  id: string;
+  organization_id: string;
+  user_id: string | null;
+  entity_type: string;
+  entity_id: string;
+  action: string;
+  changes: unknown;
+  metadata: unknown;
+  created_at: Date;
+  prev_hash: string | null;
+  entry_hash: string | null;
+};
+
+/** Chain one tenant's rows using the same canonical hash implementation as new writes. */
+async function backfillAuditOrganization(
+  transaction: postgres.TransactionSql,
+  organizationId: string,
+  acquireLock = true,
+): Promise<void> {
+  if (acquireLock) {
+    await transaction`SELECT pg_advisory_xact_lock(hashtextextended(${organizationId}, ${AUDIT_HASH_LOCK_SEED}))`;
+  }
+
+  const rows = await transaction<AuditBackfillRow[]>`
+    SELECT
+      id,
+      organization_id,
+      user_id,
+      entity_type,
+      entity_id,
+      action,
+      changes,
+      metadata,
+      created_at,
+      prev_hash,
+      entry_hash
+    FROM audit_log
+    WHERE organization_id = ${organizationId}
+    ORDER BY created_at ASC, id ASC
+  `;
+
+  let previousHash: string | null = null;
+  const updates: Array<{ id: string; prevHash: string | null; entryHash: string }> = [];
+  for (const row of rows) {
+    const fields: AuditHashFields = {
+      id: row.id,
+      organizationId: row.organization_id,
+      userId: row.user_id,
+      entityType: row.entity_type,
+      entityId: row.entity_id,
+      action: row.action,
+      changes: row.changes,
+      metadata: row.metadata,
+      createdAt: row.created_at,
+      prevHash: previousHash,
+    };
+    const entryHash = computeAuditEntryHash(fields);
+    if (row.prev_hash !== previousHash || row.entry_hash !== entryHash) {
+      updates.push({ id: row.id, prevHash: previousHash, entryHash });
+    }
+    previousHash = entryHash;
+  }
+
+  for (let offset = 0; offset < updates.length; offset += AUDIT_HASH_BACKFILL_BATCH_SIZE) {
+    const batch = updates.slice(offset, offset + AUDIT_HASH_BACKFILL_BATCH_SIZE);
+    for (const update of batch) {
+      await transaction`
+        UPDATE audit_log
+        SET prev_hash = ${update.prevHash}, entry_hash = ${update.entryHash}
+        WHERE id = ${update.id} AND organization_id = ${organizationId}
+      `;
+    }
+  }
+}
+
+/** Expand, backfill, and contract audit hashes without racing tenant appenders. */
+async function ensureAuditHashChain(client: postgres.Sql): Promise<void> {
+  const [state] = await client<AuditHashColumnState[]>`
+    SELECT
+      to_regclass('public.audit_log') IS NOT NULL AS "tableExists",
+      EXISTS (
+        SELECT 1
+        FROM pg_attribute
+        WHERE attrelid = 'public.audit_log'::regclass
+          AND attname = 'prev_hash'
+          AND NOT attisdropped
+      ) AS "prevHashColumnExists",
+      EXISTS (
+        SELECT 1
+        FROM pg_attribute
+        WHERE attrelid = 'public.audit_log'::regclass
+          AND attname = 'entry_hash'
+          AND NOT attisdropped
+      ) AS "entryHashColumnExists",
+      COALESCE((
+        SELECT attnotnull
+        FROM pg_attribute
+        WHERE attrelid = 'public.audit_log'::regclass
+          AND attname = 'entry_hash'
+          AND NOT attisdropped
+      ), false) AS "entryHashIsNotNull"
+  `;
+  if (!state?.tableExists || !state.prevHashColumnExists || !state.entryHashColumnExists) return;
+
+  const organizations = await client<{ organization_id: string }[]>`
+    SELECT DISTINCT organization_id
+    FROM audit_log
+    WHERE entry_hash IS NULL
+    ORDER BY organization_id
+  `;
+  for (const { organization_id: organizationId } of organizations) {
+    await client.begin(async (transaction) => {
+      await transaction`SET LOCAL lock_timeout = '5s'`;
+      await transaction`SET LOCAL statement_timeout = '5min'`;
+      await backfillAuditOrganization(transaction, organizationId);
+    });
+  }
+
+  // Old application instances can still write nullable rows during the expand
+  // phase. Close that small race before contracting entry_hash to NOT NULL.
+  await client.begin(async (transaction) => {
+    await transaction`SET LOCAL lock_timeout = '5s'`;
+    await transaction`SET LOCAL statement_timeout = '5min'`;
+    await transaction`LOCK TABLE audit_log IN SHARE ROW EXCLUSIVE MODE`;
+
+    const remainingOrganizations = await transaction<{ organization_id: string }[]>`
+      SELECT DISTINCT organization_id
+      FROM audit_log
+      WHERE entry_hash IS NULL
+      ORDER BY organization_id
+    `;
+    for (const { organization_id: organizationId } of remainingOrganizations) {
+      await backfillAuditOrganization(transaction, organizationId, false);
+    }
+
+    const [remaining] = await transaction<{ exists: boolean }[]>`
+      SELECT EXISTS (SELECT 1 FROM audit_log WHERE entry_hash IS NULL) AS exists
+    `;
+    if (remaining?.exists) throw new Error('Audit hash backfill left rows without entry_hash');
+    if (!state.entryHashIsNotNull) {
+      await transaction`ALTER TABLE audit_log ALTER COLUMN entry_hash SET NOT NULL`;
+    }
+  });
+}
 
 /** Build the parent key without blocking writes before transactional migrations add its FK. */
 async function prepareVendorOrganizationIndex(client: postgres.Sql): Promise<void> {
@@ -650,6 +809,7 @@ async function main(): Promise<void> {
     await validateLegacyUserRoleOrganizations(client);
     const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
+    await ensureAuditHashChain(client);
     await prepareArtifactOwnerIdempotencyIndexes(client);
     await prepareUserRoleAssignmentIndex(client);
     await prepareCustomRoleOrganizationIndex(client);

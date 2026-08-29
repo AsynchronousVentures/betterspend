@@ -2,7 +2,7 @@ import { Injectable, Inject } from '@nestjs/common';
 import { eq, and } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
-import { auditLog, systemSettings } from '@betterspend/db';
+import { appendAuditLog, systemSettings } from '@betterspend/db';
 import { DEFAULT_SETTINGS, type SettingKey } from '@betterspend/shared';
 
 @Injectable()
@@ -73,7 +73,7 @@ export class SettingsService {
             set: { value, updatedAt: new Date() },
           });
       }
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId,
         entityType: 'organization_settings',

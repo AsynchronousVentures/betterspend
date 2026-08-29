@@ -1,8 +1,8 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, lte } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
-import { auditLog } from '@betterspend/db';
+import { appendAuditLog, auditLog, verifyAuditChain, type AuditChainRange } from '@betterspend/db';
 
 @Injectable()
 export class AuditService {
@@ -23,8 +23,40 @@ export class AuditService {
           filters?.entityId ? eq(auditLog.entityId, filters.entityId) : undefined,
         ),
       )
-      .orderBy(desc(auditLog.createdAt))
+      .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
       .limit(limit);
+  }
+
+  async verifyChain(organizationId: string, range: AuditChainRange = {}) {
+    const rows = await this.db
+      .select({
+        id: auditLog.id,
+        organizationId: auditLog.organizationId,
+        userId: auditLog.userId,
+        entityType: auditLog.entityType,
+        entityId: auditLog.entityId,
+        action: auditLog.action,
+        changes: auditLog.changes,
+        metadata: auditLog.metadata,
+        prevHash: auditLog.prevHash,
+        entryHash: auditLog.entryHash,
+        createdAt: auditLog.createdAt,
+      })
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.organizationId, organizationId),
+          range.to ? lte(auditLog.createdAt, range.to) : undefined,
+        ),
+      )
+      .orderBy(asc(auditLog.createdAt), asc(auditLog.id));
+
+    return {
+      organizationId,
+      from: range.from?.toISOString() ?? null,
+      to: range.to?.toISOString() ?? null,
+      ...verifyAuditChain(rows, range),
+    };
   }
 
   async log(
@@ -35,20 +67,19 @@ export class AuditService {
     action: string,
     changes?: Record<string, unknown>,
     metadata?: Record<string, unknown>,
-    executor: Db | DbTransaction = this.db,
+    executor?: DbTransaction,
   ) {
-    const [entry] = await executor
-      .insert(auditLog)
-      .values({
-        organizationId,
-        userId: userId ?? null,
-        entityType,
-        entityId,
-        action,
-        changes: changes ?? {},
-        metadata: metadata ?? {},
-      })
-      .returning();
-    return entry;
+    const input = {
+      organizationId,
+      userId: userId ?? null,
+      entityType,
+      entityId,
+      action,
+      changes: changes ?? {},
+      metadata: metadata ?? {},
+    };
+    return executor
+      ? appendAuditLog(executor, input)
+      : this.db.transaction((transaction) => appendAuditLog(transaction, input));
   }
 }

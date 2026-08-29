@@ -431,9 +431,12 @@ test('license renewal requisitions keep decimal unit prices', async () => {
 test('linking a renewal artifact records the initiating user in the same transaction', async () => {
   const events: string[] = [];
   const transaction = {
+    execute: async () => [],
     select: () => ({
       from: () => ({
         where: () => ({
+          orderBy: () => ({ limit: async () => [] }),
+          limit: async () => [],
           for: async () => {
             events.push('select-license');
             return [{ notes: null, renewalRefs: [] }];
@@ -452,12 +455,15 @@ test('linking a renewal artifact records the initiating user in the same transac
       }),
     }),
     insert: () => ({
-      values: async (value: Record<string, unknown>) => {
-        events.push('audit');
-        assert.equal(value.userId, 'user-1');
-        assert.equal(value.entityType, 'software_license');
-        assert.equal(value.entityId, 'license-1');
-      },
+      values: (value: Record<string, unknown>) => ({
+        returning: async () => {
+          events.push('audit');
+          assert.equal(value.userId, 'user-1');
+          assert.equal(value.entityType, 'software_license');
+          assert.equal(value.entityId, 'license-1');
+          return [value];
+        },
+      }),
     }),
   };
   const service = new SoftwareLicensesService(

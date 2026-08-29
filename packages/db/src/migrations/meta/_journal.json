@@ -400,6 +400,13 @@
       "when": 1788019183707,
       "tag": "20260829155943_artifact_idempotency_after_workflow_merge",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1788021912717,
+      "tag": "20260829164512_audit_hash_chain",
+      "breakpoints": true
     }
   ]
 }

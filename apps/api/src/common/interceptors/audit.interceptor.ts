@@ -1,14 +1,8 @@
-import {
-  Injectable,
-  NestInterceptor,
-  ExecutionContext,
-  CallHandler,
-  Inject,
-} from '@nestjs/common';
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Inject } from '@nestjs/common';
 import { Observable, tap } from 'rxjs';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { auditLog } from '@betterspend/db';
+import { appendAuditLog } from '@betterspend/db';
 
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
@@ -36,19 +30,21 @@ export class AuditInterceptor implements NestInterceptor {
         const action = actionMap[method] || 'modified';
 
         try {
-          await this.db.insert(auditLog).values({
-            organizationId: user.organizationId,
-            userId: user.id,
-            entityType: result._entityType || 'unknown',
-            entityId: result.id || result._id || '00000000-0000-0000-0000-000000000000',
-            action,
-            changes: result._changes || {},
-            metadata: {
-              ip: request.ip,
-              userAgent: request.headers['user-agent'],
-              path: request.path,
-            },
-          });
+          await this.db.transaction((transaction) =>
+            appendAuditLog(transaction, {
+              organizationId: user.organizationId,
+              userId: user.id,
+              entityType: result._entityType || 'unknown',
+              entityId: result.id || result._id || '00000000-0000-0000-0000-000000000000',
+              action,
+              changes: result._changes || {},
+              metadata: {
+                ip: request.ip,
+                userAgent: request.headers['user-agent'],
+                path: request.path,
+              },
+            }),
+          );
         } catch {
           // Audit failures should not break the main operation
         }

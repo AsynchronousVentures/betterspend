@@ -93,6 +93,7 @@ export interface RandomSeedCliOptions extends RandomSeedOptions {
 type InsertRow<T> = T extends { $inferInsert: infer R } ? R : never;
 type WebhookEndpointSeedRow = Omit<InsertRow<typeof webhookEndpoints>, 'secret'>;
 type EmailIntakeAddressSeedRow = Omit<InsertRow<typeof emailIntakeAddresses>, 'token'>;
+type AuditSeedRow = Omit<InsertRow<typeof auditLog>, 'prevHash' | 'entryHash'>;
 
 type Rows = {
   legalEntities: Array<InsertRow<typeof legalEntities>>;
@@ -166,7 +167,7 @@ type Rows = {
   integrationConnections: Array<InsertRow<typeof integrationConnections>>;
   syncRecords: Array<InsertRow<typeof syncRecords>>;
   approvalDelegations: Array<InsertRow<typeof approvalDelegations>>;
-  auditLog: Array<InsertRow<typeof auditLog>>;
+  auditLog: Array<AuditSeedRow>;
 };
 
 export interface RandomSeedDataset extends Rows {

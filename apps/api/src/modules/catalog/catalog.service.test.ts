@@ -27,12 +27,25 @@ describe('CatalogService price proposal emails', () => {
     };
     const sent: MailOptions[] = [];
     const transaction = {
+      execute: async () => [],
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            orderBy: () => ({ limit: async () => [] }),
+            limit: async () => [],
+          }),
+        }),
+      }),
       update: () => ({
         set: () => ({
           where: () => ({ returning: async () => [{ ...proposal, status: 'rejected' }] }),
         }),
       }),
-      insert: () => ({ values: async () => undefined }),
+      insert: () => ({
+        values: (values: Record<string, unknown>) => ({
+          returning: async () => [values],
+        }),
+      }),
     };
     const db = {
       query: {

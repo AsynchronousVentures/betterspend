@@ -83,12 +83,19 @@ function createService(
         ],
       },
     },
+    execute: async () => [],
     select() {
       return {
         from() {
           return {
             where() {
-              return { for: async () => [{ ...approved, status: 'matched' }] };
+              return {
+                orderBy() {
+                  return { limit: async () => [] };
+                },
+                limit: async () => [],
+                for: async () => [{ ...approved, status: 'matched' }],
+              };
             },
           };
         },
@@ -107,10 +114,11 @@ function createService(
     },
     insert(table: unknown) {
       return {
-        values: async (values: { action?: string }) => {
+        values: (values: { action?: string }) => {
           if (table !== auditLog) return;
           if (options.blockedAuditFails) throw new Error('audit write failed');
           if (values.action) auditActions.push(values.action);
+          return { returning: async () => [values] };
         },
       };
     },
@@ -393,13 +401,30 @@ describe('InvoicesService creation audit', () => {
       matchStatus: 'unmatched',
     };
     const transaction = {
+      execute: async () => [],
+      select() {
+        return {
+          from() {
+            return {
+              where() {
+                return {
+                  orderBy() {
+                    return { limit: async () => [] };
+                  },
+                  limit: async () => [],
+                };
+              },
+            };
+          },
+        };
+      },
       insert(table: unknown) {
         return {
           values(values: unknown) {
             inserted.push({ table, values });
             return table === invoices
               ? { returning: async () => [{ id: 'invoice-1' }] }
-              : Promise.resolve();
+              : { returning: async () => [values] };
           },
         };
       },
@@ -450,14 +475,26 @@ describe('InvoicesService creation audit', () => {
     });
 
     const auditInsert = inserted.find((entry) => entry.table === auditLog);
-    assert.deepEqual(auditInsert?.values, {
-      organizationId: 'organization-1',
-      userId: 'maker-1',
-      entityType: 'invoice',
-      entityId: 'invoice-1',
-      action: 'created',
-      changes: { invoiceNumber: 'VENDOR-100', totalAmount: '100.00' },
-    });
+    const auditValues = auditInsert?.values as Record<string, unknown>;
+    assert.deepEqual(
+      {
+        organizationId: auditValues.organizationId,
+        userId: auditValues.userId,
+        entityType: auditValues.entityType,
+        entityId: auditValues.entityId,
+        action: auditValues.action,
+        changes: auditValues.changes,
+      },
+      {
+        organizationId: 'organization-1',
+        userId: 'maker-1',
+        entityType: 'invoice',
+        entityId: 'invoice-1',
+        action: 'created',
+        changes: { invoiceNumber: 'VENDOR-100', totalAmount: '100.00' },
+      },
+    );
+    assert.equal(typeof auditValues.entryHash, 'string');
   });
 });
 
@@ -564,10 +601,17 @@ describe('InvoicesService material edits', () => {
               : { ...invoice, lines: [line], vendor: {}, entity: {} },
         },
       },
+      execute: async () => [],
       select() {
         return {
           from() {
-            return { where: () => ({ for: async () => [invoice] }) };
+            return {
+              where: () => ({
+                orderBy: () => ({ limit: async () => [] }),
+                limit: async () => [],
+                for: async () => [invoice],
+              }),
+            };
           },
         };
       },
@@ -580,7 +624,11 @@ describe('InvoicesService material edits', () => {
         };
       },
       insert() {
-        return { values: async () => undefined };
+        return {
+          values: (values: Record<string, unknown>) => ({
+            returning: async () => [values],
+          }),
+        };
       },
     };
     const db = {
