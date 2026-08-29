@@ -14,6 +14,38 @@ interface Message {
   createdAt: string;
 }
 
+interface MessageIntent {
+  body: string;
+  recipientVendorId?: string;
+  attachments?: ReadonlyArray<{
+    documentId?: string;
+    url?: string;
+    name?: string;
+  }>;
+}
+
+interface PendingMessageIntent {
+  fingerprint: string;
+  idempotencyKey: string;
+}
+
+export function messageIntentFingerprint(intent: MessageIntent) {
+  return JSON.stringify({
+    body: intent.body.trim(),
+    recipientVendorId: intent.recipientVendorId ?? null,
+    attachments: intent.attachments ?? [],
+  });
+}
+
+export function idempotencyForMessageIntent(
+  pending: PendingMessageIntent | null,
+  fingerprint: string,
+  createKey: () => string,
+): PendingMessageIntent {
+  if (pending?.fingerprint === fingerprint) return pending;
+  return { fingerprint, idempotencyKey: createKey() };
+}
+
 /**
  * Append-only conversation attached to a procurement record. Buyers post
  * through the authenticated API; the vendor portal uses its scoped session.
@@ -36,7 +68,7 @@ export function MessageThread({
   const [error, setError] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const loadVersion = useRef(0);
-  const pendingIdempotencyKey = useRef<string | null>(null);
+  const pendingMessageIntent = useRef<PendingMessageIntent | null>(null);
   const threadKey = `${portal ? 'portal' : 'buyer'}:${threadType}:${threadId}:${recipientVendorId ?? 'broadcast'}`;
   const activeThreadKey = useRef(threadKey);
   activeThreadKey.current = threadKey;
@@ -62,7 +94,7 @@ export function MessageThread({
     setDraft('');
     setError('');
     setSending(false);
-    pendingIdempotencyKey.current = null;
+    pendingMessageIntent.current = null;
     load();
     const interval = setInterval(load, 30_000);
     return () => clearInterval(interval);
@@ -76,8 +108,14 @@ export function MessageThread({
     const body = draft.trim();
     if (!body || sending) return;
     const sendingThreadKey = threadKey;
-    const idempotencyKey = pendingIdempotencyKey.current ?? crypto.randomUUID();
-    pendingIdempotencyKey.current = idempotencyKey;
+    const fingerprint = messageIntentFingerprint({ body, recipientVendorId });
+    const pending = idempotencyForMessageIntent(
+      pendingMessageIntent.current,
+      fingerprint,
+      () => crypto.randomUUID(),
+    );
+    pendingMessageIntent.current = pending;
+    const { idempotencyKey } = pending;
     setSending(true);
     setError('');
     try {
@@ -89,7 +127,7 @@ export function MessageThread({
       if (activeThreadKey.current !== sendingThreadKey) return;
       const refreshed = await load();
       if (activeThreadKey.current !== sendingThreadKey || !refreshed) return;
-      pendingIdempotencyKey.current = null;
+      pendingMessageIntent.current = null;
       setDraft('');
     } catch {
       if (activeThreadKey.current === sendingThreadKey) {
