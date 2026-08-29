@@ -520,7 +520,10 @@ describe('QboInboundService', () => {
         expect.objectContaining({
           entityType: 'external_entity_mapping',
           action: 'deactivated',
-          metadata: expect.objectContaining({ reason: 'outside_supported_catalog' }),
+          metadata: expect.objectContaining({
+            source: 'cdc',
+            reason: 'outside_supported_catalog',
+          }),
         }),
       ]),
     );
@@ -561,7 +564,10 @@ describe('QboInboundService', () => {
         expect.objectContaining({
           entityType: 'external_entity_mapping',
           action: 'deactivated',
-          metadata: expect.objectContaining({ reason: 'outside_supported_catalog' }),
+          metadata: expect.objectContaining({
+            source: 'webhook',
+            reason: 'outside_supported_catalog',
+          }),
         }),
       ]),
     );

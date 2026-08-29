@@ -390,6 +390,7 @@ export class QboInboundService implements OnModuleInit {
                 connection.id,
                 entry.entityName,
                 entry.entity,
+                'cdc',
               );
               continue;
             }
@@ -516,6 +517,7 @@ export class QboInboundService implements OnModuleInit {
         connection.id,
         event.entityName,
         entity,
+        'webhook',
       );
       return;
     }
@@ -701,6 +703,7 @@ export class QboInboundService implements OnModuleInit {
           connectionId,
           entityName,
           entity,
+          'snapshot',
         );
         continue;
       }
@@ -727,6 +730,7 @@ export class QboInboundService implements OnModuleInit {
     connectionId: string,
     entityName: QboSyncEntity,
     entity: QboObject,
+    auditSource: 'snapshot' | 'cdc' | 'webhook',
   ): Promise<void> {
     const externalId = stringValue(entity.Id);
     if (!externalId) return;
@@ -797,7 +801,7 @@ export class QboInboundService implements OnModuleInit {
             externalId,
             isActive: { from: existing.isActive, to: false },
           },
-          source: 'snapshot',
+          source: auditSource,
           reason: 'outside_supported_catalog',
         });
       }
