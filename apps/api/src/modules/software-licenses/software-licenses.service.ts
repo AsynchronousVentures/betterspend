@@ -300,7 +300,7 @@ export class SoftwareLicensesService {
       organizationId,
       operationType: 'software_license_renewal',
       idempotencyKey: operationKey,
-      fingerprint: licenseRenewalFingerprint(license.id, action, actionNote),
+      fingerprint: licenseRenewalFingerprint(license.id, action),
       findExisting: (ownerIdempotencyKey) =>
         this.findRenewalArtifact(organizationId, ownerIdempotencyKey, action),
       create: async (ownerIdempotencyKey) => {
@@ -746,14 +746,12 @@ export function previousRenewalPeriodStart(
   return firstOfTargetMonth;
 }
 
-function licenseRenewalFingerprint(
+export function licenseRenewalFingerprint(
   licenseId: string,
   action: 'renew' | 'renegotiate',
-  note?: string,
 ): string {
   return JSON.stringify({
     licenseId,
     action,
-    note: note || null,
   });
 }

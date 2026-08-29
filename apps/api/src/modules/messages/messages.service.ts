@@ -144,7 +144,7 @@ export class MessagesService {
       attachments: input.attachments ?? [],
       recipientVendorId,
     });
-    const operationKey = messageOperationKey('user', input.idempotencyKey, fingerprint);
+    const operationKey = messageOperationKey('user', userId, input.idempotencyKey, fingerprint);
     const execution = await this.artifactIdempotency.execute({
       organizationId,
       operationType: 'message_post',
@@ -241,7 +241,7 @@ export class MessagesService {
       body: trimmedBody,
       attachments: input.attachments ?? [],
     });
-    const operationKey = messageOperationKey('vendor', input.idempotencyKey, fingerprint);
+    const operationKey = messageOperationKey('vendor', vendorId, input.idempotencyKey, fingerprint);
     const execution = await this.artifactIdempotency.execute({
       organizationId,
       operationType: 'message_post',
@@ -336,7 +336,9 @@ export class MessagesService {
           attachments: input.attachments ?? [],
           idempotencyKey: input.ownerIdempotencyKey,
         })
-        .onConflictDoNothing()
+        .onConflictDoNothing({
+          target: [messages.organizationId, messages.idempotencyKey],
+        })
         .returning();
       if (created) {
         await tx.insert(auditLog).values({
@@ -389,7 +391,9 @@ export class MessagesService {
           attachments: input.attachments ?? [],
           idempotencyKey: input.ownerIdempotencyKey,
         })
-        .onConflictDoNothing()
+        .onConflictDoNothing({
+          target: [messages.organizationId, messages.idempotencyKey],
+        })
         .returning();
       if (created) {
         await tx.insert(auditLog).values({
@@ -593,10 +597,11 @@ function withoutOwnerIdempotencyKey<T extends { idempotencyKey?: unknown }>(row:
 
 export function messageOperationKey(
   senderType: 'user' | 'vendor',
+  senderId: string,
   key: string | undefined,
   fingerprint: string,
 ): string {
-  const namespace = `message:${senderType}:`;
+  const namespace = `message:${senderType}:${senderId}:`;
   const supplied = key?.trim();
   if (!supplied) return `${namespace}derived:${fingerprint}`;
   const maxSuppliedLength = 255 - namespace.length;

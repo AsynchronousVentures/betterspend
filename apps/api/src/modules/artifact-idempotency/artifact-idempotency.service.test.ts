@@ -41,11 +41,15 @@ class ArtifactOperationStore {
 
   addRow(table: unknown, values: Record<string, unknown>): StoreRow[] {
     if (table === artifactNotificationDeliveries) {
+      const organizationId = String(values.organizationId);
       const operationId = String(values.operationId);
       const deliveryKey = String(values.deliveryKey);
       if (
         this.deliveries.some(
-          (row) => row.operationId === operationId && row.deliveryKey === deliveryKey,
+          (row) =>
+            row.organizationId === organizationId &&
+            row.operationId === operationId &&
+            row.deliveryKey === deliveryKey,
         )
       ) {
         return [];
@@ -53,6 +57,7 @@ class ArtifactOperationStore {
       const now = new Date();
       const row: DeliveryRow = {
         id: `delivery-${this.deliveries.length + 1}`,
+        organizationId,
         operationId,
         deliveryKey,
         status: 'pending',
@@ -367,10 +372,14 @@ test('successful recipients are not redelivered when a later recipient fails', a
   assert.equal(firstRecipientCalls, 1);
   assert.equal(secondRecipientCalls, 2);
   assert.deepEqual(
-    store.deliveries.map(({ deliveryKey, status }) => ({ deliveryKey, status })),
+    store.deliveries.map(({ organizationId, deliveryKey, status }) => ({
+      organizationId,
+      deliveryKey,
+      status,
+    })),
     [
-      { deliveryKey: 'vendor-email:vendor-1', status: 'delivered' },
-      { deliveryKey: 'vendor-email:vendor-2', status: 'delivered' },
+      { organizationId: 'org-1', deliveryKey: 'vendor-email:vendor-1', status: 'delivered' },
+      { organizationId: 'org-1', deliveryKey: 'vendor-email:vendor-2', status: 'delivered' },
     ],
   );
 });

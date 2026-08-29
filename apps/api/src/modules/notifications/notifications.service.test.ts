@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { notifications } from '@betterspend/db';
 import type { Db } from '@betterspend/db';
 import { NotificationsService } from './notifications.service';
 
@@ -58,19 +59,44 @@ test('idempotent notification retries retain one internal notification', async (
 
 test('the same notification identity is independent across organizations', async () => {
   const rows: Array<Record<string, unknown>> = [];
+  let pending: Record<string, unknown> = {};
+  let conflictTarget: unknown[] | undefined;
   const db = {
     insert: () => ({
-      values: (values: Record<string, unknown>) => ({
-        onConflictDoNothing: () => ({
-          returning: async () => {
-            const row = { id: `notification-${rows.length + 1}`, ...values };
-            rows.push(row);
-            return [row];
+      values: (values: Record<string, unknown>) => {
+        pending = values;
+        return {
+          onConflictDoNothing: (config: { target?: unknown[] }) => {
+            conflictTarget = config.target;
+            return {
+              returning: async () => {
+                if (
+                  rows.some(
+                    (row) =>
+                      row.organizationId === pending.organizationId &&
+                      row.idempotencyKey === pending.idempotencyKey,
+                  )
+                )
+                  return [];
+                const row = { id: `notification-${rows.length + 1}`, ...pending };
+                rows.push(row);
+                return [row];
+              },
+            };
           },
-        }),
-      }),
+        };
+      },
     }),
-    query: { notifications: { findFirst: async () => undefined } },
+    query: {
+      notifications: {
+        findFirst: async () =>
+          rows.find(
+            (row) =>
+              row.organizationId === pending.organizationId &&
+              row.idempotencyKey === pending.idempotencyKey,
+          ),
+      },
+    },
   } as unknown as Db;
   const service = new NotificationsService(db);
 
@@ -81,6 +107,7 @@ test('the same notification identity is independent across organizations', async
     rows.map((row) => row.organizationId),
     ['org-1', 'org-2'],
   );
+  assert.deepEqual(conflictTarget, [notifications.organizationId, notifications.idempotencyKey]);
 });
 
 const durableNotification = {

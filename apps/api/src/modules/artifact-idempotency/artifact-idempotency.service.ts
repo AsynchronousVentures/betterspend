@@ -152,7 +152,8 @@ export class ArtifactIdempotencyService {
       const value = await plan.link(artifact);
       if (plan.notify) {
         await plan.notify(value, {
-          once: (deliveryKey, deliver) => this.deliverOnce(operation.id, deliveryKey, deliver),
+          once: (deliveryKey, deliver) =>
+            this.deliverOnce(operation.organizationId, operation.id, deliveryKey, deliver),
         });
       }
       await this.complete(operation, claim.leaseToken, artifact);
@@ -164,6 +165,7 @@ export class ArtifactIdempotencyService {
   }
 
   private async deliverOnce(
+    organizationId: string,
     operationId: string,
     rawDeliveryKey: string,
     deliver: (identity: string) => Promise<unknown>,
@@ -181,7 +183,7 @@ export class ArtifactIdempotencyService {
     const claim = await this.db.transaction(async (tx) => {
       const [inserted] = await tx
         .insert(artifactNotificationDeliveries)
-        .values({ operationId, deliveryKey })
+        .values({ organizationId, operationId, deliveryKey })
         .onConflictDoNothing()
         .returning();
       const row =

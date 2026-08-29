@@ -4,6 +4,7 @@ import { ConflictException } from '@nestjs/common';
 import { messageOperationKey, MessagesService } from '../messages/messages.service';
 import {
   SoftwareLicensesService,
+  licenseRenewalFingerprint,
   type RenewalRef,
   previousRenewalPeriodStart,
 } from '../software-licenses/software-licenses.service';
@@ -69,6 +70,17 @@ test('renewal period boundaries clamp month-end and leap-day dates', () => {
   assert.equal(
     previousRenewalPeriodStart(new Date('2028-02-29T12:30:00.000Z'), 'annual').toISOString(),
     '2027-02-28T12:30:00.000Z',
+  );
+});
+
+test('renewal fingerprints keep notes outside the cycle identity', () => {
+  assert.deepEqual(JSON.parse(licenseRenewalFingerprint('license-1', 'renew')), {
+    licenseId: 'license-1',
+    action: 'renew',
+  });
+  assert.notEqual(
+    licenseRenewalFingerprint('license-1', 'renew'),
+    licenseRenewalFingerprint('license-1', 'renegotiate'),
   );
 });
 
@@ -536,15 +548,22 @@ test('buyer message retries retain the caller key and return one message artifac
   assert.equal(createCalls, 1);
   assert.equal(emailCalls, 1);
   assert.equal(coordinator.plans[0]?.operationType, 'message_post');
-  assert.equal(coordinator.plans[0]?.idempotencyKey, 'message:user:request-1');
+  assert.equal(coordinator.plans[0]?.idempotencyKey, 'message:user:user-1:request-1');
 });
 
 test('message operations derive a stable key when the caller omits one', () => {
-  const first = messageOperationKey('user', undefined, 'message-intent-1');
-  const second = messageOperationKey('user', undefined, 'message-intent-1');
+  const first = messageOperationKey('user', 'user-1', undefined, 'message-intent-1');
+  const second = messageOperationKey('user', 'user-1', undefined, 'message-intent-1');
 
   assert.equal(first, second);
-  assert.match(first, /^message:user:derived:message-intent-1$/);
+  assert.match(first, /^message:user:user-1:derived:message-intent-1$/);
+});
+
+test('message operation keys keep callers independent within an organization', () => {
+  assert.notEqual(
+    messageOperationKey('user', 'user-1', 'shared-key', 'message-intent-1'),
+    messageOperationKey('user', 'user-2', 'shared-key', 'message-intent-1'),
+  );
 });
 
 test('message responses never expose private owner idempotency keys', async () => {
@@ -677,6 +696,6 @@ test('vendor message retries retain the caller key and do not duplicate notifica
 
   assert.equal(createCalls, 1);
   assert.equal(notificationCalls, 1);
-  assert.equal(coordinator.plans[0]?.idempotencyKey, 'message:vendor:request-2');
+  assert.equal(coordinator.plans[0]?.idempotencyKey, 'message:vendor:vendor-1:request-2');
   assert.equal('idempotencyKey' in first, false);
 });

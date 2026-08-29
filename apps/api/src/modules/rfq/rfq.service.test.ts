@@ -18,6 +18,18 @@ test('public RFQ input rejects private owner idempotency keys', () => {
   );
 });
 
+test('public RFQ input rejects invalid due dates at the validation boundary', () => {
+  assert.throws(
+    () =>
+      parseCreateRfqBody({
+        title: 'Public RFQ',
+        dueDate: 'not-a-date',
+        lines: [{ description: 'Seats', quantity: 1 }],
+      }),
+    (error: unknown) => error instanceof BadRequestException,
+  );
+});
+
 test('RFQ response projections hide private owner idempotency keys', () => {
   const response = withoutOwnerIdempotencyKey({
     id: 'rfq-1',

@@ -1,5 +1,6 @@
 import {
   check,
+  foreignKey,
   index,
   integer,
   pgTable,
@@ -41,30 +42,34 @@ export const artifactOperations = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => ({
-    organizationKey: uniqueIndex('artifact_operations_org_key_unique').on(
+  (table) => [
+    uniqueIndex('artifact_operations_id_organization_id_unique').on(
+      table.id,
+      table.organizationId,
+    ),
+    uniqueIndex('artifact_operations_org_key_unique').on(
       table.organizationId,
       table.idempotencyKey,
     ),
-    retryLookup: index('artifact_operations_org_status_idx').on(
+    index('artifact_operations_org_status_idx').on(
       table.organizationId,
       table.operationType,
       table.status,
       table.leaseExpiresAt,
     ),
-    operationTypeCheck: check(
+    check(
       'artifact_operations_operation_type_check',
       sql`${table.operationType} IN ('software_license_renewal', 'message_post')`,
     ),
-    statusCheck: check(
+    check(
       'artifact_operations_status_check',
       sql`${table.status} IN ('pending', 'artifact_created', 'completed', 'failed')`,
     ),
-    artifactShapeCheck: check(
+    check(
       'artifact_operations_artifact_shape_check',
       sql`(${table.artifactId} IS NULL AND ${table.artifactKind} IS NULL) OR (${table.artifactId} IS NOT NULL AND ${table.artifactKind} IS NOT NULL)`,
     ),
-  }),
+  ],
 );
 
 /** Durable, independently retryable notification deliveries for an operation. */
@@ -72,9 +77,11 @@ export const artifactNotificationDeliveries = pgTable(
   'artifact_notification_deliveries',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    operationId: uuid('operation_id')
+    organizationId: uuid('organization_id')
       .notNull()
-      .references(() => artifactOperations.id, { onDelete: 'cascade' }),
+      .references(() => organizations.id),
+    operationId: uuid('operation_id')
+      .notNull(),
     deliveryKey: varchar('delivery_key', { length: 255 }).notNull(),
     status: varchar('status', { length: 20 }).notNull().default('pending'),
     attempts: integer('attempts').notNull().default(0),
@@ -85,20 +92,25 @@ export const artifactNotificationDeliveries = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => ({
-    operationKey: uniqueIndex('artifact_notification_deliveries_operation_key_unique').on(
+  (table) => [
+    uniqueIndex('artifact_notification_deliveries_operation_key_unique').on(
       table.operationId,
       table.deliveryKey,
     ),
-    retryLookup: index('artifact_notification_deliveries_retry_idx').on(
+    index('artifact_notification_deliveries_retry_idx').on(
       table.status,
       table.leaseExpiresAt,
     ),
-    statusCheck: check(
+    foreignKey({
+      columns: [table.operationId, table.organizationId],
+      foreignColumns: [artifactOperations.id, artifactOperations.organizationId],
+      name: 'artifact_notification_deliveries_operation_org_fk',
+    }).onDelete('cascade'),
+    check(
       'artifact_notification_deliveries_status_check',
       sql`${table.status} IN ('pending', 'delivered', 'failed')`,
     ),
-  }),
+  ],
 );
 
 export type ArtifactOperation = typeof artifactOperations.$inferSelect;

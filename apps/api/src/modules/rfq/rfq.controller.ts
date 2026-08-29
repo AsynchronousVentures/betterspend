@@ -116,7 +116,7 @@ const createRfqBodySchema = z
   .object({
     title: z.string().min(1),
     description: z.string().optional(),
-    dueDate: z.string().optional(),
+    dueDate: z.iso.datetime({ offset: true }).optional(),
     currency: z.string().optional(),
     notes: z.string().optional(),
     lines: z.array(
