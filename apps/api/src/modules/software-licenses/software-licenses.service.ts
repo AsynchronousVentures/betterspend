@@ -282,8 +282,12 @@ export class SoftwareLicensesService {
       return this.findOne(id, organizationId, access, 'software_licenses:manage');
     }
 
+    const operationKey = licenseRenewalOperationKey(license);
     const legacyRef = currentCycleLegacyRenewalRef(license);
-    if (legacyRef) {
+    if (
+      legacyRef &&
+      !(await this.artifactIdempotency.operationExists(organizationId, operationKey))
+    ) {
       if (legacyRef.action !== action) {
         throw new ConflictException(
           `A ${legacyRef.action} artifact already exists for this renewal cycle`,
@@ -292,7 +296,6 @@ export class SoftwareLicensesService {
       return this.findOne(id, organizationId, access, 'software_licenses:manage');
     }
 
-    const operationKey = licenseRenewalOperationKey(license);
     const execution = await this.artifactIdempotency.execute<RenewalRef>({
       organizationId,
       operationType: 'software_license_renewal',
@@ -705,9 +708,10 @@ function licenseRenewalOperationKey(license: LicenseWithRelations): string {
 function currentCycleLegacyRenewalRef(license: LicenseWithRelations): RenewalRef | undefined {
   const renewalDate = license.renewalDate ? new Date(license.renewalDate) : null;
   if (!renewalDate) return undefined;
-  const cycleStart = new Date(renewalDate);
-  if (license.billingCycle === 'monthly') cycleStart.setUTCMonth(cycleStart.getUTCMonth() - 1);
-  else cycleStart.setUTCFullYear(cycleStart.getUTCFullYear() - 1);
+  const cycleStart = previousRenewalPeriodStart(
+    renewalDate,
+    license.billingCycle === 'monthly' ? 'monthly' : 'annual',
+  );
 
   return renewalRefsSchema
     .parse(license.renewalRefs)
@@ -716,6 +720,30 @@ function currentCycleLegacyRenewalRef(license: LicenseWithRelations): RenewalRef
       const createdAt = new Date(reference.at);
       return !Number.isNaN(createdAt.getTime()) && createdAt >= cycleStart;
     });
+}
+
+export function previousRenewalPeriodStart(
+  renewalDate: Date,
+  billingCycle: 'monthly' | 'annual',
+): Date {
+  const targetYear = renewalDate.getUTCFullYear() - (billingCycle === 'annual' ? 1 : 0);
+  const targetMonth = renewalDate.getUTCMonth() - (billingCycle === 'monthly' ? 1 : 0);
+  const firstOfTargetMonth = new Date(
+    Date.UTC(
+      targetYear,
+      targetMonth,
+      1,
+      renewalDate.getUTCHours(),
+      renewalDate.getUTCMinutes(),
+      renewalDate.getUTCSeconds(),
+      renewalDate.getUTCMilliseconds(),
+    ),
+  );
+  const lastDay = new Date(
+    Date.UTC(firstOfTargetMonth.getUTCFullYear(), firstOfTargetMonth.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  firstOfTargetMonth.setUTCDate(Math.min(renewalDate.getUTCDate(), lastDay));
+  return firstOfTargetMonth;
 }
 
 function licenseRenewalFingerprint(

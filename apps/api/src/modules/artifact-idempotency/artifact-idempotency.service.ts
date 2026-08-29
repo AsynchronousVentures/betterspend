@@ -79,6 +79,21 @@ export class ArtifactIdempotencyService {
 
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
+  /** Read-only compatibility probe for callers migrating pre-coordinator state. */
+  async operationExists(organizationId: string, idempotencyKey: string): Promise<boolean> {
+    const [operation] = await this.db
+      .select({ id: artifactOperations.id })
+      .from(artifactOperations)
+      .where(
+        and(
+          eq(artifactOperations.organizationId, organizationId),
+          eq(artifactOperations.idempotencyKey, idempotencyKey),
+        ),
+      )
+      .limit(1);
+    return Boolean(operation);
+  }
+
   /**
    * Run an artifact operation through the durable reserve/create/link flow.
    * Callers must supply an idempotent `link` implementation because this seam

@@ -5,6 +5,7 @@ import { messageOperationKey, MessagesService } from '../messages/messages.servi
 import {
   SoftwareLicensesService,
   type RenewalRef,
+  previousRenewalPeriodStart,
 } from '../software-licenses/software-licenses.service';
 import type { ArtifactOperationPlan, ArtifactReference } from './artifact-idempotency.service';
 
@@ -20,10 +21,14 @@ class RecordingArtifactCoordinator {
   readonly plans: Array<ArtifactOperationPlan<unknown>> = [];
   private readonly operations = new Map<
     string,
-    { fingerprint: string; artifact: ArtifactReference }
+    { fingerprint: string; artifact: ArtifactReference; completed: boolean }
   >();
   private readonly deliveries = new Set<string>();
   private nextOperationId = 1;
+
+  async operationExists(_organizationId: string, idempotencyKey: string) {
+    return this.operations.has(idempotencyKey);
+  }
 
   async execute<TResult>(plan: ArtifactOperationPlan<TResult>) {
     this.plans.push(plan as ArtifactOperationPlan<unknown>);
@@ -32,13 +37,16 @@ class RecordingArtifactCoordinator {
       if (previous.fingerprint !== plan.fingerprint) {
         throw new ConflictException('The idempotency key was reused for a different operation');
       }
-      return { value: await plan.load(previous.artifact), replayed: true, resumed: false };
+      if (previous.completed) {
+        return { value: await plan.load(previous.artifact), replayed: true, resumed: false };
+      }
     }
 
     const ownerIdempotencyKey = `artifact-operation:operation-${this.nextOperationId++}`;
-    const recovered = await plan.findExisting(ownerIdempotencyKey);
+    const recovered = previous?.artifact ?? (await plan.findExisting(ownerIdempotencyKey));
     const artifact = recovered ?? (await plan.create(ownerIdempotencyKey));
-    this.operations.set(plan.idempotencyKey, { fingerprint: plan.fingerprint, artifact });
+    const operation = previous ?? { fingerprint: plan.fingerprint, artifact, completed: false };
+    this.operations.set(plan.idempotencyKey, operation);
     const value = await plan.link(artifact);
     await plan.notify?.(value, {
       once: async (deliveryKey, deliver) => {
@@ -48,9 +56,21 @@ class RecordingArtifactCoordinator {
         this.deliveries.add(key);
       },
     });
+    operation.completed = true;
     return { value, replayed: false, resumed: Boolean(recovered) };
   }
 }
+
+test('renewal period boundaries clamp month-end and leap-day dates', () => {
+  assert.equal(
+    previousRenewalPeriodStart(new Date('2027-03-31T12:30:00.000Z'), 'monthly').toISOString(),
+    '2027-02-28T12:30:00.000Z',
+  );
+  assert.equal(
+    previousRenewalPeriodStart(new Date('2028-02-29T12:30:00.000Z'), 'annual').toISOString(),
+    '2027-02-28T12:30:00.000Z',
+  );
+});
 
 const license = {
   id: 'license-1',
@@ -130,6 +150,62 @@ test('license renewal retries use the same artifact operation and do not recreat
     coordinator.plans[0]?.idempotencyKey,
     'license-renewal:license-1:2027-01-01T00:00:00.000Z',
   );
+});
+
+test('linked license renewal resumes its durable operation after notification failure', async () => {
+  const coordinator = new RecordingArtifactCoordinator();
+  let createCalls = 0;
+  let notificationCalls = 0;
+  let linked = false;
+  let failNotification = true;
+  const renewalRef = {
+    action: 'renew' as const,
+    kind: 'requisition' as const,
+    id: 'requisition-1',
+    number: 'REQ-2027-0001',
+    at: '2026-08-29T00:00:00.000Z',
+  };
+  const service = new SoftwareLicensesService(
+    {} as never,
+    {
+      createIdempotent: async () => {
+        notificationCalls += 1;
+        if (failNotification) {
+          failNotification = false;
+          throw new Error('notification unavailable');
+        }
+      },
+    } as never,
+    {} as never,
+    {} as never,
+    coordinator as never,
+  );
+  const methods = service as unknown as {
+    findOne: () => Promise<typeof license>;
+    findRenewalArtifact: () => Promise<null>;
+    createRenewalRequisition: () => Promise<ArtifactReference>;
+    linkRenewalArtifact: () => Promise<typeof renewalRef>;
+  };
+  methods.findOne = async () => ({ ...license, renewalRefs: linked ? [renewalRef] : [] });
+  methods.findRenewalArtifact = async () => null;
+  methods.createRenewalRequisition = async () => {
+    createCalls += 1;
+    return { kind: 'requisition', id: renewalRef.id, number: renewalRef.number };
+  };
+  methods.linkRenewalArtifact = async () => {
+    linked = true;
+    return renewalRef;
+  };
+
+  await assert.rejects(
+    service.applyRenewalAction('license-1', 'org-1', 'user-1', 'renew'),
+    /notification unavailable/,
+  );
+  await service.applyRenewalAction('license-1', 'org-1', 'user-1', 'renew');
+
+  assert.equal(createCalls, 1);
+  assert.equal(notificationCalls, 2);
+  assert.equal(coordinator.plans.length, 2);
 });
 
 test('same-cycle competing renewal intents conflict before creating a second artifact', async () => {
