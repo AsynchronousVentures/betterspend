@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { createHash, randomUUID } from 'crypto';
@@ -10,6 +10,7 @@ import { DB_TOKEN } from '../../database/database.module';
 import { GlMappingsService } from './gl-mappings.service';
 import { OAuthService } from './oauth.service';
 import { QboClientService, QboConnectionRequiredError } from './qbo-client.service';
+import { XeroClientService, XeroConnectionRequiredError } from './xero-client.service';
 
 export type GlTargetSystem = 'qbo' | 'xero';
 
@@ -42,6 +43,8 @@ type SendOutcome =
   | { kind: 'pending'; reason: string }
   | { kind: 'synced'; externalId: string; connectionId: string };
 
+type XeroInvoiceResponse = { Invoices?: Array<{ InvoiceID?: string }> };
+
 function invoiceScopePredicate(scope: ResourceScope | undefined): SQL | undefined {
   if (!scope || scope.unrestricted) return undefined;
   if (scope.ownOnly) return sql`false`;
@@ -66,6 +69,7 @@ export class GlExportService {
     private readonly oauthService: OAuthService,
     private readonly qboClient: QboClientService,
     @InjectQueue('gl-export') private readonly glQueue: Queue,
+    @Optional() private readonly xeroClient?: XeroClientService,
   ) {}
 
   /** Enqueues the one shared path used by first attempts, queue retries, and manual retries. */
@@ -468,32 +472,50 @@ export class GlExportService {
     if (lineItems.length === 0)
       return { kind: 'pending', reason: 'No mapped Xero lines are available' };
 
-    const response = await axios.post<{ Invoices?: Array<{ InvoiceID?: string }> }>(
-      'https://api.xero.com/api.xro/2.0/Invoices',
-      {
-        Invoices: [
-          {
-            Type: 'ACCPAY',
-            Contact: { Name: payload.vendorName },
-            Date: payload.invoiceDate.split('T')[0],
-            DueDate: payload.dueDate?.split('T')[0],
-            InvoiceNumber: payload.invoiceNumber,
-            CurrencyCode: payload.currency,
-            LineItems: lineItems,
-            Status: 'AUTHORISED',
-          },
-        ],
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${tokens.accessToken}`,
-          'xero-tenant-id': tokens.tenantId,
-          'Idempotency-Key': requestId,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
+    const requestData = {
+      Invoices: [
+        {
+          Type: 'ACCPAY',
+          Contact: { Name: payload.vendorName },
+          Date: payload.invoiceDate.split('T')[0],
+          DueDate: payload.dueDate?.split('T')[0],
+          InvoiceNumber: payload.invoiceNumber,
+          CurrencyCode: payload.currency,
+          LineItems: lineItems,
+          Status: 'AUTHORISED',
         },
-      },
-    );
+      ],
+    };
+    let response: { data: XeroInvoiceResponse };
+    try {
+      response = this.xeroClient
+        ? await this.xeroClient.request<XeroInvoiceResponse>({
+            organizationId,
+            method: 'POST',
+            path: 'Invoices',
+            data: requestData,
+            idempotencyKey: requestId,
+            priority: 'background',
+          })
+        : await axios.post<XeroInvoiceResponse>(
+            'https://api.xero.com/api.xro/2.0/Invoices',
+            requestData,
+            {
+              headers: {
+                Authorization: `Bearer ${tokens.accessToken}`,
+                'xero-tenant-id': tokens.tenantId,
+                'Idempotency-Key': requestId,
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+              },
+            },
+          );
+    } catch (error: unknown) {
+      if (error instanceof XeroConnectionRequiredError) {
+        return { kind: 'pending', reason: 'Xero is not connected' };
+      }
+      throw error;
+    }
     const externalId = response.data.Invoices?.[0]?.InvoiceID;
     if (!externalId) throw new Error('Xero did not return an Invoice ID');
     return { kind: 'synced', externalId, connectionId: tokens.connectionId };

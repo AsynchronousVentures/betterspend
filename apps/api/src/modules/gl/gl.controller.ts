@@ -222,12 +222,45 @@ export class GlController {
   ) {
     const webUrl = process.env.WEB_URL || 'http://localhost:3100';
     try {
-      await this.oauthService.completeXeroOAuth(state, code);
-      res.redirect(`${webUrl}/addons?connected=xero`);
+      const result = await this.oauthService.completeXeroOAuth(state, code);
+      res.redirect(
+        `${webUrl}/addons?connected=xero&xeroGrant=${encodeURIComponent(result.grantId)}`,
+      );
     } catch (err) {
       const message = encodeURIComponent(String(err));
       res.redirect(`${webUrl}/addons?error=xero&message=${message}`);
     }
+  }
+
+  @Get('oauth/xero/connections')
+  @Permissions('reports:export')
+  @ApiOperation({ summary: 'List Xero tenants available to the current OAuth grant' })
+  @ApiQuery({ name: 'grantId', required: true })
+  getXeroConnections(
+    @Query('grantId') grantId: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+    @CurrentSessionId() sessionId?: string,
+  ) {
+    return this.oauthService.getXeroPendingTenants(grantId, orgId, userId, sessionId);
+  }
+
+  @Post('oauth/xero/connections')
+  @Permissions('reports:export')
+  @ApiOperation({ summary: 'Select the Xero tenant for the current organization' })
+  selectXeroConnection(
+    @Body() body: { grantId: string; tenantId: string },
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+    @CurrentSessionId() sessionId?: string,
+  ) {
+    return this.oauthService.selectXeroTenant(
+      body.grantId,
+      body.tenantId,
+      orgId,
+      userId,
+      sessionId,
+    );
   }
 
   @Delete('oauth/xero')

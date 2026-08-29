@@ -11,6 +11,20 @@ export type OAuthStateBinding = {
   sessionId: string;
 };
 
+export type XeroPendingGrant = {
+  binding: OAuthStateBinding;
+  accessTokenEncrypted: string;
+  refreshTokenEncrypted: string;
+  accessExpiresAt: string;
+  scopes: string;
+  tenants: readonly XeroPendingTenant[];
+};
+
+export type XeroPendingTenant = {
+  tenantId: string;
+  tenantName: string | null;
+};
+
 @Injectable()
 export class OAuthRedisService implements OnModuleDestroy {
   private readonly redis: Redis;
@@ -61,6 +75,39 @@ export class OAuthRedisService implements OnModuleDestroy {
     } catch {
       return null;
     }
+  }
+
+  /** Stores an exchanged Xero grant until the authenticated user picks a tenant. */
+  async createXeroPendingGrant(grant: XeroPendingGrant): Promise<string> {
+    const grantId = randomBytes(32).toString('base64url');
+    const result = await this.redis.set(
+      this.pendingGrantKey(grantId),
+      JSON.stringify(grant),
+      'EX',
+      10 * 60,
+      'NX',
+    );
+    if (result !== 'OK') throw new ServiceUnavailableException('Could not create Xero grant');
+    return grantId;
+  }
+
+  async getXeroPendingGrant(grantId: string): Promise<XeroPendingGrant | null> {
+    if (!grantId) return null;
+    const serialized = await this.redis.get(this.pendingGrantKey(grantId));
+    if (typeof serialized !== 'string') return null;
+    return parseXeroPendingGrant(serialized);
+  }
+
+  /** Consumes a pending grant atomically so a tenant can only be selected once. */
+  async consumeXeroPendingGrant(grantId: string): Promise<XeroPendingGrant | null> {
+    if (!grantId) return null;
+    const serialized = await this.redis.eval(
+      "local value = redis.call('GET', KEYS[1]); if value then redis.call('DEL', KEYS[1]); end; return value",
+      1,
+      this.pendingGrantKey(grantId),
+    );
+    if (typeof serialized !== 'string') return null;
+    return parseXeroPendingGrant(serialized);
   }
 
   /** Serializes token rotation. Waiters re-read the connection inside the callback. */
@@ -123,4 +170,53 @@ export class OAuthRedisService implements OnModuleDestroy {
   private stateKey(state: string): string {
     return `oauth:state:${state}`;
   }
+
+  private pendingGrantKey(grantId: string): string {
+    return `oauth:xero-grant:${grantId}`;
+  }
+}
+
+function parseXeroPendingGrant(serialized: string): XeroPendingGrant | null {
+  try {
+    const parsed = JSON.parse(serialized) as Partial<XeroPendingGrant>;
+    if (!parsed.binding || !isOAuthStateBinding(parsed.binding)) return null;
+    if (
+      typeof parsed.accessTokenEncrypted !== 'string' ||
+      parsed.accessTokenEncrypted.length === 0 ||
+      typeof parsed.refreshTokenEncrypted !== 'string' ||
+      parsed.refreshTokenEncrypted.length === 0 ||
+      typeof parsed.accessExpiresAt !== 'string' ||
+      !Number.isFinite(Date.parse(parsed.accessExpiresAt)) ||
+      typeof parsed.scopes !== 'string' ||
+      parsed.scopes.length === 0 ||
+      !Array.isArray(parsed.tenants)
+    ) {
+      return null;
+    }
+    const tenants = parsed.tenants.filter(isXeroPendingTenant);
+    if (tenants.length !== parsed.tenants.length || tenants.length === 0) return null;
+    return { ...parsed, binding: parsed.binding, tenants } as XeroPendingGrant;
+  } catch {
+    return null;
+  }
+}
+
+function isOAuthStateBinding(value: unknown): value is OAuthStateBinding {
+  if (!value || typeof value !== 'object') return false;
+  const binding = value as Partial<OAuthStateBinding>;
+  return (
+    (binding.provider === 'qbo' || binding.provider === 'xero') &&
+    typeof binding.organizationId === 'string' &&
+    typeof binding.userId === 'string' &&
+    typeof binding.sessionId === 'string'
+  );
+}
+
+function isXeroPendingTenant(value: unknown): value is XeroPendingTenant {
+  if (!value || typeof value !== 'object') return false;
+  const tenant = value as Partial<XeroPendingTenant>;
+  return (
+    typeof tenant.tenantId === 'string' &&
+    (tenant.tenantName === null || typeof tenant.tenantName === 'string')
+  );
 }
