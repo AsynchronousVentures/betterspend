@@ -1,9 +1,11 @@
-import { Controller, Post, Get, Param, Body, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { PunchoutService } from './punchout.service';
 import type { PunchOutSetupRequest, PunchOutOrderMessage } from './cxml.types';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
+import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { Public } from '../../common/decorators/public.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { OperationalPermissions } from '../../common/decorators/operational-permissions.decorator';
 import { CurrentAccess } from '../auth/current-access.decorator';
 import type { AccessPolicy } from '../auth/access-policy';
@@ -12,6 +14,43 @@ import type { AccessPolicy } from '../auth/access-policy';
 @Controller('punchout')
 export class PunchoutController {
   constructor(private readonly punchoutService: PunchoutService) {}
+
+  @Get('vendors/:vendorId/config')
+  @Permissions('vendors:view')
+  @ApiOperation({ summary: 'Get masked PunchOut configuration for a vendor' })
+  getConfig(
+    @Param('vendorId') vendorId: string,
+    @CurrentOrgId() organizationId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.punchoutService.getConfig(vendorId, organizationId, access);
+  }
+
+  @Put('vendors/:vendorId/config')
+  @Permissions('vendors:edit')
+  @ApiOperation({ summary: 'Create or update PunchOut configuration for a vendor' })
+  updateConfig(
+    @Param('vendorId') vendorId: string,
+    @Body() body: unknown,
+    @CurrentOrgId() organizationId: string,
+    @CurrentUserId() userId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.punchoutService.updateConfig(vendorId, organizationId, userId, body, access);
+  }
+
+  @Patch('vendors/:vendorId/config')
+  @Permissions('vendors:edit')
+  @ApiOperation({ summary: 'Partially update PunchOut configuration for a vendor' })
+  patchConfig(
+    @Param('vendorId') vendorId: string,
+    @Body() body: unknown,
+    @CurrentOrgId() organizationId: string,
+    @CurrentUserId() userId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.punchoutService.updateConfig(vendorId, organizationId, userId, body, access);
+  }
 
   /**
    * POST /punchout/vendors/:vendorId/setup

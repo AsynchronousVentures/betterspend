@@ -16,6 +16,7 @@ import type { AccessPolicy } from './auth/access-policy';
 import type { AuditService } from './audit/audit.service';
 import type { DocumentsService } from './documents/documents.service';
 import type { NotificationsService } from './notifications/notifications.service';
+import type { CredentialCryptoService } from './ai-providers/credential-crypto.service';
 import type { EntitiesService } from './entities/entities.service';
 import type { SettingsService } from './settings/settings.service';
 import type { RequisitionsService } from './requisitions/requisitions.service';
@@ -478,7 +479,12 @@ describe('supplier operational authorization regressions', () => {
         },
       },
     } as unknown as Db;
-    const service = new PunchoutService(db);
+    const service = new PunchoutService(
+      db,
+      { encrypt: (value: string) => value } as CredentialCryptoService,
+      { createIdempotent: async () => undefined } as unknown as NotificationsService,
+      { log: async () => undefined } as unknown as AuditService,
+    );
 
     await service.handleSetupRequest(
       'vendor-1',

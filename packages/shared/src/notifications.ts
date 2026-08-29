@@ -5,6 +5,7 @@ export const NOTIFICATION_TYPE_DEFINITIONS = [
   { value: 'invoice_approved', label: 'Invoices approved' },
   { value: 'spend_guard', label: 'Spend guard alerts' },
   { value: 'software_license', label: 'Software license renewals' },
+  { value: 'punchout_auth_failed', label: 'PunchOut connection failures' },
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPE_DEFINITIONS)[number]['value'];

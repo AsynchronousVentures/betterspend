@@ -343,7 +343,7 @@ export class GlExportService {
     const invoice = await this.db.query.invoices.findFirst({
       where: (row, { and: andFn, eq: eqFn }) =>
         andFn(eqFn(row.id, invoiceId), eqFn(row.organizationId, organizationId)),
-      with: { vendor: true, lines: true },
+      with: { vendor: { columns: { punchoutConfig: false } }, lines: true },
     });
     if (!invoice) throw new BadRequestException(`Invoice ${invoiceId} not found`);
 

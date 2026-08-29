@@ -25,20 +25,23 @@ export class VendorsService {
 
   async findAll(organizationId: string, entityId?: string, access?: AccessPolicy) {
     const scope = access?.scopeFor('vendor', 'vendors:view');
-    return this.db.query.vendors.findMany({
-      where: (v, { and, eq, isNull, or }) =>
-        and(
-          eq(v.organizationId, organizationId),
-          entityId ? or(eq(v.entityId, entityId), isNull(v.entityId)) : undefined,
-          scope && !scope.unrestricted
-            ? scope.entityIds.length > 0
-              ? inArray(v.entityId, scope.entityIds)
-              : sql`false`
-            : undefined,
-        ),
-      orderBy: (v, { asc }) => asc(v.name),
-      with: { entity: true },
-    });
+    return this.db.query.vendors
+      .findMany({
+        columns: { punchoutConfig: false },
+        where: (v, { and, eq, isNull, or }) =>
+          and(
+            eq(v.organizationId, organizationId),
+            entityId ? or(eq(v.entityId, entityId), isNull(v.entityId)) : undefined,
+            scope && !scope.unrestricted
+              ? scope.entityIds.length > 0
+                ? inArray(v.entityId, scope.entityIds)
+                : sql`false`
+              : undefined,
+          ),
+        orderBy: (v, { asc }) => asc(v.name),
+        with: { entity: true },
+      })
+      .then((rows) => rows.map(withoutPunchoutConfig));
   }
 
   async findOne(
@@ -49,6 +52,7 @@ export class VendorsService {
   ) {
     const scope = access?.scopeFor('vendor', permission);
     const vendor = await this.db.query.vendors.findFirst({
+      columns: { punchoutConfig: false },
       where: (v, { and, eq }) =>
         and(
           eq(v.id, id),
@@ -63,7 +67,7 @@ export class VendorsService {
     });
 
     if (!vendor) throw new NotFoundException(`Vendor ${id} not found`);
-    return vendor;
+    return withoutPunchoutConfig(vendor);
   }
 
   private defaultQuestionnaireDefinition() {
@@ -139,7 +143,7 @@ export class VendorsService {
     this.assertEntityScope(access, 'vendors:create', data.entityId);
     await this.entitiesService.assertBelongsToOrg(data.organizationId, data.entityId);
     const [vendor] = await this.db.insert(vendors).values(data).returning();
-    return vendor;
+    return vendor ? withoutPunchoutConfig(vendor) : vendor;
   }
 
   async update(
@@ -166,7 +170,7 @@ export class VendorsService {
       .returning();
 
     if (!vendor) throw new NotFoundException(`Vendor ${id} not found`);
-    return vendor;
+    return withoutPunchoutConfig(vendor);
   }
 
   async listOnboardingQuestionnaires(organizationId: string, access?: AccessPolicy) {
@@ -241,7 +245,10 @@ export class VendorsService {
             record.vendorId,
           ),
         ),
-      with: { vendor: true, questionnaire: true },
+      with: {
+        vendor: { columns: { punchoutConfig: false } },
+        questionnaire: true,
+      },
       orderBy: (record, { desc }) => desc(record.submittedAt),
     });
 
@@ -417,7 +424,7 @@ export class VendorsService {
         )
         .returning();
       if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
-      return vendor;
+      return withoutPunchoutConfig(vendor);
     });
   }
 
@@ -463,12 +470,13 @@ export class VendorsService {
       )
       .returning();
     if (!vendor) throw new NotFoundException(`Vendor ${id} not found`);
-    return vendor;
+    return withoutPunchoutConfig(vendor);
   }
 
   async getDiversitySummary(organizationId: string, access?: AccessPolicy) {
     const scope = access?.scopeFor('vendor', 'vendors:view');
     const allVendors = await this.db.query.vendors.findMany({
+      columns: { punchoutConfig: false },
       where: (vendor, { and, eq }) =>
         and(
           eq(vendor.organizationId, organizationId),
@@ -592,4 +600,12 @@ export class VendorsService {
     this.assertEntityScope(access, permission, vendor.entityId);
     return vendor;
   }
+}
+
+/** Keep encrypted PunchOut credentials inside the configuration boundary. */
+function withoutPunchoutConfig<T extends object>(vendor: T) {
+  const { punchoutConfig: _punchoutConfig, ...safeVendor } = vendor as T & {
+    punchoutConfig?: unknown;
+  };
+  return safeVendor;
 }

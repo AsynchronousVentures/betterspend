@@ -73,7 +73,7 @@ export class SoftwareLicensesService {
           ),
         ),
       with: {
-        vendor: true,
+        vendor: { columns: { punchoutConfig: false } },
         contract: true,
         owner: true,
       },
@@ -102,7 +102,7 @@ export class SoftwareLicensesService {
           ),
         ),
       with: {
-        vendor: true,
+        vendor: { columns: { punchoutConfig: false } },
         contract: true,
         owner: true,
       },
@@ -188,7 +188,7 @@ export class SoftwareLicensesService {
           ),
         ),
       with: {
-        vendor: true,
+        vendor: { columns: { punchoutConfig: false } },
         owner: true,
       },
       orderBy: (sl, { asc }) => asc(sl.renewalDate),

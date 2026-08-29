@@ -321,7 +321,11 @@ export class PurchaseOrdersService {
         if (filters?.entityId) conditions.push(eq(po.entityId, filters.entityId));
         return and(...conditions);
       },
-      with: { vendor: true, lines: { with: { taxCode: true } }, entity: true },
+      with: {
+        vendor: { columns: { punchoutConfig: false } },
+        lines: { with: { taxCode: true } },
+        entity: true,
+      },
       orderBy: (po, { desc }) => desc(po.createdAt),
     });
   }
@@ -350,7 +354,7 @@ export class PurchaseOrdersService {
           ),
         ),
       with: {
-        vendor: true,
+        vendor: { columns: { punchoutConfig: false } },
         lines: {
           with: {
             taxCode: true,

@@ -301,7 +301,11 @@ export class InvoicesService {
             invoiceScopePredicates(organizationId),
           ),
         ),
-      with: { vendor: true, purchaseOrder: true, entity: true },
+      with: {
+        vendor: { columns: { punchoutConfig: false } },
+        purchaseOrder: true,
+        entity: true,
+      },
       orderBy: (i, { desc }) => desc(i.createdAt),
     });
   }
@@ -314,7 +318,7 @@ export class InvoicesService {
     const invoice = await executor.query.invoices.findFirst({
       where: (i, { and, eq }) => and(eq(i.id, id), eq(i.organizationId, organizationId)),
       with: {
-        vendor: true,
+        vendor: { columns: { punchoutConfig: false } },
         entity: true,
         purchaseOrder: { with: { lines: true } },
         lines: { with: { matchResults: true, taxCode: true } },
@@ -348,7 +352,7 @@ export class InvoicesService {
           ),
         ),
       with: {
-        vendor: true,
+        vendor: { columns: { punchoutConfig: false } },
         entity: true,
         purchaseOrder: {
           with: {
@@ -1323,7 +1327,7 @@ export class InvoicesService {
           ne(i.status, 'paid'),
           invoiceReportScopePredicate(access, organizationId),
         ),
-      with: { vendor: true },
+      with: { vendor: { columns: { punchoutConfig: false } } },
     });
 
     const emptyBucket = (): AgingBucket => ({ count: 0, totalAmount: '0.00' });
@@ -1430,7 +1434,7 @@ export class InvoicesService {
           ne(i.status, 'paid'),
           invoiceReportScopePredicate(access, organizationId),
         ),
-      with: { vendor: true },
+      with: { vendor: { columns: { punchoutConfig: false } } },
     });
 
     return unpaidInvoices.filter((inv) => {

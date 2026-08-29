@@ -78,7 +78,7 @@ export class CatalogService {
         if (vendorScope) conditions.push(vendorScope);
         return and(...conditions);
       },
-      with: { vendor: true },
+      with: { vendor: { columns: { punchoutConfig: false } } },
       orderBy: (c, { asc }) => [asc(c.category), asc(c.name)],
     });
   }
@@ -101,7 +101,7 @@ export class CatalogService {
             c.vendorId,
           ),
         ),
-      with: { vendor: true },
+      with: { vendor: { columns: { punchoutConfig: false } } },
       orderBy: (c, { asc }) => asc(c.name),
       limit: 20,
     });
@@ -121,7 +121,7 @@ export class CatalogService {
           eq(c.organizationId, organizationId),
           scopedVendorPredicate(this.db, organizationId, access, 'catalog', permission, c.vendorId),
         ),
-      with: { vendor: true },
+      with: { vendor: { columns: { punchoutConfig: false } } },
     });
     if (!item) throw new NotFoundException(`Catalog item ${id} not found`);
     const proposalVendorScope = scopedVendorPredicate(
@@ -140,7 +140,7 @@ export class CatalogService {
           proposalVendorScope,
         ),
       with: {
-        vendor: true,
+        vendor: { columns: { punchoutConfig: false } },
         reviewer: true,
       },
       orderBy: (proposal, { desc }) => desc(proposal.submittedAt),
@@ -323,8 +323,8 @@ export class CatalogService {
           ),
         ),
       with: {
-        item: { with: { vendor: true } },
-        vendor: true,
+        item: { with: { vendor: { columns: { punchoutConfig: false } } } },
+        vendor: { columns: { punchoutConfig: false } },
         reviewer: true,
       },
       orderBy: (p, { desc }) => desc(p.submittedAt),
@@ -422,8 +422,8 @@ export class CatalogService {
           ),
         ),
       with: {
-        item: { with: { vendor: true } },
-        vendor: true,
+        item: { with: { vendor: { columns: { punchoutConfig: false } } } },
+        vendor: { columns: { punchoutConfig: false } },
         reviewer: true,
       },
     });

@@ -424,17 +424,18 @@ export class IntakeConciergeService {
         this.loadPolicies(organizationId),
         this.db.query.catalogItems.findMany({
           where: (item, { and, eq }) => and(eq(item.organizationId, organizationId), eq(item.isActive, true)),
-          with: { vendor: true },
+          with: { vendor: { columns: { punchoutConfig: false } } },
           limit: 100,
         }),
         this.db.query.vendors.findMany({
           where: (vendor, { eq }) => eq(vendor.organizationId, organizationId),
+          columns: { punchoutConfig: false },
           orderBy: (vendor, { asc }) => asc(vendor.name),
           limit: 100,
         }),
         this.db.query.contracts.findMany({
           where: (contract, { and, eq }) => and(eq(contract.organizationId, organizationId), eq(contract.status, 'active')),
-          with: { vendor: true, lines: true },
+          with: { vendor: { columns: { punchoutConfig: false } }, lines: true },
           limit: 75,
         }),
         this.db.query.budgets.findMany({
@@ -450,7 +451,7 @@ export class IntakeConciergeService {
         }),
         this.db.query.softwareLicenses.findMany({
           where: (license, { and, eq }) => and(eq(license.organizationId, organizationId), eq(license.status, 'active')),
-          with: { vendor: true, contract: true },
+          with: { vendor: { columns: { punchoutConfig: false } }, contract: true },
           limit: 75,
         }),
       ]);

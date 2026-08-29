@@ -86,7 +86,7 @@ export class ContractsService {
         return and(...conditions);
       },
       with: {
-        vendor: true,
+        vendor: { columns: { punchoutConfig: false } },
         owner: true,
       },
       orderBy: (c, { desc }) => desc(c.createdAt),
@@ -115,7 +115,7 @@ export class ContractsService {
           ),
         ),
       with: {
-        vendor: true,
+        vendor: { columns: { punchoutConfig: false } },
         owner: true,
         createdByUser: true,
         lines: { orderBy: (l, { asc }) => asc(l.lineNumber) },
@@ -350,7 +350,7 @@ export class ContractsService {
             c.vendorId,
           ),
         ),
-      with: { vendor: true },
+      with: { vendor: { columns: { punchoutConfig: false } } },
       orderBy: (c, { asc }) => asc(c.endDate),
     });
   }

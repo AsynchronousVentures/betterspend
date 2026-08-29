@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { notifications } from '@betterspend/db';
-import type { Db } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
 import { NotificationsService } from './notifications.service';
 
 test('idempotent notification retries retain one internal notification', async () => {
@@ -55,6 +55,80 @@ test('idempotent notification retries retain one internal notification', async (
 
   assert.equal(rows.length, 1);
   assert.equal(rows[0]?.idempotencyKey, 'artifact-stable@betterspend.local');
+});
+
+test('transactional idempotent notification retries use the transaction for lookup', async () => {
+  const rows: Array<Record<string, unknown>> = [];
+  let pending: Record<string, unknown> = {};
+  let transactionInsertCalls = 0;
+  let transactionQueryCalls = 0;
+  const db = {
+    insert: () => ({
+      values: (values: Record<string, unknown>) => {
+        pending = values;
+        return {
+          onConflictDoNothing: () => ({
+            returning: async () => {
+              if (
+                rows.some(
+                  (row) =>
+                    row.organizationId === pending.organizationId &&
+                    row.idempotencyKey === pending.idempotencyKey,
+                )
+              )
+                return [];
+              const row = { id: 'notification-1', ...pending };
+              rows.push(row);
+              return [row];
+            },
+          }),
+        };
+      },
+    }),
+    query: {
+      notifications: {
+        findFirst: async () => rows[0],
+      },
+    },
+  } as unknown as Db;
+  const transaction = {
+    insert: () => {
+      transactionInsertCalls += 1;
+      return (db as unknown as { insert: () => unknown }).insert();
+    },
+    query: {
+      notifications: {
+        findFirst: async () => {
+          transactionQueryCalls += 1;
+          return rows[0];
+        },
+      },
+    },
+  } as unknown as DbTransaction;
+  const service = new NotificationsService(db);
+
+  await service.createIdempotent(
+    'transactional-key',
+    'org-1',
+    'user-1',
+    'new_message',
+    'New message',
+  );
+  await service.createIdempotent(
+    'transactional-key',
+    'org-1',
+    'user-1',
+    'new_message',
+    'New message',
+    undefined,
+    undefined,
+    undefined,
+    transaction,
+  );
+
+  assert.equal(rows.length, 1);
+  assert.equal(transactionInsertCalls, 1);
+  assert.equal(transactionQueryCalls, 1);
 });
 
 test('the same notification identity is independent across organizations', async () => {
