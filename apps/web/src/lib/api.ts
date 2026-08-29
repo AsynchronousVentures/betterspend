@@ -9,6 +9,7 @@ import {
   workflowDefinitionVersionRecordSchema,
   workflowDraftLeaseStatusSchema,
   workflowAssistantProposalResponseSchema,
+  xeroTenantSchema,
   type CreateRequisitionInput,
   type CreateWorkflowDefinitionInput,
   type MessageThreadType,
@@ -18,6 +19,7 @@ import {
   type WorkflowDraft,
   type WorkflowDefinitionRecord,
   type WorkflowDefinitionVersionRecord,
+  type XeroTenant,
   vendorScreeningResultSchema,
   vendorScreeningStatusSchema,
 } from '@betterspend/shared';
@@ -55,6 +57,7 @@ import type { ReceivingDetail, ReceivingListItem } from './receiving';
 export type {
   WorkflowDefinitionRecord,
   WorkflowDefinitionVersionRecord,
+  XeroTenant,
 } from '@betterspend/shared';
 
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
@@ -294,11 +297,6 @@ export interface AiProviderStatus {
   modelPlaceholder: string;
   connectedAt?: string;
   updatedAt?: string;
-}
-
-export interface XeroTenant {
-  tenantId: string;
-  tenantName: string | null;
 }
 
 export interface AiProvidersStatusResponse {
@@ -809,7 +807,10 @@ export const api = {
     oauthDisconnect: (provider: 'qbo' | 'xero') =>
       apiFetch<void>(`/gl/oauth/${provider}`, { method: 'DELETE' }),
     xeroConnections: (grantId: string) =>
-      apiFetch<XeroTenant[]>(`/gl/oauth/xero/connections?grantId=${encodeURIComponent(grantId)}`),
+      apiFetchParsed(
+        xeroTenantSchema.array(),
+        `/gl/oauth/xero/connections?grantId=${encodeURIComponent(grantId)}`,
+      ),
     selectXeroConnection: (data: { grantId: string; tenantId: string }) =>
       apiFetch<void>('/gl/oauth/xero/connections', {
         method: 'POST',

@@ -105,6 +105,12 @@ class FailingAfterSaveXeroOAuthRedis extends FakeXeroOAuthRedis {
   }
 }
 
+class ConcurrentXeroOAuthRedis extends FakeXeroOAuthRedis {
+  async withLock<T>(_key: string, callback: () => Promise<T>): Promise<T> {
+    return callback();
+  }
+}
+
 function insertCapturingDb(captured: Array<Record<string, unknown>>): Db {
   const db = {} as { insert: jest.Mock; transaction: jest.Mock };
   db.insert = jest.fn(() => ({
@@ -705,6 +711,127 @@ describe('OAuthService', () => {
         userId: null,
         entityType: 'integration_connection',
         entityId: connection.id,
+        action: 'token_refreshed',
+        metadata: { actor: 'system', provider: 'xero', reason: 'token_refresh' },
+      }),
+    ]);
+  });
+
+  it('keeps a concurrent Xero refresh usable during the grace window', async () => {
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
+      provider: 'xero',
+      realmId: 'tenant-1',
+      realmName: 'Tenant 1',
+      accessTokenEncrypted: crypto.encrypt('expired-access'),
+      refreshTokenEncrypted: crypto.encrypt('old-refresh'),
+      accessExpiresAt: new Date(0),
+      status: 'active',
+      scopes: XERO_SCOPES.join(' '),
+      connectedByUserId: userId,
+      lastSyncAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const audits: Array<Record<string, unknown>> = [];
+    const postBodies: unknown[] = [];
+    let resolveFirstPost!: (response: {
+      data: { access_token: string; refresh_token: string; expires_in: number };
+    }) => void;
+    const firstPost = new Promise<{
+      data: { access_token: string; refresh_token: string; expires_in: number };
+    }>((resolve) => {
+      resolveFirstPost = resolve;
+    });
+    let rejectSecondPost!: (error: unknown) => void;
+    const secondPost = new Promise<never>((_resolve, reject) => {
+      rejectSecondPost = reject;
+    });
+    let resolveFirstPostStarted!: () => void;
+    const firstPostStarted = new Promise<void>((resolve) => {
+      resolveFirstPostStarted = resolve;
+    });
+    let resolveSecondPostStarted!: () => void;
+    const secondPostStarted = new Promise<void>((resolve) => {
+      resolveSecondPostStarted = resolve;
+    });
+    let resolveFirstPersisted!: () => void;
+    const firstPersisted = new Promise<void>((resolve) => {
+      resolveFirstPersisted = resolve;
+    });
+
+    mockedAxios.isAxiosError.mockReturnValue(true);
+    mockedAxios.post
+      .mockImplementationOnce(async (_url, body) => {
+        postBodies.push(body);
+        resolveFirstPostStarted();
+        return firstPost;
+      })
+      .mockImplementationOnce(async (_url, body) => {
+        postBodies.push(body);
+        resolveSecondPostStarted();
+        return secondPost;
+      });
+    mockedAxios.get.mockResolvedValue({ data: [{ tenantId: 'tenant-1', tenantName: 'Tenant 1' }] });
+
+    const transaction = {
+      update: jest.fn(() => ({
+        set: jest.fn((values: Record<string, unknown>) => {
+          Object.assign(connection, values);
+          resolveFirstPersisted();
+          return {
+            where: jest.fn(() => ({
+              returning: jest.fn(async () => [{ id: connection.id }]),
+            })),
+          };
+        }),
+      })),
+      insert: jest.fn(() => ({
+        values: jest.fn(async (values: Record<string, unknown>) => {
+          audits.push(values);
+        }),
+      })),
+    };
+    const db = {
+      query: {
+        integrationConnections: {
+          findFirst: jest.fn(async () => ({ ...connection })),
+        },
+      },
+      transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback(transaction),
+      ),
+    } as unknown as Db;
+    const service = new OAuthService(db, crypto, new ConcurrentXeroOAuthRedis() as never);
+
+    const firstResult = service.getXeroToken(organizationId);
+    await firstPostStarted;
+    const secondResult = service.getXeroToken(organizationId);
+    await secondPostStarted;
+
+    resolveFirstPost({
+      data: { access_token: 'rotated-access', refresh_token: 'rotated-refresh', expires_in: 1800 },
+    });
+    await firstPersisted;
+    rejectSecondPost({ response: { data: { error: 'invalid_grant' } } });
+
+    const expectedToken = {
+      accessToken: 'rotated-access',
+      tenantId: 'tenant-1',
+      connectionId: connection.id,
+    };
+    await expect(firstResult).resolves.toEqual(expectedToken);
+    await expect(secondResult).resolves.toEqual(expectedToken);
+    expect(connection.status).toBe('active');
+    expect(mockedAxios.post).toHaveBeenCalledTimes(2);
+    expect(postBodies).toHaveLength(2);
+    expect(postBodies.every((body) => String(body).includes('refresh_token=old-refresh'))).toBe(
+      true,
+    );
+    expect(transaction.update).toHaveBeenCalledTimes(1);
+    expect(audits).toEqual([
+      expect.objectContaining({
         action: 'token_refreshed',
         metadata: { actor: 'system', provider: 'xero', reason: 'token_refresh' },
       }),

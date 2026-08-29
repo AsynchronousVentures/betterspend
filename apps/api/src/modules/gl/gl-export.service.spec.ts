@@ -70,6 +70,7 @@ describe('GlExportService', () => {
       oauth as never,
       qboClient as never,
       queue as never,
+      {} as never,
     );
 
     await service.processExport(
@@ -119,6 +120,7 @@ describe('GlExportService', () => {
       {} as never,
       {} as never,
       { add: jest.fn() } as never,
+      {} as never,
     );
 
     await expect(
@@ -155,7 +157,14 @@ describe('GlExportService', () => {
         },
       },
     } as unknown as Db;
-    const service = new GlExportService(db, {} as never, {} as never, {} as never, {} as never);
+    const service = new GlExportService(
+      db,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
 
     await service.findJobsForInvoice('invoice-1', 'organization-1');
 
@@ -178,7 +187,14 @@ describe('GlExportService', () => {
         },
       },
     } as unknown as Db;
-    const service = new GlExportService(db, {} as never, {} as never, {} as never, {} as never);
+    const service = new GlExportService(
+      db,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
 
     const [record] = await service.findJobsForInvoice('invoice-1', 'organization-1');
 
@@ -190,7 +206,14 @@ describe('GlExportService', () => {
     const db = {
       execute: jest.fn(async () => []),
     } as unknown as Db;
-    const service = new GlExportService(db, {} as never, {} as never, {} as never, queue as never);
+    const service = new GlExportService(
+      db,
+      {} as never,
+      {} as never,
+      {} as never,
+      queue as never,
+      {} as never,
+    );
     const scope = {
       organizationId: 'organization-1',
       userId: 'user-1',
@@ -212,7 +235,14 @@ describe('GlExportService', () => {
     const execute = jest.fn(async (..._args: unknown[]) => []);
     const queue = { add: jest.fn() };
     const db = { execute } as unknown as Db;
-    const service = new GlExportService(db, {} as never, {} as never, {} as never, queue as never);
+    const service = new GlExportService(
+      db,
+      {} as never,
+      {} as never,
+      {} as never,
+      queue as never,
+      {} as never,
+    );
     const scope = {
       organizationId: 'organization-1',
       userId: 'user-1',
@@ -233,19 +263,28 @@ describe('GlExportService', () => {
 
   it('keeps scoped journal lists filtered in SQL without materializing invoice IDs', async () => {
     let predicate: unknown;
-    const findMany = jest.fn(async (options: {
-      where: (
-        record: typeof syncRecords,
-        operators: { and: typeof and; eq: typeof eq; or: typeof or },
-      ) => unknown;
-    }) => {
-      predicate = options.where(syncRecords, { and, eq, or });
-      return [];
-    });
+    const findMany = jest.fn(
+      async (options: {
+        where: (
+          record: typeof syncRecords,
+          operators: { and: typeof and; eq: typeof eq; or: typeof or },
+        ) => unknown;
+      }) => {
+        predicate = options.where(syncRecords, { and, eq, or });
+        return [];
+      },
+    );
     const db = {
       query: { syncRecords: { findMany } },
     } as unknown as Db;
-    const service = new GlExportService(db, {} as never, {} as never, {} as never, {} as never);
+    const service = new GlExportService(
+      db,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
     const scope = {
       organizationId: 'organization-1',
       userId: 'user-1',
@@ -275,7 +314,14 @@ describe('GlExportService', () => {
         })),
       })),
     } as unknown as Db;
-    const service = new GlExportService(db, {} as never, {} as never, {} as never, {} as never);
+    const service = new GlExportService(
+      db,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
 
     await (
       service as unknown as {
@@ -305,7 +351,14 @@ describe('GlExportService', () => {
         })),
       })),
     } as unknown as Db;
-    const service = new GlExportService(db, {} as never, {} as never, {} as never, {} as never);
+    const service = new GlExportService(
+      db,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
 
     await service.processExport('organization-1', 'invoice-1', 'qbo');
 

@@ -1,9 +1,8 @@
-import { BadRequestException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { createHash, randomUUID } from 'crypto';
 import { and, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
-import axios from 'axios';
 import { syncRecords, type Db } from '@betterspend/db';
 import type { ResourceScope } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
@@ -50,9 +49,7 @@ function invoiceScopePredicate(scope: ResourceScope | undefined): SQL | undefine
   if (scope.ownOnly) return sql`false`;
 
   const clauses: SQL[] = [
-    ...scope.departmentIds.map(
-      (id) => sql`r.department_id = ${id}`,
-    ),
+    ...scope.departmentIds.map((id) => sql`r.department_id = ${id}`),
     ...scope.projectIds.map((id) => sql`r.project_id = ${id}`),
     ...scope.entityIds.map((id) => sql`COALESCE(i.entity_id, po.entity_id) = ${id}`),
   ];
@@ -69,7 +66,7 @@ export class GlExportService {
     private readonly oauthService: OAuthService,
     private readonly qboClient: QboClientService,
     @InjectQueue('gl-export') private readonly glQueue: Queue,
-    @Optional() private readonly xeroClient?: XeroClientService,
+    private readonly xeroClient: XeroClientService,
   ) {}
 
   /** Enqueues the one shared path used by first attempts, queue retries, and manual retries. */
@@ -205,11 +202,7 @@ export class GlExportService {
     }
   }
 
-  async findJobsForInvoice(
-    invoiceId: string,
-    organizationId: string,
-    scope?: ResourceScope,
-  ) {
+  async findJobsForInvoice(invoiceId: string, organizationId: string, scope?: ResourceScope) {
     if (!(await this.assertInvoiceInScope(organizationId, invoiceId, scope, false))) return [];
     const records = await this.db.query.syncRecords.findMany({
       where: (record, { and: andFn, eq: eqFn, or: orFn }) =>
@@ -488,28 +481,14 @@ export class GlExportService {
     };
     let response: { data: XeroInvoiceResponse };
     try {
-      response = this.xeroClient
-        ? await this.xeroClient.request<XeroInvoiceResponse>({
-            organizationId,
-            method: 'POST',
-            path: 'Invoices',
-            data: requestData,
-            idempotencyKey: requestId,
-            priority: 'background',
-          })
-        : await axios.post<XeroInvoiceResponse>(
-            'https://api.xero.com/api.xro/2.0/Invoices',
-            requestData,
-            {
-              headers: {
-                Authorization: `Bearer ${tokens.accessToken}`,
-                'xero-tenant-id': tokens.tenantId,
-                'Idempotency-Key': requestId,
-                'Content-Type': 'application/json',
-                Accept: 'application/json',
-              },
-            },
-          );
+      response = await this.xeroClient.request<XeroInvoiceResponse>({
+        organizationId,
+        method: 'POST',
+        path: 'Invoices',
+        data: requestData,
+        idempotencyKey: requestId,
+        priority: 'background',
+      });
     } catch (error: unknown) {
       if (error instanceof XeroConnectionRequiredError) {
         return { kind: 'pending', reason: 'Xero is not connected' };
