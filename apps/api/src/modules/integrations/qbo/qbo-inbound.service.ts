@@ -400,12 +400,12 @@ export class QboInboundService implements OnModuleInit {
     }
 
     if (!isCatalogEntity(event.entityName) || isTaxEntity(event.entityName)) return;
-    const rows = await this.queryEntity(
-      connection.organizationId,
-      event.entityName,
-      `Id = '${escapeQboLiteral(event.entityId)}'`,
-    );
-    const entity = rows[0];
+    const response = await this.qboClient.request<QboObject>({
+      organizationId: connection.organizationId,
+      method: 'GET',
+      path: `${event.entityName.toLowerCase()}/${encodeURIComponent(event.entityId)}`,
+    });
+    const entity = extractResourceEntity(response.data, event.entityName);
     if (!entity) {
       await this.upsertMapping({
         organizationId: connection.organizationId,
@@ -721,6 +721,13 @@ function extractQueryRows(data: unknown, entityName: string): QboObject[] {
   return Array.isArray(rows) ? rows.filter(isRecord) : [];
 }
 
+function extractResourceEntity(data: unknown, entityName: string): QboObject | null {
+  if (!isRecord(data)) return null;
+  const resource = data[entityName];
+  if (isRecord(resource)) return resource;
+  return stringValue(data.Id) ? data : null;
+}
+
 function extractCdcEntries(data: unknown): CdcEntry[] {
   if (!isRecord(data)) return [];
   const responseItems = recordList(data.CDCResponse);
@@ -880,10 +887,6 @@ function firstString(payload: QboObject, keys: readonly string[]): string | null
     if (value) return value;
   }
   return null;
-}
-
-function escapeQboLiteral(value: string): string {
-  return value.replace(/'/g, "''");
 }
 
 function isRecord(value: unknown): value is QboObject {

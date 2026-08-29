@@ -206,6 +206,36 @@ describe('QboInboundService', () => {
     expect(harness.cdcQueue.add).not.toHaveBeenCalled();
   });
 
+  it('fetches webhook entities by an encoded resource ID instead of building query text', async () => {
+    const hostileId = "42' OR Id = '43";
+    const request = jest.fn(
+      async ({ path, query }: { path: string; query?: Record<string, unknown> }) => {
+        expect(path).toBe(`vendor/${encodeURIComponent(hostileId)}`);
+        expect(query).toBeUndefined();
+        return { data: { Vendor: { Id: hostileId, DisplayName: 'Acme' } } };
+      },
+    );
+    const harness = service({ request });
+
+    await harness.instance.processWebhookEvent({
+      realmId: 'realm-1',
+      entityName: 'Vendor',
+      entityId: hostileId,
+      operation: 'update',
+      payload: {},
+    });
+
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          externalEntity: 'Vendor',
+          externalId: hostileId,
+          isDeleted: false,
+        }),
+      ]),
+    );
+  });
+
   it('imports expense/AP accounts and keeps inactive vendors as catalog rows', async () => {
     const request = jest.fn(
       async ({ path, query }: { path: string; query?: Record<string, unknown> }) => {
