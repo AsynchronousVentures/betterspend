@@ -3,7 +3,7 @@ import nextCoreWebVitals from 'eslint-config-next/core-web-vitals';
 import nextTypescript from 'eslint-config-next/typescript';
 import tseslint from 'typescript-eslint';
 
-const webFiles = ['apps/web/**/*.{js,jsx,ts,tsx}'];
+const webFiles = ['apps/web/**/*.{js,jsx,mjs,ts,tsx,mts,cts}'];
 const scopeNextConfig = (config) => ('ignores' in config ? config : { ...config, files: webFiles });
 
 export default defineConfig([
