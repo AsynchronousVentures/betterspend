@@ -294,6 +294,44 @@ test('auto-disables after three failures, retains config, and notifies an admin 
   assert.equal(state.transactionExecutors.includes(audits[5]?.[7]), true);
 });
 
+test('does not auto-disable after three failures in an inactive environment', async () => {
+  const state = fakeDatabase(completeConfig(), true);
+  const notifications: Array<unknown[]> = [];
+  const audits: Array<unknown[]> = [];
+  const service = new PunchoutService(
+    state.db,
+    cryptoStub(),
+    {
+      createIdempotent: async (...args: unknown[]) => {
+        notifications.push(args);
+      },
+    } as unknown as NotificationsService,
+    auditStub(audits),
+  );
+
+  const failed = await service.recordAuthenticationFailure(
+    vendorId,
+    organizationId,
+    'production',
+  );
+  await service.recordAuthenticationFailure(vendorId, organizationId, 'production');
+  const stillEnabled = await service.recordAuthenticationFailure(
+    vendorId,
+    organizationId,
+    'production',
+  );
+
+  assert.equal(stillEnabled.enabled, true);
+  assert.equal(stillEnabled.activeEnvironment, 'test');
+  assert.equal(stillEnabled.environments.production.status, 'auth_failed');
+  assert.equal(stillEnabled.environments.production.consecutiveAuthFailures, 3);
+  assert.equal(failed.enabled, true);
+  assert.equal(state.getVendor().punchoutEnabled, true);
+  assert.equal(notifications.length, 0);
+  assert.equal(audits.length, 3);
+  assert.equal(audits.some((audit) => audit[4] === 'punchout_auto_disabled'), false);
+});
+
 test('rolls back a health mutation when its audit entry fails', async () => {
   const initialConfig = completeConfig();
   const state = fakeDatabase(initialConfig, true);

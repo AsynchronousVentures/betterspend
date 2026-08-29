@@ -179,7 +179,9 @@ export class PunchoutService {
           [parsedEnvironment]: nextEnvironment,
         },
       };
-      const shouldDisable = consecutiveAuthFailures >= PUNCHOUT_AUTH_FAILURE_THRESHOLD;
+      const shouldDisable =
+        parsedEnvironment === current.activeEnvironment &&
+        consecutiveAuthFailures >= PUNCHOUT_AUTH_FAILURE_THRESHOLD;
       const autoDisabled = shouldDisable && vendor.punchoutEnabled;
       const [updated] = await tx
         .update(vendors)
