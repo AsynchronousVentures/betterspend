@@ -428,6 +428,145 @@ describe('QboInboundService', () => {
     );
   });
 
+  it('audits a completed sync with the connection update in one transaction', async () => {
+    const harness = service({
+      request: jest.fn(async () => ({ data: { QueryResponse: { Vendor: [] } } })),
+    });
+
+    await harness.instance.syncNow('organization-1', ['Vendor']);
+
+    expect(harness.db.transaction).toHaveBeenCalled();
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          organizationId: 'organization-1',
+          entityType: 'integration_connection',
+          entityId: 'connection-1',
+          action: 'sync_completed',
+          changes: { lastSyncAt: expect.any(String) },
+          metadata: { actor: 'system', provider: 'qbo', source: 'sync' },
+        }),
+      ]),
+    );
+  });
+
+  it('classifies imported tax entities with their local mapping entities', async () => {
+    const request = jest.fn(async ({ query }: { query?: Record<string, unknown> }) => {
+      const statement = String(query?.query);
+      if (statement.includes('FROM TaxCode')) {
+        return { data: { QueryResponse: { TaxCode: [{ Id: 'tax-code-1', Name: 'Sales tax' }] } } };
+      }
+      if (statement.includes('FROM TaxRate')) {
+        return { data: { QueryResponse: { TaxRate: [{ Id: 'tax-rate-1', Name: 'State rate' }] } } };
+      }
+      return { data: { QueryResponse: {} } };
+    });
+    const harness = service({ request });
+
+    const result = await harness.instance.syncNow('organization-1', ['TaxCode', 'TaxRate']);
+
+    expect(result.imported).toBe(2);
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          externalEntity: 'TaxCode',
+          externalId: 'tax-code-1',
+          localEntity: 'tax_code',
+        }),
+        expect.objectContaining({
+          externalEntity: 'TaxRate',
+          externalId: 'tax-rate-1',
+          localEntity: 'tax_rate',
+        }),
+      ]),
+    );
+  });
+
+  it('deactivates an account that leaves the supported subset during a CDC sweep', async () => {
+    const harness = service({
+      mappings: [
+        {
+          id: 'mapping-1',
+          connectionId: 'connection-1',
+          externalId: 'account-1',
+          displayName: 'Travel',
+          syncToken: '3',
+          isActive: true,
+          isDeleted: false,
+          payload: { Id: 'account-1', Name: 'Travel', AccountType: 'Expense' },
+        },
+      ],
+      request: jest.fn(async () => ({
+        data: {
+          CDCResponse: [
+            {
+              QueryResponse: {
+                Account: [{ Id: 'account-1', Name: 'Cash', AccountType: 'Bank', SyncToken: '4' }],
+              },
+            },
+          ],
+        },
+      })),
+    });
+
+    const result = await harness.instance.runCdcSweep('organization-1');
+
+    expect(result.imported).toBe(0);
+    expect(harness.updates).toEqual(
+      expect.arrayContaining([expect.objectContaining({ isActive: false, isDeleted: false })]),
+    );
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entityType: 'external_entity_mapping',
+          action: 'deactivated',
+          metadata: expect.objectContaining({ reason: 'outside_supported_catalog' }),
+        }),
+      ]),
+    );
+  });
+
+  it('deactivates an account that leaves the supported subset from a webhook update', async () => {
+    const harness = service({
+      mappings: [
+        {
+          id: 'mapping-1',
+          connectionId: 'connection-1',
+          externalId: 'account-1',
+          displayName: 'Travel',
+          syncToken: '3',
+          isActive: true,
+          isDeleted: false,
+          payload: { Id: 'account-1', Name: 'Travel', AccountType: 'Expense' },
+        },
+      ],
+      request: jest.fn(async () => ({
+        data: { Account: { Id: 'account-1', Name: 'Cash', AccountType: 'Bank', SyncToken: '4' } },
+      })),
+    });
+
+    await harness.instance.processWebhookEvent({
+      realmId: 'realm-1',
+      entityName: 'Account',
+      entityId: 'account-1',
+      operation: 'update',
+      payload: {},
+    });
+
+    expect(harness.updates).toEqual(
+      expect.arrayContaining([expect.objectContaining({ isActive: false, isDeleted: false })]),
+    );
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entityType: 'external_entity_mapping',
+          action: 'deactivated',
+          metadata: expect.objectContaining({ reason: 'outside_supported_catalog' }),
+        }),
+      ]),
+    );
+  });
+
   it('reconciles rows missing from a completed snapshot and audits the tombstone', async () => {
     const staleMapping = {
       id: 'stale-mapping',
@@ -695,6 +834,118 @@ describe('QboInboundService', () => {
       expect.stringContaining('vendor-source was merged into vendor-target'),
       'external_entity_mapping',
       'source-mapping',
+    );
+  });
+
+  it('does not mutate or re-audit a duplicate vendor merge webhook', async () => {
+    const source = {
+      id: 'source-mapping',
+      externalId: 'vendor-source',
+      localId: null,
+      autoCreated: false,
+      isActive: true,
+      isDeleted: false,
+      mergedIntoExternalId: null,
+    };
+    const target = {
+      id: 'target-mapping',
+      externalId: 'vendor-target',
+      localId: null,
+      autoCreated: false,
+      isActive: true,
+      isDeleted: false,
+      mergedIntoExternalId: null,
+    };
+    const alreadyMergedSource = {
+      ...source,
+      isActive: false,
+      isDeleted: true,
+      mergedIntoExternalId: 'vendor-target',
+    };
+    const harness = service({ mappings: [source, target, alreadyMergedSource, target] });
+    const event = {
+      realmId: 'realm-1',
+      entityName: 'Vendor' as const,
+      entityId: 'vendor-target',
+      operation: 'merge' as const,
+      payload: { deletedId: 'vendor-source' },
+    };
+
+    await harness.instance.processWebhookEvent(event);
+    await harness.instance.processWebhookEvent(event);
+
+    expect(
+      harness.inserted.filter(
+        (values) => values.entityType === 'external_entity_mapping' && values.action === 'merged',
+      ),
+    ).toHaveLength(1);
+    expect(
+      harness.updates.filter((values) => values.mergedIntoExternalId === 'vendor-target'),
+    ).toHaveLength(1);
+  });
+
+  it('preserves an existing mapping payload and name in a delete tombstone', async () => {
+    const previousPayload = { Id: 'vendor-1', DisplayName: 'Acme', SyncToken: '7' };
+    const harness = service({
+      mappings: [
+        {
+          id: 'mapping-1',
+          externalId: 'vendor-1',
+          displayName: 'Acme',
+          syncToken: '7',
+          isActive: true,
+          isDeleted: false,
+          mergedIntoExternalId: null,
+          payload: previousPayload,
+        },
+      ],
+    });
+
+    await harness.instance.processWebhookEvent({
+      realmId: 'realm-1',
+      entityName: 'Vendor',
+      entityId: 'vendor-1',
+      operation: 'delete',
+      payload: { operation: 'Delete', lastUpdated: 'now' },
+    });
+
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          externalEntity: 'Vendor',
+          externalId: 'vendor-1',
+          displayName: 'Acme',
+          syncToken: '7',
+          payload: previousPayload,
+          isActive: false,
+          isDeleted: true,
+        }),
+      ]),
+    );
+  });
+
+  it('uses webhook metadata when creating a new delete tombstone', async () => {
+    const webhookPayload = { DisplayName: 'Deleted vendor', lastUpdated: 'now' };
+    const harness = service();
+
+    await harness.instance.processWebhookEvent({
+      realmId: 'realm-1',
+      entityName: 'Vendor',
+      entityId: 'vendor-new',
+      operation: 'delete',
+      payload: webhookPayload,
+    });
+
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          externalEntity: 'Vendor',
+          externalId: 'vendor-new',
+          displayName: 'Deleted vendor',
+          payload: { ...webhookPayload, Id: 'vendor-new' },
+          isDeleted: true,
+        }),
+      ]),
     );
   });
 

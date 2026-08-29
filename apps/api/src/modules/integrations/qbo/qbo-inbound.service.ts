@@ -384,7 +384,15 @@ export class QboInboundService implements OnModuleInit {
 
           if (isCatalogEntity(entry.entityName)) {
             const definition = ENTITY_DEFINITIONS[entry.entityName];
-            if (definition.shouldStore?.(entry.entity) === false) continue;
+            if (definition.shouldStore?.(entry.entity) === false) {
+              await this.deactivateFilteredCatalogMapping(
+                organizationId,
+                connection.id,
+                entry.entityName,
+                entry.entity,
+              );
+              continue;
+            }
             if (entry.entity.Id) {
               await this.upsertMapping({
                 organizationId,
@@ -502,7 +510,15 @@ export class QboInboundService implements OnModuleInit {
       return;
     }
     const definition = ENTITY_DEFINITIONS[event.entityName];
-    if (definition.shouldStore?.(entity) === false) return;
+    if (definition.shouldStore?.(entity) === false) {
+      await this.deactivateFilteredCatalogMapping(
+        connection.organizationId,
+        connection.id,
+        event.entityName,
+        entity,
+      );
+      return;
+    }
     await this.upsertMapping({
       organizationId: connection.organizationId,
       connectionId: connection.id,
@@ -636,15 +652,29 @@ export class QboInboundService implements OnModuleInit {
     organizationId: string,
   ): Promise<Date> {
     const completedAt = new Date();
-    await this.db
-      .update(integrationConnections)
-      .set({ lastSyncAt: completedAt, updatedAt: completedAt })
-      .where(
-        and(
-          eq(integrationConnections.id, connectionId),
-          eq(integrationConnections.organizationId, organizationId),
-        ),
-      );
+    await this.db.transaction(async (transaction) => {
+      const [updated] = await transaction
+        .update(integrationConnections)
+        .set({ lastSyncAt: completedAt, updatedAt: completedAt })
+        .where(
+          and(
+            eq(integrationConnections.id, connectionId),
+            eq(integrationConnections.organizationId, organizationId),
+          ),
+        )
+        .returning({ id: integrationConnections.id });
+      if (!updated) return;
+
+      await transaction.insert(auditLog).values({
+        organizationId,
+        userId: null,
+        entityType: 'integration_connection',
+        entityId: connectionId,
+        action: 'sync_completed',
+        changes: { lastSyncAt: completedAt.toISOString() },
+        metadata: { actor: 'system', provider: 'qbo', source: 'sync' },
+      });
+    });
     return completedAt;
   }
 
@@ -868,7 +898,7 @@ export class QboInboundService implements OnModuleInit {
       input;
     const externalId = stringValue(entity.Id);
     if (!externalId) return undefined;
-    const definition = isCatalogEntity(entityName) ? ENTITY_DEFINITIONS[entityName] : undefined;
+    const definition = isSyncEntity(entityName) ? ENTITY_DEFINITIONS[entityName] : undefined;
     const existing = await transaction.query.externalEntityMappings.findFirst({
       where: (mapping, { and, eq }) =>
         and(
@@ -890,22 +920,27 @@ export class QboInboundService implements OnModuleInit {
       },
     });
     const now = new Date();
+    const existingDelete = deleted && existing ? existing : null;
     const values = {
       organizationId,
       connectionId,
       provider: 'qbo',
       externalEntity: entityName,
       externalId,
-      displayName: definition?.displayName(entity) ?? displayNameFromQbo(entity),
-      syncToken: stringValue(entity.SyncToken),
+      displayName: existingDelete
+        ? existingDelete.displayName
+        : (definition?.displayName(entity) ?? displayNameFromQbo(entity)),
+      syncToken: existingDelete ? existingDelete.syncToken : stringValue(entity.SyncToken),
       localEntity: definition?.localEntity ?? 'qbo_transaction',
       localId: input.localId ?? null,
       direction: 'inbound' as const,
       autoCreated: input.autoCreated ?? false,
       isActive: !deleted && entity.Active !== false,
       isDeleted: deleted,
-      mergedIntoExternalId: mergedIntoExternalId ?? null,
-      payload: entity,
+      mergedIntoExternalId: existingDelete
+        ? existingDelete.mergedIntoExternalId
+        : (mergedIntoExternalId ?? null),
+      payload: existingDelete ? existingDelete.payload : entity,
       syncedAt: now,
       updatedAt: now,
     };
@@ -1044,6 +1079,11 @@ export class QboInboundService implements OnModuleInit {
           ),
       });
 
+      if (source?.isDeleted && source.mergedIntoExternalId === targetId) {
+        sourceIdForNotification = source.id;
+        return;
+      }
+
       if (source) {
         const [updated] = await transaction
           .update(externalEntityMappings)
@@ -1172,6 +1212,10 @@ function readSyncInterval(): number {
 
 function isCatalogEntity(value: string): value is QboCatalogEntity {
   return (QBO_CATALOG_ENTITY_TYPES as readonly string[]).includes(value);
+}
+
+function isSyncEntity(value: string): value is QboSyncEntity {
+  return isCatalogEntity(value) || isTaxEntity(value);
 }
 
 function isTaxEntity(value: string): value is QboTaxEntity {
