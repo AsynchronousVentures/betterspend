@@ -663,8 +663,17 @@ export class QboInboundService implements OnModuleInit {
     const snapshotIds = new Set<string>();
     for (const entity of rows) {
       const externalId = stringValue(entity.Id);
-      if (!externalId || definition.shouldStore?.(entity) === false) continue;
+      if (!externalId) continue;
       snapshotIds.add(externalId);
+      if (definition.shouldStore?.(entity) === false) {
+        await this.deactivateFilteredCatalogMapping(
+          organizationId,
+          connectionId,
+          entityName,
+          entity,
+        );
+        continue;
+      }
       await this.upsertMapping({
         organizationId,
         connectionId,
@@ -677,6 +686,92 @@ export class QboInboundService implements OnModuleInit {
     }
     await this.reconcileCatalogEntity(organizationId, connectionId, entityName, snapshotIds);
     return imported;
+  }
+
+  /**
+   * Keeps a previously imported row out of the selectable catalog when it no
+   * longer matches our supported subset, without misreporting it as deleted.
+   */
+  private async deactivateFilteredCatalogMapping(
+    organizationId: string,
+    connectionId: string,
+    entityName: QboSyncEntity,
+    entity: QboObject,
+  ): Promise<void> {
+    const externalId = stringValue(entity.Id);
+    if (!externalId) return;
+
+    await this.db.transaction(async (transaction) => {
+      const existing = await transaction.query.externalEntityMappings.findFirst({
+        where: (mapping, { and, eq }) =>
+          and(
+            eq(mapping.organizationId, organizationId),
+            eq(mapping.provider, 'qbo'),
+            eq(mapping.direction, 'inbound'),
+            eq(mapping.externalEntity, entityName),
+            eq(mapping.externalId, externalId),
+            eq(mapping.isDeleted, false),
+          ),
+        columns: {
+          id: true,
+          connectionId: true,
+          displayName: true,
+          syncToken: true,
+          isActive: true,
+          payload: true,
+        },
+      });
+      if (!existing) return;
+
+      const now = new Date();
+      const displayName = ENTITY_DEFINITIONS[entityName].displayName(entity);
+      const syncToken = stringValue(entity.SyncToken);
+      const [updated] = await transaction
+        .update(externalEntityMappings)
+        .set({
+          connectionId,
+          displayName,
+          syncToken,
+          isActive: false,
+          isDeleted: false,
+          payload: entity,
+          syncedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(externalEntityMappings.id, existing.id),
+            eq(externalEntityMappings.organizationId, organizationId),
+            eq(externalEntityMappings.provider, 'qbo'),
+            eq(externalEntityMappings.direction, 'inbound'),
+            eq(externalEntityMappings.isDeleted, false),
+          ),
+        )
+        .returning({ id: externalEntityMappings.id });
+      if (!updated) return;
+
+      if (
+        existing.connectionId !== connectionId ||
+        existing.displayName !== displayName ||
+        existing.syncToken !== syncToken ||
+        existing.isActive ||
+        !isDeepStrictEqual(existing.payload, entity)
+      ) {
+        await this.auditMappingMutation(transaction, {
+          organizationId,
+          userId: null,
+          mappingId: updated.id,
+          action: 'deactivated',
+          changes: {
+            externalEntity: entityName,
+            externalId,
+            isActive: { from: existing.isActive, to: false },
+          },
+          source: 'snapshot',
+          reason: 'outside_supported_catalog',
+        });
+      }
+    });
   }
 
   private async queryEntity(

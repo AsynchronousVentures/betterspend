@@ -458,6 +458,59 @@ describe('QboInboundService', () => {
     );
   });
 
+  it('deactivates an account that leaves the supported subset without tombstoning it', async () => {
+    const previousAccount = {
+      Id: 'account-1',
+      Name: 'Travel',
+      AccountType: 'Expense',
+      SyncToken: '3',
+    };
+    const currentAccount = {
+      Id: 'account-1',
+      Name: 'Operating cash',
+      AccountType: 'Bank',
+      SyncToken: '4',
+    };
+    const harness = service({
+      mappings: [
+        {
+          id: 'mapping-1',
+          connectionId: 'connection-1',
+          externalId: 'account-1',
+          displayName: 'Travel',
+          syncToken: '3',
+          isActive: true,
+          isDeleted: false,
+          payload: previousAccount,
+        },
+      ],
+      request: jest.fn(async () => ({
+        data: { QueryResponse: { Account: [currentAccount] } },
+      })),
+    });
+
+    const result = await harness.instance.syncNow('organization-1', ['Account']);
+
+    expect(result.imported).toBe(0);
+    expect(harness.updates).toEqual(
+      expect.arrayContaining([expect.objectContaining({ isActive: false, isDeleted: false })]),
+    );
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entityType: 'external_entity_mapping',
+          action: 'deactivated',
+          metadata: expect.objectContaining({ reason: 'outside_supported_catalog' }),
+        }),
+      ]),
+    );
+    expect(harness.inserted).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ entityType: 'external_entity_mapping', action: 'deleted' }),
+      ]),
+    );
+  });
+
   it('does not audit an unchanged snapshot row', async () => {
     const vendor = { Id: 'vendor-1', DisplayName: 'Acme', Active: true, SyncToken: '7' };
     const harness = service({
