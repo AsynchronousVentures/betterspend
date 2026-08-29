@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ConflictException } from '@nestjs/common';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { artifactOperations } from '@betterspend/db';
+import { artifactNotificationDeliveries, artifactOperations } from '@betterspend/db';
 import type { Db } from '@betterspend/db';
 import {
   ArtifactIdempotencyService,
@@ -10,7 +10,8 @@ import {
 } from './artifact-idempotency.service';
 
 type OperationRow = typeof artifactOperations.$inferSelect;
-type OperationColumn = keyof OperationRow;
+type DeliveryRow = typeof artifactNotificationDeliveries.$inferSelect;
+type StoreRow = OperationRow | DeliveryRow;
 
 /**
  * A small Drizzle adapter that evaluates the actual where clauses produced by
@@ -19,7 +20,8 @@ type OperationColumn = keyof OperationRow;
  */
 class ArtifactOperationStore {
   readonly rows: OperationRow[] = [];
-  beforeUpdate?: (row: OperationRow, values: Record<string, unknown>) => void;
+  readonly deliveries: DeliveryRow[] = [];
+  beforeUpdate?: (row: StoreRow, values: Record<string, unknown>) => void;
 
   async transaction<TResult>(callback: (tx: ArtifactOperationStore) => Promise<TResult>) {
     return callback(this);
@@ -37,7 +39,34 @@ class ArtifactOperationStore {
     return new UpdateBuilder(this, table);
   }
 
-  addRow(table: unknown, values: Record<string, unknown>): OperationRow[] {
+  addRow(table: unknown, values: Record<string, unknown>): StoreRow[] {
+    if (table === artifactNotificationDeliveries) {
+      const operationId = String(values.operationId);
+      const deliveryKey = String(values.deliveryKey);
+      if (
+        this.deliveries.some(
+          (row) => row.operationId === operationId && row.deliveryKey === deliveryKey,
+        )
+      ) {
+        return [];
+      }
+      const now = new Date();
+      const row: DeliveryRow = {
+        id: `delivery-${this.deliveries.length + 1}`,
+        operationId,
+        deliveryKey,
+        status: 'pending',
+        attempts: 0,
+        lastError: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        deliveredAt: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.deliveries.push(row);
+      return [row];
+    }
     if (table !== artifactOperations) return [];
     const organizationId = String(values.organizationId);
     const idempotencyKey = String(values.idempotencyKey);
@@ -71,15 +100,15 @@ class ArtifactOperationStore {
     return [row];
   }
 
-  readRows(table: unknown, condition?: unknown): OperationRow[] {
-    if (table !== artifactOperations) return [];
-    return this.rows.filter((row) => evaluateCondition(condition, row));
+  readRows(table: unknown, condition?: unknown): StoreRow[] {
+    const rows = table === artifactOperations ? this.rows : this.deliveries;
+    return rows.filter((row) => evaluateCondition(condition, row));
   }
 
-  writeRows(table: unknown, values: Record<string, unknown>, condition?: unknown): OperationRow[] {
-    if (table !== artifactOperations) return [];
-    const updated: OperationRow[] = [];
-    for (const row of this.rows) {
+  writeRows(table: unknown, values: Record<string, unknown>, condition?: unknown): StoreRow[] {
+    const rows = table === artifactOperations ? this.rows : this.deliveries;
+    const updated: StoreRow[] = [];
+    for (const row of rows) {
       if (!evaluateCondition(condition, row)) continue;
       this.beforeUpdate?.(row, values);
       if (!evaluateCondition(condition, row)) continue;
@@ -171,7 +200,7 @@ class UpdateResult {
   }
 
   then<TResult>(
-    onFulfilled?: (value: OperationRow[]) => TResult | PromiseLike<TResult>,
+    onFulfilled?: (value: StoreRow[]) => TResult | PromiseLike<TResult>,
     onRejected?: (reason: unknown) => TResult | PromiseLike<TResult>,
   ) {
     return Promise.resolve(this.store.writeRows(this.table, this.values, this.condition)).then(
@@ -311,6 +340,67 @@ test('notification failure leaves a created artifact retryable', async () => {
   assert.equal(store.rows[0]?.status, 'completed');
 });
 
+test('successful recipients are not redelivered when a later recipient fails', async () => {
+  const store = new ArtifactOperationStore();
+  const service = new ArtifactIdempotencyService(store as unknown as Db);
+  let firstRecipientCalls = 0;
+  let secondRecipientCalls = 0;
+  let failSecondRecipient = true;
+  const plan = createPlan(store, {
+    notify: async (_value, delivery) => {
+      await delivery.once('vendor-email:vendor-1', async () => {
+        firstRecipientCalls += 1;
+      });
+      await delivery.once('vendor-email:vendor-2', async () => {
+        secondRecipientCalls += 1;
+        if (failSecondRecipient) {
+          failSecondRecipient = false;
+          throw new Error('second recipient temporarily unavailable');
+        }
+      });
+    },
+  });
+
+  await assert.rejects(service.execute(plan), /second recipient temporarily unavailable/);
+  await service.execute(plan);
+
+  assert.equal(firstRecipientCalls, 1);
+  assert.equal(secondRecipientCalls, 2);
+  assert.deepEqual(
+    store.deliveries.map(({ deliveryKey, status }) => ({ deliveryKey, status })),
+    [
+      { deliveryKey: 'vendor-email:vendor-1', status: 'delivered' },
+      { deliveryKey: 'vendor-email:vendor-2', status: 'delivered' },
+    ],
+  );
+});
+
+test('a completed delivery is skipped when operation completion must retry', async () => {
+  const store = new ArtifactOperationStore();
+  const service = new ArtifactIdempotencyService(store as unknown as Db);
+  let notifyCalls = 0;
+  let rejectCompletion = true;
+  store.beforeUpdate = (row, values) => {
+    if ('operationType' in row && values.status === 'completed' && rejectCompletion) {
+      rejectCompletion = false;
+      row.leaseToken = 'lease-stolen';
+    }
+  };
+  const plan = createPlan(store, {
+    notify: async (_value, delivery) =>
+      delivery.once('vendor-email:vendor-1', async () => {
+        notifyCalls += 1;
+      }),
+  });
+
+  await assert.rejects(service.execute(plan), /lease was lost after linkage/);
+  store.rows[0]!.leaseExpiresAt = new Date(0);
+  await service.execute(plan);
+
+  assert.equal(notifyCalls, 1);
+  assert.equal(store.rows[0]?.status, 'completed');
+});
+
 test('an idempotency key cannot be reused for a different request', async () => {
   const store = new ArtifactOperationStore();
   const service = new ArtifactIdempotencyService(store as unknown as Db);
@@ -377,7 +467,7 @@ test('a lost lease rejects artifact recording and does not claim the operation',
   assert.equal(store.rows[0]?.leaseToken, 'lease-stolen');
 });
 
-function evaluateCondition(condition: unknown, row: OperationRow): boolean {
+function evaluateCondition(condition: unknown, row: StoreRow): boolean {
   if (!condition) return true;
   const query = new PgDialect().sqlToQuery(condition as never);
   return new ConditionParser(tokenize(query.sql), query.params, row).parse();
@@ -397,7 +487,7 @@ class ConditionParser {
   constructor(
     private readonly tokens: string[],
     private readonly params: unknown[],
-    private readonly row: OperationRow,
+    private readonly row: StoreRow,
   ) {}
 
   parse(): boolean {
@@ -436,7 +526,7 @@ class ConditionParser {
     const column = this.next();
     const operator = this.next().toLowerCase();
     const key = columnName(column);
-    const actual = this.row[key];
+    const actual = (this.row as unknown as Record<string, unknown>)[key];
 
     if (operator === 'is') {
       this.expect('null');
@@ -468,9 +558,9 @@ class ConditionParser {
   }
 }
 
-function columnName(token: string): OperationColumn {
+function columnName(token: string): keyof (OperationRow & DeliveryRow) {
   const name = token.split('.').at(-1)?.replaceAll('"', '');
-  const columnMap: Record<string, OperationColumn> = {
+  const columnMap: Record<string, keyof (OperationRow & DeliveryRow)> = {
     id: 'id',
     organization_id: 'organizationId',
     operation_type: 'operationType',
@@ -486,6 +576,9 @@ function columnName(token: string): OperationColumn {
     lease_expires_at: 'leaseExpiresAt',
     created_at: 'createdAt',
     updated_at: 'updatedAt',
+    operation_id: 'operationId',
+    delivery_key: 'deliveryKey',
+    delivered_at: 'deliveredAt',
   };
   const result = name ? columnMap[name] : undefined;
   if (!result) throw new Error(`Unknown artifact operation column ${name}`);

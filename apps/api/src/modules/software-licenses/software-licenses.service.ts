@@ -304,8 +304,10 @@ export class SoftwareLicensesService {
           actionNote,
           artifact,
         }),
-      notify: (renewalRef) =>
-        this.notifyRenewalAction(license, organizationId, action, actionNote, renewalRef, true),
+      notify: (renewalRef, delivery) =>
+        delivery.once(`renewal-action:${license.ownerUserId ?? userId}:${action}`, () =>
+          this.notifyRenewalAction(license, organizationId, action, actionNote, renewalRef, true),
+        ),
       load: (artifact) => this.loadRenewalRef(id, organizationId, action, artifact, access),
     });
     return this.findOne(id, organizationId, access, 'software_licenses:manage');

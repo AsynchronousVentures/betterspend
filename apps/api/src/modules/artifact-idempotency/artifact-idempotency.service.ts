@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { artifactOperations } from '@betterspend/db';
+import { artifactNotificationDeliveries, artifactOperations } from '@betterspend/db';
 
 export const ARTIFACT_OPERATION_TYPES = ['software_license_renewal', 'message_post'] as const;
 export type ArtifactOperationType = (typeof ARTIFACT_OPERATION_TYPES)[number];
@@ -41,9 +41,14 @@ export interface ArtifactOperationPlan<TResult> {
    * complete. A failure leaves the durable operation retryable, so a
    * notification cannot be lost after a successful artifact write.
    */
-  notify?: (value: TResult) => Promise<void>;
+  notify?: (value: TResult, delivery: ArtifactDeliveryContext) => Promise<void>;
   /** Load the original result after a completed operation without mutating anything. */
   load: (artifact: ArtifactReference) => Promise<TResult>;
+}
+
+export interface ArtifactDeliveryContext {
+  /** Run one stable recipient/action delivery at most once after it succeeds. */
+  once(deliveryKey: string, deliver: () => Promise<unknown>): Promise<void>;
 }
 
 export interface ArtifactOperationResult<TResult> {
@@ -126,11 +131,124 @@ export class ArtifactIdempotencyService {
       }
 
       const value = await plan.link(artifact);
-      if (plan.notify) await plan.notify(value);
+      if (plan.notify) {
+        await plan.notify(value, {
+          once: (deliveryKey, deliver) => this.deliverOnce(operation.id, deliveryKey, deliver),
+        });
+      }
       await this.complete(operation, claim.leaseToken, artifact);
       return { value, replayed: false, resumed: claim.resumed };
     } catch (error) {
       await this.markFailed(operation, claim.leaseToken, artifact, error);
+      throw error;
+    }
+  }
+
+  private async deliverOnce(
+    operationId: string,
+    rawDeliveryKey: string,
+    deliver: () => Promise<unknown>,
+  ): Promise<void> {
+    const deliveryKey = rawDeliveryKey.trim();
+    if (!deliveryKey || deliveryKey.length > 255) {
+      throw new ConflictException(
+        'A non-empty notification delivery key of at most 255 characters is required',
+      );
+    }
+
+    const now = new Date();
+    const leaseToken = randomUUID();
+    const leaseExpiresAt = new Date(now.getTime() + LEASE_DURATION_MS);
+    const claim = await this.db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(artifactNotificationDeliveries)
+        .values({ operationId, deliveryKey })
+        .onConflictDoNothing()
+        .returning();
+      const row =
+        inserted ??
+        (
+          await tx
+            .select()
+            .from(artifactNotificationDeliveries)
+            .where(
+              and(
+                eq(artifactNotificationDeliveries.operationId, operationId),
+                eq(artifactNotificationDeliveries.deliveryKey, deliveryKey),
+              ),
+            )
+            .limit(1)
+        )[0];
+      if (!row) throw new Error('Artifact notification delivery reservation was not found');
+      if (row.status === 'delivered') return null;
+
+      const [claimed] = await tx
+        .update(artifactNotificationDeliveries)
+        .set({
+          status: 'pending',
+          attempts: sql`${artifactNotificationDeliveries.attempts} + 1`,
+          lastError: null,
+          leaseToken,
+          leaseExpiresAt,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(artifactNotificationDeliveries.id, row.id),
+            ne(artifactNotificationDeliveries.status, 'delivered'),
+            or(
+              isNull(artifactNotificationDeliveries.leaseExpiresAt),
+              lt(artifactNotificationDeliveries.leaseExpiresAt, now),
+            ),
+          ),
+        )
+        .returning();
+      if (!claimed) {
+        throw new ConflictException(
+          'This notification delivery is already in progress; retry later',
+        );
+      }
+      return claimed;
+    });
+    if (!claim) return;
+
+    try {
+      await deliver();
+      const [delivered] = await this.db
+        .update(artifactNotificationDeliveries)
+        .set({
+          status: 'delivered',
+          deliveredAt: new Date(),
+          leaseToken: null,
+          leaseExpiresAt: null,
+          lastError: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(artifactNotificationDeliveries.id, claim.id),
+            eq(artifactNotificationDeliveries.leaseToken, leaseToken),
+          ),
+        )
+        .returning({ id: artifactNotificationDeliveries.id });
+      if (!delivered) throw new ConflictException('Notification delivery lease was lost');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.db
+        .update(artifactNotificationDeliveries)
+        .set({
+          status: 'failed',
+          lastError: message.slice(0, 10_000),
+          leaseToken: null,
+          leaseExpiresAt: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(artifactNotificationDeliveries.id, claim.id),
+            eq(artifactNotificationDeliveries.leaseToken, leaseToken),
+          ),
+        );
       throw error;
     }
   }

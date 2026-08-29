@@ -165,7 +165,7 @@ export class MessagesService {
           ownerIdempotencyKey,
         }),
       link: (artifact) => this.loadMessage(organizationId, artifact),
-      notify: async (message) => {
+      notify: async (message, delivery) => {
         if (threadType === 'rfq' && recipientVendorId === null) {
           const invitations = await this.db.query.rfqInvitations.findMany({
             where: (inv, { eq }) => eq(inv.rfqId, threadId),
@@ -175,26 +175,31 @@ export class MessagesService {
             invitedVendorIds.add(threadContext.vendorId);
           }
           for (const vendorIdToNotify of invitedVendorIds) {
-            await this.emailVendorContact(
-              organizationId,
-              threadType,
-              threadId,
-              user.name,
-              message.body,
-              vendorIdToNotify,
-              true,
+            await delivery.once(`vendor-email:${vendorIdToNotify}`, () =>
+              this.emailVendorContact(
+                organizationId,
+                threadType,
+                threadId,
+                user.name,
+                message.body,
+                vendorIdToNotify,
+                true,
+              ),
             );
           }
           return;
         }
-        await this.emailVendorContact(
-          organizationId,
-          threadType,
-          threadId,
-          user.name,
-          message.body,
-          recipientVendorId ?? undefined,
-          true,
+        const vendorDeliveryKey = recipientVendorId ?? threadContext.vendorId ?? 'counterparty';
+        await delivery.once(`vendor-email:${vendorDeliveryKey}`, () =>
+          this.emailVendorContact(
+            organizationId,
+            threadType,
+            threadId,
+            user.name,
+            message.body,
+            recipientVendorId ?? undefined,
+            true,
+          ),
         );
       },
       load: (artifact) => this.loadMessage(organizationId, artifact),
@@ -254,16 +259,18 @@ export class MessagesService {
           ownerIdempotencyKey,
         }),
       link: (artifact) => this.loadMessage(organizationId, artifact),
-      notify: async (message) => {
+      notify: async (message, delivery) => {
         if (!context.internalUserId) return;
-        await this.notificationsService.create(
-          organizationId,
-          context.internalUserId,
-          'new_message',
-          `New message from ${vendor.name}`,
-          message.body.length > 140 ? `${message.body.slice(0, 140)}...` : message.body,
-          threadType,
-          threadId,
+        await delivery.once(`internal-notification:${context.internalUserId}`, () =>
+          this.notificationsService.create(
+            organizationId,
+            context.internalUserId!,
+            'new_message',
+            `New message from ${vendor.name}`,
+            message.body.length > 140 ? `${message.body.slice(0, 140)}...` : message.body,
+            threadType,
+            threadId,
+          ),
         );
       },
       load: (artifact) => this.loadMessage(organizationId, artifact),

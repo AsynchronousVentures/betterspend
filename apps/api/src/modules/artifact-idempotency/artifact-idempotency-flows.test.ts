@@ -22,6 +22,7 @@ class RecordingArtifactCoordinator {
     string,
     { fingerprint: string; artifact: ArtifactReference }
   >();
+  private readonly deliveries = new Set<string>();
   private nextOperationId = 1;
 
   async execute<TResult>(plan: ArtifactOperationPlan<TResult>) {
@@ -39,7 +40,14 @@ class RecordingArtifactCoordinator {
     const artifact = recovered ?? (await plan.create(ownerIdempotencyKey));
     this.operations.set(plan.idempotencyKey, { fingerprint: plan.fingerprint, artifact });
     const value = await plan.link(artifact);
-    await plan.notify?.(value);
+    await plan.notify?.(value, {
+      once: async (deliveryKey, deliver) => {
+        const key = `${plan.idempotencyKey}:${deliveryKey}`;
+        if (this.deliveries.has(key)) return;
+        await deliver();
+        this.deliveries.add(key);
+      },
+    });
     return { value, replayed: false, resumed: Boolean(recovered) };
   }
 }
