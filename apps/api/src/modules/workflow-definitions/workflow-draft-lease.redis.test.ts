@@ -152,13 +152,11 @@ describe('WorkflowDraftLeaseService Redis integration', () => {
         cleanupFailed = true;
         cleanupError = error;
       }
-      if (recoveryKeys) {
-        try {
-          await redis.del(leaseKey, fenceKey, ...recoveryKeys);
-        } catch (error) {
-          if (!cleanupFailed) cleanupError = error;
-          cleanupFailed = true;
-        }
+      try {
+        await redis.del(leaseKey, fenceKey, ...(recoveryKeys ?? []));
+      } catch (error) {
+        if (!cleanupFailed) cleanupError = error;
+        cleanupFailed = true;
       }
     } finally {
       redis.disconnect();
