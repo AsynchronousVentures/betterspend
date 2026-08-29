@@ -41,15 +41,17 @@ export function MessageThread({
   const activeThreadKey = useRef(threadKey);
   activeThreadKey.current = threadKey;
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<boolean> => {
     const version = ++loadVersion.current;
     try {
       const data = portal
         ? await api.vendorPortal.listMessages(threadType, threadId)
         : await api.messages.list(threadType, threadId);
       if (version === loadVersion.current) setMessages(data);
+      return true;
     } catch {
       if (version === loadVersion.current) setError('Failed to load messages.');
+      return false;
     }
   }, [portal, threadType, threadId]);
 
@@ -85,9 +87,10 @@ export function MessageThread({
         await api.messages.post(threadType, threadId, body, recipientVendorId, idempotencyKey);
       }
       if (activeThreadKey.current !== sendingThreadKey) return;
+      const refreshed = await load();
+      if (activeThreadKey.current !== sendingThreadKey || !refreshed) return;
       pendingIdempotencyKey.current = null;
       setDraft('');
-      await load();
     } catch {
       if (activeThreadKey.current === sendingThreadKey) {
         setError('Failed to send message.');

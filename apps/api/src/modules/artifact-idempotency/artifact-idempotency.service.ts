@@ -23,10 +23,17 @@ export interface ArtifactOperationPlan<TResult> {
   idempotencyKey: string;
   /** A stable description of the requested write, never raw secrets or message bodies. */
   fingerprint: string;
-  /** Find an owner artifact by its retained operation key after a partial failure. */
-  findExisting: () => Promise<ArtifactReference | null>;
-  /** Create only the artifact. Linkage and later lifecycle transitions belong in `link`. */
-  create: () => Promise<ArtifactReference>;
+  /**
+   * Find an owner artifact by its private operation key after a partial failure.
+   * The coordinator supplies the key after reserving the operation, so callers
+   * cannot accidentally collide with an unrelated public idempotency key.
+   */
+  findExisting: (ownerIdempotencyKey: string) => Promise<ArtifactReference | null>;
+  /**
+   * Create only the artifact with the private operation key. Linkage and later
+   * lifecycle transitions belong in `link`.
+   */
+  create: (ownerIdempotencyKey: string) => Promise<ArtifactReference>;
   /** Complete the caller-side linkage. This callback must be safe to repeat. */
   link: (artifact: ArtifactReference) => Promise<TResult>;
   /** Load the original result after a completed operation without mutating anything. */
@@ -90,6 +97,7 @@ export class ArtifactIdempotencyService {
     }
 
     const operation = claim.operation;
+    const ownerIdempotencyKey = `artifact-operation:${operation.id}`;
     let artifact: ArtifactReference | null = operation.artifactId
       ? {
           kind: assertArtifactKind(operation.artifactKind),
@@ -102,14 +110,14 @@ export class ArtifactIdempotencyService {
 
     try {
       if (!artifact) {
-        artifact = await plan.findExisting();
+        artifact = await plan.findExisting(ownerIdempotencyKey);
         if (artifact) {
           recoveredExistingArtifact = true;
           await this.recordArtifact(operation, claim.leaseToken, artifact);
         }
       }
       if (!artifact) {
-        artifact = await plan.create();
+        artifact = await plan.create(ownerIdempotencyKey);
         await this.recordArtifact(operation, claim.leaseToken, artifact);
       }
 

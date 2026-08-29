@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   ForbiddenException,
   Inject,
@@ -8,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, lte, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { requisitions, rfqRequests, softwareLicenses, vendors } from '@betterspend/db';
@@ -22,13 +22,16 @@ import {
   type ArtifactReference,
 } from '../artifact-idempotency/artifact-idempotency.service';
 
-export interface RenewalRef {
-  action: 'renew' | 'renegotiate' | 'cancel';
-  kind: 'requisition' | 'rfq';
-  id: string;
-  number: string;
-  at: string;
-}
+const renewalRefSchema = z.object({
+  action: z.enum(['renew', 'renegotiate', 'cancel']),
+  kind: z.enum(['requisition', 'rfq']),
+  id: z.string(),
+  number: z.string(),
+  at: z.string(),
+});
+const renewalRefsSchema = z.array(renewalRefSchema);
+
+export type RenewalRef = z.infer<typeof renewalRefSchema>;
 
 type LicenseWithRelations = Awaited<ReturnType<SoftwareLicensesService['findOne']>>;
 type SoftwareLicenseTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -255,10 +258,9 @@ export class SoftwareLicensesService {
     action: 'renew' | 'renegotiate' | 'cancel',
     note?: string,
     access?: AccessPolicy,
-    idempotencyKey?: string,
   ) {
     const license = await this.findOne(id, organizationId, access, 'software_licenses:manage');
-    const actionNote = note?.trim();
+    const actionNote = note?.trim() || undefined;
     if (action === 'cancel') {
       const updatedAt = new Date();
       const notePrefix = `[${updatedAt.toISOString()}] ${action.toUpperCase()}`;
@@ -280,18 +282,18 @@ export class SoftwareLicensesService {
       return this.findOne(id, organizationId, access, 'software_licenses:manage');
     }
 
-    const operationKey = idempotencyKey?.trim() || `license-renewal:${id}:${action}`;
+    const operationKey = licenseRenewalOperationKey(license);
     const execution = await this.artifactIdempotency.execute<RenewalRef>({
       organizationId,
       operationType: 'software_license_renewal',
       idempotencyKey: operationKey,
-      fingerprint: licenseRenewalFingerprint(license, action, actionNote),
-      findExisting: () => this.findRenewalArtifact(organizationId, operationKey, action),
-      create: async () => {
-        await this.assertRenewalCanStart(id, organizationId, access);
+      fingerprint: licenseRenewalFingerprint(license.id, action, actionNote),
+      findExisting: (ownerIdempotencyKey) =>
+        this.findRenewalArtifact(organizationId, ownerIdempotencyKey, action),
+      create: async (ownerIdempotencyKey) => {
         return action === 'renew'
-          ? this.createRenewalRequisition(license, userId, actionNote, operationKey)
-          : this.createRenegotiationRfq(license, userId, actionNote, operationKey);
+          ? this.createRenewalRequisition(license, userId, actionNote, ownerIdempotencyKey)
+          : this.createRenegotiationRfq(license, userId, actionNote, ownerIdempotencyKey);
       },
       link: (artifact) =>
         this.linkRenewalArtifact({
@@ -320,7 +322,7 @@ export class SoftwareLicensesService {
     license: LicenseWithRelations,
     userId: string,
     note?: string,
-    idempotencyKey?: string,
+    ownerIdempotencyKey?: string,
   ): Promise<ArtifactReference> {
     const unitPrice = Number(license.pricePerSeat);
     const requisition = await this.requisitionsService.create(
@@ -347,7 +349,7 @@ export class SoftwareLicensesService {
             vendorId: license.vendorId,
           },
         ],
-        idempotencyKey,
+        ownerIdempotencyKey,
       },
     );
     return {
@@ -362,7 +364,7 @@ export class SoftwareLicensesService {
     license: LicenseWithRelations,
     userId: string,
     note?: string,
-    idempotencyKey?: string,
+    ownerIdempotencyKey?: string,
   ): Promise<ArtifactReference> {
     const targetPrice = Number(license.pricePerSeat);
     const requestedDueDate = license.renewalDate
@@ -384,7 +386,7 @@ export class SoftwareLicensesService {
         },
       ],
       vendorIds: [license.vendorId],
-      idempotencyKey,
+      ownerIdempotencyKey,
     });
     return {
       kind: 'rfq',
@@ -395,7 +397,7 @@ export class SoftwareLicensesService {
 
   private async findRenewalArtifact(
     organizationId: string,
-    idempotencyKey: string,
+    ownerIdempotencyKey: string,
     action: 'renew' | 'renegotiate',
   ): Promise<ArtifactReference | null> {
     if (action === 'renew') {
@@ -405,13 +407,13 @@ export class SoftwareLicensesService {
         .where(
           and(
             eq(requisitions.organizationId, organizationId),
-            eq(requisitions.idempotencyKey, idempotencyKey),
+            eq(requisitions.idempotencyKey, ownerIdempotencyKey),
           ),
         )
         .limit(1);
-      return requisition
-        ? { kind: 'requisition', id: requisition.id, number: requisition.number }
-        : null;
+      if (!requisition) return null;
+      await this.requisitionsService.ensureSpendGuardAnalysis(organizationId, requisition.id);
+      return { kind: 'requisition', id: requisition.id, number: requisition.number };
     }
 
     const [rfq] = await this.db
@@ -420,23 +422,11 @@ export class SoftwareLicensesService {
       .where(
         and(
           eq(rfqRequests.organizationId, organizationId),
-          eq(rfqRequests.idempotencyKey, idempotencyKey),
+          eq(rfqRequests.idempotencyKey, ownerIdempotencyKey),
         ),
       )
       .limit(1);
     return rfq ? { kind: 'rfq', id: rfq.id, number: rfq.number } : null;
-  }
-
-  private async assertRenewalCanStart(
-    id: string,
-    organizationId: string,
-    access?: AccessPolicy,
-  ): Promise<void> {
-    const current = await this.findOne(id, organizationId, access, 'software_licenses:manage');
-    const refs = current.renewalRefs as RenewalRef[];
-    if (refs.some((reference) => reference.action !== 'cancel')) {
-      throw new BadRequestException('A renewal action is already in progress for this license');
-    }
   }
 
   private async linkRenewalArtifact(input: {
@@ -492,12 +482,9 @@ export class SoftwareLicensesService {
         .for('update');
       if (!license) throw new NotFoundException(`Software license ${input.id} not found`);
 
-      const refs = license.renewalRefs as RenewalRef[];
+      const refs = renewalRefsSchema.parse(license.renewalRefs);
       const existing = refs.find((reference) => reference.id === renewalRef.id);
       if (existing) return existing;
-      if (refs.some((reference) => reference.action !== 'cancel')) {
-        throw new BadRequestException('A renewal action is already in progress for this license');
-      }
 
       const updatedAt = new Date();
       const notePrefix = `[${updatedAt.toISOString()}] ${input.action.toUpperCase()}`;
@@ -512,8 +499,7 @@ export class SoftwareLicensesService {
         .set({
           status: 'renewal_due',
           notes: appendedNote,
-          renewalRefs:
-            sql`COALESCE(${softwareLicenses.renewalRefs}, '[]'::jsonb) || ${JSON.stringify([renewalRef])}::jsonb` as unknown as RenewalRef[],
+          renewalRefs: sql`COALESCE(${softwareLicenses.renewalRefs}, '[]'::jsonb) || ${JSON.stringify([renewalRef])}::jsonb`,
           updatedAt,
         })
         .where(
@@ -536,9 +522,9 @@ export class SoftwareLicensesService {
     access?: AccessPolicy,
   ): Promise<RenewalRef> {
     const license = await this.findOne(id, organizationId, access, 'software_licenses:manage');
-    const existing = (license.renewalRefs as RenewalRef[]).find(
-      (reference) => reference.id === artifact.id && reference.action === action,
-    );
+    const existing = renewalRefsSchema
+      .parse(license.renewalRefs)
+      .find((reference) => reference.id === artifact.id && reference.action === action);
     if (!existing) {
       throw new ConflictException(
         'The artifact operation is complete but its license link is missing',
@@ -669,22 +655,19 @@ export class SoftwareLicensesService {
   }
 }
 
+function licenseRenewalOperationKey(license: LicenseWithRelations): string {
+  const renewalCycle = license.renewalDate?.toISOString() ?? 'unscheduled';
+  return `license-renewal:${license.id}:${renewalCycle}`;
+}
+
 function licenseRenewalFingerprint(
-  license: LicenseWithRelations,
+  licenseId: string,
   action: 'renew' | 'renegotiate',
   note?: string,
 ): string {
   return JSON.stringify({
-    licenseId: license.id,
+    licenseId,
     action,
-    productName: license.productName,
-    vendorId: license.vendorId,
-    ownerUserId: license.ownerUserId,
-    seatCount: license.seatCount,
-    pricePerSeat: String(license.pricePerSeat),
-    currency: license.currency,
-    billingCycle: license.billingCycle,
-    renewalDate: license.renewalDate?.toISOString() ?? null,
-    note: note ?? null,
+    note: note || null,
   });
 }

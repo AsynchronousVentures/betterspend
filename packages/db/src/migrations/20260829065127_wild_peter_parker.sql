@@ -25,6 +25,3 @@ ALTER TABLE "messages" ADD COLUMN "idempotency_key" varchar(255);--> statement-b
 ALTER TABLE "artifact_operations" ADD CONSTRAINT "artifact_operations_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "artifact_operations_org_key_unique" ON "artifact_operations" USING btree ("organization_id","idempotency_key");--> statement-breakpoint
 CREATE INDEX "artifact_operations_org_status_idx" ON "artifact_operations" USING btree ("organization_id","operation_type","status","lease_expires_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "requisitions_org_idempotency_key_unique" ON "requisitions" USING btree ("organization_id","idempotency_key");--> statement-breakpoint
-CREATE UNIQUE INDEX "rfq_requests_org_idempotency_key_unique" ON "rfq_requests" USING btree ("organization_id","idempotency_key");--> statement-breakpoint
-CREATE UNIQUE INDEX "messages_org_idempotency_key_unique" ON "messages" USING btree ("organization_id","idempotency_key");

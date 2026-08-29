@@ -3,7 +3,6 @@ import {
   Body,
   Controller,
   Get,
-  Headers,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -134,12 +133,10 @@ export class SoftwareLicensesController {
     body: {
       action?: 'renew' | 'renegotiate' | 'cancel';
       note?: string;
-      idempotencyKey?: string;
     },
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
     @CurrentAccess() access?: AccessPolicy,
-    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     const action = body?.action;
     if (!action || !['renew', 'renegotiate', 'cancel'].includes(action)) {
@@ -152,7 +149,6 @@ export class SoftwareLicensesController {
       action,
       body?.note,
       access,
-      idempotencyKey ?? body?.idempotencyKey,
     );
   }
 }

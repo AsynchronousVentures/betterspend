@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
+import { SequenceService } from '../../common/services/sequence.service';
 import type { Db } from '@betterspend/db';
 import {
   rfqRequests,
@@ -23,13 +24,11 @@ import {
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
 
-type RfqTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
-type RfqExecutor = Db | RfqTransaction;
-
 @Injectable()
 export class RfqService {
   constructor(
     @Inject(DB_TOKEN) private db: Db,
+    private readonly sequenceService: SequenceService,
     private readonly mailService: MailService,
     private readonly settingsService: SettingsService,
   ) {}
@@ -102,19 +101,6 @@ export class RfqService {
         text: `${summary}\n\n${detail}`,
       },
     );
-  }
-
-  private async nextNumber(orgId: string, executor: RfqExecutor = this.db): Promise<string> {
-    const year = new Date().getFullYear();
-    const [sequence] = await executor
-      .insert(sequences)
-      .values({ organizationId: orgId, entityType: 'rfq', year, lastValue: 1 })
-      .onConflictDoUpdate({
-        target: [sequences.organizationId, sequences.entityType, sequences.year],
-        set: { lastValue: sql`${sequences.lastValue} + 1`, updatedAt: new Date() },
-      })
-      .returning({ lastValue: sequences.lastValue });
-    return `RFQ-${year}-${String(sequence.lastValue).padStart(4, '0')}`;
   }
 
   private async nextPoNumber(orgId: string): Promise<string> {
@@ -286,7 +272,7 @@ export class RfqService {
         targetPrice?: number;
       }>;
       vendorIds?: string[];
-      idempotencyKey?: string;
+      ownerIdempotencyKey?: string;
     },
   ) {
     const vendorIds = [...new Set(dto.vendorIds ?? [])];
@@ -303,21 +289,7 @@ export class RfqService {
     }
 
     const rfqId = await this.db.transaction(async (tx) => {
-      if (dto.idempotencyKey) {
-        const [existing] = await tx
-          .select({ id: rfqRequests.id })
-          .from(rfqRequests)
-          .where(
-            and(
-              eq(rfqRequests.organizationId, orgId),
-              eq(rfqRequests.idempotencyKey, dto.idempotencyKey),
-            ),
-          )
-          .limit(1);
-        if (existing) return existing.id;
-      }
-
-      const number = await this.nextNumber(orgId, tx);
+      const number = await this.sequenceService.next(orgId, 'rfq', tx);
       const values = {
         organizationId: orgId,
         requesterId: userId,
@@ -327,29 +299,10 @@ export class RfqService {
         dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
         currency: dto.currency ?? 'USD',
         notes: dto.notes,
-        idempotencyKey: dto.idempotencyKey,
+        idempotencyKey: dto.ownerIdempotencyKey,
       };
-      const [rfq] = await (
-        dto.idempotencyKey
-          ? tx.insert(rfqRequests).values(values).onConflictDoNothing()
-          : tx.insert(rfqRequests).values(values)
-      ).returning();
-
-      if (!rfq) {
-        if (!dto.idempotencyKey) throw new Error('RFQ was not created');
-        const [existing] = await tx
-          .select({ id: rfqRequests.id })
-          .from(rfqRequests)
-          .where(
-            and(
-              eq(rfqRequests.organizationId, orgId),
-              eq(rfqRequests.idempotencyKey, dto.idempotencyKey),
-            ),
-          )
-          .limit(1);
-        if (!existing) throw new Error('Idempotent RFQ was not found after insert conflict');
-        return existing.id;
-      }
+      const [rfq] = await tx.insert(rfqRequests).values(values).returning();
+      if (!rfq) throw new Error('RFQ was not created');
 
       if (dto.lines?.length) {
         await tx.insert(rfqLines).values(

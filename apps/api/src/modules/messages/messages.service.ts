@@ -149,8 +149,9 @@ export class MessagesService {
         attachments: input.attachments ?? [],
         recipientVendorId,
       }),
-      findExisting: () => this.findMessageArtifact(organizationId, operationKey),
-      create: () =>
+      findExisting: (ownerIdempotencyKey) =>
+        this.findMessageArtifact(organizationId, ownerIdempotencyKey),
+      create: (ownerIdempotencyKey) =>
         this.createUserMessage({
           organizationId,
           userId,
@@ -160,7 +161,7 @@ export class MessagesService {
           authorName: user.name,
           body: trimmedBody,
           attachments: input.attachments ?? [],
-          idempotencyKey: operationKey,
+          ownerIdempotencyKey,
         }),
       link: (artifact) => this.loadMessage(organizationId, artifact),
       load: (artifact) => this.loadMessage(organizationId, artifact),
@@ -237,8 +238,9 @@ export class MessagesService {
         body: trimmedBody,
         attachments: input.attachments ?? [],
       }),
-      findExisting: () => this.findMessageArtifact(organizationId, operationKey),
-      create: () =>
+      findExisting: (ownerIdempotencyKey) =>
+        this.findMessageArtifact(organizationId, ownerIdempotencyKey),
+      create: (ownerIdempotencyKey) =>
         this.createVendorMessage({
           organizationId,
           vendorId,
@@ -247,7 +249,7 @@ export class MessagesService {
           authorName: vendor.name,
           body: trimmedBody,
           attachments: input.attachments ?? [],
-          idempotencyKey: operationKey,
+          ownerIdempotencyKey,
         }),
       link: (artifact) => this.loadMessage(organizationId, artifact),
       load: (artifact) => this.loadMessage(organizationId, artifact),
@@ -276,7 +278,7 @@ export class MessagesService {
 
   private async findMessageArtifact(
     organizationId: string,
-    idempotencyKey: string,
+    ownerIdempotencyKey: string,
   ): Promise<ArtifactReference | null> {
     const [message] = await this.db
       .select({ id: messages.id })
@@ -284,7 +286,7 @@ export class MessagesService {
       .where(
         and(
           eq(messages.organizationId, organizationId),
-          eq(messages.idempotencyKey, idempotencyKey),
+          eq(messages.idempotencyKey, ownerIdempotencyKey),
         ),
       )
       .limit(1);
@@ -312,7 +314,7 @@ export class MessagesService {
     authorName: string;
     body: string;
     attachments: PostMessageInput['attachments'];
-    idempotencyKey: string;
+    ownerIdempotencyKey: string;
   }): Promise<ArtifactReference> {
     const message = await this.db.transaction(async (tx) => {
       const [created] = await tx
@@ -327,7 +329,7 @@ export class MessagesService {
           authorName: input.authorName,
           body: input.body,
           attachments: input.attachments ?? [],
-          idempotencyKey: input.idempotencyKey,
+          idempotencyKey: input.ownerIdempotencyKey,
         })
         .onConflictDoNothing()
         .returning();
@@ -348,7 +350,7 @@ export class MessagesService {
         .where(
           and(
             eq(messages.organizationId, input.organizationId),
-            eq(messages.idempotencyKey, input.idempotencyKey),
+            eq(messages.idempotencyKey, input.ownerIdempotencyKey),
           ),
         )
         .limit(1);
@@ -366,7 +368,7 @@ export class MessagesService {
     authorName: string;
     body: string;
     attachments: PostMessageInput['attachments'];
-    idempotencyKey: string;
+    ownerIdempotencyKey: string;
   }): Promise<ArtifactReference> {
     const message = await this.db.transaction(async (tx) => {
       const [created] = await tx
@@ -380,7 +382,7 @@ export class MessagesService {
           authorName: input.authorName,
           body: input.body,
           attachments: input.attachments ?? [],
-          idempotencyKey: input.idempotencyKey,
+          idempotencyKey: input.ownerIdempotencyKey,
         })
         .onConflictDoNothing()
         .returning();
@@ -406,7 +408,7 @@ export class MessagesService {
         .where(
           and(
             eq(messages.organizationId, input.organizationId),
-            eq(messages.idempotencyKey, input.idempotencyKey),
+            eq(messages.idempotencyKey, input.ownerIdempotencyKey),
           ),
         )
         .limit(1);

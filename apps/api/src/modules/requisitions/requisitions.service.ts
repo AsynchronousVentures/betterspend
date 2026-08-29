@@ -192,7 +192,7 @@ export class RequisitionsService {
   async create(
     organizationId: string,
     requesterId: string,
-    input: CreateRequisitionInput & { idempotencyKey?: string },
+    input: CreateRequisitionInput & { ownerIdempotencyKey?: string },
     access?: AccessPolicy,
   ) {
     requirePermission(access, 'requisitions:create');
@@ -201,20 +201,6 @@ export class RequisitionsService {
       projectId: input.projectId ?? null,
     });
     const creation = await this.db.transaction(async (tx) => {
-      if (input.idempotencyKey) {
-        const [existing] = await tx
-          .select({ id: requisitions.id })
-          .from(requisitions)
-          .where(
-            and(
-              eq(requisitions.organizationId, organizationId),
-              eq(requisitions.idempotencyKey, input.idempotencyKey),
-            ),
-          )
-          .limit(1);
-        if (existing) return { id: existing.id, created: false };
-      }
-
       const number = await this.sequenceService.next(organizationId, 'requisition', tx);
       const totalAmount = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
 
@@ -232,30 +218,10 @@ export class RequisitionsService {
         totalAmount: String(totalAmount),
         status: 'draft' as const,
         sourceType: 'manual',
-        idempotencyKey: input.idempotencyKey,
+        idempotencyKey: input.ownerIdempotencyKey,
       };
-      const [req] = await (
-        input.idempotencyKey
-          ? tx.insert(requisitions).values(values).onConflictDoNothing()
-          : tx.insert(requisitions).values(values)
-      ).returning();
-
-      if (!req) {
-        if (!input.idempotencyKey) throw new Error('Requisition was not created');
-        const [existing] = await tx
-          .select({ id: requisitions.id })
-          .from(requisitions)
-          .where(
-            and(
-              eq(requisitions.organizationId, organizationId),
-              eq(requisitions.idempotencyKey, input.idempotencyKey),
-            ),
-          )
-          .limit(1);
-        if (!existing)
-          throw new Error('Idempotent requisition was not found after insert conflict');
-        return { id: existing.id, created: false };
-      }
+      const [req] = await tx.insert(requisitions).values(values).returning();
+      if (!req) throw new Error('Requisition was not created');
 
       await tx.insert(requisitionLines).values(
         input.lines.map((l, i) => ({
@@ -272,20 +238,31 @@ export class RequisitionsService {
         })),
       );
 
-      return { id: req.id, created: true };
+      await this.audit.log(
+        organizationId,
+        requesterId,
+        'requisition',
+        req.id,
+        'created',
+        {
+          number: req.number,
+          title: input.title,
+        },
+        undefined,
+        tx,
+      );
+
+      return { id: req.id };
     });
 
     const created = await this.findOne(creation.id, organizationId);
-    if (creation.created) {
-      this.audit
-        .log(organizationId, requesterId, 'requisition', creation.id, 'created', {
-          number: (created as any).number,
-          title: input.title,
-        })
-        .catch(() => {});
-      await this.spendGuard.analyzeRequisition(organizationId, creation.id).catch(() => {});
-    }
+    await this.ensureSpendGuardAnalysis(organizationId, creation.id);
     return created;
+  }
+
+  /** Re-run the idempotent analysis when a cross-module owner is recovered. */
+  async ensureSpendGuardAnalysis(organizationId: string, requisitionId: string): Promise<void> {
+    await this.spendGuard.analyzeRequisition(organizationId, requisitionId).catch(() => {});
   }
 
   async update(
