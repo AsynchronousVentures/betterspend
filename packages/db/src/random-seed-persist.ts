@@ -110,12 +110,21 @@ async function insertBatches<T extends PgTable>(
   }
 }
 
-async function insertAuditRows(
+/** Persist seed audit entries in the order their timestamps describe. */
+export async function insertAuditRows(
   tx: DbTransaction,
   values: readonly Omit<typeof auditLog.$inferInsert, 'prevHash' | 'entryHash'>[] | undefined,
 ): Promise<void> {
   if (!values?.length) return;
-  for (const row of values) {
+  const defaultCreatedAt = new Date();
+  const orderedValues = values
+    .map((row) => ({ ...row, createdAt: row.createdAt ?? defaultCreatedAt }))
+    .sort((left, right) => {
+      const byCreatedAt = left.createdAt.getTime() - right.createdAt.getTime();
+      return byCreatedAt || (left.id ?? '').localeCompare(right.id ?? '');
+    });
+
+  for (const row of orderedValues) {
     const id = row.id;
     if (id) {
       await appendAuditLogIfAbsent(tx, { ...row, id });
