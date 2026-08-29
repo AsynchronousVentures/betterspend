@@ -28,6 +28,7 @@ import {
 import { Input } from '../../components/ui/input';
 import { Select } from '../../components/ui/select';
 import { Textarea } from '../../components/ui/textarea';
+import { ApprovalWorkflowCanvasPrototype } from './workflow-canvas-prototype';
 
 type RuleStep = {
   id?: string;
@@ -385,7 +386,7 @@ function RuleCard({
   );
 }
 
-export default function ApprovalRulesPage() {
+function ApprovalRulesLegacyPage() {
   const [rules, setRules] = useState<RuleRecord[]>([]);
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1090,4 +1091,12 @@ export default function ApprovalRulesPage() {
       </div>
     </div>
   );
+}
+
+export default function ApprovalRulesPage() {
+  if (process.env.NODE_ENV !== 'production') {
+    return <ApprovalWorkflowCanvasPrototype />;
+  }
+
+  return <ApprovalRulesLegacyPage />;
 }
