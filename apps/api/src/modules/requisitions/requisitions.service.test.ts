@@ -27,6 +27,45 @@ test('requisition list responses hide private owner idempotency keys', async () 
   assert.equal('idempotencyKey' in requisition!, false);
 });
 
+test('cancelling a renewal-owned requisition hides its private owner key', async () => {
+  const renewalOwned = {
+    id: 'requisition-1',
+    requesterId: 'user-1',
+    departmentId: null,
+    projectId: null,
+    status: 'draft',
+    idempotencyKey: 'artifact-operation:private',
+  };
+  const service = new RequisitionsService(
+    {
+      transaction: async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback({
+          update: () => ({
+            set: () => ({
+              where: () => ({ returning: async () => [{ ...renewalOwned, status: 'cancelled' }] }),
+            }),
+          }),
+        }),
+    } as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    { log: async () => {} } as never,
+    { releaseRequisition: async () => {} } as never,
+    {} as never,
+  );
+  (
+    service as unknown as {
+      findOneForMutation: () => Promise<typeof renewalOwned>;
+    }
+  ).findOneForMutation = async () => renewalOwned;
+
+  const response = await service.cancel('requisition-1', 'org-1', 'user-1');
+
+  assert.equal(response.status, 'cancelled');
+  assert.equal('idempotencyKey' in response, false);
+});
+
 test('RequisitionsService mutation scope', async (t) => {
   const service = new RequisitionsService(
     {} as never,

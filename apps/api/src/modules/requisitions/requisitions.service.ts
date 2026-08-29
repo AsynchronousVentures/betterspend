@@ -455,7 +455,7 @@ export class RequisitionsService {
       return transitioned;
     });
     this.audit.log(organizationId, null, 'requisition', id, 'cancelled').catch(() => {});
-    return updated;
+    return withoutOwnerIdempotencyKey(updated);
   }
 
   private assertCanMutate(
