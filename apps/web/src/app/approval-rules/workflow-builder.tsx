@@ -24,7 +24,15 @@ import {
   Save,
   Upload,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   validateWorkflowGraph,
   workflowAssistantProposalResponseSchema,
@@ -59,6 +67,7 @@ import {
   type WorkflowNoteFlowNode,
 } from './workflow-node-registry';
 import { WORKFLOW_NODE_DRAG_TYPE, WorkflowPalette } from './workflow-palette';
+import { navigateAfterDraftFlush } from './workflow-navigation';
 import { beginWorkflowOperation, endWorkflowOperation } from './workflow-operation-lock';
 import { isCurrentWorkflowRequest } from './workflow-request-identity';
 import { isValidWorkflowConnection, useWorkflowBuilderStore } from './workflow-store';
@@ -73,17 +82,21 @@ function messageFor(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong.';
 }
 
-function BuilderCanvas({
-  definition,
-  versions,
-  onDefinitionChange,
-  onVersionsChange,
-}: {
-  definition: WorkflowDefinitionRecord;
-  versions: WorkflowDefinitionVersionRecord[];
-  onDefinitionChange: (definition: WorkflowDefinitionRecord) => void;
-  onVersionsChange: (versions: WorkflowDefinitionVersionRecord[]) => void;
-}) {
+type BuilderCanvasHandle = { flushDraftBeforeNavigation: () => Promise<boolean> };
+
+const BuilderCanvas = forwardRef<
+  BuilderCanvasHandle,
+  {
+    definition: WorkflowDefinitionRecord;
+    versions: WorkflowDefinitionVersionRecord[];
+    onDefinitionChange: (definition: WorkflowDefinitionRecord) => void;
+    onVersionsChange: (versions: WorkflowDefinitionVersionRecord[]) => void;
+    navigationBusy: boolean;
+  }
+>(function BuilderCanvas(
+  { definition, versions, onDefinitionChange, onVersionsChange, navigationBusy },
+  ref,
+) {
   const store = useWorkflowBuilderStore();
   const { draft, selection, dirty, draftRevision, assistantProposal } = store;
   const { fitView, getNodes, screenToFlowPosition } = useReactFlow();
@@ -109,10 +122,11 @@ function BuilderCanvas({
   const restoreLockRef = useRef(false);
   const activeDefinitionIdRef = useRef<string | null>(definition.id);
   const saveRequestIdRef = useRef(0);
+  const savePromiseRef = useRef<Promise<WorkflowDefinitionRecord> | null>(null);
   const publishRequestIdRef = useRef(0);
   const proposalRequestIdRef = useRef(0);
   const ownsLease = ownsWorkflowDraftLease(leaseStatus);
-  const canEdit = ownsLease && !restoring && !publishing;
+  const canEdit = ownsLease && !restoring && !publishing && !navigationBusy;
   const openInsertDialog = useCallback((edgeId: string) => {
     insertDialogTriggerRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -373,11 +387,12 @@ function BuilderCanvas({
       };
       setSaving(true);
       setError(null);
-      api.workflowDefinitions
-        .saveDraft(definition.id, draft, {
-          editorInstanceId,
-          leaseToken: leaseStatus.leaseToken,
-        })
+      const savePromise = api.workflowDefinitions.saveDraft(definition.id, draft, {
+        editorInstanceId,
+        leaseToken: leaseStatus.leaseToken,
+      });
+      savePromiseRef.current = savePromise;
+      savePromise
         .then((saved) => {
           if (
             !isCurrentWorkflowRequest(
@@ -402,6 +417,7 @@ function BuilderCanvas({
             setError(messageFor(saveError));
         })
         .finally(() => {
+          if (savePromiseRef.current === savePromise) savePromiseRef.current = null;
           if (
             isCurrentWorkflowRequest(
               activeDefinitionIdRef.current,
@@ -426,6 +442,85 @@ function BuilderCanvas({
     saving,
     store,
   ]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      flushDraftBeforeNavigation: async () => {
+        try {
+          await savePromiseRef.current;
+        } catch {
+          // The autosave handler already surfaced the failure. Retry the current draft below.
+        }
+
+        const state = useWorkflowBuilderStore.getState();
+        if (!state.dirty || !state.draft) return true;
+        const leaseToken = leaseTokenRef.current;
+        if (!leaseToken || leaseStatus?.state !== 'owned') {
+          setError(
+            'Draft could not be saved because edit access was lost. Take over editing and try again.',
+          );
+          return false;
+        }
+        if (publishing || restoring || !beginWorkflowOperation(mutationLockRef)) {
+          setError('Wait for the current workflow operation to finish before leaving.');
+          return false;
+        }
+
+        const snapshot = state.draft;
+        const revision = state.draftRevision;
+        const request = {
+          definitionId: definition.id,
+          requestId: ++saveRequestIdRef.current,
+        };
+        setSaving(true);
+        setError(null);
+        try {
+          const saved = await api.workflowDefinitions.saveDraft(definition.id, snapshot, {
+            editorInstanceId,
+            leaseToken,
+          });
+          if (
+            !isCurrentWorkflowRequest(
+              activeDefinitionIdRef.current,
+              saveRequestIdRef.current,
+              request,
+            ) ||
+            leaseTokenRef.current !== leaseToken
+          ) {
+            setError('Draft save was superseded. Review the current workflow before leaving.');
+            return false;
+          }
+          store.markSaved(revision);
+          onDefinitionChange(saved);
+          return true;
+        } catch (saveError) {
+          if (activeDefinitionIdRef.current === definition.id) setError(messageFor(saveError));
+          return false;
+        } finally {
+          if (
+            isCurrentWorkflowRequest(
+              activeDefinitionIdRef.current,
+              saveRequestIdRef.current,
+              request,
+            )
+          ) {
+            endWorkflowOperation(mutationLockRef);
+            setSaving(false);
+          }
+        }
+      },
+    }),
+    [
+      definition.id,
+      editorInstanceId,
+      leaseStatus,
+      onDefinitionChange,
+      publishing,
+      restoring,
+      store,
+    ],
+  );
 
   const runLayout = useCallback(async () => {
     const leaseToken = leaseTokenRef.current;
@@ -1049,16 +1144,19 @@ function BuilderCanvas({
       </div>
     </div>
   );
-}
+});
 
 function WorkflowBuilderInner() {
   const loadDraft = useWorkflowBuilderStore((state) => state.loadDraft);
   const openRequestIdRef = useRef(0);
+  const builderRef = useRef<BuilderCanvasHandle>(null);
+  const navigationLockRef = useRef(false);
   const [definitions, setDefinitions] = useState<WorkflowDefinitionRecord[]>([]);
   const [active, setActive] = useState<WorkflowDefinitionRecord | null>(null);
   const [versions, setVersions] = useState<WorkflowDefinitionVersionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [navigationBusy, setNavigationBusy] = useState(false);
   const [createName, setCreateName] = useState('Requisition approvals');
   const [createDomain, setCreateDomain] = useState<WorkflowDomain>('requisition');
   const [error, setError] = useState<string | null>(null);
@@ -1106,6 +1204,19 @@ function WorkflowBuilderInner() {
       setCreating(false);
     }
   };
+  const leaveActiveWorkflow = async (navigate: () => void | Promise<void>) => {
+    if (navigationLockRef.current) return;
+    setNavigationBusy(true);
+    try {
+      await navigateAfterDraftFlush(
+        navigationLockRef,
+        () => builderRef.current?.flushDraftBeforeNavigation() ?? Promise.resolve(true),
+        navigate,
+      );
+    } finally {
+      setNavigationBusy(false);
+    }
+  };
   return (
     <div className="flex h-[calc(100vh-4rem)] min-h-[620px] flex-col bg-black">
       <PageHeader
@@ -1116,9 +1227,10 @@ function WorkflowBuilderInner() {
             <div className="flex items-center gap-2">
               <select
                 value={active.id}
+                disabled={navigationBusy}
                 onChange={(event) => {
                   const next = definitions.find((item) => item.id === event.target.value);
-                  if (next) void openDefinition(next);
+                  if (next) void leaveActiveWorkflow(() => openDefinition(next));
                 }}
                 className="h-8 border border-white/15 bg-black px-2 text-xs text-white"
               >
@@ -1130,11 +1242,14 @@ function WorkflowBuilderInner() {
               </select>
               <button
                 type="button"
+                disabled={navigationBusy}
                 onClick={() => {
-                  openRequestIdRef.current += 1;
-                  setActive(null);
+                  void leaveActiveWorkflow(() => {
+                    openRequestIdRef.current += 1;
+                    setActive(null);
+                  });
                 }}
-                className="flex h-8 items-center gap-1.5 border border-white/15 px-2.5 text-[10px] text-zinc-300 hover:text-white"
+                className="flex h-8 items-center gap-1.5 border border-white/15 px-2.5 text-[10px] text-zinc-300 hover:text-white disabled:opacity-35"
               >
                 <Plus className="size-3" /> New
               </button>
@@ -1148,6 +1263,7 @@ function WorkflowBuilderInner() {
         </div>
       ) : active ? (
         <BuilderCanvas
+          ref={builderRef}
           key={active.id}
           definition={active}
           versions={versions}
@@ -1156,6 +1272,7 @@ function WorkflowBuilderInner() {
             setDefinitions((items) => items.map((item) => (item.id === next.id ? next : item)));
           }}
           onVersionsChange={setVersions}
+          navigationBusy={navigationBusy}
         />
       ) : (
         <div className="grid flex-1 place-items-center p-6">
