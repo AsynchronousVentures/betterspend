@@ -146,7 +146,7 @@ export class OAuthService {
     return grant.tenants;
   }
 
-  /** Saves the tenant selected by the grant owner and consumes the one-time grant. */
+  /** Claims the selected tenant before saving it, then consumes the one-time grant. */
   async selectXeroTenant(
     grantId: string,
     tenantId: string,
@@ -158,6 +158,12 @@ export class OAuthService {
       const grant = await this.getAuthorizedXeroGrant(grantId, organizationId, userId, sessionId);
       const tenant = grant.tenants.find((candidate) => candidate.tenantId === tenantId);
       if (!tenant) throw new BadRequestException('Xero tenant is not part of this grant');
+
+      const claim = await this.oauthRedis.claimXeroPendingTenant(grantId, tenant.tenantId);
+      if (claim === 'missing') throw new BadRequestException('Invalid or expired Xero grant');
+      if (claim === 'conflict') {
+        throw new BadRequestException('Xero tenant selection is already bound to another tenant');
+      }
 
       await this.saveConnection(
         'xero',
@@ -174,7 +180,7 @@ export class OAuthService {
         },
         tenant.tenantName ?? undefined,
       );
-      const consumed = await this.oauthRedis.consumeXeroPendingGrant(grantId);
+      const consumed = await this.oauthRedis.completeXeroPendingGrant(grantId, tenant.tenantId);
       if (!consumed) {
         this.logger.log(
           `Xero connection stored for org ${organizationId}, but the pending grant expired`,
@@ -458,26 +464,31 @@ export class OAuthService {
           { headers: this.tokenHeaders(provider) },
         );
         if (provider === 'xero') {
-          const tenants = await this.fetchXeroTenants(response.data.access_token);
-          const configuredTenantStillAvailable = tenants.some(
-            (tenant) => tenant.tenantId === connection.realmId,
-          );
-          if (!configuredTenantStillAvailable) {
-            await this.transitionToRevoked(
-              connection,
-              tenants.length === 0 ? 'empty_connections' : 'configured_tenant_missing',
-            );
-            return;
-          }
           if (!response.data.refresh_token) {
             throw new Error('Xero token refresh did not return a rotated refresh token');
           }
-          await this.persistXeroRefresh(
+          const persisted = await this.persistXeroRefresh(
             connection,
             encryptedAccessToken,
             encryptedRefreshToken,
             response.data,
           );
+          if (!persisted) return;
+
+          const tenants = await this.fetchXeroTenants(response.data.access_token);
+          const configuredTenantStillAvailable = tenants.some(
+            (tenant) => tenant.tenantId === connection.realmId,
+          );
+          if (!configuredTenantStillAvailable) {
+            const latest = await this.findConnectionById(connection.id);
+            if (latest) {
+              await this.transitionToRevoked(
+                latest,
+                tenants.length === 0 ? 'empty_connections' : 'configured_tenant_missing',
+              );
+            }
+            return;
+          }
           return;
         }
 
@@ -518,8 +529,8 @@ export class OAuthService {
     encryptedAccessToken: string | null,
     encryptedRefreshToken: string,
     token: TokenResponse,
-  ): Promise<void> {
-    await this.db.transaction(async (transaction) => {
+  ): Promise<boolean> {
+    return this.db.transaction(async (transaction) => {
       const [updated] = await transaction
         .update(integrationConnections)
         .set({
@@ -542,7 +553,7 @@ export class OAuthService {
           ),
         )
         .returning({ id: integrationConnections.id });
-      if (!updated) return;
+      if (!updated) return false;
 
       await transaction.insert(auditLog).values({
         organizationId: connection.organizationId,
@@ -553,6 +564,7 @@ export class OAuthService {
         changes: { accessTokenRotated: true, refreshTokenRotated: true },
         metadata: { actor: 'system', provider: 'xero', reason: 'token_refresh' },
       });
+      return true;
     });
   }
 

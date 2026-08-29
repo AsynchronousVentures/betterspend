@@ -35,6 +35,7 @@ class FakeOAuthRedis {
 
 class FakeXeroOAuthRedis extends FakeOAuthRedis {
   private pendingGrant: XeroPendingGrant | null = null;
+  private selectedTenantId: string | null = null;
 
   async createXeroPendingGrant(grant: XeroPendingGrant): Promise<string> {
     this.pendingGrant = grant;
@@ -49,13 +50,58 @@ class FakeXeroOAuthRedis extends FakeOAuthRedis {
     if (grantId !== 'pending-grant') return null;
     const grant = this.pendingGrant;
     this.pendingGrant = null;
+    this.selectedTenantId = null;
     return grant;
+  }
+
+  async claimXeroPendingTenant(
+    grantId: string,
+    tenantId: string,
+  ): Promise<'claimed' | 'already_claimed' | 'conflict' | 'missing'> {
+    if (grantId !== 'pending-grant' || !this.pendingGrant) return 'missing';
+    if (!this.selectedTenantId) {
+      this.selectedTenantId = tenantId;
+      return 'claimed';
+    }
+    return this.selectedTenantId === tenantId ? 'already_claimed' : 'conflict';
+  }
+
+  async completeXeroPendingGrant(grantId: string, tenantId: string): Promise<boolean> {
+    if (grantId !== 'pending-grant') return false;
+    if (this.selectedTenantId && this.selectedTenantId !== tenantId) return false;
+    this.pendingGrant = null;
+    this.selectedTenantId = null;
+    return true;
   }
 }
 
 class ExpiringAfterSaveXeroOAuthRedis extends FakeXeroOAuthRedis {
   async consumeXeroPendingGrant(_grantId: string): Promise<XeroPendingGrant | null> {
     return null;
+  }
+
+  async completeXeroPendingGrant(_grantId: string, _tenantId: string): Promise<boolean> {
+    return false;
+  }
+}
+
+class FailingAfterSaveXeroOAuthRedis extends FakeXeroOAuthRedis {
+  private failCleanup = true;
+
+  async consumeXeroPendingGrant(grantId: string): Promise<XeroPendingGrant | null> {
+    if (this.failCleanup) {
+      this.failCleanup = false;
+      throw new Error('Redis unavailable while consuming grant');
+    }
+    return super.consumeXeroPendingGrant(grantId);
+  }
+
+  async completeXeroPendingGrant(grantId: string, tenantId: string): Promise<boolean> {
+    if (this.failCleanup) {
+      this.failCleanup = false;
+      throw new Error('Redis unavailable while consuming grant');
+    }
+    return super.completeXeroPendingGrant(grantId, tenantId);
   }
 }
 
@@ -541,6 +587,53 @@ describe('OAuthService', () => {
     );
   });
 
+  it('keeps a grant bound to its first tenant when cleanup fails after saving', async () => {
+    const captured: Array<Record<string, unknown>> = [];
+    const stateStore = new FailingAfterSaveXeroOAuthRedis();
+    const service = new OAuthService(insertCapturingDb(captured), crypto, stateStore as never);
+    const url = new URL(await service.getXeroAuthUrl(organizationId, userId, sessionId));
+    mockedAxios.post.mockResolvedValue({
+      data: {
+        access_token: 'xero-access',
+        refresh_token: 'xero-refresh',
+        expires_in: 1800,
+        scope: XERO_SCOPES.join(' '),
+      },
+    });
+    mockedAxios.get.mockResolvedValue({
+      data: [
+        { tenantId: 'tenant-1', tenantName: 'Tenant 1' },
+        { tenantId: 'tenant-2', tenantName: 'Tenant 2' },
+      ],
+    });
+
+    const { grantId } = await service.completeXeroOAuth(
+      url.searchParams.get('state')!,
+      'authorization-code',
+      userId,
+      sessionId,
+    );
+
+    await expect(
+      service.selectXeroTenant(grantId, 'tenant-1', organizationId, userId, sessionId),
+    ).rejects.toThrow('Redis unavailable while consuming grant');
+    await expect(
+      service.selectXeroTenant(grantId, 'tenant-2', organizationId, userId, sessionId),
+    ).rejects.toThrow('already bound to another tenant');
+    await expect(
+      service.selectXeroTenant(grantId, 'tenant-1', organizationId, userId, sessionId),
+    ).resolves.toBeUndefined();
+
+    expect(captured.filter((values) => 'accessTokenEncrypted' in values)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ realmId: 'tenant-1', status: 'active' })]),
+    );
+    expect(
+      captured.filter(
+        (values) => values.realmId === 'tenant-2' && 'accessTokenEncrypted' in values,
+      ),
+    ).toHaveLength(0);
+  });
+
   it('atomically rotates Xero refresh credentials and checks the old refresh version', async () => {
     let refreshPredicate: unknown;
     const audits: Array<Record<string, unknown>> = [];
@@ -618,6 +711,89 @@ describe('OAuthService', () => {
     ]);
   });
 
+  it('persists rotated Xero credentials before transient tenant discovery', async () => {
+    const events: string[] = [];
+    const audits: Array<Record<string, unknown>> = [];
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
+      provider: 'xero',
+      realmId: 'tenant-1',
+      realmName: 'Tenant 1',
+      accessTokenEncrypted: crypto.encrypt('expired-access'),
+      refreshTokenEncrypted: crypto.encrypt('old-refresh'),
+      accessExpiresAt: new Date(0),
+      status: 'active',
+      scopes: XERO_SCOPES.join(' '),
+      connectedByUserId: userId,
+      lastSyncAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const transaction = {
+      update: jest.fn(() => ({
+        set: jest.fn((values: Record<string, unknown>) => {
+          events.push('persist');
+          Object.assign(connection, values);
+          return {
+            where: jest.fn(() => ({
+              returning: jest.fn(async () => [{ id: connection.id }]),
+            })),
+          };
+        }),
+      })),
+      insert: jest.fn(() => ({
+        values: jest.fn(async (values: Record<string, unknown>) => {
+          audits.push(values);
+        }),
+      })),
+    };
+    const db = {
+      query: {
+        integrationConnections: { findFirst: jest.fn(async () => ({ ...connection })) },
+      },
+      transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback(transaction),
+      ),
+    } as unknown as Db;
+    mockedAxios.post.mockImplementation(async () => {
+      events.push('refresh');
+      return {
+        data: {
+          access_token: 'rotated-access',
+          refresh_token: 'rotated-refresh',
+          expires_in: 1800,
+        },
+      };
+    });
+    mockedAxios.get.mockImplementation(async () => {
+      events.push('discover');
+      throw new Error('temporary tenant discovery failure');
+    });
+    const service = new OAuthService(db, crypto, new FakeXeroOAuthRedis() as never);
+
+    await expect(service.getXeroToken(organizationId)).rejects.toThrow(
+      'temporary tenant discovery failure',
+    );
+
+    expect(events).toEqual(['refresh', 'persist', 'discover']);
+    expect(crypto.decrypt(String(connection.accessTokenEncrypted))).toBe('rotated-access');
+    expect(crypto.decrypt(String(connection.refreshTokenEncrypted))).toBe('rotated-refresh');
+    expect(audits).toEqual([
+      expect.objectContaining({
+        action: 'token_refreshed',
+        metadata: { actor: 'system', provider: 'xero', reason: 'token_refresh' },
+      }),
+    ]);
+
+    await expect(service.getXeroToken(organizationId)).resolves.toEqual({
+      accessToken: 'rotated-access',
+      tenantId: 'tenant-1',
+      connectionId: connection.id,
+    });
+    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+  });
+
   it('revokes Xero credentials when refresh no longer includes the configured tenant', async () => {
     const connection = {
       id: '00000000-0000-0000-0000-000000000010',
@@ -673,12 +849,14 @@ describe('OAuthService', () => {
     expect(connection.status).toBe('revoked');
     expect(connection.accessTokenEncrypted).toBeNull();
     expect(connection.refreshTokenEncrypted).toBeNull();
-    expect(audits).toEqual([
-      expect.objectContaining({
-        action: 'revoked',
-        metadata: { actor: 'system', provider: 'xero', reason: 'configured_tenant_missing' },
-      }),
-    ]);
+    expect(audits).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'revoked',
+          metadata: { actor: 'system', provider: 'xero', reason: 'configured_tenant_missing' },
+        }),
+      ]),
+    );
   });
 
   it('revokes Xero credentials when refresh succeeds but /connections is empty', async () => {
@@ -734,11 +912,13 @@ describe('OAuthService', () => {
     expect(connection.status).toBe('revoked');
     expect(connection.accessTokenEncrypted).toBeNull();
     expect(connection.refreshTokenEncrypted).toBeNull();
-    expect(audits).toEqual([
-      expect.objectContaining({
-        action: 'revoked',
-        metadata: { actor: 'system', provider: 'xero', reason: 'empty_connections' },
-      }),
-    ]);
+    expect(audits).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'revoked',
+          metadata: { actor: 'system', provider: 'xero', reason: 'empty_connections' },
+        }),
+      ]),
+    );
   });
 });

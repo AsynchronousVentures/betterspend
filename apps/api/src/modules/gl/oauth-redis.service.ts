@@ -25,6 +25,8 @@ export type XeroPendingTenant = {
   tenantName: string | null;
 };
 
+export type XeroPendingTenantClaim = 'claimed' | 'already_claimed' | 'conflict' | 'missing';
+
 export type XeroDailyBudgetPriority = 'interactive' | 'background';
 
 export type XeroDailyBudgetConsumeInput = {
@@ -132,12 +134,47 @@ export class OAuthRedisService implements OnModuleDestroy {
   async consumeXeroPendingGrant(grantId: string): Promise<XeroPendingGrant | null> {
     if (!grantId) return null;
     const serialized = await this.redis.eval(
-      "local value = redis.call('GET', KEYS[1]); if value then redis.call('DEL', KEYS[1]); end; return value",
-      1,
+      "local value = redis.call('GET', KEYS[1]); if value then redis.call('DEL', KEYS[1], KEYS[2]); end; return value",
+      2,
       this.pendingGrantKey(grantId),
+      this.pendingGrantSelectionKey(grantId),
     );
     if (typeof serialized !== 'string') return null;
     return parseXeroPendingGrant(serialized);
+  }
+
+  /** Claims one tenant before its credentials can be written to the connection registry. */
+  async claimXeroPendingTenant(grantId: string, tenantId: string): Promise<XeroPendingTenantClaim> {
+    if (!grantId || !tenantId) return 'missing';
+    const result = await this.redis.eval(
+      "if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end; local selected = redis.call('GET', KEYS[2]); if not selected then local ttl = redis.call('TTL', KEYS[1]); if ttl < 1 then return -1 end; redis.call('SET', KEYS[2], ARGV[1], 'EX', ttl); return 1 end; if selected == ARGV[1] then return 2 end; return 0",
+      2,
+      this.pendingGrantKey(grantId),
+      this.pendingGrantSelectionKey(grantId),
+      tenantId,
+    );
+    const claim = Number(result);
+    if (claim === -1) return 'missing';
+    if (claim === 0) return 'conflict';
+    if (claim === 1) return 'claimed';
+    if (claim === 2) return 'already_claimed';
+    throw new ServiceUnavailableException('Invalid Xero tenant claim response');
+  }
+
+  /** Completes a claimed tenant selection and clears both grant state keys atomically. */
+  async completeXeroPendingGrant(grantId: string, tenantId: string): Promise<boolean> {
+    if (!grantId || !tenantId) return false;
+    const result = await this.redis.eval(
+      "local selected = redis.call('GET', KEYS[2]); if selected and selected ~= ARGV[1] then return 0 end; redis.call('DEL', KEYS[1], KEYS[2]); return 1",
+      2,
+      this.pendingGrantKey(grantId),
+      this.pendingGrantSelectionKey(grantId),
+      tenantId,
+    );
+    const completed = Number(result);
+    if (completed === 0) return false;
+    if (completed === 1) return true;
+    throw new ServiceUnavailableException('Invalid Xero grant completion response');
   }
 
   /** Atomically reserves one request while preserving the interactive daily reserve. */
@@ -237,6 +274,10 @@ export class OAuthRedisService implements OnModuleDestroy {
 
   private pendingGrantKey(grantId: string): string {
     return `oauth:xero-grant:${grantId}`;
+  }
+
+  private pendingGrantSelectionKey(grantId: string): string {
+    return `oauth:xero-grant-selection:${grantId}`;
   }
 
   private xeroDailyBudgetKey(tenantId: string, date: string): string {
