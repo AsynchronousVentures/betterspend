@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import axios from 'axios';
 import { and, desc, eq, isNull } from 'drizzle-orm';
-import { auditLog, integrationConnections, type Db } from '@betterspend/db';
+import { appendAuditLog, integrationConnections, type Db } from '@betterspend/db';
 import { INTEGRATION_CONNECTION_STATUS } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
 import { CredentialCryptoService } from '../ai-providers/credential-crypto.service';
@@ -406,7 +406,7 @@ export class OAuthService {
           set: values,
         })
         .returning({ id: integrationConnections.id });
-      await transaction.insert(auditLog).values({
+      await appendAuditLog(transaction, {
         organizationId: binding.organizationId,
         userId: binding.userId,
         entityType: 'integration_connection',
@@ -555,7 +555,7 @@ export class OAuthService {
         .returning({ id: integrationConnections.id });
       if (!updated) return false;
 
-      await transaction.insert(auditLog).values({
+      await appendAuditLog(transaction, {
         organizationId: connection.organizationId,
         userId: null,
         entityType: 'integration_connection',
@@ -620,7 +620,7 @@ export class OAuthService {
           )
           .returning({ id: integrationConnections.id, realmId: integrationConnections.realmId });
         for (const connection of purged) {
-          await transaction.insert(auditLog).values({
+          await appendAuditLog(transaction, {
             organizationId,
             userId,
             entityType: 'integration_connection',
@@ -730,7 +730,7 @@ export class OAuthService {
         .returning({ id: integrationConnections.id });
       if (!updated) return;
 
-      await transaction.insert(auditLog).values({
+      await appendAuditLog(transaction, {
         organizationId: connection.organizationId,
         userId: null,
         entityType: 'integration_connection',
@@ -778,7 +778,7 @@ export class OAuthService {
         .returning({ id: integrationConnections.id });
       if (!updated) return;
 
-      await transaction.insert(auditLog).values({
+      await appendAuditLog(transaction, {
         organizationId: connection.organizationId,
         userId: null,
         entityType: 'integration_connection',

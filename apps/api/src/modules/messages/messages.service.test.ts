@@ -4,13 +4,31 @@ import { messages } from '@betterspend/db';
 import type { Db } from '@betterspend/db';
 import { MessagesService } from './messages.service';
 
+const auditProjection = [
+  {
+    changesJson: '{}',
+    metadataJson: '{}',
+    createdAtText: '2026-08-29T00:00:00.000000Z',
+  },
+];
+
 test('message owner inserts target the organization-scoped idempotency key', async () => {
   const conflictTargets: unknown[][] = [];
   const db = {
     transaction: async <T>(callback: (tx: unknown) => Promise<T>) =>
       callback({
+        execute: async () => auditProjection,
+        select: () => ({
+          from: () => ({
+            where: () => ({
+              orderBy: () => ({ limit: async () => [] }),
+              limit: async () => [],
+            }),
+          }),
+        }),
         insert: () => ({
           values: () => ({
+            returning: async () => [{ id: 'audit-1' }],
             onConflictDoNothing: (config?: { target?: unknown[] }) => {
               assert.ok(config?.target);
               conflictTargets.push(config.target);
@@ -54,7 +72,7 @@ test('message owner inserts target the organization-scoped idempotency key', asy
   };
 
   await methods.createUserMessage({
-    organizationId: 'org-1',
+    organizationId: '00000000-0000-4000-8000-000000000001',
     userId: 'user-1',
     threadType: 'po',
     threadId: 'po-1',
@@ -65,7 +83,7 @@ test('message owner inserts target the organization-scoped idempotency key', asy
     ownerIdempotencyKey: 'artifact-operation:user',
   });
   await methods.createVendorMessage({
-    organizationId: 'org-1',
+    organizationId: '00000000-0000-4000-8000-000000000001',
     vendorId: 'vendor-1',
     threadType: 'po',
     threadId: 'po-1',

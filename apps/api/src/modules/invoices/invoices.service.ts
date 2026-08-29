@@ -12,7 +12,7 @@ import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
 import { updateInvoiceSchema, type UpdateInvoiceInput } from '@betterspend/shared';
 import {
-  auditLog,
+  appendAuditLog,
   invoices,
   invoiceLines,
   purchaseOrders,
@@ -128,7 +128,6 @@ function invoiceReportScopePredicate(access: AccessPolicy | undefined, organizat
 }
 
 export type { UpdateInvoiceInput } from '@betterspend/shared';
-
 
 export interface CreateInvoiceInput {
   entityId?: string;
@@ -1086,7 +1085,7 @@ export class InvoicesService {
         );
       }
 
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId: createdBy,
         entityType: 'invoice',
@@ -1229,7 +1228,7 @@ export class InvoicesService {
           );
         }
       }
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId: actorId,
         entityType: 'invoice',
@@ -1566,7 +1565,7 @@ export class InvoicesService {
         lockedInvoice.submissionSource !== 'vendor_portal' &&
         !lockedInvoice.createdBy;
       if (unknownInternalMaker) {
-        await tx.insert(auditLog).values({
+        await appendAuditLog(tx, {
           organizationId,
           userId: approverId,
           entityType: 'invoice',
@@ -1605,7 +1604,7 @@ export class InvoicesService {
           candidates,
         );
         const fallbackApprover = fallback ? { id: fallback.id, name: fallback.name } : null;
-        await tx.insert(auditLog).values({
+        await appendAuditLog(tx, {
           organizationId,
           userId: approverId,
           entityType: 'invoice',

@@ -14,7 +14,8 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import { simpleParser } from 'mailparser';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
-  auditLog,
+  appendAuditLog,
+  appendAuditLogIfAbsent,
   emailIntakeAddresses,
   emailIntakeAttachments,
   emailIntakeItems,
@@ -150,7 +151,7 @@ export class EmailIntakeService implements OnModuleInit {
           .onConflictDoNothing({ target: emailIntakeAddresses.organizationId })
           .returning();
         if (created) {
-          await tx.insert(auditLog).values({
+          await appendAuditLog(tx, {
             organizationId,
             userId,
             entityType: 'email_intake_address',
@@ -484,7 +485,7 @@ export class EmailIntakeService implements OnModuleInit {
         );
       }
 
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId: null,
         entityType: 'email_intake_message',
@@ -644,23 +645,20 @@ export class EmailIntakeService implements OnModuleInit {
             )
             .returning({ id: emailIntakeAttachments.id });
           if (updated) {
-            await tx
-              .insert(auditLog)
-              .values({
-                id: this.stableUuid('audit', 'attachment-deduplicated', outcome.id),
-                organizationId: context.organizationId,
-                userId: null,
-                entityType: 'email_intake_attachment',
-                entityId: outcome.id,
-                action: 'deduplicated',
-                metadata: {
-                  messageId: context.messageId,
-                  fromStatus: 'pending',
-                  toStatus: 'duplicate',
-                  rejectionReason: 'duplicate_file_hash',
-                },
-              })
-              .onConflictDoNothing({ target: auditLog.id });
+            await appendAuditLogIfAbsent(tx, {
+              id: this.stableUuid('audit', 'attachment-deduplicated', outcome.id),
+              organizationId: context.organizationId,
+              userId: null,
+              entityType: 'email_intake_attachment',
+              entityId: outcome.id,
+              action: 'deduplicated',
+              metadata: {
+                messageId: context.messageId,
+                fromStatus: 'pending',
+                toStatus: 'duplicate',
+                rejectionReason: 'duplicate_file_hash',
+              },
+            });
           }
           continue;
         }
@@ -718,24 +716,21 @@ export class EmailIntakeService implements OnModuleInit {
           )
           .returning({ id: emailIntakeAttachments.id });
         if (updated) {
-          await tx
-            .insert(auditLog)
-            .values({
-              id: this.stableUuid('audit', 'attachment-promoted', outcome.id),
-              organizationId: context.organizationId,
-              userId: null,
-              entityType: 'email_intake_attachment',
-              entityId: outcome.id,
-              action: 'promoted',
-              metadata: {
-                messageId: context.messageId,
-                fromStatus: 'pending',
-                toStatus: 'accepted',
-                intakeItemId,
-                storageKey: current.storageKey,
-              },
-            })
-            .onConflictDoNothing({ target: auditLog.id });
+          await appendAuditLogIfAbsent(tx, {
+            id: this.stableUuid('audit', 'attachment-promoted', outcome.id),
+            organizationId: context.organizationId,
+            userId: null,
+            entityType: 'email_intake_attachment',
+            entityId: outcome.id,
+            action: 'promoted',
+            metadata: {
+              messageId: context.messageId,
+              fromStatus: 'pending',
+              toStatus: 'accepted',
+              intakeItemId,
+              storageKey: current.storageKey,
+            },
+          });
         }
       }
 
@@ -759,24 +754,20 @@ export class EmailIntakeService implements OnModuleInit {
         invoiceNumberHint: attachment.invoiceNumberHint,
       }));
       const status = this.summarizeMessageStatus(outcomes);
-      await tx
-        .insert(auditLog)
-        .values({
-          id: this.stableUuid('audit', 'processing-completed', context.messageId),
-          organizationId: context.organizationId,
-          userId: null,
-          entityType: 'email_intake_message',
-          entityId: context.messageId,
-          action: 'processing_completed',
-          metadata: {
-            status,
-            acceptedAttachments: outcomes.filter((outcome) => outcome.status === 'accepted').length,
-            duplicateAttachments: outcomes.filter((outcome) => outcome.status === 'duplicate')
-              .length,
-            rejectedAttachments: outcomes.filter((outcome) => outcome.status === 'rejected').length,
-          },
-        })
-        .onConflictDoNothing({ target: auditLog.id });
+      await appendAuditLogIfAbsent(tx, {
+        id: this.stableUuid('audit', 'processing-completed', context.messageId),
+        organizationId: context.organizationId,
+        userId: null,
+        entityType: 'email_intake_message',
+        entityId: context.messageId,
+        action: 'processing_completed',
+        metadata: {
+          status,
+          acceptedAttachments: outcomes.filter((outcome) => outcome.status === 'accepted').length,
+          duplicateAttachments: outcomes.filter((outcome) => outcome.status === 'duplicate').length,
+          rejectedAttachments: outcomes.filter((outcome) => outcome.status === 'rejected').length,
+        },
+      });
       return { outcomes, status };
     });
   }

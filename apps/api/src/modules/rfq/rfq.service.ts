@@ -10,7 +10,7 @@ import { DB_TOKEN } from '../../database/database.module';
 import { SequenceService } from '../../common/services/sequence.service';
 import type { Db } from '@betterspend/db';
 import {
-  auditLog,
+  appendAuditLog,
   rfqRequests,
   rfqLines,
   rfqInvitations,
@@ -401,7 +401,7 @@ export class RfqService {
         throw new BadRequestException('Only draft RFQs can be opened');
       }
 
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId: orgId,
         userId,
         entityType: 'rfq',

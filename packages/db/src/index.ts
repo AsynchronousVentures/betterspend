@@ -1,4 +1,17 @@
 export * from './schema';
+export {
+  appendAuditLog,
+  appendAuditLogIfAbsent,
+  AUDIT_HASH_TIMESTAMP_FORMAT,
+  verifyAuditChain,
+} from './audit-integrity';
+export type {
+  AuditChainFailure,
+  AuditChainRange,
+  AuditChainRow,
+  AuditChainVerification,
+  AuditEntryInput,
+} from './audit-integrity';
 export * from './relations';
 export * from './client';
 export * from './credential-crypto';

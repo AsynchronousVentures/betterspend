@@ -532,7 +532,7 @@ export class PunchoutService {
     vendorId: string,
     action: string,
     changes: Record<string, unknown>,
-    executor: Db | DbTransaction,
+    executor: DbTransaction,
   ) {
     await this.audit.log(
       organizationId,

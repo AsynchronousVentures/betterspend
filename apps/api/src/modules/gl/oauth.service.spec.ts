@@ -7,6 +7,14 @@ import type { OAuthStateBinding, XeroPendingGrant } from './oauth-redis.service'
 
 jest.mock('axios');
 
+const auditProjection = [
+  {
+    changesJson: '{}',
+    metadataJson: '{}',
+    createdAtText: '2026-08-29T00:00:00.000000Z',
+  },
+];
+
 class FakeOAuthRedis {
   private readonly states = new Map<string, OAuthStateBinding>();
   private lockTail = Promise.resolve();
@@ -112,11 +120,26 @@ class ConcurrentXeroOAuthRedis extends FakeXeroOAuthRedis {
 }
 
 function insertCapturingDb(captured: Array<Record<string, unknown>>): Db {
-  const db = {} as { insert: jest.Mock; transaction: jest.Mock };
+  const db = {} as {
+    execute: jest.Mock;
+    select: jest.Mock;
+    insert: jest.Mock;
+    transaction: jest.Mock;
+  };
+  db.execute = jest.fn(async () => auditProjection);
+  db.select = jest.fn(() => ({
+    from: jest.fn(() => ({
+      where: jest.fn(() => ({
+        orderBy: jest.fn(() => ({ limit: jest.fn(async () => []) })),
+        limit: jest.fn(async () => []),
+      })),
+    })),
+  }));
   db.insert = jest.fn(() => ({
     values: jest.fn((values: Record<string, unknown>) => {
       captured.push(values);
       return {
+        returning: jest.fn(async () => [values]),
         onConflictDoUpdate: jest.fn(() => ({
           returning: jest.fn(async () => [{ id: '00000000-0000-0000-0000-000000000010' }]),
         })),
@@ -127,6 +150,26 @@ function insertCapturingDb(captured: Array<Record<string, unknown>>): Db {
     callback(db),
   );
   return db as unknown as Db;
+}
+
+function auditTransaction(captured: Array<Record<string, unknown>>) {
+  return {
+    execute: jest.fn(async () => auditProjection),
+    select: jest.fn(() => ({
+      from: jest.fn(() => ({
+        where: jest.fn(() => ({
+          orderBy: jest.fn(() => ({ limit: jest.fn(async () => []) })),
+          limit: jest.fn(async () => []),
+        })),
+      })),
+    })),
+    insert: jest.fn(() => ({
+      values: jest.fn((values: Record<string, unknown>) => {
+        captured.push(values);
+        return { returning: jest.fn(async () => [values]) };
+      }),
+    })),
+  };
 }
 
 describe('OAuthService', () => {
@@ -347,6 +390,15 @@ describe('OAuthService', () => {
       updatedAt: new Date(),
     };
     const transaction = {
+      execute: jest.fn(async () => auditProjection),
+      select: jest.fn(() => ({
+        from: jest.fn(() => ({
+          where: jest.fn(() => ({
+            orderBy: jest.fn(() => ({ limit: jest.fn(async () => []) })),
+            limit: jest.fn(async () => []),
+          })),
+        })),
+      })),
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => ({
           where: jest.fn(() => ({
@@ -357,7 +409,11 @@ describe('OAuthService', () => {
           })),
         })),
       })),
-      insert: jest.fn(() => ({ values: jest.fn(async () => undefined) })),
+      insert: jest.fn(() => ({
+        values: jest.fn((values: Record<string, unknown>) => ({
+          returning: jest.fn(async () => [values]),
+        })),
+      })),
     };
     const db = {
       query: {
@@ -412,6 +468,15 @@ describe('OAuthService', () => {
       status: 'active',
     };
     const transaction = {
+      execute: jest.fn(async () => auditProjection),
+      select: jest.fn(() => ({
+        from: jest.fn(() => ({
+          where: jest.fn(() => ({
+            orderBy: jest.fn(() => ({ limit: jest.fn(async () => []) })),
+            limit: jest.fn(async () => []),
+          })),
+        })),
+      })),
       update: jest.fn(() => ({
         set: jest.fn(() => ({
           where: jest.fn((condition: unknown) => ({
@@ -423,8 +488,9 @@ describe('OAuthService', () => {
         })),
       })),
       insert: jest.fn(() => ({
-        values: jest.fn(async (values: Record<string, unknown>) => {
+        values: jest.fn((values: Record<string, unknown>) => {
           audits.push(values);
+          return { returning: jest.fn(async () => [values]) };
         }),
       })),
     };
@@ -661,6 +727,7 @@ describe('OAuthService', () => {
       updatedAt: new Date(),
     };
     const transaction = {
+      ...auditTransaction(audits),
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => {
           Object.assign(connection, values);
@@ -672,11 +739,6 @@ describe('OAuthService', () => {
               };
             }),
           };
-        }),
-      })),
-      insert: jest.fn(() => ({
-        values: jest.fn(async (values: Record<string, unknown>) => {
-          audits.push(values);
         }),
       })),
     };
@@ -776,6 +838,7 @@ describe('OAuthService', () => {
     mockedAxios.get.mockResolvedValue({ data: [{ tenantId: 'tenant-1', tenantName: 'Tenant 1' }] });
 
     const transaction = {
+      ...auditTransaction(audits),
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => {
           Object.assign(connection, values);
@@ -785,11 +848,6 @@ describe('OAuthService', () => {
               returning: jest.fn(async () => [{ id: connection.id }]),
             })),
           };
-        }),
-      })),
-      insert: jest.fn(() => ({
-        values: jest.fn(async (values: Record<string, unknown>) => {
-          audits.push(values);
         }),
       })),
     };
@@ -858,6 +916,7 @@ describe('OAuthService', () => {
       updatedAt: new Date(),
     };
     const transaction = {
+      ...auditTransaction(audits),
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => {
           events.push('persist');
@@ -867,11 +926,6 @@ describe('OAuthService', () => {
               returning: jest.fn(async () => [{ id: connection.id }]),
             })),
           };
-        }),
-      })),
-      insert: jest.fn(() => ({
-        values: jest.fn(async (values: Record<string, unknown>) => {
-          audits.push(values);
         }),
       })),
     };
@@ -940,6 +994,7 @@ describe('OAuthService', () => {
     };
     const audits: Array<Record<string, unknown>> = [];
     const transaction = {
+      ...auditTransaction(audits),
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => {
           Object.assign(connection, values);
@@ -948,11 +1003,6 @@ describe('OAuthService', () => {
               returning: jest.fn(async () => [{ id: connection.id }]),
             })),
           };
-        }),
-      })),
-      insert: jest.fn(() => ({
-        values: jest.fn(async (values: Record<string, unknown>) => {
-          audits.push(values);
         }),
       })),
     };
@@ -1005,6 +1055,7 @@ describe('OAuthService', () => {
     };
     const audits: Array<Record<string, unknown>> = [];
     const transaction = {
+      ...auditTransaction(audits),
       update: jest.fn(() => ({
         set: jest.fn((values: Record<string, unknown>) => {
           Object.assign(connection, values);
@@ -1013,11 +1064,6 @@ describe('OAuthService', () => {
               returning: jest.fn(async () => [{ id: connection.id }]),
             })),
           };
-        }),
-      })),
-      insert: jest.fn(() => ({
-        values: jest.fn(async (values: Record<string, unknown>) => {
-          audits.push(values);
         }),
       })),
     };

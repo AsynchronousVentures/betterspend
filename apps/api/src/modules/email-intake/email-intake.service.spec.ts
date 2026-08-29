@@ -3,6 +3,13 @@ import { EmailIntakeService } from './email-intake.service';
 
 const organizationId = '00000000-0000-0000-0000-000000000001';
 const secret = 'a'.repeat(32);
+const auditProjection = [
+  {
+    changesJson: '{}',
+    metadataJson: '{}',
+    createdAtText: '2026-08-29T00:00:00.000000Z',
+  },
+];
 
 function receipt(rawStorageKey = 'email-intake/raw/ses-123') {
   return {
@@ -165,7 +172,7 @@ describe('EmailIntakeService attachment promotion', () => {
     const update = jest.fn();
     const transaction = jest.fn(async (callback) =>
       callback({
-        execute: jest.fn(),
+        execute: jest.fn().mockResolvedValue(auditProjection),
         query: { emailIntakeAttachments: { findFirst: findAttachment } },
         insert,
         update,
@@ -256,11 +263,22 @@ describe('EmailIntakeService attachment promotion', () => {
     const set = jest.fn().mockReturnValue({ where });
     const update = jest.fn().mockReturnValue({ set });
     const onConflictDoNothing = jest.fn().mockResolvedValue(undefined);
-    const values = jest.fn().mockReturnValue({ onConflictDoNothing });
+    const values = jest.fn().mockImplementation((value) => ({
+      onConflictDoNothing,
+      returning: jest.fn().mockResolvedValue([value]),
+    }));
     const insert = jest.fn().mockReturnValue({ values });
     const transaction = jest.fn(async (callback) =>
       callback({
-        execute: jest.fn(),
+        execute: jest.fn().mockResolvedValue(auditProjection),
+        select: jest.fn(() => ({
+          from: jest.fn(() => ({
+            where: jest.fn(() => ({
+              orderBy: jest.fn(() => ({ limit: jest.fn().mockResolvedValue([]) })),
+              limit: jest.fn().mockResolvedValue([]),
+            })),
+          })),
+        })),
         query: { emailIntakeAttachments: { findFirst, findMany } },
         insert,
         update,

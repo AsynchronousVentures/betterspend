@@ -6,6 +6,14 @@ import type { Db } from '@betterspend/db';
 import { RfqService, withoutOwnerIdempotencyKey } from './rfq.service';
 import { parseCreateRfqBody } from './rfq.controller';
 
+const auditProjection = [
+  {
+    changesJson: '{}',
+    metadataJson: '{}',
+    createdAtText: '2026-08-29T00:00:00.000000Z',
+  },
+];
+
 test('public RFQ input rejects private owner idempotency keys', () => {
   assert.throws(
     () =>
@@ -89,6 +97,7 @@ function createOpenFixture(input: { updateResult: unknown[]; existing?: { status
   let updateCondition: unknown;
   const audits: Array<Record<string, unknown>> = [];
   const transaction = {
+    execute: async () => auditProjection,
     update: () => ({
       set: () => ({
         where: (condition: unknown) => {
@@ -99,13 +108,19 @@ function createOpenFixture(input: { updateResult: unknown[]; existing?: { status
     }),
     select: () => ({
       from: () => ({
-        where: () => ({ limit: async () => (input.existing ? [input.existing] : []) }),
+        where: () => ({
+          orderBy: () => ({ limit: async () => [] }),
+          limit: async () => (input.existing ? [input.existing] : []),
+        }),
       }),
     }),
     insert: () => ({
-      values: async (value: Record<string, unknown>) => {
-        audits.push(value);
-      },
+      values: (value: Record<string, unknown>) => ({
+        returning: async () => {
+          audits.push(value);
+          return [value];
+        },
+      }),
     }),
   };
   const db = {
@@ -127,21 +142,31 @@ test('opening an RFQ conditionally transitions draft status and records its init
     undefined as never,
   );
 
-  const opened = await service.open('org-1', 'rfq-1', 'user-1');
+  const opened = await service.open('00000000-0000-4000-8000-000000000001', 'rfq-1', 'user-1');
   const sql = new PgDialect().sqlToQuery(fixture.getUpdateCondition() as never).sql;
 
   assert.deepEqual(opened, { id: 'rfq-1', status: 'open' });
   assert.match(sql, /"status" = \$\d+/);
-  assert.deepEqual(fixture.audits, [
+  assert.equal(fixture.audits.length, 1);
+  assert.deepEqual(
     {
-      organizationId: 'org-1',
+      organizationId: fixture.audits[0]?.organizationId,
+      userId: fixture.audits[0]?.userId,
+      entityType: fixture.audits[0]?.entityType,
+      entityId: fixture.audits[0]?.entityId,
+      action: fixture.audits[0]?.action,
+      changes: fixture.audits[0]?.changes,
+    },
+    {
+      organizationId: '00000000-0000-4000-8000-000000000001',
       userId: 'user-1',
       entityType: 'rfq',
       entityId: 'rfq-1',
       action: 'opened',
       changes: { previousStatus: 'draft', status: 'open' },
     },
-  ]);
+  );
+  assert.equal(typeof fixture.audits[0]?.entryHash, 'string');
 });
 
 test('a concurrent RFQ award prevents reopening the record', async () => {
@@ -157,7 +182,7 @@ test('a concurrent RFQ award prevents reopening the record', async () => {
   );
 
   await assert.rejects(
-    service.open('org-1', 'rfq-1', 'user-1'),
+    service.open('00000000-0000-4000-8000-000000000001', 'rfq-1', 'user-1'),
     (error: unknown) => error instanceof BadRequestException,
   );
   assert.deepEqual(fixture.audits, []);
@@ -173,7 +198,7 @@ test('opening an unknown RFQ reports not found', async () => {
   );
 
   await assert.rejects(
-    service.open('org-1', 'missing', 'user-1'),
+    service.open('00000000-0000-4000-8000-000000000001', 'missing', 'user-1'),
     (error: unknown) => error instanceof NotFoundException,
   );
 });

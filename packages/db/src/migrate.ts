@@ -2,6 +2,12 @@ import path from 'path';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
+import {
+  AUDIT_HASH_TIMESTAMP_FORMAT,
+  auditAdvisoryLockKeys,
+  computeAuditEntryHash,
+  type AuditHashFields,
+} from './audit-integrity';
 import { encryptCredential } from './credential-crypto';
 import { migrateBetterAuthAccounts } from './better-auth-migration';
 
@@ -92,6 +98,7 @@ type UserRoleOrganizationContractState = {
 };
 
 const USER_ROLE_BACKFILL_BATCH_SIZE = 500;
+const AUDIT_HASH_BACKFILL_BATCH_SIZE = 500;
 
 const ARTIFACT_OWNER_IDEMPOTENCY_INDEXES = [
   { table: 'requisitions', index: 'requisitions_org_idempotency_key_unique' },
@@ -99,6 +106,179 @@ const ARTIFACT_OWNER_IDEMPOTENCY_INDEXES = [
   { table: 'messages', index: 'messages_org_idempotency_key_unique' },
   { table: 'notifications', index: 'notifications_org_idempotency_key_unique' },
 ] as const;
+
+type AuditHashColumnState = {
+  tableExists: boolean;
+  prevHashColumnExists: boolean;
+  entryHashColumnExists: boolean;
+};
+
+type AuditBackfillRow = {
+  id: string;
+  organization_id: string;
+  user_id: string | null;
+  entity_type: string;
+  entity_id: string;
+  action: string;
+  changes_json: string;
+  metadata_json: string;
+  created_at_text: string;
+  prev_hash: string | null;
+  entry_hash: string | null;
+};
+
+/** Chain one bounded tenant batch using the same canonical hash implementation as new writes. */
+async function backfillAuditOrganizationBatch(
+  transaction: postgres.TransactionSql,
+  organizationId: string,
+): Promise<boolean> {
+  const [lockKeyA, lockKeyB] = auditAdvisoryLockKeys(organizationId);
+  await transaction`SELECT pg_advisory_xact_lock(${lockKeyA}, ${lockKeyB})`;
+
+  const [firstUnhashed] = await transaction<{ id: string }[]>`
+    SELECT id
+    FROM audit_log
+    WHERE organization_id = ${organizationId} AND entry_hash IS NULL
+    ORDER BY created_at ASC, id ASC
+    LIMIT 1
+  `;
+  if (!firstUnhashed) return false;
+
+  const [previous] = await transaction<{ entry_hash: string | null }[]>`
+    SELECT entry_hash
+    FROM audit_log
+    WHERE organization_id = ${organizationId}
+      AND (created_at, id) < (
+        SELECT created_at, id
+        FROM audit_log
+        WHERE organization_id = ${organizationId} AND id = ${firstUnhashed.id}::uuid
+      )
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `;
+  if (previous && !previous.entry_hash) {
+    throw new Error(`Audit hash backfill found a broken prefix for organization ${organizationId}`);
+  }
+
+  const rows = await transaction<AuditBackfillRow[]>`
+    SELECT
+      id,
+      organization_id,
+      user_id,
+      entity_type,
+      entity_id,
+      action,
+      created_at,
+      COALESCE(changes::text, 'null') AS changes_json,
+      COALESCE(metadata::text, 'null') AS metadata_json,
+      to_char(
+        created_at AT TIME ZONE 'UTC',
+        ${AUDIT_HASH_TIMESTAMP_FORMAT}
+      ) AS created_at_text,
+      prev_hash,
+      entry_hash
+    FROM audit_log
+    WHERE organization_id = ${organizationId}
+      AND (created_at, id) >= (
+        SELECT created_at, id
+        FROM audit_log
+        WHERE organization_id = ${organizationId} AND id = ${firstUnhashed.id}::uuid
+      )
+    ORDER BY created_at ASC, id ASC
+    LIMIT ${AUDIT_HASH_BACKFILL_BATCH_SIZE}
+    FOR UPDATE
+  `;
+
+  let previousHash = previous?.entry_hash ?? null;
+  for (const row of rows) {
+    const fields: AuditHashFields = {
+      id: row.id,
+      organizationId: row.organization_id,
+      userId: row.user_id,
+      entityType: row.entity_type,
+      entityId: row.entity_id,
+      action: row.action,
+      changesJson: row.changes_json,
+      metadataJson: row.metadata_json,
+      createdAtText: row.created_at_text,
+      prevHash: previousHash,
+    };
+    const entryHash = computeAuditEntryHash(fields);
+    if (row.prev_hash !== previousHash || row.entry_hash !== entryHash) {
+      await transaction`
+        UPDATE audit_log
+        SET prev_hash = ${previousHash}, entry_hash = ${entryHash}
+        WHERE id = ${row.id} AND organization_id = ${organizationId}
+      `;
+    }
+    previousHash = entryHash;
+  }
+  return true;
+}
+
+/** Backfill nullable audit hash columns while preserving rollback compatibility. */
+async function ensureAuditHashChain(client: postgres.Sql): Promise<void> {
+  const [state] = await client<AuditHashColumnState[]>`
+    SELECT
+      to_regclass('public.audit_log') IS NOT NULL AS "tableExists",
+      EXISTS (
+        SELECT 1
+        FROM pg_attribute
+        WHERE attrelid = 'public.audit_log'::regclass
+          AND attname = 'prev_hash'
+          AND NOT attisdropped
+      ) AS "prevHashColumnExists",
+      EXISTS (
+        SELECT 1
+        FROM pg_attribute
+        WHERE attrelid = 'public.audit_log'::regclass
+          AND attname = 'entry_hash'
+          AND NOT attisdropped
+      ) AS "entryHashColumnExists"
+  `;
+  if (!state?.tableExists || !state.prevHashColumnExists || !state.entryHashColumnExists) return;
+
+  const organizations = await client<{ organization_id: string }[]>`
+    SELECT DISTINCT organization_id
+    FROM audit_log
+    WHERE entry_hash IS NULL
+    ORDER BY organization_id
+  `;
+  for (const { organization_id: organizationId } of organizations) {
+    let hasMore = true;
+    while (hasMore) {
+      hasMore = await client.begin(async (transaction) => {
+        await transaction`SET LOCAL lock_timeout = '5s'`;
+        await transaction`SET LOCAL statement_timeout = '30s'`;
+        return backfillAuditOrganizationBatch(transaction, organizationId);
+      });
+    }
+  }
+}
+
+/** Build the audit chain traversal index without blocking writes. */
+async function prepareAuditHashIndex(client: postgres.Sql): Promise<void> {
+  const [state] = await client<
+    { tableExists: boolean; indexExists: boolean; indexIsValid: boolean }[]
+  >`
+    SELECT
+      to_regclass('public.audit_log') IS NOT NULL AS "tableExists",
+      to_regclass('public.audit_log_organization_created_at_id_idx') IS NOT NULL AS "indexExists",
+      COALESCE(index_state.indisvalid, false) AS "indexIsValid"
+    FROM (VALUES (1)) AS singleton(value)
+    LEFT JOIN pg_class AS index_class
+      ON index_class.oid = to_regclass('public.audit_log_organization_created_at_id_idx')
+    LEFT JOIN pg_index AS index_state ON index_state.indexrelid = index_class.oid
+  `;
+  if (!state?.tableExists || state.indexIsValid) return;
+  if (state.indexExists) {
+    await client`DROP INDEX CONCURRENTLY "audit_log_organization_created_at_id_idx"`;
+  }
+  await client`
+    CREATE INDEX CONCURRENTLY "audit_log_organization_created_at_id_idx"
+    ON "audit_log" ("organization_id", "created_at", "id")
+  `;
+}
 
 /** Build the parent key without blocking writes before transactional migrations add its FK. */
 async function prepareVendorOrganizationIndex(client: postgres.Sql): Promise<void> {
@@ -650,6 +830,8 @@ async function main(): Promise<void> {
     await validateLegacyUserRoleOrganizations(client);
     const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
+    await prepareAuditHashIndex(client);
+    await ensureAuditHashChain(client);
     await prepareArtifactOwnerIdempotencyIndexes(client);
     await prepareUserRoleAssignmentIndex(client);
     await prepareCustomRoleOrganizationIndex(client);

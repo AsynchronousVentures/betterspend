@@ -14,7 +14,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import {
-  auditLog,
+  appendAuditLog,
   sanctionsEntries,
   sanctionsRegistryState,
   sanctionsScreenings,
@@ -131,7 +131,7 @@ export class RiskScreeningService {
           })),
         );
       }
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId,
         entityType: 'sanctions_registry',
@@ -269,7 +269,7 @@ export class RiskScreeningService {
         updatedAt: new Date(),
       })
       .where(eq(vendors.id, vendorId));
-    await tx.insert(auditLog).values({
+    await appendAuditLog(tx, {
       organizationId,
       userId: screenedBy ?? null,
       entityType: 'vendor',
@@ -314,7 +314,7 @@ export class RiskScreeningService {
           updatedAt: new Date(),
         })
         .where(and(eq(vendors.id, vendorId), eq(vendors.organizationId, organizationId)));
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId,
         entityType: 'vendor',

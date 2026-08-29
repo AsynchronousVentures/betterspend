@@ -35,6 +35,28 @@ compose_with_migrate_profile() {
   docker compose --profile migrate --env-file "$ENV_FILE" -f "$COMPOSE_BASE_FILE" -f "$COMPOSE_PROD_FILE" "$@"
 }
 
+api_quiesced=false
+new_stack_started=false
+
+restore_api_on_exit() {
+  local exit_status=$?
+  trap - EXIT
+
+  if [ "$api_quiesced" = true ] && [ "$new_stack_started" != true ]; then
+    echo "Deployment exited before the new stack started; restarting the existing API container..." >&2
+    if ! compose start api; then
+      echo "Failed to restart the existing API container; refusing to recreate it with the new image." >&2
+    fi
+  fi
+
+  exit "$exit_status"
+}
+
+trap restore_api_on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 echo "Pulling BetterSpend images for $IMAGE_TAG..."
 compose pull api web
 compose_with_migrate_profile pull migrator
@@ -64,8 +86,17 @@ compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gz
 echo "Running database migrations..."
 compose_with_migrate_profile run --rm migrator
 
+echo "Quiescing API writes for the final migration sweep..."
+api_quiesced=true
+compose stop api
+if ! compose_with_migrate_profile run --rm migrator; then
+  echo "Final migration sweep failed." >&2
+  exit 1
+fi
+
 echo "Starting application stack..."
 compose up -d --remove-orphans
+new_stack_started=true
 
 domain="$(awk -F= '$1 == "BETTERSPEND_DOMAIN" { print $2 }' "$ENV_FILE" | tail -n 1 | tr -d '"')"
 if [ -z "$domain" ]; then

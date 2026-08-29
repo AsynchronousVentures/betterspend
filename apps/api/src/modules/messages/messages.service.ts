@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import {
-  auditLog,
+  appendAuditLog,
   messages,
   purchaseOrders,
   invoices,
@@ -341,7 +341,7 @@ export class MessagesService {
         })
         .returning();
       if (created) {
-        await tx.insert(auditLog).values({
+        await appendAuditLog(tx, {
           organizationId: input.organizationId,
           userId: input.userId,
           entityType: 'message',
@@ -396,7 +396,7 @@ export class MessagesService {
         })
         .returning();
       if (created) {
-        await tx.insert(auditLog).values({
+        await appendAuditLog(tx, {
           organizationId: input.organizationId,
           userId: null,
           entityType: 'message',

@@ -23,7 +23,7 @@ import { permissionScopePredicate, requirePermission } from '../auth/access-scop
 import { canViewRelatedRecord } from '../auth/related-record-access';
 import type { Db } from '@betterspend/db';
 import {
-  auditLog,
+  appendAuditLog,
   approvalRequests,
   purchaseOrders,
   poLines,
@@ -431,7 +431,12 @@ export class PurchaseOrdersService {
           : null,
     }));
     const goodsReceipts = (po.goodsReceipts ?? []).filter(() =>
-      canViewRelatedRecord(access, 'receiving', ['receiving:view', 'receiving:manage'], recordScope),
+      canViewRelatedRecord(
+        access,
+        'receiving',
+        ['receiving:view', 'receiving:manage'],
+        recordScope,
+      ),
     );
     const invoices = (po.invoices ?? [])
       .filter((invoice) =>
@@ -456,7 +461,9 @@ export class PurchaseOrdersService {
         return [];
       }
 
-      return [{ id: event.id, budgetId: event.budgetId, budget: { id: budget.id, name: budget.name } }];
+      return [
+        { id: event.id, budgetId: event.budgetId, budget: { id: budget.id, name: budget.name } },
+      ];
     });
     const {
       lines: _lines,
@@ -655,7 +662,7 @@ export class PurchaseOrdersService {
       }
 
       if (sanctionsWarning) {
-        await tx.insert(auditLog).values({
+        await appendAuditLog(tx, {
           organizationId,
           userId: issuedBy,
           entityType: 'vendor',
@@ -664,7 +671,7 @@ export class PurchaseOrdersService {
           changes: { poNumber: number, warning: sanctionsWarning },
         });
       }
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId: issuedBy,
         entityType: 'purchase_order',
@@ -757,7 +764,7 @@ export class PurchaseOrdersService {
         if (!issued) throw new BadRequestException('Purchase order status changed before issuance');
         await this.budgets.commitPurchaseOrder(tx, organizationId, id);
         if (sanctionsWarning) {
-          await tx.insert(auditLog).values({
+          await appendAuditLog(tx, {
             organizationId,
             userId: issuedBy,
             entityType: 'vendor',
@@ -766,7 +773,7 @@ export class PurchaseOrdersService {
             changes: { poNumber: po.number, warning: sanctionsWarning },
           });
         }
-        await tx.insert(auditLog).values({
+        await appendAuditLog(tx, {
           organizationId,
           userId: issuedBy,
           entityType: 'purchase_order',
@@ -813,7 +820,7 @@ export class PurchaseOrdersService {
           if (!transitioned) {
             throw new BadRequestException('Purchase order status changed before approval started');
           }
-          await tx.insert(auditLog).values({
+          await appendAuditLog(tx, {
             organizationId,
             userId: issuedBy,
             entityType: 'purchase_order',

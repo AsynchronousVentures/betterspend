@@ -9,7 +9,7 @@ import {
 import { eq, and, ilike, or, desc, isNull, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { auditLog, catalogItems, catalogPriceProposals, vendors } from '@betterspend/db';
+import { appendAuditLog, catalogItems, catalogPriceProposals, vendors } from '@betterspend/db';
 import type { PermissionKey } from '@betterspend/shared';
 import { z } from 'zod';
 import { MailService } from '../../common/mail/mail.service';
@@ -175,7 +175,7 @@ export class CatalogService {
           metadata: input.metadata ?? {},
         })
         .returning();
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId: null,
         entityType: 'catalog_item',
@@ -234,7 +234,7 @@ export class CatalogService {
         )
         .returning();
       if (!changed) throw new NotFoundException(`Catalog item ${id} not found`);
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId: null,
         entityType: 'catalog_item',
@@ -275,7 +275,7 @@ export class CatalogService {
         )
         .returning({ id: catalogItems.id });
       if (!deleted) throw new NotFoundException(`Catalog item ${id} not found`);
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId: null,
         entityType: 'catalog_item',
@@ -378,7 +378,7 @@ export class CatalogService {
         throw new BadRequestException(`Catalog price proposal ${proposalId} was already reviewed`);
       }
 
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId: reviewerId,
         entityType: 'catalog_price_proposal',
@@ -472,7 +472,7 @@ export class CatalogService {
         )
         .returning();
       if (!updated) return undefined;
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId,
         userId: null,
         entityType: 'catalog_price_proposal',
@@ -575,7 +575,7 @@ export class CatalogService {
         .update(catalogItems)
         .set({ unitPrice: String(proposal.proposedPrice), updatedAt: new Date() })
         .where(eq(catalogItems.id, proposal.itemId));
-      await tx.insert(auditLog).values({
+      await appendAuditLog(tx, {
         organizationId: proposal.organizationId,
         userId: null,
         entityType: 'catalog_item',

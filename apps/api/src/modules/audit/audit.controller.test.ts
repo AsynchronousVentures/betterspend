@@ -59,3 +59,48 @@ test('audit reads reach the service for a global report grant', async () => {
 
   assert.deepEqual(calls, [['org-1', { entityType: 'budget', entityId: 'budget-1', limit: 50 }]]);
 });
+
+test('audit verification reaches the service with a normalized date range', async () => {
+  const calls: unknown[][] = [];
+  const service = {
+    verifyChain: async (...args: unknown[]) => {
+      calls.push(args);
+      return { valid: true };
+    },
+  };
+  const controller = new AuditController(service as never);
+
+  await controller.verify(
+    'org-1',
+    '2026-08-01T00:00:00-06:00',
+    '2026-08-31T23:59:59-06:00',
+    accessFor({ ...scopedScope, unrestricted: true }),
+  );
+
+  assert.deepEqual(calls, [
+    [
+      'org-1',
+      {
+        from: new Date('2026-08-01T06:00:00Z'),
+        to: new Date('2026-09-01T05:59:59Z'),
+      },
+    ],
+  ]);
+});
+
+test('audit verification rejects an invalid or reversed date range', () => {
+  const service = { verifyChain: async () => ({ valid: true }) };
+  const controller = new AuditController(service as never);
+  const globalAccess = accessFor({ ...scopedScope, unrestricted: true });
+
+  assert.throws(
+    () => controller.verify('org-1', 'not-a-date', undefined, globalAccess),
+    (error: unknown) =>
+      error && typeof error === 'object' && 'status' in error && error.status === 400,
+  );
+  assert.throws(
+    () => controller.verify('org-1', '2026-09-01', '2026-08-01', globalAccess),
+    (error: unknown) =>
+      error && typeof error === 'object' && 'status' in error && error.status === 400,
+  );
+});

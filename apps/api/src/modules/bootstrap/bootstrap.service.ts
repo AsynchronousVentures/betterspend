@@ -1,7 +1,14 @@
 import { ConflictException, Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import { auditLog, authAccounts, organizations, userRoles, users, type Db } from '@betterspend/db';
+import {
+  appendAuditLog,
+  authAccounts,
+  organizations,
+  userRoles,
+  users,
+  type Db,
+} from '@betterspend/db';
 import type { BootstrapInstanceInput } from '@betterspend/shared';
 import { hashCredentialPassword } from '../../auth/credential-password';
 import { DB_TOKEN } from '../../database/database.module';
@@ -127,7 +134,7 @@ export class BootstrapService {
           scopeType: 'global',
         });
       }
-      await transaction.insert(auditLog).values({
+      await appendAuditLog(transaction, {
         organizationId: organization.id,
         userId,
         entityType: 'organization',
