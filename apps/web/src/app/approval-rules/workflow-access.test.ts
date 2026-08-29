@@ -118,6 +118,42 @@ describe('workflow editor access', () => {
     assert.deepEqual(result.definition, { id: 'definition-1', revision: 2 });
   });
 
+  it('uses an already-owned lease without acquiring it again', async () => {
+    let acquireCalls = 0;
+    const result = await openWorkflowDraftAccess('definition-1', {
+      status: async () => ownedLease,
+      acquire: async () => {
+        acquireCalls += 1;
+        return ownedLease;
+      },
+      release: async () => ({ state: 'available' }),
+      getDefinition: async () => ({ id: 'definition-1' }),
+    });
+
+    assert.equal(acquireCalls, 0);
+    assert.equal(result.status.state, 'owned');
+  });
+
+  it('releases the lease when the authoritative draft fails to load', async () => {
+    const released: string[] = [];
+
+    await assert.rejects(
+      openWorkflowDraftAccess('definition-1', {
+        status: async () => ({ state: 'available' }),
+        acquire: async () => ownedLease,
+        release: async (_definitionId, leaseToken) => {
+          released.push(leaseToken);
+          return { state: 'available' };
+        },
+        getDefinition: async () => {
+          throw new Error('load failed');
+        },
+      }),
+      /load failed/,
+    );
+    assert.deepEqual(released, [ownedLease.leaseToken]);
+  });
+
   it('requires a clean idle editor before restore starts', () => {
     assert.equal(
       canRestoreWorkflowDraft({

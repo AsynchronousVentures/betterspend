@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { WorkflowAssistantSnapshot } from '@betterspend/shared';
+import type { WorkflowAssistantSnapshot, WorkflowGraphPatchOperation } from '@betterspend/shared';
 import { buildWorkflowPatchPreview } from './workflow-assistant-preview';
 
 const snapshot: WorkflowAssistantSnapshot = {
@@ -58,5 +58,54 @@ describe('workflow assistant patch preview', () => {
     ]);
 
     assert.match(item?.consequence ?? '', /trigger-to-approved/);
+  });
+
+  it('previews every typed patch operation', () => {
+    const rejected = {
+      id: 'rejected',
+      name: 'Rejected',
+      type: 'reject' as const,
+      disabled: false,
+      config: { reasonRequired: true },
+    };
+    const route = {
+      id: 'trigger-to-rejected',
+      sourceNodeId: 'trigger',
+      sourceHandle: 'out',
+      targetNodeId: 'rejected',
+      targetHandle: 'in',
+      isDefault: false,
+    };
+    const operations: WorkflowGraphPatchOperation[] = [
+      { type: 'add_node', node: rejected, position: { x: 400, y: 120 } },
+      {
+        type: 'update_node',
+        nodeId: 'approved',
+        node: { ...snapshot.graph.nodes[1]!, name: 'Completed' },
+      },
+      { type: 'remove_node', nodeId: 'approved' },
+      { type: 'add_edge', edge: route },
+      { type: 'update_edge', edgeId: route.id, edge: { ...route, isDefault: true } },
+      { type: 'remove_edge', edgeId: route.id },
+      { type: 'set_entry', nodeId: rejected.id },
+    ];
+
+    const preview = buildWorkflowPatchPreview(snapshot, operations);
+
+    assert.deepEqual(
+      preview.map(({ action, subject }) => `${action} ${subject}`),
+      [
+        'Add node',
+        'Update node',
+        'Remove node',
+        'Add edge',
+        'Update edge',
+        'Remove edge',
+        'Set entry',
+      ],
+    );
+    assert.match(preview[4]?.before ?? '', /trigger\.out -> rejected\.in/);
+    assert.equal(preview[6]?.before, 'trigger');
+    assert.equal(preview[6]?.after, 'rejected');
   });
 });

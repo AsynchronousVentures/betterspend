@@ -63,6 +63,38 @@ describe('workflow builder store', () => {
     );
   });
 
+  it('accepts a compatible typed connection', () => {
+    const compatibleDraft: WorkflowDraft = {
+      ...draft,
+      graph: {
+        ...draft.graph,
+        nodes: [
+          ...draft.graph.nodes,
+          {
+            id: 'resolver',
+            name: 'Manager approval',
+            type: 'resolver',
+            disabled: false,
+            config: {
+              resolvers: [{ type: 'manager_chain', maxLevels: 10 }],
+              separationOfDuties: { enabled: false, exclude: [], fallbackResolvers: [] },
+            },
+          },
+        ],
+      },
+    };
+
+    assert.equal(
+      isValidWorkflowConnection(compatibleDraft, {
+        source: 'resolver',
+        sourceHandle: 'out',
+        target: 'approved',
+        targetHandle: 'in',
+      }),
+      true,
+    );
+  });
+
   it('increments the local revision and refuses a stale assistant proposal', () => {
     const store = useWorkflowBuilderStore.getState();
     const proposalRevision = store.draftRevision;
@@ -182,6 +214,16 @@ describe('workflow builder store', () => {
     assert.equal(next?.graph.edges[0]?.targetNodeId, insertedId);
     assert.equal(next?.graph.edges[1]?.sourceNodeId, insertedId);
     assert.equal(next?.graph.edges[1]?.targetNodeId, 'approved');
+  });
+
+  it('refuses to insert a node outside the workflow domain', () => {
+    const before = useWorkflowBuilderStore.getState().draft;
+
+    assert.equal(
+      useWorkflowBuilderStore.getState().insertNodeOnEdge('trigger-to-approved', 'match_check'),
+      null,
+    );
+    assert.deepEqual(useWorkflowBuilderStore.getState().draft, before);
   });
 
   it('selects a new condition branch for explicit configuration instead of inventing criteria', () => {

@@ -168,7 +168,13 @@ export const useWorkflowBuilderStore = create<WorkflowBuilderState>((set, get) =
     if (!state.draft) return null;
     const edge = state.draft.graph.edges.find((candidate) => candidate.id === edgeId);
     const definition = WORKFLOW_NODE_REGISTRY[type];
-    if (!edge || !definition || definition.ports.outputs.length !== 1) return null;
+    if (
+      !edge ||
+      !definition ||
+      !definition.domains.includes(state.draft.graph.domain) ||
+      definition.ports.outputs.length !== 1
+    )
+      return null;
 
     const sourcePosition = state.draft.positions[edge.sourceNodeId] ?? { x: 0, y: 0 };
     const targetPosition = state.draft.positions[edge.targetNodeId] ?? {
