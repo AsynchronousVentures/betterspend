@@ -636,6 +636,38 @@ export class WorkflowDefinitionsService {
 }
 
 function sameWorkflowDraft(stored: unknown, expected: WorkflowDraft): boolean {
-  const parsed = workflowDraftSchema.safeParse(stored);
-  return parsed.success && JSON.stringify(parsed.data) === JSON.stringify(expected);
+  const storedDraft = workflowDraftSchema.safeParse(stored);
+  const expectedDraft = workflowDraftSchema.safeParse(expected);
+  return (
+    storedDraft.success &&
+    expectedDraft.success &&
+    sameJsonValue(storedDraft.data, expectedDraft.data)
+  );
+}
+
+function sameJsonValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => sameJsonValue(value, right[index]))
+    );
+  }
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') {
+    return false;
+  }
+
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key) =>
+        Object.hasOwn(rightRecord, key) && sameJsonValue(leftRecord[key], rightRecord[key]),
+    )
+  );
 }

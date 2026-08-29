@@ -67,11 +67,18 @@ describe('WorkflowDefinitionsService', () => {
     const inserted: Array<Record<string, unknown>> = [];
     const updates: Array<Record<string, unknown>> = [];
     const auditExecutors: unknown[] = [];
+    const reviewedDraft = validDraft();
     const definition = {
       id: 'definition-1',
       organizationId: 'organization-1',
       draftFence: 1,
-      currentDraft: validDraft(),
+      currentDraft: {
+        ...reviewedDraft,
+        positions: {
+          approved: reviewedDraft.positions.approved,
+          trigger: reviewedDraft.positions.trigger,
+        },
+      },
     };
     const tx = {
       select() {
@@ -125,7 +132,7 @@ describe('WorkflowDefinitionsService', () => {
       'publisher-1',
       editorInstanceId,
       'publisher-lease-token',
-      definition.currentDraft,
+      reviewedDraft,
     );
 
     assert.equal(result.version, 2);
