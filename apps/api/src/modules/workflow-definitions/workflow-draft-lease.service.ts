@@ -98,7 +98,11 @@ return {previous, previousTtl, raw}
 const RECONCILE_ATTEMPT_SCRIPT = `
 local current = redis.call('GET', KEYS[1])
 local recovery = redis.call('GET', KEYS[2])
-if not current or not recovery then return 0 end
+if not recovery then return 0 end
+if not current then
+  redis.call('DEL', KEYS[2])
+  return 0
+end
 local prefix = ARGV[1]
 if string.sub(current, 1, string.len(prefix)) ~= prefix then
   redis.call('DEL', KEYS[2])
@@ -119,6 +123,10 @@ else
 end
 redis.call('DEL', KEYS[2])
 return 1
+`;
+
+const ACKNOWLEDGE_ATTEMPT_SCRIPT = `
+return redis.call('DEL', KEYS[1])
 `;
 
 const RELEASE_SCRIPT = `
@@ -154,6 +162,7 @@ export const WORKFLOW_DRAFT_LEASE_LUA = {
   deleteIfUnchanged: DELETE_IF_UNCHANGED_SCRIPT,
   restore: RESTORE_SCRIPT,
   reconcileAttempt: RECONCILE_ATTEMPT_SCRIPT,
+  acknowledgeAttempt: ACKNOWLEDGE_ATTEMPT_SCRIPT,
 } as const;
 
 type StoredLease = {
@@ -278,10 +287,12 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
         'Workflow draft lease storage returned an invalid lease',
       );
     }
+    const restore = () => this.restoreRaw(key, raw, '', -1);
+    await this.acknowledgeAttempt(recoveryKey, restore);
     return {
       status: { state: 'owned', lease: stored.lease, leaseToken: stored.token },
       created: true,
-      restore: () => this.restoreRaw(key, raw, '', -1),
+      restore,
     };
   }
 
@@ -419,10 +430,12 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
         : null;
     const restoreRaw = previous ? previousRaw : '';
     const restoreTtl = previous ? previousTtl : -1;
+    const restore = () => this.restoreRaw(key, raw, restoreRaw, restoreTtl);
+    await this.acknowledgeAttempt(recoveryKey, restore);
     return {
       status: { state: 'owned', lease: stored.lease, leaseToken: stored.token },
       previous,
-      restore: () => this.restoreRaw(key, raw, restoreRaw, restoreTtl),
+      restore,
     };
   }
 
@@ -503,6 +516,30 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
       );
     }
     throw originalError;
+  }
+
+  private async acknowledgeAttempt(
+    recoveryKey: string,
+    restore: () => Promise<boolean>,
+  ): Promise<void> {
+    try {
+      await this.redisCall(() =>
+        this.redis.eval(WORKFLOW_DRAFT_LEASE_LUA.acknowledgeAttempt, 1, recoveryKey),
+      );
+    } catch (error) {
+      try {
+        await restore();
+        await this.redisCall(() =>
+          this.redis.eval(WORKFLOW_DRAFT_LEASE_LUA.acknowledgeAttempt, 1, recoveryKey),
+        );
+      } catch {
+        throw new ServiceUnavailableException(
+          'Workflow draft lease acknowledgement could not be reconciled',
+          { cause: error },
+        );
+      }
+      throw error;
+    }
   }
 
   private async restoreRaw(

@@ -45,6 +45,7 @@ describe('WorkflowDraftLeaseService Redis integration', () => {
     const thirdEditorInstanceId = randomUUID();
     const leaseKey = `workflow:draft-lease:${organizationId}:${definitionId}`;
     const fenceKey = `workflow:draft-lease-fence:${organizationId}:${definitionId}`;
+    const recoveryPattern = `workflow:draft-lease-recovery:${organizationId}:${definitionId}:*`;
     const service = new WorkflowDraftLeaseService(redis as unknown as WorkflowDraftLeaseRedis);
 
     try {
@@ -134,8 +135,11 @@ describe('WorkflowDraftLeaseService Redis integration', () => {
         firstOwner.leaseToken,
       );
       assert.equal(staleRenewal.state, 'held');
+      assert.deepEqual(await redis.keys(recoveryPattern), []);
     } finally {
-      await redis.del(leaseKey, fenceKey);
+      const recoveryKeys = await redis.keys(recoveryPattern);
+      assert.deepEqual(recoveryKeys, [], 'the lease protocol must not leave recovery journals');
+      await redis.del(leaseKey, fenceKey, ...recoveryKeys);
       redis.disconnect();
     }
   });
