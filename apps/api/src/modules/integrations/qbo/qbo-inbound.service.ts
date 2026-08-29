@@ -63,6 +63,7 @@ const QBO_ACCOUNT_TYPES = new Set([
   'Other Expense',
 ]);
 
+const CDC_RESPONSE_LIMIT = 1_000;
 const QUERY_PAGE_SIZE = 1000;
 const DEFAULT_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const MAX_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -358,59 +359,76 @@ export class QboInboundService implements OnModuleInit {
       const changedSince = new Date(Date.now() - boundedLookback * 24 * 60 * 60 * 1000);
       let imported = 0;
       let tombstones = 0;
+      const incompleteTransactionEntities: string[] = [];
 
-      const response = await this.qboClient.request<QboObject>({
-        organizationId,
-        method: 'GET',
-        path: 'cdc',
-        query: {
-          entities: CDC_ENTITY_TYPES.join(','),
-          changedSince: changedSince.toISOString(),
-        },
-      });
-      const entries = extractCdcEntries(response.data);
-      for (const entry of entries) {
-        if (isTaxEntity(entry.entityName)) continue;
-
-        if (entry.deleted) {
-          if (isSupportedCdcEntity(entry.entityName) && entry.entity.Id) {
-            await this.upsertMapping({
-              organizationId,
-              connectionId: connection.id,
-              entityName: entry.entityName,
-              entity: entry.entity,
-              deleted: true,
-              auditSource: 'cdc',
-            });
-            tombstones += 1;
-          }
+      for (const entityName of CDC_ENTITY_TYPES) {
+        const response = await this.qboClient.request<QboObject>({
+          organizationId,
+          method: 'GET',
+          path: 'cdc',
+          query: {
+            entities: entityName,
+            changedSince: changedSince.toISOString(),
+          },
+        });
+        const entries = extractCdcEntries(response.data);
+        if (entries.length >= CDC_RESPONSE_LIMIT && isCatalogEntity(entityName)) {
+          imported += await this.syncCatalogEntity(organizationId, connection.id, entityName);
           continue;
         }
+        if (entries.length >= CDC_RESPONSE_LIMIT) {
+          incompleteTransactionEntities.push(entityName);
+        }
 
-        if (isCatalogEntity(entry.entityName)) {
-          const definition = ENTITY_DEFINITIONS[entry.entityName];
-          if (definition.shouldStore?.(entry.entity) === false) {
-            await this.deactivateFilteredCatalogMapping(
-              organizationId,
-              connection.id,
-              entry.entityName,
-              entry.entity,
-              'cdc',
-            );
+        for (const entry of entries) {
+          if (isTaxEntity(entry.entityName)) continue;
+
+          if (entry.deleted) {
+            if (isSupportedCdcEntity(entry.entityName) && entry.entity.Id) {
+              await this.upsertMapping({
+                organizationId,
+                connectionId: connection.id,
+                entityName: entry.entityName,
+                entity: entry.entity,
+                deleted: true,
+                auditSource: 'cdc',
+              });
+              tombstones += 1;
+            }
             continue;
           }
-          if (entry.entity.Id) {
-            await this.upsertMapping({
-              organizationId,
-              connectionId: connection.id,
-              entityName: entry.entityName,
-              entity: entry.entity,
-              deleted: false,
-              auditSource: 'cdc',
-            });
-            imported += 1;
+
+          if (isCatalogEntity(entry.entityName)) {
+            const definition = ENTITY_DEFINITIONS[entry.entityName];
+            if (definition.shouldStore?.(entry.entity) === false) {
+              await this.deactivateFilteredCatalogMapping(
+                organizationId,
+                connection.id,
+                entry.entityName,
+                entry.entity,
+                'cdc',
+              );
+              continue;
+            }
+            if (entry.entity.Id) {
+              await this.upsertMapping({
+                organizationId,
+                connectionId: connection.id,
+                entityName: entry.entityName,
+                entity: entry.entity,
+                deleted: false,
+                auditSource: 'cdc',
+              });
+              imported += 1;
+            }
           }
         }
+      }
+
+      if (incompleteTransactionEntities.length > 0) {
+        throw new ServiceUnavailableException(
+          `QBO CDC response reached ${CDC_RESPONSE_LIMIT} objects for ${incompleteTransactionEntities.join(', ')}; sync state was not advanced`,
+        );
       }
 
       const completedAt = await this.completeConnectionSync(connection.id, organizationId);

@@ -773,20 +773,36 @@ describe('QboInboundService', () => {
     const request = jest.fn(
       async ({ path, query }: { path: string; query?: Record<string, unknown> }) => {
         expect(path).toBe('cdc');
+        const entityName = String(query?.entities);
+        expect([
+          'Account',
+          'Vendor',
+          'Class',
+          'Department',
+          'Customer',
+          'Term',
+          'Bill',
+          'Invoice',
+          'Payment',
+          'BillPayment',
+          'PurchaseOrder',
+        ]).toContain(entityName);
+        expect(entityName).not.toBe('TaxCode');
+        expect(entityName).not.toBe('TaxRate');
         expect(query?.changedSince).toEqual(expect.any(String));
         expect(query).not.toHaveProperty('startposition');
         expect(query).not.toHaveProperty('maxresults');
-        expect(String(query?.entities)).not.toContain('TaxCode');
-        expect(String(query?.entities)).not.toContain('TaxRate');
+        const queryResponse =
+          entityName === 'Vendor'
+            ? { Vendor: [{ Id: 'vendor-1', Name: 'Acme', SyncToken: '9' }] }
+            : entityName === 'Bill'
+              ? { DeletedObject: [{ EntityName: 'Bill', Id: 'bill-1' }] }
+              : {};
         return {
           data: {
             CDCResponse: [
               {
-                QueryResponse: {
-                  Vendor: [{ Id: 'vendor-1', Name: 'Acme', SyncToken: '9' }],
-                  TaxCode: [{ Id: 'tax-1', Name: 'Sales Tax' }],
-                  DeletedObject: [{ EntityName: 'Bill', Id: 'bill-1' }],
-                },
+                QueryResponse: queryResponse,
               },
             ],
           },
@@ -798,6 +814,7 @@ describe('QboInboundService', () => {
     const result = await harness.instance.runCdcSweep('organization-1');
 
     expect(result).toMatchObject({ imported: 1, tombstones: 1 });
+    expect(request).toHaveBeenCalledTimes(11);
     expect(harness.inserted).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -828,40 +845,110 @@ describe('QboInboundService', () => {
     );
   });
 
-  it('does not replay a full CDC response as an unsupported second page', async () => {
-    const rows = Array.from({ length: 1_000 }, (_, index) => ({
-      Id: `vendor-${index}`,
-      Name: `Vendor ${index}`,
+  it('falls back to a full catalog snapshot when CDC reaches its response limit', async () => {
+    const cdcRows = Array.from({ length: 1_000 }, (_, index) => ({
+      Id: `account-cdc-${index}`,
+      Name: `Account ${index}`,
+      AccountType: 'Expense',
     }));
-    let calls = 0;
-    const request = jest.fn(async () => {
-      calls += 1;
-      return {
-        data:
-          calls === 1
-            ? { CDCResponse: [{ QueryResponse: { Vendor: rows } }] }
-            : { CDCResponse: [] },
-      };
-    });
+    const request = jest.fn(
+      async ({ path, query }: { path: string; query?: Record<string, unknown> }) => {
+        if (path === 'cdc') {
+          expect(query).not.toHaveProperty('startposition');
+          expect(query).not.toHaveProperty('maxresults');
+          if (query?.entities === 'Account') {
+            return { data: { CDCResponse: [{ QueryResponse: { Account: cdcRows } }] } };
+          }
+          return { data: { CDCResponse: [] } };
+        }
+
+        expect(path).toBe('query');
+        expect(String(query?.query)).toContain('FROM Account');
+        return {
+          data: {
+            QueryResponse: {
+              Account: [{ Id: 'account-authoritative', Name: 'Cash', AccountType: 'Expense' }],
+            },
+          },
+        };
+      },
+    );
     const harness = service({ request });
 
-    await harness.instance.runCdcSweep('organization-1');
+    const result = await harness.instance.runCdcSweep('organization-1');
 
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(result.imported).toBe(1);
+    expect(request.mock.calls.filter(([input]) => input.path === 'query')).toHaveLength(1);
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          externalEntity: 'Account',
+          externalId: 'account-authoritative',
+          localEntity: 'gl_account',
+        }),
+      ]),
+    );
+    expect(harness.inserted).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ externalId: 'account-cdc-0' })]),
+    );
+  });
+
+  it('keeps returned transaction tombstones but does not advance sync after CDC overflow', async () => {
+    const deletedRows = Array.from({ length: 1_000 }, (_, index) => ({
+      EntityName: 'Bill',
+      Id: `bill-${index}`,
+    }));
+    const request = jest.fn(
+      async ({ path, query }: { path: string; query?: Record<string, unknown> }) => {
+        expect(path).toBe('cdc');
+        if (query?.entities === 'Bill') {
+          return { data: { CDCResponse: [{ QueryResponse: { DeletedObject: deletedRows } }] } };
+        }
+        return { data: { CDCResponse: [] } };
+      },
+    );
+    const harness = service({ request });
+
+    await expect(harness.instance.runCdcSweep('organization-1')).rejects.toThrow(
+      'sync state was not advanced',
+    );
+
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          externalEntity: 'Bill',
+          externalId: 'bill-0',
+          localEntity: 'qbo_transaction',
+          isDeleted: true,
+          isActive: false,
+        }),
+      ]),
+    );
+    expect(harness.inserted).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ entityType: 'integration_connection', action: 'sync_completed' }),
+      ]),
+    );
+    expect(harness.updates).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ lastSyncAt: expect.any(Date) })]),
+    );
   });
 
   it('unwraps CDC query-response arrays and nested deleted objects', async () => {
-    const request = jest.fn(async () => ({
-      data: {
-        CDCResponse: {
-          QueryResponse: [
-            {
-              DeletedObject: [{ DeletedObject: { Name: 'Bill', Id: 'bill-2' } }],
-            },
-          ],
+    const request = jest.fn(async ({ query }: { query?: Record<string, unknown> }) => {
+      if (query?.entities !== 'Bill') return { data: { CDCResponse: [] } };
+      return {
+        data: {
+          CDCResponse: {
+            QueryResponse: [
+              {
+                DeletedObject: [{ DeletedObject: { Name: 'Bill', Id: 'bill-2' } }],
+              },
+            ],
+          },
         },
-      },
-    }));
+      };
+    });
     const harness = service({ request });
 
     const result = await harness.instance.runCdcSweep('organization-1');
@@ -879,18 +966,25 @@ describe('QboInboundService', () => {
   });
 
   it('treats normal CDC rows with deleted status casing as tombstones', async () => {
-    const request = jest.fn(async () => ({
-      data: {
-        CDCResponse: [
-          {
-            QueryResponse: {
-              Vendor: [{ Id: 'vendor-deleted', Status: 'Deleted' }],
-              Bill: [{ Id: 'bill-deleted', status: 'deleted' }],
+    const request = jest.fn(async ({ query }: { query?: Record<string, unknown> }) => {
+      const entityName = query?.entities;
+      return {
+        data: {
+          CDCResponse: [
+            {
+              QueryResponse: {
+                ...(entityName === 'Vendor'
+                  ? { Vendor: [{ Id: 'vendor-deleted', Status: 'Deleted' }] }
+                  : {}),
+                ...(entityName === 'Bill'
+                  ? { Bill: [{ Id: 'bill-deleted', status: 'deleted' }] }
+                  : {}),
+              },
             },
-          },
-        ],
-      },
-    }));
+          ],
+        },
+      };
+    });
     const harness = service({ request });
 
     const result = await harness.instance.runCdcSweep('organization-1');
