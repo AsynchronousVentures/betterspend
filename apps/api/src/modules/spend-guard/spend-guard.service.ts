@@ -165,7 +165,7 @@ export class SpendGuardService {
   async analyzeInvoice(orgId: string, invoiceId: string) {
     const invoice = await this.db.query.invoices.findFirst({
       where: (record, operators) => and(eq(record.id, invoiceId), eq(record.organizationId, orgId)),
-      with: { vendor: true },
+      with: { vendor: { columns: { punchoutConfig: false } } },
     });
     if (!invoice) return [];
 

@@ -79,7 +79,7 @@ export class PaymentRunsService {
           }),
         ),
       with: {
-        vendor: true,
+        vendor: { columns: { punchoutConfig: false } },
         entity: true,
         purchaseOrder: true,
       },
@@ -106,7 +106,7 @@ export class PaymentRunsService {
           with: {
             invoice: {
               with: {
-                vendor: true,
+                vendor: { columns: { punchoutConfig: false } },
                 entity: true,
               },
             },
@@ -141,12 +141,14 @@ export class PaymentRunsService {
         createdByUser: true,
         approvedByUser: true,
         events: { orderBy: (event, { desc }) => desc(event.createdAt) },
-        virtualCards: { with: { vendor: true, invoice: true } },
+        virtualCards: {
+          with: { vendor: { columns: { punchoutConfig: false } }, invoice: true },
+        },
         paymentRunInvoices: {
           with: {
             invoice: {
               with: {
-                vendor: true,
+                vendor: { columns: { punchoutConfig: false } },
                 entity: true,
                 purchaseOrder: true,
               },
@@ -176,7 +178,7 @@ export class PaymentRunsService {
             entity: (entityId) => eq(invoice.entityId, entityId),
           }),
         ),
-      with: { vendor: true },
+      with: { vendor: { columns: { punchoutConfig: false } } },
     });
 
     if (selectedInvoices.length !== invoiceIds.length) {
@@ -432,7 +434,7 @@ export class PaymentRunsService {
             vendorPaymentAccountScopePredicates(orgId),
           ),
         ),
-      with: { vendor: true },
+      with: { vendor: { columns: { punchoutConfig: false } } },
       orderBy: (account, { desc }) => desc(account.createdAt),
     });
   }

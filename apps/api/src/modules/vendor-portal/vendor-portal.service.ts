@@ -207,6 +207,7 @@ export class VendorPortalService {
 
   async getVendorDashboard(vendorId: string, orgId: string) {
     const vendor = await this.db.query.vendors.findFirst({
+      columns: { punchoutConfig: false },
       where: (v, { and, eq }) => and(eq(v.id, vendorId), eq(v.organizationId, orgId)),
     });
     if (!vendor) throw new NotFoundException('Vendor not found');

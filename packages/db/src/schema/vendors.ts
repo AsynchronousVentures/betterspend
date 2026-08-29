@@ -10,6 +10,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { organizations, legalEntities } from './organizations';
+import type { PunchoutStoredConfig } from '@betterspend/shared';
 
 export const vendors = pgTable(
   'vendors',
@@ -32,7 +33,7 @@ export const vendors = pgTable(
     onboardingApprovedAt: timestamp('onboarding_approved_at', { withTimezone: true }),
     onboardingLastSubmittedAt: timestamp('onboarding_last_submitted_at', { withTimezone: true }),
     punchoutEnabled: boolean('punchout_enabled').notNull().default(false),
-    punchoutConfig: jsonb('punchout_config'),
+    punchoutConfig: jsonb('punchout_config').$type<PunchoutStoredConfig | null>(),
     // Supplier diversity & ESG fields
     diversityCategories: jsonb('diversity_categories').default([]), // ['minority_owned', 'women_owned', 'veteran_owned', 'small_business', 'lgbtq_owned', 'disability_owned']
     esgRating: varchar('esg_rating', { length: 10 }), // A+, A, B+, B, C, D (null = not rated)

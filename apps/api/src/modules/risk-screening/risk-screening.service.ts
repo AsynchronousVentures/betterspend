@@ -325,6 +325,7 @@ export class RiskScreeningService {
     });
 
     return this.db.query.vendors.findFirst({
+      columns: { punchoutConfig: false },
       where: (v, { and, eq }) =>
         and(
           eq(v.id, vendorId),
