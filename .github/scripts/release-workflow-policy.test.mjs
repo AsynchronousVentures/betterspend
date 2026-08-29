@@ -201,7 +201,24 @@ test('quiesces API writes for a final migration sweep before replacing the stack
       stopApi < catchUpMigration &&
       catchUpMigration < startStack,
   );
-  assert.match(deployScript.slice(stopApi, startStack), /compose start api/);
+  assert.match(deployScript, /compose start api/);
+});
+
+test('restores the API when deployment exits during the final migration sweep', () => {
+  const trap = deployScript.indexOf('restore_api_on_exit()');
+  const stopApi = deployScript.indexOf('api_quiesced=true');
+  const startStack = deployScript.indexOf('compose up -d --remove-orphans');
+  const markStarted = deployScript.indexOf('new_stack_started=true');
+
+  assert.ok(trap > -1 && trap < stopApi);
+  assert.ok(stopApi > -1 && stopApi < startStack && startStack < markStarted);
+  assert.match(deployScript, /trap restore_api_on_exit EXIT/);
+  assert.match(deployScript, /trap 'exit 130' INT/);
+  assert.match(deployScript, /trap 'exit 143' TERM/);
+  assert.match(
+    deployScript,
+    /\[ "\$api_quiesced" = true \] && \[ "\$new_stack_started" != true \][\s\S]*?compose start api/,
+  );
 });
 
 test('requires the Redis lease integration in both fast and full CI', () => {

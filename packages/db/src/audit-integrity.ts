@@ -6,12 +6,37 @@ import { auditLog } from './schema';
 /** @internal The hash payload version stays private to this module's public API. */
 export const AUDIT_HASH_VERSION = 1 as const;
 
+function uuidHex(value: string): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const unwrapped = value.startsWith('{') && value.endsWith('}') ? value.slice(1, -1) : value;
+  const hex = unwrapped.replaceAll('-', '');
+  return /^[0-9a-f]{32}$/i.test(hex) ? hex.toLowerCase() : undefined;
+}
+
+function formatUuid(hex: string): string {
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join('-');
+}
+
+function normalizeUuid(value: string): string {
+  const hex = uuidHex(value);
+  return hex ? formatUuid(hex) : value;
+}
+
+function requireUuid(value: string): string {
+  const hex = uuidHex(value);
+  if (!hex) throw new TypeError('Audit UUID must be a UUID');
+  return formatUuid(hex);
+}
+
 /** @internal Stable signed lock pair used by appenders and the migration backfill. */
 export function auditAdvisoryLockKeys(organizationId: string): readonly [number, number] {
-  const normalized = organizationId.replaceAll('-', '');
-  if (!/^[0-9a-f]{32}$/i.test(normalized)) {
-    throw new TypeError('Audit organizationId must be a UUID');
-  }
+  const normalized = requireUuid(organizationId).replaceAll('-', '');
   return [toSignedInt32(normalized.slice(0, 8)), toSignedInt32(normalized.slice(24, 32))];
 }
 
@@ -122,19 +147,23 @@ export async function appendAuditLog(
   transaction: DbTransaction,
   input: AuditEntryInput,
 ): Promise<typeof auditLog.$inferSelect> {
-  await lockAuditChain(transaction, input.organizationId);
+  const organizationId = requireUuid(input.organizationId);
+  const id = normalizeUuid(input.id ?? randomUUID());
+  const userId = input.userId == null ? null : normalizeUuid(input.userId);
+  const entityId = normalizeUuid(input.entityId);
+
+  await lockAuditChain(transaction, organizationId);
 
   const [previous] = await transaction
     .select({ id: auditLog.id, entryHash: auditLog.entryHash, createdAt: auditLog.createdAt })
     .from(auditLog)
-    .where(eq(auditLog.organizationId, input.organizationId))
+    .where(eq(auditLog.organizationId, organizationId))
     .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
     .limit(1);
   if (previous && !previous.entryHash) {
     throw new Error('Audit hash backfill is incomplete for this organization');
   }
 
-  const id = input.id ?? randomUUID();
   const requestedCreatedAt = input.createdAt ?? new Date();
   if (Number.isNaN(requestedCreatedAt.getTime())) {
     throw new Error('Audit entry createdAt must be a valid date');
@@ -148,10 +177,10 @@ export async function appendAuditLog(
   const projection = await projectAuditInput(transaction, changes, metadata, createdAt);
   const entryHash = computeAuditEntryHash({
     id,
-    organizationId: input.organizationId,
-    userId: input.userId ?? null,
+    organizationId,
+    userId,
     entityType: input.entityType,
-    entityId: input.entityId,
+    entityId,
     action: input.action,
     ...projection,
     prevHash,
@@ -161,10 +190,10 @@ export async function appendAuditLog(
     .insert(auditLog)
     .values({
       id,
-      organizationId: input.organizationId,
-      userId: input.userId ?? null,
+      organizationId,
+      userId,
       entityType: input.entityType,
-      entityId: input.entityId,
+      entityId,
       action: input.action,
       changes,
       metadata,
@@ -183,11 +212,14 @@ export async function appendAuditLogIfAbsent(
   transaction: DbTransaction,
   input: AuditEntryInput & { id: string },
 ): Promise<typeof auditLog.$inferSelect | undefined> {
-  await lockAuditChain(transaction, input.organizationId);
+  const organizationId = requireUuid(input.organizationId);
+  const id = normalizeUuid(input.id);
+
+  await lockAuditChain(transaction, organizationId);
   const [existing] = await transaction
     .select()
     .from(auditLog)
-    .where(and(eq(auditLog.id, input.id), eq(auditLog.organizationId, input.organizationId)))
+    .where(and(eq(auditLog.id, id), eq(auditLog.organizationId, organizationId)))
     .limit(1);
   if (existing) {
     if (!existing.entryHash) {
@@ -195,7 +227,7 @@ export async function appendAuditLogIfAbsent(
     }
     return existing;
   }
-  return appendAuditLog(transaction, input);
+  return appendAuditLog(transaction, { ...input, id, organizationId });
 }
 
 async function lockAuditChain(transaction: DbTransaction, organizationId: string): Promise<void> {

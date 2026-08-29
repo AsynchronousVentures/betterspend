@@ -235,6 +235,37 @@ test('hashes the same JSON representation that PostgreSQL persists', async () =>
   }
 });
 
+test('canonicalizes UUID spellings before hashing and persistence', async () => {
+  const { database, db } = await createDatabase();
+  try {
+    const id = '00000000000040008000000000000052';
+    const userId = '{10000000-0000-4000-8000-000000000052}'.toUpperCase();
+    const entityId = '20000000000040008000000000000052';
+    const nonCanonicalOrganizationId = organizationId.replaceAll('-', '').toUpperCase();
+
+    const entry = await db.transaction((transaction) =>
+      appendAuditLog(asTransaction(transaction), {
+        ...input(id, nonCanonicalOrganizationId),
+        userId,
+        entityId,
+      }),
+    );
+
+    assert.equal(entry.id, '00000000-0000-4000-8000-000000000052');
+    assert.equal(entry.organizationId, organizationId);
+    assert.equal(entry.userId, '10000000-0000-4000-8000-000000000052');
+    assert.equal(entry.entityId, '20000000-0000-4000-8000-000000000052');
+
+    const rows = await db
+      .select(auditChainSelection)
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.organizationId, organizationId));
+    assert.equal(verifyAuditChain(rows as AuditChainRow[]).valid, true);
+  } finally {
+    await database.close();
+  }
+});
+
 test('verifyAuditChain detects sub-millisecond timestamp tampering', async () => {
   const { database, db } = await createDatabase();
   try {
@@ -289,6 +320,7 @@ test('appendAuditLogIfAbsent fails closed for a rollback-era NULL hash row', asy
 test('audit advisory lock keys are stable and tenant-specific signed integers', () => {
   const first = auditAdvisoryLockKeys(organizationId);
   assert.deepEqual(first, auditAdvisoryLockKeys(organizationId));
+  assert.deepEqual(first, auditAdvisoryLockKeys(organizationId.replaceAll('-', '').toUpperCase()));
   assert.notDeepEqual(first, auditAdvisoryLockKeys(otherOrganizationId));
   assert.equal(first.every(Number.isInteger), true);
   assert.throws(() => auditAdvisoryLockKeys('not-a-uuid'), TypeError);
