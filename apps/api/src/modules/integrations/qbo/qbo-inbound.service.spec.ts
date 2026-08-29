@@ -12,6 +12,36 @@ type QueueJob = {
   remove: jest.Mock<Promise<void>, []>;
 };
 
+type WhereFactory = (
+  row: Record<string, string>,
+  operators: {
+    and: (...conditions: unknown[]) => boolean;
+    eq: (column: unknown, value: unknown) => boolean;
+  },
+) => unknown;
+
+function whereCriteria(where: unknown): Record<string, unknown> {
+  if (typeof where !== 'function') return {};
+
+  const criteria: Record<string, unknown> = {};
+  const row = new Proxy({} as Record<string, string>, {
+    get: (_target, property) => String(property),
+  });
+  const operators = {
+    and: (...conditions: unknown[]) => conditions.every(Boolean),
+    eq: (column: unknown, value: unknown) => {
+      if (typeof column === 'string') criteria[column] = value;
+      return true;
+    },
+  };
+  (where as WhereFactory)(row, operators);
+  return criteria;
+}
+
+function matchesWhere(row: Record<string, unknown>, criteria: Record<string, unknown>): boolean {
+  return Object.entries(criteria).every(([key, value]) => row[key] === value);
+}
+
 function queue(existingJob?: QueueJob) {
   return {
     getJob: jest.fn(async () => existingJob ?? null),
@@ -40,7 +70,7 @@ function database(options: {
   };
   const connections = options.connections ?? [connection];
   const localRecordExists = options.localRecordExists ?? true;
-  let mappingIndex = 0;
+  const mappings = options.mappings ?? [];
   const db = {
     query: {
       integrationConnections: {
@@ -48,8 +78,14 @@ function database(options: {
         findMany: jest.fn(async () => connections),
       },
       externalEntityMappings: {
-        findFirst: jest.fn(async () => options.mappings?.[mappingIndex++] ?? null),
-        findMany: jest.fn(async () => options.mappings ?? []),
+        findFirst: jest.fn(async (query: { where?: unknown }) => {
+          const criteria = whereCriteria(query?.where);
+          return mappings.find((mapping) => matchesWhere(mapping, criteria)) ?? null;
+        }),
+        findMany: jest.fn(async (query: { where?: unknown }) => {
+          const criteria = whereCriteria(query?.where);
+          return mappings.filter((mapping) => matchesWhere(mapping, criteria));
+        }),
       },
       vendors: { findFirst: jest.fn(async () => (localRecordExists ? { id: 'local' } : null)) },
       departments: { findFirst: jest.fn(async () => (localRecordExists ? { id: 'local' } : null)) },
@@ -270,6 +306,36 @@ describe('QboInboundService', () => {
     );
   });
 
+  it('recovers a pending initial sync from the connection marker on startup', async () => {
+    const harness = service({
+      connection: {
+        id: 'connection-1',
+        organizationId: 'organization-1',
+        provider: 'qbo',
+        realmId: 'realm-1',
+        status: 'active',
+        lastSyncAt: null,
+      },
+    });
+
+    await harness.instance.onModuleInit();
+
+    expect(harness.syncQueue.add).toHaveBeenCalledWith(
+      'initial-sync',
+      {
+        kind: 'initial',
+        organizationId: 'organization-1',
+        entityTypes: expect.any(Array),
+      },
+      expect.objectContaining({
+        jobId: 'qbo-initial-sync-organization-1',
+        attempts: 3,
+        removeOnFail: true,
+      }),
+    );
+    expect(harness.syncQueue.add).toHaveBeenCalledTimes(1);
+  });
+
   it('fans one realm webhook out to every active organization connection', async () => {
     const connections = [
       {
@@ -487,8 +553,12 @@ describe('QboInboundService', () => {
       mappings: [
         {
           id: 'mapping-1',
+          organizationId: 'organization-1',
           connectionId: 'connection-1',
+          provider: 'qbo',
+          externalEntity: 'Account',
           externalId: 'account-1',
+          direction: 'inbound',
           displayName: 'Travel',
           syncToken: '3',
           isActive: true,
@@ -534,8 +604,12 @@ describe('QboInboundService', () => {
       mappings: [
         {
           id: 'mapping-1',
+          organizationId: 'organization-1',
           connectionId: 'connection-1',
+          provider: 'qbo',
+          externalEntity: 'Account',
           externalId: 'account-1',
+          direction: 'inbound',
           displayName: 'Travel',
           syncToken: '3',
           isActive: true,
@@ -576,7 +650,12 @@ describe('QboInboundService', () => {
   it('reconciles rows missing from a completed snapshot and audits the tombstone', async () => {
     const staleMapping = {
       id: 'stale-mapping',
+      organizationId: 'organization-1',
+      connectionId: 'connection-1',
+      provider: 'qbo',
+      externalEntity: 'Vendor',
       externalId: 'vendor-stale',
+      direction: 'inbound',
       isActive: true,
       isDeleted: false,
     };
@@ -620,8 +699,12 @@ describe('QboInboundService', () => {
       mappings: [
         {
           id: 'mapping-1',
+          organizationId: 'organization-1',
           connectionId: 'connection-1',
+          provider: 'qbo',
+          externalEntity: 'Account',
           externalId: 'account-1',
+          direction: 'inbound',
           displayName: 'Travel',
           syncToken: '3',
           isActive: true,
@@ -662,8 +745,12 @@ describe('QboInboundService', () => {
       mappings: [
         {
           id: 'mapping-1',
+          organizationId: 'organization-1',
           connectionId: 'connection-1',
+          provider: 'qbo',
+          externalEntity: 'Vendor',
           externalId: 'vendor-1',
+          direction: 'inbound',
           displayName: 'Acme',
           syncToken: '7',
           isActive: true,
@@ -682,11 +769,13 @@ describe('QboInboundService', () => {
     ).toEqual([]);
   });
 
-  it('polls CDC in 1000-object pages, excludes tax entities, and stores transaction tombstones', async () => {
+  it('uses CDC-supported request parameters, excludes tax entities, and stores transaction tombstones', async () => {
     const request = jest.fn(
       async ({ path, query }: { path: string; query?: Record<string, unknown> }) => {
         expect(path).toBe('cdc');
-        expect(query?.maxresults).toBe(1000);
+        expect(query?.changedSince).toEqual(expect.any(String));
+        expect(query).not.toHaveProperty('startposition');
+        expect(query).not.toHaveProperty('maxresults');
         expect(String(query?.entities)).not.toContain('TaxCode');
         expect(String(query?.entities)).not.toContain('TaxRate');
         return {
@@ -737,6 +826,28 @@ describe('QboInboundService', () => {
       'qbo-sync:organization-1',
       expect.any(Function),
     );
+  });
+
+  it('does not replay a full CDC response as an unsupported second page', async () => {
+    const rows = Array.from({ length: 1_000 }, (_, index) => ({
+      Id: `vendor-${index}`,
+      Name: `Vendor ${index}`,
+    }));
+    let calls = 0;
+    const request = jest.fn(async () => {
+      calls += 1;
+      return {
+        data:
+          calls === 1
+            ? { CDCResponse: [{ QueryResponse: { Vendor: rows } }] }
+            : { CDCResponse: [] },
+      };
+    });
+    const harness = service({ request });
+
+    await harness.instance.runCdcSweep('organization-1');
+
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it('unwraps CDC query-response arrays and nested deleted objects', async () => {
@@ -800,13 +911,23 @@ describe('QboInboundService', () => {
       mappings: [
         {
           id: 'source-mapping',
+          organizationId: 'organization-1',
+          connectionId: 'connection-1',
+          provider: 'qbo',
+          externalEntity: 'Vendor',
           externalId: 'vendor-source',
+          direction: 'inbound',
           localId: localVendorId,
           autoCreated: true,
         },
         {
           id: 'target-mapping',
+          organizationId: 'organization-1',
+          connectionId: 'connection-1',
+          provider: 'qbo',
+          externalEntity: 'Vendor',
           externalId: 'vendor-target',
+          direction: 'inbound',
           localId: null,
           autoCreated: false,
         },
@@ -846,7 +967,12 @@ describe('QboInboundService', () => {
   it('does not mutate or re-audit a duplicate vendor merge webhook', async () => {
     const source = {
       id: 'source-mapping',
+      organizationId: 'organization-1',
+      connectionId: 'connection-1',
+      provider: 'qbo',
+      externalEntity: 'Vendor',
       externalId: 'vendor-source',
+      direction: 'inbound',
       localId: null,
       autoCreated: false,
       isActive: true,
@@ -855,20 +981,19 @@ describe('QboInboundService', () => {
     };
     const target = {
       id: 'target-mapping',
+      organizationId: 'organization-1',
+      connectionId: 'connection-1',
+      provider: 'qbo',
+      externalEntity: 'Vendor',
       externalId: 'vendor-target',
+      direction: 'inbound',
       localId: null,
       autoCreated: false,
       isActive: true,
       isDeleted: false,
       mergedIntoExternalId: null,
     };
-    const alreadyMergedSource = {
-      ...source,
-      isActive: false,
-      isDeleted: true,
-      mergedIntoExternalId: 'vendor-target',
-    };
-    const harness = service({ mappings: [source, target, alreadyMergedSource, target] });
+    const harness = service({ mappings: [source, target] });
     const event = {
       realmId: 'realm-1',
       entityName: 'Vendor' as const,
@@ -878,6 +1003,11 @@ describe('QboInboundService', () => {
     };
 
     await harness.instance.processWebhookEvent(event);
+    Object.assign(source, {
+      isActive: false,
+      isDeleted: true,
+      mergedIntoExternalId: 'vendor-target',
+    });
     await harness.instance.processWebhookEvent(event);
 
     expect(
@@ -896,7 +1026,12 @@ describe('QboInboundService', () => {
       mappings: [
         {
           id: 'mapping-1',
+          organizationId: 'organization-1',
+          connectionId: 'connection-1',
+          provider: 'qbo',
+          externalEntity: 'Vendor',
           externalId: 'vendor-1',
+          direction: 'inbound',
           displayName: 'Acme',
           syncToken: '7',
           isActive: true,
@@ -961,13 +1096,23 @@ describe('QboInboundService', () => {
       mappings: [
         {
           id: 'source-mapping',
+          organizationId: 'organization-1',
+          connectionId: 'connection-1',
+          provider: 'qbo',
+          externalEntity: 'Vendor',
           externalId: 'vendor-source',
+          direction: 'inbound',
           localId: localVendorId,
           autoCreated: false,
         },
         {
           id: 'target-mapping',
+          organizationId: 'organization-1',
+          connectionId: 'connection-1',
+          provider: 'qbo',
+          externalEntity: 'Vendor',
           externalId: 'vendor-target',
+          direction: 'inbound',
           localId: null,
           autoCreated: false,
         },
@@ -999,7 +1144,12 @@ describe('QboInboundService', () => {
       mappings: [
         {
           id: 'source-mapping',
+          organizationId: 'organization-1',
+          connectionId: 'connection-1',
+          provider: 'qbo',
+          externalEntity: 'Vendor',
           externalId: 'vendor-source',
+          direction: 'inbound',
           localId: localVendorId,
           autoCreated: true,
         },
@@ -1049,10 +1199,13 @@ describe('QboInboundService', () => {
         {
           id: 'mapping-1',
           organizationId: 'organization-1',
+          connectionId: 'connection-1',
+          provider: 'qbo',
           externalEntity: 'Vendor',
           externalId: 'vendor-1',
           localEntity: 'vendor',
           localId: null,
+          direction: 'inbound',
           autoCreated: false,
         },
       ],
@@ -1092,10 +1245,13 @@ describe('QboInboundService', () => {
         {
           id: 'mapping-1',
           organizationId: 'organization-1',
+          connectionId: 'connection-1',
+          provider: 'qbo',
           externalEntity: 'Vendor',
           externalId: 'vendor-1',
           localEntity: 'vendor',
           localId: null,
+          direction: 'inbound',
           autoCreated: false,
         },
       ],
@@ -1116,10 +1272,13 @@ describe('QboInboundService', () => {
         {
           id: 'mapping-1',
           organizationId: 'organization-1',
+          connectionId: 'connection-1',
+          provider: 'qbo',
           externalEntity: 'Account',
           externalId: 'account-1',
           localEntity: 'gl_account',
           localId: null,
+          direction: 'inbound',
           autoCreated: false,
         },
       ],

@@ -1,5 +1,6 @@
 import { Module, Global } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { QBO_SYNC_QUEUE_NAME } from '../qbo-sync-queue';
 
 export function getRedisConnection() {
   if (!process.env.REDIS_HOST && process.env.REDIS_URL) {
@@ -33,7 +34,7 @@ export function getRedisConnection() {
       { name: 'webhook-delivery' },
       { name: 'ocr' },
       { name: 'email-intake' },
-      { name: 'qbo-sync-in' },
+      { name: QBO_SYNC_QUEUE_NAME },
       { name: 'qbo-cdc' },
     ),
   ],

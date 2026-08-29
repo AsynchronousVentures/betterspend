@@ -14,6 +14,12 @@ import { and, desc, eq, isNull } from 'drizzle-orm';
 import { appendAuditLog, integrationConnections, type Db } from '@betterspend/db';
 import { INTEGRATION_CONNECTION_STATUS } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
+import {
+  findReusableQboInitialSyncJob,
+  QBO_INITIAL_SYNC_JOB_NAME,
+  qboInitialSyncJobOptions,
+  QBO_SYNC_QUEUE_NAME,
+} from '../../common/qbo-sync-queue';
 import { CredentialCryptoService } from '../ai-providers/credential-crypto.service';
 import {
   OAuthRedisService,
@@ -80,7 +86,7 @@ export class OAuthService {
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly crypto: CredentialCryptoService,
     private readonly oauthRedis: OAuthRedisService,
-    @Optional() @InjectQueue('qbo-sync-in') private readonly qboSyncQueue?: Queue,
+    @Optional() @InjectQueue(QBO_SYNC_QUEUE_NAME) private readonly qboSyncQueue?: Queue,
   ) {}
 
   async getQboAuthUrl(organizationId: string, userId: string, sessionId: string): Promise<string> {
@@ -401,6 +407,7 @@ export class OAuthService {
       status: INTEGRATION_CONNECTION_STATUS.ACTIVE,
       scopes: this.scopesFor(provider, token.scope),
       connectedByUserId: binding.userId,
+      ...(provider === 'qbo' ? { lastSyncAt: null } : {}),
       updatedAt: new Date(),
     };
     await this.db.transaction(async (transaction) => {
@@ -429,27 +436,17 @@ export class OAuthService {
         'QBO connection was stored, but the initial sync queue is unavailable',
       );
     }
-    const jobId = `qbo-initial-sync-${organizationId}`;
+    const options = qboInitialSyncJobOptions(organizationId);
     try {
-      const existing = await this.qboSyncQueue.getJob(jobId);
+      const existing = await findReusableQboInitialSyncJob(this.qboSyncQueue, organizationId);
       if (existing) {
-        if ((await existing.getState()) === 'failed') {
-          await existing.remove();
-        } else {
-          return;
-        }
+        return;
       }
 
       await this.qboSyncQueue.add(
-        'initial-sync',
+        QBO_INITIAL_SYNC_JOB_NAME,
         { kind: 'initial', organizationId },
-        {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 2_000 },
-          jobId,
-          removeOnComplete: true,
-          removeOnFail: true,
-        },
+        options,
       );
     } catch (error: unknown) {
       this.logger.error(`Unable to queue initial QBO sync for ${organizationId}: ${String(error)}`);

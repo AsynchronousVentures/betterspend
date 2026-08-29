@@ -241,6 +241,7 @@ describe('OAuthService', () => {
     expect(connection.refreshTokenEncrypted).not.toBe('plain-refresh-token');
     expect(crypto.decrypt(String(connection.accessTokenEncrypted))).toBe('plain-access-token');
     expect(crypto.decrypt(String(connection.refreshTokenEncrypted))).toBe('plain-refresh-token');
+    expect(connection.lastSyncAt).toBeNull();
     expect(audit).toEqual(
       expect.objectContaining({
         organizationId,
@@ -287,7 +288,12 @@ describe('OAuthService', () => {
 
     expect(captured).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ provider: 'qbo', organizationId, realmId: 'realm-1' }),
+        expect.objectContaining({
+          provider: 'qbo',
+          organizationId,
+          realmId: 'realm-1',
+          lastSyncAt: null,
+        }),
       ]),
     );
   });

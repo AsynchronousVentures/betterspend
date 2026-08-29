@@ -32,6 +32,12 @@ import {
   type QboSyncEntity,
 } from '@betterspend/shared';
 import { DB_TOKEN } from '../../../database/database.module';
+import {
+  findReusableQboInitialSyncJob,
+  QBO_INITIAL_SYNC_JOB_NAME,
+  qboInitialSyncJobOptions,
+  QBO_SYNC_QUEUE_NAME,
+} from '../../../common/qbo-sync-queue';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { resolveOrganizationAdminId } from '../../../common/demo-identity';
 import { QboClientService } from '../../gl/qbo-client.service';
@@ -57,7 +63,6 @@ const QBO_ACCOUNT_TYPES = new Set([
   'Other Expense',
 ]);
 
-const CDC_PAGE_SIZE = 1000;
 const QUERY_PAGE_SIZE = 1000;
 const DEFAULT_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const MAX_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -148,7 +153,7 @@ export class QboInboundService implements OnModuleInit {
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly qboClient: QboClientService,
     private readonly notifications: NotificationsService,
-    @InjectQueue('qbo-sync-in') private readonly syncQueue: Queue<QboSyncJobData>,
+    @InjectQueue(QBO_SYNC_QUEUE_NAME) private readonly syncQueue: Queue<QboSyncJobData>,
     @InjectQueue('qbo-cdc') private readonly cdcQueue: Queue<QboCdcJobData>,
     private readonly oauthRedis: OAuthRedisService,
   ) {}
@@ -157,12 +162,23 @@ export class QboInboundService implements OnModuleInit {
     const connections = await this.db.query.integrationConnections.findMany({
       where: (connection, { and, eq }) =>
         and(eq(connection.provider, 'qbo'), eq(connection.status, 'active')),
-      columns: { organizationId: true },
+      columns: { organizationId: true, lastSyncAt: true },
     });
 
     await Promise.all(
-      connections.map(async ({ organizationId }) => {
-        await this.scheduleOrganization(organizationId);
+      connections.map(async ({ organizationId, lastSyncAt }) => {
+        if (lastSyncAt) {
+          await this.scheduleOrganization(organizationId);
+          return;
+        }
+
+        try {
+          await this.enqueueInitialSync(organizationId);
+        } catch (error: unknown) {
+          this.logger.error(
+            `Unable to recover pending initial QBO sync for ${organizationId}: ${String(error)}`,
+          );
+        }
       }),
     );
   }
@@ -171,18 +187,12 @@ export class QboInboundService implements OnModuleInit {
     organizationId: string,
     entityTypes: readonly QboSyncEntity[] = [...QBO_CATALOG_ENTITY_TYPES, ...QBO_TAX_ENTITY_TYPES],
   ): Promise<{ queued: true; jobId: string | undefined }> {
-    const options = {
-      attempts: 3,
-      backoff: { type: 'exponential' as const, delay: 2_000 },
-      jobId: `qbo-initial-sync-${organizationId}`,
-      removeOnComplete: true,
-      removeOnFail: true,
-    };
-    const existing = await this.existingQueueJob(this.syncQueue, options.jobId);
+    const options = qboInitialSyncJobOptions(organizationId);
+    const existing = await findReusableQboInitialSyncJob(this.syncQueue, organizationId);
     if (existing) return { queued: true, jobId: existing.id };
 
     const job = await this.syncQueue.add(
-      'initial-sync',
+      QBO_INITIAL_SYNC_JOB_NAME,
       { kind: 'initial', organizationId, entityTypes },
       options,
     );
@@ -190,10 +200,9 @@ export class QboInboundService implements OnModuleInit {
   }
 
   /**
-   * Creates the repeatable jobs for a connected organization. The initial
-   * import calls this after its queue worker starts, so a newly connected
-   * organization does not wait for an application restart to receive its
-   * hourly import and daily CDC sweep.
+   * Creates the repeatable jobs for a connected organization after its initial
+   * import succeeds, so a newly connected organization does not wait for an
+   * application restart to receive its hourly import and daily CDC sweep.
    */
   async ensureScheduledSync(organizationId: string): Promise<void> {
     if (!(await this.activeConnection(organizationId))) return;
@@ -347,69 +356,61 @@ export class QboInboundService implements OnModuleInit {
 
       const boundedLookback = Math.min(Math.max(1, Math.floor(lookbackDays)), MAX_LOOKBACK_DAYS);
       const changedSince = new Date(Date.now() - boundedLookback * 24 * 60 * 60 * 1000);
-      let startPosition = 1;
       let imported = 0;
       let tombstones = 0;
 
-      while (true) {
-        const response = await this.qboClient.request<QboObject>({
-          organizationId,
-          method: 'GET',
-          path: 'cdc',
-          query: {
-            entities: CDC_ENTITY_TYPES.join(','),
-            changedSince: changedSince.toISOString(),
-            startposition: startPosition,
-            maxresults: CDC_PAGE_SIZE,
-          },
-        });
-        const entries = extractCdcEntries(response.data);
-        for (const entry of entries) {
-          if (isTaxEntity(entry.entityName)) continue;
+      const response = await this.qboClient.request<QboObject>({
+        organizationId,
+        method: 'GET',
+        path: 'cdc',
+        query: {
+          entities: CDC_ENTITY_TYPES.join(','),
+          changedSince: changedSince.toISOString(),
+        },
+      });
+      const entries = extractCdcEntries(response.data);
+      for (const entry of entries) {
+        if (isTaxEntity(entry.entityName)) continue;
 
-          if (entry.deleted) {
-            if (isSupportedCdcEntity(entry.entityName) && entry.entity.Id) {
-              await this.upsertMapping({
-                organizationId,
-                connectionId: connection.id,
-                entityName: entry.entityName,
-                entity: entry.entity,
-                deleted: true,
-                auditSource: 'cdc',
-              });
-              tombstones += 1;
-            }
-            continue;
+        if (entry.deleted) {
+          if (isSupportedCdcEntity(entry.entityName) && entry.entity.Id) {
+            await this.upsertMapping({
+              organizationId,
+              connectionId: connection.id,
+              entityName: entry.entityName,
+              entity: entry.entity,
+              deleted: true,
+              auditSource: 'cdc',
+            });
+            tombstones += 1;
           }
-
-          if (isCatalogEntity(entry.entityName)) {
-            const definition = ENTITY_DEFINITIONS[entry.entityName];
-            if (definition.shouldStore?.(entry.entity) === false) {
-              await this.deactivateFilteredCatalogMapping(
-                organizationId,
-                connection.id,
-                entry.entityName,
-                entry.entity,
-                'cdc',
-              );
-              continue;
-            }
-            if (entry.entity.Id) {
-              await this.upsertMapping({
-                organizationId,
-                connectionId: connection.id,
-                entityName: entry.entityName,
-                entity: entry.entity,
-                deleted: false,
-                auditSource: 'cdc',
-              });
-              imported += 1;
-            }
-          }
+          continue;
         }
 
-        if (entries.length < CDC_PAGE_SIZE) break;
-        startPosition += entries.length;
+        if (isCatalogEntity(entry.entityName)) {
+          const definition = ENTITY_DEFINITIONS[entry.entityName];
+          if (definition.shouldStore?.(entry.entity) === false) {
+            await this.deactivateFilteredCatalogMapping(
+              organizationId,
+              connection.id,
+              entry.entityName,
+              entry.entity,
+              'cdc',
+            );
+            continue;
+          }
+          if (entry.entity.Id) {
+            await this.upsertMapping({
+              organizationId,
+              connectionId: connection.id,
+              entityName: entry.entityName,
+              entity: entry.entity,
+              deleted: false,
+              auditSource: 'cdc',
+            });
+            imported += 1;
+          }
+        }
       }
 
       const completedAt = await this.completeConnectionSync(connection.id, organizationId);
