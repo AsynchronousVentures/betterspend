@@ -71,11 +71,14 @@ export class NotificationsService {
         entityId: entityId ?? null,
         idempotencyKey,
       })
-      .onConflictDoNothing({ target: notifications.idempotencyKey })
+      .onConflictDoNothing({
+        target: [notifications.organizationId, notifications.idempotencyKey],
+      })
       .returning();
     if (notification) return notification;
     return this.db.query.notifications.findFirst({
-      where: (row, { eq }) => eq(row.idempotencyKey, idempotencyKey),
+      where: (row, { and, eq }) =>
+        and(eq(row.organizationId, orgId), eq(row.idempotencyKey, idempotencyKey)),
     });
   }
 

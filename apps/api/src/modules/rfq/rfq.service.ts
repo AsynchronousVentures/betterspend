@@ -166,7 +166,7 @@ export class RfqService {
     const resMap = Object.fromEntries(resCounts.map((r) => [r.rfqId, Number(r.count)]));
 
     return rows.map((r) => ({
-      ...r.rfq,
+      ...withoutOwnerIdempotencyKey(r.rfq),
       requester: r.requester,
       awardedVendor: r.awardedVendor,
       invitationCount: invMap[r.rfq.id] ?? 0,
@@ -245,7 +245,7 @@ export class RfqService {
     }, {});
 
     return {
-      ...row.rfq,
+      ...withoutOwnerIdempotencyKey(row.rfq),
       requester: row.requester,
       awardedVendor: row.awardedVendor,
       lines,
@@ -374,7 +374,7 @@ export class RfqService {
       .returning();
 
     if (!rfq) throw new NotFoundException('RFQ not found');
-    return rfq;
+    return withoutOwnerIdempotencyKey(rfq);
   }
 
   async open(orgId: string, id: string, userId: string) {
@@ -409,7 +409,7 @@ export class RfqService {
         action: 'opened',
         changes: { previousStatus: 'draft', status: 'open' },
       });
-      return rfq;
+      return withoutOwnerIdempotencyKey(rfq);
     });
   }
 
@@ -699,4 +699,9 @@ function escapeHtml(value: string): string {
     };
     return entities[character] ?? character;
   });
+}
+
+export function withoutOwnerIdempotencyKey<T extends { idempotencyKey?: unknown }>(row: T) {
+  const { idempotencyKey: _privateOwnerKey, ...publicRow } = row;
+  return publicRow;
 }

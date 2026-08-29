@@ -97,6 +97,7 @@ const ARTIFACT_OWNER_IDEMPOTENCY_INDEXES = [
   { table: 'requisitions', index: 'requisitions_org_idempotency_key_unique' },
   { table: 'rfq_requests', index: 'rfq_requests_org_idempotency_key_unique' },
   { table: 'messages', index: 'messages_org_idempotency_key_unique' },
+  { table: 'notifications', index: 'notifications_org_idempotency_key_unique' },
 ] as const;
 
 /** Build the parent key without blocking writes before transactional migrations add its FK. */

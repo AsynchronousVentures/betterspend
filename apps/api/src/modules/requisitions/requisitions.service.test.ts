@@ -3,6 +3,30 @@ import test from 'node:test';
 import { ForbiddenException } from '@nestjs/common';
 import { RequisitionsService } from './requisitions.service';
 
+test('requisition list responses hide private owner idempotency keys', async () => {
+  const service = new RequisitionsService(
+    {
+      query: {
+        requisitions: {
+          findMany: async () => [
+            { id: 'requisition-1', title: 'Renewal', idempotencyKey: 'artifact-private' },
+          ],
+        },
+      },
+    } as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+  );
+
+  const [requisition] = await service.findAll('org-1');
+
+  assert.equal('idempotencyKey' in requisition!, false);
+});
+
 test('RequisitionsService mutation scope', async (t) => {
   const service = new RequisitionsService(
     {} as never,

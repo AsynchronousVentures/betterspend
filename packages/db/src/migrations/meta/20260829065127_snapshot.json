@@ -7413,9 +7413,15 @@
         }
       },
       "indexes": {
-        "notifications_idempotency_key_unique": {
-          "name": "notifications_idempotency_key_unique",
+        "notifications_org_idempotency_key_unique": {
+          "name": "notifications_org_idempotency_key_unique",
           "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
             {
               "expression": "idempotency_key",
               "isExpression": false,

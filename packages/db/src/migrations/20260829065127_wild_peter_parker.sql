@@ -46,4 +46,3 @@ CREATE UNIQUE INDEX "artifact_operations_org_key_unique" ON "artifact_operations
 CREATE INDEX "artifact_operations_org_status_idx" ON "artifact_operations" USING btree ("organization_id","operation_type","status","lease_expires_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "artifact_notification_deliveries_operation_key_unique" ON "artifact_notification_deliveries" USING btree ("operation_id","delivery_key");--> statement-breakpoint
 CREATE INDEX "artifact_notification_deliveries_retry_idx" ON "artifact_notification_deliveries" USING btree ("status","lease_expires_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "notifications_idempotency_key_unique" ON "notifications" USING btree ("idempotency_key");--> statement-breakpoint

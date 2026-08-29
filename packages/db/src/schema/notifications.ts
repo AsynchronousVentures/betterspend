@@ -19,7 +19,8 @@ export const notifications = pgTable(
     idempotencyKey: varchar('idempotency_key', { length: 255 }),
   },
   (table) => ({
-    idempotencyKeyUnique: uniqueIndex('notifications_idempotency_key_unique').on(
+    idempotencyKeyUnique: uniqueIndex('notifications_org_idempotency_key_unique').on(
+      table.organizationId,
       table.idempotencyKey,
     ),
   }),

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { Db } from '@betterspend/db';
-import { RfqService } from './rfq.service';
+import { RfqService, withoutOwnerIdempotencyKey } from './rfq.service';
 import { parseCreateRfqBody } from './rfq.controller';
 
 test('public RFQ input rejects private owner idempotency keys', () => {
@@ -16,6 +16,16 @@ test('public RFQ input rejects private owner idempotency keys', () => {
       }),
     (error: unknown) => error instanceof BadRequestException,
   );
+});
+
+test('RFQ response projections hide private owner idempotency keys', () => {
+  const response = withoutOwnerIdempotencyKey({
+    id: 'rfq-1',
+    title: 'Renewal',
+    idempotencyKey: 'artifact-operation:private',
+  });
+
+  assert.equal('idempotencyKey' in response, false);
 });
 
 function createOpenFixture(input: { updateResult: unknown[]; existing?: { status: string } }) {

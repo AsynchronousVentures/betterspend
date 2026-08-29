@@ -75,7 +75,7 @@ export class MessagesService {
       orderBy: (m, { desc }) => desc(m.createdAt),
       limit: 500,
     });
-    return rows.reverse();
+    return rows.reverse().map(withoutOwnerIdempotencyKey);
   }
 
   /**
@@ -207,7 +207,7 @@ export class MessagesService {
       load: (artifact) => this.loadMessage(organizationId, artifact),
     });
     const message = execution.value;
-    return message;
+    return withoutOwnerIdempotencyKey(message);
   }
 
   /**
@@ -540,7 +540,7 @@ export class MessagesService {
       const escapedVendorName = escapeHtml(vendor.name);
       const escapedBody = escapeHtml(messageBody);
 
-      await this.mailService.sendMail(
+      const sent = await this.mailService.sendMail(
         {
           host: smtpHost,
           port: parseInt(settings['smtp_port'] || '587', 10),
@@ -567,6 +567,8 @@ export class MessagesService {
           messageId,
         },
       );
+      if (!sent && propagateErrors)
+        throw new Error('Vendor contact email was not accepted by SMTP');
     } catch (error) {
       if (propagateErrors) throw error;
       this.logger.warn(
@@ -582,6 +584,11 @@ function extractContactEmail(contactInfo: unknown): string | undefined {
   if (typeof email !== 'string' || /[,;\r\n]/.test(email)) return undefined;
   const parsed = z.string().trim().email().safeParse(email);
   return parsed.success ? parsed.data : undefined;
+}
+
+function withoutOwnerIdempotencyKey<T extends { idempotencyKey?: unknown }>(row: T) {
+  const { idempotencyKey: _privateOwnerKey, ...publicRow } = row;
+  return publicRow;
 }
 
 export function messageOperationKey(

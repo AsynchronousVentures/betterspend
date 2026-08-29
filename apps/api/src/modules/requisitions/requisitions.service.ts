@@ -50,7 +50,7 @@ export class RequisitionsService {
     filters?: { status?: string; departmentId?: string },
     access?: AccessPolicy,
   ) {
-    return this.db.query.requisitions.findMany({
+    const rows = await this.db.query.requisitions.findMany({
       where: (r, { and, eq }) => {
         const conditions = [
           eq(r.organizationId, organizationId),
@@ -72,6 +72,7 @@ export class RequisitionsService {
       with: { lines: true },
       orderBy: (r, { desc }) => desc(r.createdAt),
     });
+    return rows.map(withoutOwnerIdempotencyKey);
   }
 
   async findOne(id: string, organizationId: string, access?: AccessPolicy) {
@@ -171,6 +172,7 @@ export class RequisitionsService {
     const {
       purchaseOrders: _purchaseOrders,
       commitmentEvents: _commitmentEvents,
+      idempotencyKey: _privateOwnerKey,
       ...requisition
     } = req;
     return { ...requisition, purchaseOrders, commitmentEvents, activeApproval };
@@ -505,4 +507,9 @@ export class RequisitionsService {
     }
     throw new ForbiddenException('The requisition is outside your assigned scope');
   }
+}
+
+function withoutOwnerIdempotencyKey<T extends { idempotencyKey?: unknown }>(row: T) {
+  const { idempotencyKey: _privateOwnerKey, ...publicRow } = row;
+  return publicRow;
 }

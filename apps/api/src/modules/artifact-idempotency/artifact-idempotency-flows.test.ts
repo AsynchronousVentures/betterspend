@@ -414,6 +414,84 @@ test('message operations derive a stable key when the caller omits one', () => {
   assert.match(first, /^message:user:derived:message-intent-1$/);
 });
 
+test('message responses never expose private owner idempotency keys', async () => {
+  const service = new MessagesService(
+    {
+      query: {
+        messages: {
+          findMany: async () => [
+            {
+              id: 'message-1',
+              body: 'Hello',
+              idempotencyKey: 'artifact-operation:private',
+              createdAt: new Date(),
+            },
+          ],
+        },
+      },
+    } as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+  );
+  (service as unknown as { assertThreadExists: () => Promise<void> }).assertThreadExists =
+    async () => {};
+
+  const [message] = await service.list('org-1', 'po', 'po-1');
+
+  assert.equal('idempotencyKey' in message!, false);
+});
+
+test('required vendor email failures reject with the same stable Message-ID', async () => {
+  const messageIds: string[] = [];
+  const service = new MessagesService(
+    {
+      query: {
+        vendors: {
+          findFirst: async () => ({
+            id: 'vendor-1',
+            name: 'Vendor',
+            contactInfo: { email: 'vendor@example.com' },
+          }),
+        },
+      },
+    } as never,
+    {} as never,
+    {
+      sendMail: async (_config: unknown, options: { messageId?: string }) => {
+        messageIds.push(options.messageId!);
+        return false;
+      },
+    } as never,
+    { getAll: async () => ({ smtp_host: 'smtp.example.com' }) } as never,
+    {} as never,
+  );
+  const methods = service as unknown as {
+    getThreadContext: () => Promise<{ vendorId: string; internalUserId: null }>;
+    emailVendorContact: (...args: unknown[]) => Promise<void>;
+  };
+  methods.getThreadContext = async () => ({ vendorId: 'vendor-1', internalUserId: null });
+  const identity = 'artifact-stable@betterspend.local';
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(
+      methods.emailVendorContact(
+        'org-1',
+        'po',
+        'po-1',
+        'Buyer',
+        'Hello',
+        undefined,
+        true,
+        identity,
+      ),
+      /not accepted by SMTP/,
+    );
+  }
+  assert.deepEqual(messageIds, [identity, identity]);
+});
+
 test('vendor message retries retain the caller key and do not duplicate notifications', async () => {
   const coordinator = new RecordingArtifactCoordinator();
   let createCalls = 0;
