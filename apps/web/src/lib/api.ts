@@ -296,6 +296,11 @@ export interface AiProviderStatus {
   updatedAt?: string;
 }
 
+export interface XeroTenant {
+  tenantId: string;
+  tenantName: string | null;
+}
+
 export interface AiProvidersStatusResponse {
   defaultProvider: AiProviderId | null;
   providers: AiProviderStatus[];
@@ -803,6 +808,13 @@ export const api = {
       apiFetch<{ url: string }>(`/gl/oauth/${provider}/connect`),
     oauthDisconnect: (provider: 'qbo' | 'xero') =>
       apiFetch<void>(`/gl/oauth/${provider}`, { method: 'DELETE' }),
+    xeroConnections: (grantId: string) =>
+      apiFetch<XeroTenant[]>(`/gl/oauth/xero/connections?grantId=${encodeURIComponent(grantId)}`),
+    selectXeroConnection: (data: { grantId: string; tenantId: string }) =>
+      apiFetch<void>('/gl/oauth/xero/connections', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
   aiProviders: {
     status: () => apiFetch<AiProvidersStatusResponse>('/ai-providers/status'),

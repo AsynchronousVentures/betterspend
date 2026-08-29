@@ -25,6 +25,36 @@ export type XeroPendingTenant = {
   tenantName: string | null;
 };
 
+export type XeroDailyBudgetPriority = 'interactive' | 'background';
+
+export type XeroDailyBudgetConsumeInput = {
+  tenantId: string;
+  date: string;
+  limit: number;
+  backgroundLimit: number;
+  priority: XeroDailyBudgetPriority;
+  ttlSeconds: number;
+};
+
+export type XeroDailyBudgetConsumeResult = {
+  allowed: boolean;
+  used: number;
+};
+
+export type XeroDailyBudgetReconcileInput = {
+  tenantId: string;
+  date: string;
+  limit: number;
+  providerRemaining: number;
+  ttlSeconds: number;
+};
+
+export type XeroDailyBudgetStore = {
+  consumeXeroDailyBudget(input: XeroDailyBudgetConsumeInput): Promise<XeroDailyBudgetConsumeResult>;
+  getXeroDailyBudget(tenantId: string, date: string): Promise<number>;
+  reconcileXeroDailyBudget(input: XeroDailyBudgetReconcileInput): Promise<number>;
+};
+
 @Injectable()
 export class OAuthRedisService implements OnModuleDestroy {
   private readonly redis: Redis;
@@ -110,6 +140,40 @@ export class OAuthRedisService implements OnModuleDestroy {
     return parseXeroPendingGrant(serialized);
   }
 
+  /** Atomically reserves one request while preserving the interactive daily reserve. */
+  async consumeXeroDailyBudget(
+    input: XeroDailyBudgetConsumeInput,
+  ): Promise<XeroDailyBudgetConsumeResult> {
+    const result = await this.redis.eval(
+      "local used = tonumber(redis.call('GET', KEYS[1]) or '0') or 0; local ceiling = ARGV[3] == 'background' and tonumber(ARGV[2]) or tonumber(ARGV[1]); if used >= ceiling then return {0, used}; end; used = used + 1; redis.call('SET', KEYS[1], used, 'EX', ARGV[4]); return {1, used}",
+      1,
+      this.xeroDailyBudgetKey(input.tenantId, input.date),
+      String(input.limit),
+      String(input.backgroundLimit),
+      input.priority,
+      String(input.ttlSeconds),
+    );
+    return parseBudgetConsumeResult(result);
+  }
+
+  async getXeroDailyBudget(tenantId: string, date: string): Promise<number> {
+    const value = await this.redis.get(this.xeroDailyBudgetKey(tenantId, date));
+    return parseBudgetUsed(value);
+  }
+
+  /** Reconciles the local counter upward with Xero's authoritative remaining-day header. */
+  async reconcileXeroDailyBudget(input: XeroDailyBudgetReconcileInput): Promise<number> {
+    const providerUsed = Math.max(0, Math.min(input.limit, input.limit - input.providerRemaining));
+    const result = await this.redis.eval(
+      "local used = tonumber(redis.call('GET', KEYS[1]) or '0') or 0; local provider_used = tonumber(ARGV[1]); if provider_used > used then used = provider_used; redis.call('SET', KEYS[1], used, 'EX', ARGV[2]); end; return used",
+      1,
+      this.xeroDailyBudgetKey(input.tenantId, input.date),
+      String(providerUsed),
+      String(input.ttlSeconds),
+    );
+    return parseBudgetUsed(result);
+  }
+
   /** Serializes token rotation. Waiters re-read the connection inside the callback. */
   async withLock<T>(key: string, callback: () => Promise<T>): Promise<T> {
     const lockKey = `oauth:lock:${key}`;
@@ -174,6 +238,35 @@ export class OAuthRedisService implements OnModuleDestroy {
   private pendingGrantKey(grantId: string): string {
     return `oauth:xero-grant:${grantId}`;
   }
+
+  private xeroDailyBudgetKey(tenantId: string, date: string): string {
+    return `oauth:xero-budget:${encodeURIComponent(tenantId)}:${date}`;
+  }
+}
+
+function parseBudgetConsumeResult(value: unknown): XeroDailyBudgetConsumeResult {
+  if (!Array.isArray(value) || value.length !== 2) {
+    throw new ServiceUnavailableException('Invalid Xero daily budget response');
+  }
+  const allowed = Number(value[0]);
+  const used = Number(value[1]);
+  if (
+    ![allowed, used].every(Number.isSafeInteger) ||
+    (allowed !== 0 && allowed !== 1) ||
+    used < 0
+  ) {
+    throw new ServiceUnavailableException('Invalid Xero daily budget response');
+  }
+  return { allowed: allowed === 1, used };
+}
+
+function parseBudgetUsed(value: unknown): number {
+  if (value === null || value === undefined) return 0;
+  const used = Number(value);
+  if (!Number.isSafeInteger(used) || used < 0) {
+    throw new ServiceUnavailableException('Invalid Xero daily budget response');
+  }
+  return used;
 }
 
 function parseXeroPendingGrant(serialized: string): XeroPendingGrant | null {

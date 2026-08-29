@@ -13,6 +13,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { xeroGrantQuerySchema, xeroTenantSelectionSchema } from '@betterspend/shared';
 import { Response } from 'express';
 import {
   GlMappingsService,
@@ -87,10 +88,7 @@ export class GlController {
   @Permissions('reports:view')
   @ApiOperation({ summary: 'List GL export jobs' })
   findAllJobs(@CurrentOrgId() orgId: string, @CurrentAccess() access?: AccessPolicy) {
-    return this.glExportService.findAll(
-      orgId,
-      access?.scopeFor('report', 'reports:view'),
-    );
+    return this.glExportService.findAll(orgId, access?.scopeFor('report', 'reports:view'));
   }
 
   @Get('export-jobs/invoice/:invoiceId')
@@ -116,11 +114,7 @@ export class GlController {
     @CurrentOrgId() orgId: string,
     @CurrentAccess() access?: AccessPolicy,
   ) {
-    await this.glExportService.retryJob(
-      id,
-      orgId,
-      access?.scopeFor('report', 'reports:export'),
-    );
+    await this.glExportService.retryJob(id, orgId, access?.scopeFor('report', 'reports:export'));
     return { queued: true };
   }
 
@@ -237,30 +231,27 @@ export class GlController {
   @ApiOperation({ summary: 'List Xero tenants available to the current OAuth grant' })
   @ApiQuery({ name: 'grantId', required: true })
   getXeroConnections(
-    @Query('grantId') grantId: string,
+    @Query() query: unknown,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
     @CurrentSessionId() sessionId?: string,
   ) {
+    const { grantId } = xeroGrantQuerySchema.parse(query);
     return this.oauthService.getXeroPendingTenants(grantId, orgId, userId, sessionId);
   }
 
   @Post('oauth/xero/connections')
   @Permissions('reports:export')
+  @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Select the Xero tenant for the current organization' })
   selectXeroConnection(
-    @Body() body: { grantId: string; tenantId: string },
+    @Body() body: unknown,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
     @CurrentSessionId() sessionId?: string,
   ) {
-    return this.oauthService.selectXeroTenant(
-      body.grantId,
-      body.tenantId,
-      orgId,
-      userId,
-      sessionId,
-    );
+    const { grantId, tenantId } = xeroTenantSelectionSchema.parse(body);
+    return this.oauthService.selectXeroTenant(grantId, tenantId, orgId, userId, sessionId);
   }
 
   @Delete('oauth/xero')

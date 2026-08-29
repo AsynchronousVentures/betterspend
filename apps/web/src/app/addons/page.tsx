@@ -1,7 +1,7 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   BrainCircuit,
   CircleAlert,
@@ -23,6 +23,7 @@ import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
 import { IntegrationCard, InlineNotice } from '../../components/settings-ui';
+import { XeroGrantPanel, type XeroGrantState } from './xero-grant-panel';
 
 interface OAuthStatus {
   qbo: boolean;
@@ -47,14 +48,69 @@ const EMPTY_AI_FORMS: Record<AiProviderId, AiProviderForm> = {
 };
 
 function AddonsContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [oauthStatus, setOauthStatus] = useState<OAuthStatus>({ qbo: false, xero: false });
   const [aiStatus, setAiStatus] = useState<AiProvidersStatusResponse | null>(null);
   const [aiForms, setAiForms] = useState<Record<AiProviderId, AiProviderForm>>(EMPTY_AI_FORMS);
   const [oauthLoading, setOauthLoading] = useState(false);
+  const [xeroGrant, setXeroGrant] = useState<XeroGrantState>({ status: 'idle' });
   const [aiBusy, setAiBusy] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const handledXeroGrant = useRef<string | null>(null);
+
+  const completeXeroGrant = useCallback(
+    async (grantId: string, tenantId: string) => {
+      setXeroGrant({ status: 'submitting', grantId });
+      await api.gl.selectXeroConnection({ grantId, tenantId });
+      setOauthStatus((current) => ({
+        ...current,
+        xero: true,
+        xeroTenantId: tenantId,
+      }));
+      setXeroGrant({ status: 'idle' });
+      setMessage('Xero connected successfully.');
+      router.replace('/addons', { scroll: false });
+    },
+    [router],
+  );
+
+  const loadXeroGrant = useCallback(
+    async (grantId: string) => {
+      setError('');
+      setMessage('');
+      setXeroGrant({ status: 'loading', grantId });
+
+      try {
+        const tenants = await api.gl.xeroConnections(grantId);
+        if (tenants.length === 0) {
+          throw new Error('Xero did not return any organizations for this account.');
+        }
+        if (tenants.length === 1) {
+          await completeXeroGrant(grantId, tenants[0].tenantId);
+          return;
+        }
+        setXeroGrant({
+          status: 'choosing',
+          grantId,
+          tenants,
+          selectedTenantId: '',
+        });
+      } catch (err: unknown) {
+        const failureMessage = err instanceof Error ? err.message : String(err);
+        const normalizedMessage = failureMessage.toLowerCase();
+        setXeroGrant({
+          status: 'error',
+          grantId,
+          message: failureMessage,
+          canRetry:
+            !normalizedMessage.includes('expired') && !normalizedMessage.includes('invalid'),
+        });
+      }
+    },
+    [completeXeroGrant],
+  );
 
   useEffect(() => {
     const connected = searchParams.get('connected');
@@ -62,8 +118,9 @@ function AddonsContent() {
     const aiConnected = searchParams.get('aiConnected');
     const aiFailedProvider = searchParams.get('aiError');
     const failureMessage = searchParams.get('message');
+    const xeroGrantId = searchParams.get('xeroGrant');
 
-    if (connected) {
+    if (connected && !(connected === 'xero' && xeroGrantId)) {
       setMessage(`${connected === 'qbo' ? 'QuickBooks Online' : 'Xero'} connected successfully.`);
     }
     if (aiConnected) {
@@ -86,7 +143,11 @@ function AddonsContent() {
 
     api.gl.oauthStatus().then(setOauthStatus).catch((err: Error) => setError(err.message));
     loadAiStatus().catch((err: Error) => setError(err.message));
-  }, [searchParams]);
+    if (xeroGrantId && handledXeroGrant.current !== xeroGrantId) {
+      handledXeroGrant.current = xeroGrantId;
+      void loadXeroGrant(xeroGrantId);
+    }
+  }, [loadXeroGrant, searchParams]);
 
   async function loadAiStatus() {
     const next = await api.aiProviders.status();
@@ -156,6 +217,24 @@ function AddonsContent() {
       setMessage(`${provider === 'qbo' ? 'QuickBooks Online' : 'Xero'} disconnected.`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleXeroTenantSelection() {
+    if (xeroGrant.status !== 'choosing' || !xeroGrant.selectedTenantId) return;
+    setError('');
+    setMessage('');
+    try {
+      await completeXeroGrant(xeroGrant.grantId, xeroGrant.selectedTenantId);
+    } catch (err: unknown) {
+      const failureMessage = err instanceof Error ? err.message : String(err);
+      const normalizedMessage = failureMessage.toLowerCase();
+      setXeroGrant({
+        status: 'error',
+        grantId: xeroGrant.grantId,
+        message: failureMessage,
+        canRetry: !normalizedMessage.includes('expired') && !normalizedMessage.includes('invalid'),
+      });
     }
   }
 
@@ -265,6 +344,20 @@ function AddonsContent() {
             onDisconnect={() => handleDisconnect('xero')}
             manageHref="/gl-mappings?targetSystem=xero"
             activityHref="/gl-mappings?view=export-history"
+          />
+          <XeroGrantPanel
+            state={xeroGrant}
+            oauthLoading={oauthLoading}
+            onTenantChange={(tenantId) => {
+              setXeroGrant((current) =>
+                current.status === 'choosing'
+                  ? { ...current, selectedTenantId: tenantId }
+                  : current,
+              );
+            }}
+            onSubmit={() => void handleXeroTenantSelection()}
+            onRetry={(grantId) => void loadXeroGrant(grantId)}
+            onStartOver={() => void handleConnect('xero')}
           />
           <Alert variant="warning">
             <CircleAlert className="h-4 w-4" />

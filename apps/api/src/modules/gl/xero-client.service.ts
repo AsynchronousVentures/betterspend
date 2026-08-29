@@ -2,6 +2,12 @@ import { Injectable, Optional } from '@nestjs/common';
 import axios from 'axios';
 import { randomUUID } from 'crypto';
 import { OAuthService, type XeroToken } from './oauth.service';
+import type {
+  XeroDailyBudgetConsumeInput,
+  XeroDailyBudgetConsumeResult,
+  XeroDailyBudgetReconcileInput,
+  XeroDailyBudgetStore,
+} from './oauth-redis.service';
 
 export const XERO_MAX_CONCURRENT_REQUESTS = 5;
 export const XERO_REQUESTS_PER_MINUTE = 60;
@@ -54,6 +60,37 @@ export type XeroDailyBudgetSnapshot = {
   backgroundRemaining: number;
 };
 
+/** Small local store used by isolated unit tests; production injects the Redis store. */
+export class InMemoryXeroDailyBudgetStore implements XeroDailyBudgetStore {
+  private readonly entries = new Map<string, number>();
+
+  async consumeXeroDailyBudget(
+    input: XeroDailyBudgetConsumeInput,
+  ): Promise<XeroDailyBudgetConsumeResult> {
+    const key = `${input.tenantId}:${input.date}`;
+    const used = this.entries.get(key) ?? 0;
+    const ceiling = input.priority === 'background' ? input.backgroundLimit : input.limit;
+    if (used >= ceiling) return { allowed: false, used };
+    const next = used + 1;
+    this.entries.set(key, next);
+    return { allowed: true, used: next };
+  }
+
+  async getXeroDailyBudget(tenantId: string, date: string): Promise<number> {
+    return this.entries.get(`${tenantId}:${date}`) ?? 0;
+  }
+
+  async reconcileXeroDailyBudget(input: XeroDailyBudgetReconcileInput): Promise<number> {
+    const key = `${input.tenantId}:${input.date}`;
+    const used = Math.max(
+      this.entries.get(key) ?? 0,
+      Math.max(0, Math.min(input.limit, input.limit - input.providerRemaining)),
+    );
+    this.entries.set(key, used);
+    return used;
+  }
+}
+
 export class XeroConnectionRequiredError extends Error {
   constructor() {
     super('Xero is not connected or requires reconnection');
@@ -85,12 +122,12 @@ export class XeroApiError extends Error {
 
 /** Tracks each tenant's UTC-day usage and leaves a reserve for interactive work. */
 export class XeroDailyBudgetLedger {
-  private readonly entries = new Map<string, { date: string; used: number }>();
   private readonly interactiveReserve: number;
 
   constructor(
     private readonly limit = configuredDailyLimit(),
     interactiveReserve = Math.ceil(limit * XERO_INTERACTIVE_RESERVE_RATIO),
+    private readonly store: XeroDailyBudgetStore = new InMemoryXeroDailyBudgetStore(),
   ) {
     if (!Number.isSafeInteger(limit) || limit <= 0) {
       throw new TypeError('Xero daily request limit must be a positive integer');
@@ -101,27 +138,71 @@ export class XeroDailyBudgetLedger {
     this.interactiveReserve = Math.min(interactiveReserve, limit);
   }
 
-  tryConsume(tenantId: string, priority: XeroRequestPriority, now = Date.now()): boolean {
-    const snapshot = this.consume(tenantId, priority, now, false);
-    return snapshot !== null;
-  }
-
-  consumeOrThrow(
+  async tryConsume(
     tenantId: string,
     priority: XeroRequestPriority,
     now = Date.now(),
-  ): XeroDailyBudgetSnapshot {
-    const snapshot = this.consume(tenantId, priority, now, true);
-    if (!snapshot) {
-      throw new XeroDailyBudgetExceededError(tenantId, priority, this.snapshot(tenantId, now));
+  ): Promise<boolean> {
+    const result = await this.store.consumeXeroDailyBudget(
+      this.consumeInput(tenantId, priority, now),
+    );
+    return result.allowed;
+  }
+
+  async consumeOrThrow(
+    tenantId: string,
+    priority: XeroRequestPriority,
+    now = Date.now(),
+  ): Promise<XeroDailyBudgetSnapshot> {
+    const date = utcDate(now);
+    const result = await this.store.consumeXeroDailyBudget(
+      this.consumeInput(tenantId, priority, now),
+    );
+    const snapshot = this.snapshotFromUsed(date, result.used);
+    if (!result.allowed) {
+      throw new XeroDailyBudgetExceededError(tenantId, priority, snapshot);
     }
     return snapshot;
   }
 
-  snapshot(tenantId: string, now = Date.now()): XeroDailyBudgetSnapshot {
+  async snapshot(tenantId: string, now = Date.now()): Promise<XeroDailyBudgetSnapshot> {
     const date = utcDate(now);
-    const entry = this.entries.get(tenantId);
-    const used = entry?.date === date ? entry.used : 0;
+    const used = await this.store.getXeroDailyBudget(tenantId, date);
+    return this.snapshotFromUsed(date, used);
+  }
+
+  /** Reconciles local usage with Xero's authoritative remaining-day header. */
+  async recordProviderRemaining(
+    tenantId: string,
+    remaining: number,
+    now = Date.now(),
+  ): Promise<void> {
+    if (!Number.isSafeInteger(remaining) || remaining < 0) return;
+    await this.store.reconcileXeroDailyBudget({
+      tenantId,
+      date: utcDate(now),
+      limit: this.limit,
+      providerRemaining: remaining,
+      ttlSeconds: dailyBudgetTtlSeconds(now),
+    });
+  }
+
+  private consumeInput(
+    tenantId: string,
+    priority: XeroRequestPriority,
+    now: number,
+  ): XeroDailyBudgetConsumeInput {
+    return {
+      tenantId,
+      date: utcDate(now),
+      limit: this.limit,
+      backgroundLimit: this.limit - this.interactiveReserve,
+      priority,
+      ttlSeconds: dailyBudgetTtlSeconds(now),
+    };
+  }
+
+  private snapshotFromUsed(date: string, used: number): XeroDailyBudgetSnapshot {
     return {
       date,
       used,
@@ -129,34 +210,6 @@ export class XeroDailyBudgetLedger {
       remaining: Math.max(0, this.limit - used),
       backgroundRemaining: Math.max(0, this.limit - this.interactiveReserve - used),
     };
-  }
-
-  /** Reconciles local usage with Xero's authoritative remaining-day header. */
-  recordProviderRemaining(tenantId: string, remaining: number, now = Date.now()): void {
-    if (!Number.isSafeInteger(remaining) || remaining < 0) return;
-    const before = this.snapshot(tenantId, now);
-    const used = Math.max(before.used, this.limit - remaining);
-    this.entries.set(tenantId, { date: before.date, used: Math.min(this.limit, used) });
-  }
-
-  private consume(
-    tenantId: string,
-    priority: XeroRequestPriority,
-    now: number,
-    throwOnFailure: boolean,
-  ): XeroDailyBudgetSnapshot | null {
-    const before = this.snapshot(tenantId, now);
-    const allowed =
-      priority === 'interactive' ? before.remaining > 0 : before.backgroundRemaining > 0;
-    if (!allowed) {
-      if (throwOnFailure) {
-        throw new XeroDailyBudgetExceededError(tenantId, priority, before);
-      }
-      return null;
-    }
-    const date = before.date;
-    this.entries.set(tenantId, { date, used: before.used + 1 });
-    return this.snapshot(tenantId, now);
   }
 }
 
@@ -202,7 +255,7 @@ class TenantLimiter {
     const release = await this.semaphore.acquire();
     try {
       await this.takeQuotaSlot();
-      this.budget.consumeOrThrow(tenantId, priority);
+      await this.budget.consumeOrThrow(tenantId, priority);
       return await operation();
     } finally {
       release();
@@ -265,7 +318,7 @@ export class XeroClientService {
               validateStatus: (status) => (status >= 200 && status < 300) || status === 304,
             }),
         );
-        this.budget.recordProviderRemaining(
+        await this.budget.recordProviderRemaining(
           token.tenantId,
           headerNumber(response.headers, 'x-daylimit-remaining') ?? Number.NaN,
         );
@@ -298,7 +351,7 @@ export class XeroClientService {
 
         if (status === 429 || status === 503) {
           if (status === 429 && dayLimitRemaining(error) === 0) {
-            this.budget.recordProviderRemaining(token.tenantId, 0);
+            await this.budget.recordProviderRemaining(token.tenantId, 0);
             throw this.toXeroError(error);
           }
           transientAttempts += 1;
@@ -331,30 +384,6 @@ export class XeroClientService {
     > = {},
   ): Promise<XeroResponse<T>> {
     return this.get(organizationId, path, { ...options, ifModifiedSince });
-  }
-
-  fetchSince<T>(
-    organizationId: string,
-    path: string,
-    ifModifiedSince: Date | string,
-    options: Omit<
-      XeroRequestOptions,
-      'organizationId' | 'method' | 'path' | 'ifModifiedSince'
-    > = {},
-  ): Promise<XeroResponse<T>> {
-    return this.getSince(organizationId, path, ifModifiedSince, options);
-  }
-
-  incrementalGet<T>(
-    organizationId: string,
-    path: string,
-    ifModifiedSince: Date | string,
-    options: Omit<
-      XeroRequestOptions,
-      'organizationId' | 'method' | 'path' | 'ifModifiedSince'
-    > = {},
-  ): Promise<XeroResponse<T>> {
-    return this.getSince(organizationId, path, ifModifiedSince, options);
   }
 
   batch<T>(options: XeroBatchRequestOptions): Promise<XeroResponse<T>>;
@@ -455,9 +484,7 @@ function configuredDailyLimit(): number {
       ? XERO_STANDARD_DAILY_LIMIT
       : XERO_STARTER_DAILY_LIMIT;
   const configured = Number(
-    process.env.XERO_DAILY_REQUEST_LIMIT ??
-      process.env.XERO_DAILY_LIMIT ??
-      planDefault,
+    process.env.XERO_DAILY_REQUEST_LIMIT ?? process.env.XERO_DAILY_LIMIT ?? planDefault,
   );
   return Number.isSafeInteger(configured) && configured > 0 ? configured : planDefault;
 }
@@ -536,6 +563,12 @@ function headerValue(headers: unknown, name: string): unknown {
 
 function utcDate(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function dailyBudgetTtlSeconds(timestamp: number): number {
+  const today = utcDate(timestamp);
+  const nextUtcDay = Date.parse(`${today}T00:00:00.000Z`) + 86_400_000;
+  return Math.max(60, Math.ceil((nextUtcDay - timestamp) / 1_000) + 86_400);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

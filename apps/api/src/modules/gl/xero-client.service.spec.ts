@@ -31,27 +31,36 @@ function axiosError(status: number, data?: unknown, headers?: Record<string, str
 }
 
 describe('XeroDailyBudgetLedger', () => {
-  it('keeps the interactive reserve unavailable to background work', () => {
+  it('keeps the interactive reserve unavailable to background work', async () => {
     const ledger = new XeroDailyBudgetLedger(10, 2);
 
     for (let index = 0; index < 8; index += 1) {
-      expect(ledger.tryConsume('tenant-1', 'background')).toBe(true);
+      await expect(ledger.tryConsume('tenant-1', 'background')).resolves.toBe(true);
     }
-    expect(ledger.tryConsume('tenant-1', 'background')).toBe(false);
-    expect(ledger.tryConsume('tenant-1', 'interactive')).toBe(true);
-    expect(ledger.snapshot('tenant-1')).toEqual(
+    await expect(ledger.tryConsume('tenant-1', 'background')).resolves.toBe(false);
+    await expect(ledger.tryConsume('tenant-1', 'interactive')).resolves.toBe(true);
+    await expect(ledger.snapshot('tenant-1')).resolves.toEqual(
       expect.objectContaining({ used: 9, remaining: 1, backgroundRemaining: 0 }),
     );
   });
 
-  it('resets usage at the UTC day boundary', () => {
+  it('resets usage at the UTC day boundary', async () => {
     const ledger = new XeroDailyBudgetLedger(1, 0);
     const beforeMidnight = Date.parse('2026-08-29T23:59:59.000Z');
     const afterMidnight = Date.parse('2026-08-30T00:00:00.000Z');
 
-    expect(ledger.tryConsume('tenant-1', 'background', beforeMidnight)).toBe(true);
-    expect(ledger.tryConsume('tenant-1', 'background', beforeMidnight)).toBe(false);
-    expect(ledger.tryConsume('tenant-1', 'background', afterMidnight)).toBe(true);
+    await expect(ledger.tryConsume('tenant-1', 'background', beforeMidnight)).resolves.toBe(true);
+    await expect(ledger.tryConsume('tenant-1', 'background', beforeMidnight)).resolves.toBe(false);
+    await expect(ledger.tryConsume('tenant-1', 'background', afterMidnight)).resolves.toBe(true);
+  });
+
+  it('enforces the reserve across concurrent consumers', async () => {
+    const ledger = new XeroDailyBudgetLedger(10, 2);
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => ledger.tryConsume('tenant-1', 'background')),
+    );
+
+    expect(results.filter(Boolean)).toHaveLength(8);
   });
 });
 
