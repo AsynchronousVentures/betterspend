@@ -6,7 +6,7 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { DB_TOKEN } from '../../database/database.module';
@@ -135,20 +135,21 @@ export class MessagesService {
       recipientVendorId = input.recipientVendorId;
     }
 
-    const operationKey = messageOperationKey('user', input.idempotencyKey);
+    const fingerprint = messageFingerprint({
+      senderType: 'user',
+      senderId: userId,
+      threadType,
+      threadId,
+      body: trimmedBody,
+      attachments: input.attachments ?? [],
+      recipientVendorId,
+    });
+    const operationKey = messageOperationKey('user', input.idempotencyKey, fingerprint);
     const execution = await this.artifactIdempotency.execute({
       organizationId,
       operationType: 'message_post',
       idempotencyKey: operationKey,
-      fingerprint: messageFingerprint({
-        senderType: 'user',
-        senderId: userId,
-        threadType,
-        threadId,
-        body: trimmedBody,
-        attachments: input.attachments ?? [],
-        recipientVendorId,
-      }),
+      fingerprint,
       findExisting: (ownerIdempotencyKey) =>
         this.findMessageArtifact(organizationId, ownerIdempotencyKey),
       create: (ownerIdempotencyKey) =>
@@ -164,41 +165,41 @@ export class MessagesService {
           ownerIdempotencyKey,
         }),
       link: (artifact) => this.loadMessage(organizationId, artifact),
-      load: (artifact) => this.loadMessage(organizationId, artifact),
-    });
-    const message = execution.value;
-
-    // Email the addressed vendor on addressed RFQ messages; broadcast RFQ
-    // messages go to every invited vendor. Other threads have a single
-    // supplier counterpart resolved inside.
-    if (!execution.replayed && threadType === 'rfq' && recipientVendorId === null) {
-      const invitations = await this.db.query.rfqInvitations.findMany({
-        where: (inv, { eq }) => eq(inv.rfqId, threadId),
-      });
-      const invitedVendorIds = new Set(invitations.map((inv) => inv.vendorId));
-      if (threadContext.vendorId) {
-        invitedVendorIds.add(threadContext.vendorId);
-      }
-      for (const vendorIdToNotify of invitedVendorIds) {
+      notify: async (message) => {
+        if (threadType === 'rfq' && recipientVendorId === null) {
+          const invitations = await this.db.query.rfqInvitations.findMany({
+            where: (inv, { eq }) => eq(inv.rfqId, threadId),
+          });
+          const invitedVendorIds = new Set(invitations.map((inv) => inv.vendorId));
+          if (threadContext.vendorId) {
+            invitedVendorIds.add(threadContext.vendorId);
+          }
+          for (const vendorIdToNotify of invitedVendorIds) {
+            await this.emailVendorContact(
+              organizationId,
+              threadType,
+              threadId,
+              user.name,
+              message.body,
+              vendorIdToNotify,
+              true,
+            );
+          }
+          return;
+        }
         await this.emailVendorContact(
           organizationId,
           threadType,
           threadId,
           user.name,
           message.body,
-          vendorIdToNotify,
+          recipientVendorId ?? undefined,
+          true,
         );
-      }
-    } else if (!execution.replayed) {
-      await this.emailVendorContact(
-        organizationId,
-        threadType,
-        threadId,
-        user.name,
-        message.body,
-        recipientVendorId ?? undefined,
-      );
-    }
+      },
+      load: (artifact) => this.loadMessage(organizationId, artifact),
+    });
+    const message = execution.value;
     return message;
   }
 
@@ -225,19 +226,20 @@ export class MessagesService {
     });
     if (!vendor) throw new NotFoundException(`Vendor ${vendorId} not found`);
 
-    const operationKey = messageOperationKey('vendor', input.idempotencyKey);
+    const fingerprint = messageFingerprint({
+      senderType: 'vendor',
+      senderId: vendorId,
+      threadType,
+      threadId,
+      body: trimmedBody,
+      attachments: input.attachments ?? [],
+    });
+    const operationKey = messageOperationKey('vendor', input.idempotencyKey, fingerprint);
     const execution = await this.artifactIdempotency.execute({
       organizationId,
       operationType: 'message_post',
       idempotencyKey: operationKey,
-      fingerprint: messageFingerprint({
-        senderType: 'vendor',
-        senderId: vendorId,
-        threadType,
-        threadId,
-        body: trimmedBody,
-        attachments: input.attachments ?? [],
-      }),
+      fingerprint,
       findExisting: (ownerIdempotencyKey) =>
         this.findMessageArtifact(organizationId, ownerIdempotencyKey),
       create: (ownerIdempotencyKey) =>
@@ -252,13 +254,9 @@ export class MessagesService {
           ownerIdempotencyKey,
         }),
       link: (artifact) => this.loadMessage(organizationId, artifact),
-      load: (artifact) => this.loadMessage(organizationId, artifact),
-    });
-    const message = execution.value;
-
-    if (!execution.replayed && context.internalUserId) {
-      this.notificationsService
-        .create(
+      notify: async (message) => {
+        if (!context.internalUserId) return;
+        await this.notificationsService.create(
           organizationId,
           context.internalUserId,
           'new_message',
@@ -266,14 +264,11 @@ export class MessagesService {
           message.body.length > 140 ? `${message.body.slice(0, 140)}...` : message.body,
           threadType,
           threadId,
-        )
-        .catch((error) =>
-          this.logger.warn(
-            `Notification failed for message ${message.id}: ${error instanceof Error ? error.message : error}`,
-          ),
         );
-    }
-    return message;
+      },
+      load: (artifact) => this.loadMessage(organizationId, artifact),
+    });
+    return execution.value;
   }
 
   private async findMessageArtifact(
@@ -512,6 +507,7 @@ export class MessagesService {
     authorName: string,
     messageBody: string,
     recipientVendorOverride?: string,
+    propagateErrors = false,
   ) {
     try {
       const context = await this.getThreadContext(organizationId, threadType, threadId);
@@ -560,6 +556,7 @@ export class MessagesService {
         },
       );
     } catch (error) {
+      if (propagateErrors) throw error;
       this.logger.warn(
         `Failed to email vendor contact for ${threadType}/${threadId}: ${error instanceof Error ? error.message : error}`,
       );
@@ -575,10 +572,14 @@ function extractContactEmail(contactInfo: unknown): string | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
-function messageOperationKey(senderType: 'user' | 'vendor', key?: string): string {
+export function messageOperationKey(
+  senderType: 'user' | 'vendor',
+  key: string | undefined,
+  fingerprint: string,
+): string {
   const namespace = `message:${senderType}:`;
   const supplied = key?.trim();
-  if (!supplied) return `${namespace}${randomUUID()}`;
+  if (!supplied) return `${namespace}derived:${fingerprint}`;
   const maxSuppliedLength = 255 - namespace.length;
   const bounded =
     supplied.length <= maxSuppliedLength

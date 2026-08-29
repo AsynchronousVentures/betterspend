@@ -1,3 +1,5 @@
+SET LOCAL lock_timeout = '5s';--> statement-breakpoint
+SET LOCAL statement_timeout = '30s';--> statement-breakpoint
 CREATE TABLE "artifact_operations" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"organization_id" uuid NOT NULL,

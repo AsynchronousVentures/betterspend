@@ -15,10 +15,23 @@ import { BudgetsService } from '../budgets/budgets.service';
 import { SpendGuardService } from '../spend-guard/spend-guard.service';
 import type { Db } from '@betterspend/db';
 import { approvalRequests, requisitions, requisitionLines } from '@betterspend/db';
-import type { CreateRequisitionInput } from '@betterspend/shared';
+import {
+  multiplyMoney,
+  normalizeMoney,
+  sumMoney,
+  type CreateRequisitionInput,
+  type DecimalInput,
+} from '@betterspend/shared';
 import type { AccessPolicy } from '../auth/access-policy';
 import { permissionScopePredicate, requirePermission } from '../auth/access-scope';
 import { canViewRelatedRecord } from '../auth/related-record-access';
+
+type RequisitionCreateInput = Omit<CreateRequisitionInput, 'lines'> & {
+  lines: Array<
+    Omit<CreateRequisitionInput['lines'][number], 'unitPrice'> & { unitPrice: DecimalInput }
+  >;
+  ownerIdempotencyKey?: string;
+};
 
 @Injectable()
 export class RequisitionsService {
@@ -192,7 +205,7 @@ export class RequisitionsService {
   async create(
     organizationId: string,
     requesterId: string,
-    input: CreateRequisitionInput & { ownerIdempotencyKey?: string },
+    input: RequisitionCreateInput,
     access?: AccessPolicy,
   ) {
     requirePermission(access, 'requisitions:create');
@@ -202,7 +215,14 @@ export class RequisitionsService {
     });
     const creation = await this.db.transaction(async (tx) => {
       const number = await this.sequenceService.next(organizationId, 'requisition', tx);
-      const totalAmount = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
+      const amounts = input.lines.map((line) => {
+        const unitPrice = normalizeMoney(line.unitPrice);
+        return {
+          unitPrice,
+          totalPrice: multiplyMoney(line.quantity, unitPrice),
+        };
+      });
+      const totalAmount = sumMoney(amounts.map(({ totalPrice }) => totalPrice));
 
       const values = {
         organizationId,
@@ -215,7 +235,7 @@ export class RequisitionsService {
         priority: input.priority ?? 'normal',
         neededBy: input.neededBy ? new Date(input.neededBy) : null,
         currency: input.currency ?? 'USD',
-        totalAmount: String(totalAmount),
+        totalAmount,
         status: 'draft' as const,
         sourceType: 'manual',
         idempotencyKey: input.ownerIdempotencyKey,
@@ -230,8 +250,8 @@ export class RequisitionsService {
           description: l.description,
           quantity: String(l.quantity),
           unitOfMeasure: l.unitOfMeasure,
-          unitPrice: String(l.unitPrice),
-          totalPrice: String(l.quantity * l.unitPrice),
+          unitPrice: amounts[i]?.unitPrice ?? '0.00',
+          totalPrice: amounts[i]?.totalPrice ?? '0.00',
           vendorId: l.vendorId,
           catalogItemId: l.catalogItemId,
           glAccount: l.glAccount,

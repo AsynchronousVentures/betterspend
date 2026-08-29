@@ -36,14 +36,22 @@ export interface ArtifactOperationPlan<TResult> {
   create: (ownerIdempotencyKey: string) => Promise<ArtifactReference>;
   /** Complete the caller-side linkage. This callback must be safe to repeat. */
   link: (artifact: ArtifactReference) => Promise<TResult>;
+  /**
+   * Deliver the operation's notification before the operation is marked
+   * complete. A failure leaves the durable operation retryable, so a
+   * notification cannot be lost after a successful artifact write.
+   */
+  notify?: (value: TResult) => Promise<void>;
   /** Load the original result after a completed operation without mutating anything. */
   load: (artifact: ArtifactReference) => Promise<TResult>;
 }
 
 export interface ArtifactOperationResult<TResult> {
   value: TResult;
-  /** True when this invocation resumed or returned an existing operation. */
+  /** True only when this invocation loaded a fully completed operation. */
   replayed: boolean;
+  /** True when this invocation resumed a prior pending, failed, or artifact-created attempt. */
+  resumed: boolean;
 }
 
 type OperationRow = typeof artifactOperations.$inferSelect;
@@ -93,7 +101,7 @@ export class ArtifactIdempotencyService {
         id: claim.operation.artifactId,
         number: claim.operation.artifactNumber,
       });
-      return { value, replayed: true };
+      return { value, replayed: true, resumed: false };
     }
 
     const operation = claim.operation;
@@ -105,14 +113,10 @@ export class ArtifactIdempotencyService {
           number: operation.artifactNumber,
         }
       : null;
-    const hadExistingArtifact = artifact !== null;
-    let recoveredExistingArtifact = false;
-
     try {
       if (!artifact) {
         artifact = await plan.findExisting(ownerIdempotencyKey);
         if (artifact) {
-          recoveredExistingArtifact = true;
           await this.recordArtifact(operation, claim.leaseToken, artifact);
         }
       }
@@ -122,8 +126,9 @@ export class ArtifactIdempotencyService {
       }
 
       const value = await plan.link(artifact);
+      if (plan.notify) await plan.notify(value);
       await this.complete(operation, claim.leaseToken, artifact);
-      return { value, replayed: hadExistingArtifact || recoveredExistingArtifact };
+      return { value, replayed: false, resumed: claim.resumed };
     } catch (error) {
       await this.markFailed(operation, claim.leaseToken, artifact, error);
       throw error;
@@ -135,7 +140,12 @@ export class ArtifactIdempotencyService {
     operationType: ArtifactOperationType,
     idempotencyKey: string,
     requestHash: string,
-  ): Promise<{ operation: OperationRow; leaseToken: string; completed: boolean }> {
+  ): Promise<{
+    operation: OperationRow;
+    leaseToken: string;
+    completed: boolean;
+    resumed: boolean;
+  }> {
     const now = new Date();
     const leaseToken = randomUUID();
     const leaseExpiresAt = new Date(now.getTime() + LEASE_DURATION_MS);
@@ -170,8 +180,10 @@ export class ArtifactIdempotencyService {
         throw new ConflictException('The idempotency key was reused for a different operation');
       }
       if (operation.status === 'completed') {
-        return { operation, leaseToken, completed: true };
+        return { operation, leaseToken, completed: true, resumed: false };
       }
+
+      const resumed = operation.attempts > 0 || operation.artifactId !== null;
 
       const [claimed] = await tx
         .update(artifactOperations)
@@ -197,7 +209,7 @@ export class ArtifactIdempotencyService {
       if (!claimed) {
         throw new ConflictException('This artifact operation is already in progress; retry later');
       }
-      return { operation: claimed, leaseToken, completed: false };
+      return { operation: claimed, leaseToken, completed: false, resumed };
     });
   }
 

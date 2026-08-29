@@ -63,8 +63,8 @@ export class RfqController {
   @Post(':id/open')
   @OperationalPermissions('rfqs:manage')
   @ApiOperation({ summary: 'Open an RFQ for vendor responses' })
-  open(@CurrentOrgId() orgId: string, @Param('id') id: string) {
-    return this.rfqService.open(orgId, id);
+  open(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string, @Param('id') id: string) {
+    return this.rfqService.open(orgId, id, userId);
   }
 
   @Post(':id/close')

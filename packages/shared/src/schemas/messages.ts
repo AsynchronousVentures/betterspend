@@ -20,6 +20,7 @@ export const postMessageSchema = z.object({
   body: z.string().trim().min(1).max(10_000),
   attachments: z.array(messageAttachmentSchema).max(20).optional(),
   recipientVendorId: uuidSchema.optional(),
+  // The API accepts a caller key or derives one from the complete message intent.
   idempotencyKey: z.string().trim().min(1).max(255).optional(),
 });
 

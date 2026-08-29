@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ConflictException } from '@nestjs/common';
-import { MessagesService } from '../messages/messages.service';
+import { messageOperationKey, MessagesService } from '../messages/messages.service';
 import {
   SoftwareLicensesService,
   type RenewalRef,
@@ -31,14 +31,16 @@ class RecordingArtifactCoordinator {
       if (previous.fingerprint !== plan.fingerprint) {
         throw new ConflictException('The idempotency key was reused for a different operation');
       }
-      return { value: await plan.load(previous.artifact), replayed: true };
+      return { value: await plan.load(previous.artifact), replayed: true, resumed: false };
     }
 
     const ownerIdempotencyKey = `artifact-operation:operation-${this.nextOperationId++}`;
     const recovered = await plan.findExisting(ownerIdempotencyKey);
     const artifact = recovered ?? (await plan.create(ownerIdempotencyKey));
     this.operations.set(plan.idempotencyKey, { fingerprint: plan.fingerprint, artifact });
-    return { value: await plan.link(artifact), replayed: false };
+    const value = await plan.link(artifact);
+    await plan.notify?.(value);
+    return { value, replayed: false, resumed: Boolean(recovered) };
   }
 }
 
@@ -57,6 +59,7 @@ const license = {
   renewalRefs: [] as TestRenewalRef[],
   status: 'renewal_due',
 };
+type TestLicense = typeof license;
 
 test('license renewal retries use the same artifact operation and do not recreate the requisition', async () => {
   const coordinator = new RecordingArtifactCoordinator();
@@ -236,6 +239,108 @@ test('advancing a license renewal date starts a new artifact cycle', async () =>
   );
 });
 
+test('license renewal requisitions keep decimal unit prices', async () => {
+  let requisitionInput: Record<string, unknown> | undefined;
+  const service = new SoftwareLicensesService(
+    {} as never,
+    {} as never,
+    {
+      create: async (
+        _organizationId: string,
+        _requesterId: string,
+        input: Record<string, unknown>,
+      ) => {
+        requisitionInput = input;
+        return { id: 'requisition-1', number: 'REQ-2027-0001' };
+      },
+    } as never,
+    {} as never,
+    {} as never,
+  );
+  const methods = service as unknown as {
+    createRenewalRequisition: (
+      license: TestLicense,
+      userId: string,
+      note?: string,
+      ownerIdempotencyKey?: string,
+    ) => Promise<ArtifactReference>;
+  };
+
+  await methods.createRenewalRequisition(
+    { ...license, pricePerSeat: '0.29', seatCount: 3 },
+    'user-1',
+  );
+
+  const lines = requisitionInput?.lines as Array<Record<string, unknown>> | undefined;
+  assert.equal(lines?.[0]?.unitPrice, '0.29');
+});
+
+test('linking a renewal artifact records the initiating user in the same transaction', async () => {
+  const events: string[] = [];
+  const transaction = {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          for: async () => {
+            events.push('select-license');
+            return [{ notes: null, renewalRefs: [] }];
+          },
+        }),
+      }),
+    }),
+    update: () => ({
+      set: () => ({
+        where: () => ({
+          returning: async () => {
+            events.push('update-license');
+            return [{ id: 'license-1' }];
+          },
+        }),
+      }),
+    }),
+    insert: () => ({
+      values: async (value: Record<string, unknown>) => {
+        events.push('audit');
+        assert.equal(value.userId, 'user-1');
+        assert.equal(value.entityType, 'software_license');
+        assert.equal(value.entityId, 'license-1');
+      },
+    }),
+  };
+  const service = new SoftwareLicensesService(
+    {
+      transaction: async <T>(callback: (tx: typeof transaction) => Promise<T>) =>
+        callback(transaction),
+    } as never,
+    {} as never,
+    {
+      ensureSpendGuardAnalysis: async () => {},
+      findOne: async () => ({ status: 'submitted' }),
+    } as never,
+    {} as never,
+    {} as never,
+  );
+  const methods = service as unknown as {
+    linkRenewalArtifact: (input: {
+      id: string;
+      organizationId: string;
+      userId: string;
+      action: 'renew';
+      artifact: ArtifactReference;
+    }) => Promise<RenewalRef>;
+  };
+
+  await methods.linkRenewalArtifact({
+    id: 'license-1',
+    organizationId: 'org-1',
+    userId: 'user-1',
+    action: 'renew',
+    artifact: { kind: 'requisition', id: 'requisition-1', number: 'REQ-2027-0001' },
+  });
+
+  assert.deepEqual(events, ['select-license', 'update-license', 'audit']);
+});
+
 test('buyer message retries retain the caller key and return one message artifact', async () => {
   const coordinator = new RecordingArtifactCoordinator();
   let createCalls = 0;
@@ -291,6 +396,14 @@ test('buyer message retries retain the caller key and return one message artifac
   assert.equal(emailCalls, 1);
   assert.equal(coordinator.plans[0]?.operationType, 'message_post');
   assert.equal(coordinator.plans[0]?.idempotencyKey, 'message:user:request-1');
+});
+
+test('message operations derive a stable key when the caller omits one', () => {
+  const first = messageOperationKey('user', undefined, 'message-intent-1');
+  const second = messageOperationKey('user', undefined, 'message-intent-1');
+
+  assert.equal(first, second);
+  assert.match(first, /^message:user:derived:message-intent-1$/);
 });
 
 test('vendor message retries retain the caller key and do not duplicate notifications', async () => {

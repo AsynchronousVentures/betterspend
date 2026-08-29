@@ -203,6 +203,7 @@ test('artifact operation resumes linkage without creating a second artifact', as
   const service = new ArtifactIdempotencyService(store as unknown as Db);
   let createCalls = 0;
   let linkCalls = 0;
+  let notifyCalls = 0;
   let failLink = true;
   let ownerIdempotencyKey: string | undefined;
   const plan = createPlan(store, {
@@ -223,14 +224,22 @@ test('artifact operation resumes linkage without creating a second artifact', as
       }
       return { id: artifact.id };
     },
+    notify: async () => {
+      notifyCalls += 1;
+    },
   });
 
   await assert.rejects(service.execute(plan), /link temporarily unavailable/);
   const resumed = await service.execute(plan);
 
-  assert.deepEqual(resumed, { value: { id: 'message-1' }, replayed: true });
+  assert.deepEqual(resumed, {
+    value: { id: 'message-1' },
+    replayed: false,
+    resumed: true,
+  });
   assert.equal(createCalls, 1);
   assert.equal(linkCalls, 2);
+  assert.equal(notifyCalls, 1);
   assert.equal(ownerIdempotencyKey, 'artifact-operation:operation-1');
   assert.equal(store.rows[0]?.status, 'completed');
   assert.equal(store.rows[0]?.artifactId, 'message-1');
@@ -241,6 +250,7 @@ test('completed operations return the original result without rerunning linkage'
   const service = new ArtifactIdempotencyService(store as unknown as Db);
   let linkCalls = 0;
   let loadCalls = 0;
+  let notifyCalls = 0;
   const plan = createPlan(store, {
     link: async (artifact) => {
       linkCalls += 1;
@@ -250,14 +260,55 @@ test('completed operations return the original result without rerunning linkage'
       loadCalls += 1;
       return { id: artifact.id };
     },
+    notify: async () => {
+      notifyCalls += 1;
+    },
   });
 
   await service.execute(plan);
   const replay = await service.execute(plan);
 
-  assert.deepEqual(replay, { value: { id: 'message-1' }, replayed: true });
+  assert.deepEqual(replay, {
+    value: { id: 'message-1' },
+    replayed: true,
+    resumed: false,
+  });
   assert.equal(linkCalls, 1);
   assert.equal(loadCalls, 1);
+  assert.equal(notifyCalls, 1);
+});
+
+test('notification failure leaves a created artifact retryable', async () => {
+  const store = new ArtifactOperationStore();
+  const service = new ArtifactIdempotencyService(store as unknown as Db);
+  let createCalls = 0;
+  let notifyCalls = 0;
+  let failNotification = true;
+  const plan = createPlan(store, {
+    create: async () => {
+      createCalls += 1;
+      return { kind: 'message', id: 'message-1' };
+    },
+    notify: async () => {
+      notifyCalls += 1;
+      if (failNotification) {
+        failNotification = false;
+        throw new Error('notification temporarily unavailable');
+      }
+    },
+  });
+
+  await assert.rejects(service.execute(plan), /notification temporarily unavailable/);
+  const resumed = await service.execute(plan);
+
+  assert.deepEqual(resumed, {
+    value: { id: 'message-1' },
+    replayed: false,
+    resumed: true,
+  });
+  assert.equal(createCalls, 1);
+  assert.equal(notifyCalls, 2);
+  assert.equal(store.rows[0]?.status, 'completed');
 });
 
 test('an idempotency key cannot be reused for a different request', async () => {

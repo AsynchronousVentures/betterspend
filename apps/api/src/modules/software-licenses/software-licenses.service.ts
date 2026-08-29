@@ -10,8 +10,8 @@ import { and, asc, desc, eq, lte, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
-import { requisitions, rfqRequests, softwareLicenses, vendors } from '@betterspend/db';
-import type { PermissionKey } from '@betterspend/shared';
+import { auditLog, requisitions, rfqRequests, softwareLicenses, vendors } from '@betterspend/db';
+import { normalizeMoney, type PermissionKey } from '@betterspend/shared';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RequisitionsService } from '../requisitions/requisitions.service';
 import { RfqService } from '../rfq/rfq.service';
@@ -299,21 +299,15 @@ export class SoftwareLicensesService {
         this.linkRenewalArtifact({
           id,
           organizationId,
+          userId,
           action,
           actionNote,
           artifact,
         }),
+      notify: (renewalRef) =>
+        this.notifyRenewalAction(license, organizationId, action, actionNote, renewalRef, true),
       load: (artifact) => this.loadRenewalRef(id, organizationId, action, artifact, access),
     });
-
-    await this.notifyRenewalAction(
-      license,
-      organizationId,
-      action,
-      actionNote,
-      execution.value,
-      !execution.replayed,
-    );
     return this.findOne(id, organizationId, access, 'software_licenses:manage');
   }
 
@@ -324,7 +318,7 @@ export class SoftwareLicensesService {
     note?: string,
     ownerIdempotencyKey?: string,
   ): Promise<ArtifactReference> {
-    const unitPrice = Number(license.pricePerSeat);
+    const unitPrice = normalizeMoney(license.pricePerSeat);
     const requisition = await this.requisitionsService.create(
       license.organizationId,
       license.ownerUserId ?? userId,
@@ -366,7 +360,7 @@ export class SoftwareLicensesService {
     note?: string,
     ownerIdempotencyKey?: string,
   ): Promise<ArtifactReference> {
-    const targetPrice = Number(license.pricePerSeat);
+    const targetPrice = normalizeMoney(license.pricePerSeat);
     const requestedDueDate = license.renewalDate
       ? new Date(license.renewalDate).getTime() - 7 * 24 * 60 * 60 * 1000
       : 0;
@@ -432,6 +426,7 @@ export class SoftwareLicensesService {
   private async linkRenewalArtifact(input: {
     id: string;
     organizationId: string;
+    userId: string;
     action: 'renew' | 'renegotiate';
     actionNote?: string;
     artifact: ArtifactReference;
@@ -458,7 +453,7 @@ export class SoftwareLicensesService {
     } else {
       const rfq = await this.rfqService.findOne(input.organizationId, input.artifact.id);
       if (rfq.status === 'draft') {
-        await this.rfqService.open(input.organizationId, input.artifact.id);
+        await this.rfqService.open(input.organizationId, input.artifact.id, input.userId);
       }
     }
 
@@ -514,6 +509,19 @@ export class SoftwareLicensesService {
         )
         .returning({ id: softwareLicenses.id });
       if (!updated) throw new NotFoundException(`Software license ${input.id} not found`);
+      await tx.insert(auditLog).values({
+        organizationId: input.organizationId,
+        userId: input.userId,
+        entityType: 'software_license',
+        entityId: input.id,
+        action: `${input.action}_renewal_artifact_linked`,
+        changes: {
+          artifactKind: renewalRef.kind,
+          artifactId: renewalRef.id,
+          artifactNumber: renewalRef.number,
+          status: 'renewal_due',
+        },
+      });
       return renewalRef;
     });
   }

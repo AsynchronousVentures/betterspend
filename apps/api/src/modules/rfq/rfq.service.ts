@@ -10,6 +10,7 @@ import { DB_TOKEN } from '../../database/database.module';
 import { SequenceService } from '../../common/services/sequence.service';
 import type { Db } from '@betterspend/db';
 import {
+  auditLog,
   rfqRequests,
   rfqLines,
   rfqInvitations,
@@ -21,6 +22,7 @@ import {
   purchaseOrders,
   poLines,
 } from '@betterspend/db';
+import { normalizeMoney } from '@betterspend/shared';
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
 
@@ -269,7 +271,7 @@ export class RfqService {
         description: string;
         quantity: number;
         unitOfMeasure?: string;
-        targetPrice?: number;
+        targetPrice?: number | string;
       }>;
       vendorIds?: string[];
       ownerIdempotencyKey?: string;
@@ -312,7 +314,7 @@ export class RfqService {
             description: l.description,
             quantity: String(l.quantity),
             unitOfMeasure: l.unitOfMeasure ?? 'each',
-            targetPrice: l.targetPrice != null ? String(l.targetPrice) : undefined,
+            targetPrice: l.targetPrice != null ? normalizeMoney(l.targetPrice) : undefined,
           })),
         );
       }
@@ -357,10 +359,40 @@ export class RfqService {
     return rfq;
   }
 
-  async open(orgId: string, id: string) {
-    const rfq = await this.findOne(orgId, id);
-    if (rfq.status !== 'draft') throw new BadRequestException('Only draft RFQs can be opened');
-    return this.update(orgId, id, { status: 'open' });
+  async open(orgId: string, id: string, userId: string) {
+    return this.db.transaction(async (tx) => {
+      const [rfq] = await tx
+        .update(rfqRequests)
+        .set({ status: 'open', updatedAt: new Date() })
+        .where(
+          and(
+            eq(rfqRequests.organizationId, orgId),
+            eq(rfqRequests.id, id),
+            eq(rfqRequests.status, 'draft'),
+          ),
+        )
+        .returning();
+
+      if (!rfq) {
+        const [existing] = await tx
+          .select({ status: rfqRequests.status })
+          .from(rfqRequests)
+          .where(and(eq(rfqRequests.organizationId, orgId), eq(rfqRequests.id, id)))
+          .limit(1);
+        if (!existing) throw new NotFoundException('RFQ not found');
+        throw new BadRequestException('Only draft RFQs can be opened');
+      }
+
+      await tx.insert(auditLog).values({
+        organizationId: orgId,
+        userId,
+        entityType: 'rfq',
+        entityId: id,
+        action: 'opened',
+        changes: { previousStatus: 'draft', status: 'open' },
+      });
+      return rfq;
+    });
   }
 
   async close(orgId: string, id: string) {
