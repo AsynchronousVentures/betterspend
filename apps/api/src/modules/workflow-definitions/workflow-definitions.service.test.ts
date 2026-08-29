@@ -10,6 +10,7 @@ import {
 import { workflowDraftSchema } from '@betterspend/shared';
 import type { AuditService } from '../audit/audit.service';
 import type { EntitiesService } from '../entities/entities.service';
+import type { WorkflowDraftLeaseService } from './workflow-draft-lease.service';
 import { WorkflowDefinitionsService } from './workflow-definitions.service';
 
 function validDraft() {
@@ -45,6 +46,7 @@ function dependencies() {
   return {
     audit: { log: async () => ({}) } as unknown as AuditService,
     entities: { assertBelongsToOrg: async () => {} } as unknown as EntitiesService,
+    leases: { assertOwned: async () => {} } as unknown as WorkflowDraftLeaseService,
   };
 }
 
@@ -95,14 +97,14 @@ describe('WorkflowDefinitionsService', () => {
     const db = {
       transaction: async (run: (transaction: typeof tx) => Promise<unknown>) => run(tx),
     } as unknown as Db;
-    const { entities } = dependencies();
+    const { entities, leases } = dependencies();
     const audit = {
       log: async (...args: unknown[]) => {
         auditExecutors.push(args[7]);
         return {};
       },
     } as unknown as AuditService;
-    const service = new WorkflowDefinitionsService(db, entities, audit);
+    const service = new WorkflowDefinitionsService(db, entities, audit, leases);
 
     const result = await service.publish('definition-1', 'organization-1', 'publisher-1');
 
@@ -140,8 +142,8 @@ describe('WorkflowDefinitionsService', () => {
     const db = {
       transaction: async (run: (transaction: typeof tx) => Promise<unknown>) => run(tx),
     } as unknown as Db;
-    const { audit, entities } = dependencies();
-    const service = new WorkflowDefinitionsService(db, entities, audit);
+    const { audit, entities, leases } = dependencies();
+    const service = new WorkflowDefinitionsService(db, entities, audit, leases);
 
     await assert.rejects(
       service.publish('definition-1', 'organization-1', 'publisher-1'),
@@ -177,8 +179,8 @@ describe('WorkflowDefinitionsService', () => {
     const db = {
       transaction: async (run: (transaction: typeof tx) => Promise<unknown>) => run(tx),
     } as unknown as Db;
-    const { audit, entities } = dependencies();
-    const service = new WorkflowDefinitionsService(db, entities, audit);
+    const { audit, entities, leases } = dependencies();
+    const service = new WorkflowDefinitionsService(db, entities, audit, leases);
 
     const result = await service.restoreVersion(
       'definition-1',
