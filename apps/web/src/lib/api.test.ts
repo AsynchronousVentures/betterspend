@@ -256,6 +256,50 @@ test('workflow definition responses are parsed at the API boundary', async () =>
   );
 });
 
+test('workflow lease and assistant responses are parsed at the API boundary', async () => {
+  const definitionId = '00000000-0000-4000-8000-000000000001';
+  const editorInstanceId = '00000000-0000-4000-8000-000000000002';
+  const credentials = { editorInstanceId, leaseToken: 'valid-lease-token' };
+  const invalidLeaseResponse = jsonResponse({ state: 'owned' });
+  const leaseCalls = [
+    () => api.workflowDefinitions.lease.status(definitionId, editorInstanceId),
+    () => api.workflowDefinitions.lease.acquire(definitionId, editorInstanceId),
+    () => api.workflowDefinitions.lease.renew(definitionId, credentials),
+    () => api.workflowDefinitions.lease.release(definitionId, credentials),
+    () => api.workflowDefinitions.lease.takeover(definitionId, editorInstanceId),
+  ];
+
+  for (const call of leaseCalls) {
+    await assert.rejects(runWithMockedRequest(invalidLeaseResponse.clone(), call));
+  }
+
+  await assert.rejects(
+    runWithMockedRequest(
+      jsonResponse({ summary: '', operations: [], validation: { valid: true, issues: [] } }),
+      () =>
+        api.workflowDefinitions.propose(definitionId, {
+          prompt: 'Add an approval',
+          graph: {
+            schemaVersion: 1,
+            domain: 'requisition',
+            entryNodeId: 'trigger',
+            nodes: [
+              {
+                id: 'trigger',
+                name: 'Submitted',
+                type: 'trigger',
+                disabled: false,
+                config: { event: 'requisition_submitted' },
+              },
+            ],
+            edges: [],
+          },
+          positions: {},
+        }),
+    ),
+  );
+});
+
 test('message lists accept RFC-compatible database UUIDs', async () => {
   const messages = [
     {

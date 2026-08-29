@@ -466,6 +466,29 @@ describe('WorkflowDraftLeaseService', () => {
     assert.deepEqual(redis.recoveryKeys(), []);
   });
 
+  it('removes a surviving acquired lease when Redis times out after executing the mutation', async () => {
+    const redis = new FakeRedis();
+    const service = new WorkflowDraftLeaseService(redis);
+    redis.failAfterMutationFor = 'acquire';
+
+    await assert.rejects(
+      service.acquireWithResult(
+        definitionId,
+        organizationId,
+        firstUserId,
+        firstEditorInstanceId,
+        'First editor',
+      ),
+      /storage is unavailable/,
+    );
+
+    assert.deepEqual(
+      await service.status(definitionId, organizationId, firstUserId, firstEditorInstanceId),
+      { state: 'available' },
+    );
+    assert.deepEqual(redis.recoveryKeys(), []);
+  });
+
   it('restores the displaced holder when Redis times out after executing takeover', async () => {
     const redis = new FakeRedis();
     const service = new WorkflowDraftLeaseService(redis);

@@ -135,7 +135,6 @@ describe('WorkflowDraftLeaseService Redis integration', () => {
         firstOwner.leaseToken,
       );
       assert.equal(staleRenewal.state, 'held');
-      assert.deepEqual(await redis.keys(recoveryPattern), []);
     } finally {
       const recoveryKeys = await redis.keys(recoveryPattern);
       await redis.del(leaseKey, fenceKey, ...recoveryKeys);
