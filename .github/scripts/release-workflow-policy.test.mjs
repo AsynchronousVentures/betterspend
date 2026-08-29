@@ -185,6 +185,20 @@ test('deploys the validated release tag and runs the shared preflight in fast CI
   );
 });
 
+test('requires the Redis lease integration in both fast and full CI', () => {
+  const fullCiStart = workflow.indexOf('  full-ci:\n');
+  const validateStart = workflow.indexOf('  validate:\n');
+  const fullCi = workflow.slice(fullCiStart, validateStart);
+
+  assert.match(fullCi, /REQUIRE_REDIS_TEST: 'true'/);
+  assert.match(fullCi, /REDIS_TEST_URL: redis:\/\/127\.0\.0\.1:6379/);
+  assert.match(
+    fullCi,
+    /redis:\n        image: redis:7-alpine[\s\S]*?--health-cmd "redis-cli ping"/,
+  );
+  assert.equal((workflow.match(/REQUIRE_REDIS_TEST: 'true'/g) ?? []).length, 2);
+});
+
 test('uses standard GitHub-hosted runners without duplicate validation', () => {
   assert.match(workflow, /permissions:\n  checks: read\n  contents: read\n  pull-requests: read/);
   assert.match(

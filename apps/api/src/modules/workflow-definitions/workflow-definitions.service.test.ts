@@ -13,6 +13,8 @@ import type { EntitiesService } from '../entities/entities.service';
 import type { WorkflowDraftLeaseService } from './workflow-draft-lease.service';
 import { WorkflowDefinitionsService } from './workflow-definitions.service';
 
+const editorInstanceId = '00000000-0000-4000-8000-000000000003';
+
 function validDraft() {
   return workflowDraftSchema.parse({
     graph: {
@@ -47,6 +49,7 @@ function dependencies() {
   const lease = {
     definitionId: '00000000-0000-4000-8000-000000000001',
     holderUserId: '00000000-0000-4000-8000-000000000002',
+    editorInstanceId,
     holderName: 'Finance editor',
     fence: 1,
     acquiredAt: '2026-08-29T12:00:00.000Z',
@@ -120,7 +123,9 @@ describe('WorkflowDefinitionsService', () => {
       'definition-1',
       'organization-1',
       'publisher-1',
+      editorInstanceId,
       'publisher-lease-token',
+      definition.currentDraft,
     );
 
     assert.equal(result.version, 2);
@@ -163,9 +168,64 @@ describe('WorkflowDefinitionsService', () => {
     const service = new WorkflowDefinitionsService(db, entities, audit, leases);
 
     await assert.rejects(
-      service.publish('definition-1', 'organization-1', 'publisher-1', 'publisher-lease-token'),
+      service.publish(
+        'definition-1',
+        'organization-1',
+        'publisher-1',
+        editorInstanceId,
+        'publisher-lease-token',
+        draft,
+      ),
       /not publishable/,
     );
+  });
+
+  it('rejects publication when the stored draft changed after review', async () => {
+    const reviewedDraft = validDraft();
+    const changedDraft = validDraft();
+    changedDraft.notes = [
+      ...changedDraft.notes,
+      { id: 'late-change', text: 'Changed after review', position: { x: 20, y: 20 } },
+    ];
+    let insertCalled = false;
+    const tx = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            for: async () => [
+              {
+                id: 'definition-1',
+                organizationId: 'organization-1',
+                draftFence: 1,
+                currentDraft: changedDraft,
+              },
+            ],
+          }),
+        }),
+      }),
+      insert: () => {
+        insertCalled = true;
+        throw new Error('must not publish a changed draft');
+      },
+    };
+    const db = {
+      transaction: async (run: (transaction: typeof tx) => Promise<unknown>) => run(tx),
+    } as unknown as Db;
+    const { audit, entities, leases } = dependencies();
+    const service = new WorkflowDefinitionsService(db, entities, audit, leases);
+
+    await assert.rejects(
+      service.publish(
+        'definition-1',
+        'organization-1',
+        'publisher-1',
+        editorInstanceId,
+        'publisher-lease-token',
+        reviewedDraft,
+      ),
+      /changed after it was reviewed/,
+    );
+    assert.equal(insertCalled, false);
   });
 
   it('restores a version as draft without changing the published pointer', async () => {
@@ -205,6 +265,7 @@ describe('WorkflowDefinitionsService', () => {
       'version-1',
       'organization-1',
       'editor-1',
+      editorInstanceId,
       'editor-lease-token',
     );
 
@@ -247,7 +308,14 @@ describe('WorkflowDefinitionsService', () => {
     const service = new WorkflowDefinitionsService(db, entities, audit, leases);
 
     await assert.rejects(
-      service.saveDraft('definition-1', 'organization-1', 'editor-1', validDraft(), 'old-token'),
+      service.saveDraft(
+        'definition-1',
+        'organization-1',
+        'editor-1',
+        validDraft(),
+        editorInstanceId,
+        'old-token',
+      ),
       /fence is stale/,
     );
     assert.equal(updateCalled, false);
@@ -292,6 +360,7 @@ describe('WorkflowDefinitionsService', () => {
         lease: {
           definitionId: '00000000-0000-4000-8000-000000000001',
           holderUserId: '00000000-0000-4000-8000-000000000003',
+          editorInstanceId,
           holderName: 'New editor',
           fence: 5,
           acquiredAt: '2026-08-29T12:00:00.000Z',
@@ -302,6 +371,7 @@ describe('WorkflowDefinitionsService', () => {
       previous: {
         definitionId: '00000000-0000-4000-8000-000000000001',
         holderUserId: '00000000-0000-4000-8000-000000000002',
+        editorInstanceId: '00000000-0000-4000-8000-000000000004',
         holderName: 'Old editor',
         fence: 4,
         acquiredAt: '2026-08-29T11:00:00.000Z',
@@ -324,7 +394,13 @@ describe('WorkflowDefinitionsService', () => {
     const service = new WorkflowDefinitionsService(db, entities, audit, leases);
 
     await assert.rejects(
-      service.takeoverDraftLease('definition-1', 'organization-1', 'editor-2', 'New editor'),
+      service.takeoverDraftLease(
+        'definition-1',
+        'organization-1',
+        'editor-2',
+        editorInstanceId,
+        'New editor',
+      ),
       /audit failed/,
     );
     assert.equal(restoreCalls, 1);

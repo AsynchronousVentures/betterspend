@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { workflowDomainSchema, workflowGraphSchema } from './graph';
-import { workflowDraftLeaseTokenSchema } from './lease';
+import {
+  workflowDraftLeaseMutationSchema,
+  workflowDraftLeaseTokenSchema,
+  workflowEditorInstanceIdSchema,
+} from './lease';
 
 export const workflowNodePositionSchema = z.object({
   x: z.number().finite(),
@@ -33,9 +37,16 @@ export const updateWorkflowDraftSchema = z.object({
 export const leasedWorkflowDraftUpdateSchema = z.object({
   draft: workflowDraftSchema,
   leaseToken: workflowDraftLeaseTokenSchema,
+  editorInstanceId: workflowEditorInstanceIdSchema,
+});
+
+export const publishWorkflowDefinitionSchema = workflowDraftLeaseMutationSchema.extend({
+  expectedDraft: workflowDraftSchema,
 });
 
 export type WorkflowNodePosition = z.infer<typeof workflowNodePositionSchema>;
 export type WorkflowCanvasNote = z.infer<typeof workflowCanvasNoteSchema>;
 export type WorkflowDraft = z.infer<typeof workflowDraftSchema>;
 export type CreateWorkflowDefinitionInput = z.infer<typeof createWorkflowDefinitionSchema>;
+export type LeasedWorkflowDraftUpdate = z.infer<typeof leasedWorkflowDraftUpdateSchema>;
+export type PublishWorkflowDefinitionInput = z.infer<typeof publishWorkflowDefinitionSchema>;

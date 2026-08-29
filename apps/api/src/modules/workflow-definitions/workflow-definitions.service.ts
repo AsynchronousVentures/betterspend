@@ -138,6 +138,7 @@ export class WorkflowDefinitionsService {
     organizationId: string,
     userId: string,
     draft: WorkflowDraft,
+    editorInstanceId: string,
     leaseToken: string,
   ) {
     await this.db.transaction(async (tx) => {
@@ -157,6 +158,7 @@ export class WorkflowDefinitionsService {
         organizationId,
         userId,
         definition.draftFence,
+        editorInstanceId,
         leaseToken,
       );
       this.assertDraftDomain(definition.domain as WorkflowDomain, draft);
@@ -192,7 +194,14 @@ export class WorkflowDefinitionsService {
     return this.findOne(id, organizationId);
   }
 
-  async publish(id: string, organizationId: string, userId: string, leaseToken: string) {
+  async publish(
+    id: string,
+    organizationId: string,
+    userId: string,
+    editorInstanceId: string,
+    leaseToken: string,
+    expectedDraft: WorkflowDraft,
+  ) {
     const published = await this.db.transaction(async (tx) => {
       const [definition] = await tx
         .select()
@@ -210,8 +219,15 @@ export class WorkflowDefinitionsService {
         organizationId,
         userId,
         definition.draftFence,
+        editorInstanceId,
         leaseToken,
       );
+
+      if (!sameWorkflowDraft(definition.currentDraft, expectedDraft)) {
+        throw new ConflictException(
+          'Workflow draft changed after it was reviewed; review the latest draft before publishing',
+        );
+      }
 
       const compilation = compileWorkflowGraph(definition.currentDraft.graph);
       if (!compilation.success) {
@@ -287,6 +303,7 @@ export class WorkflowDefinitionsService {
     versionId: string,
     organizationId: string,
     userId: string,
+    editorInstanceId: string,
     leaseToken: string,
   ) {
     const restored = await this.db.transaction(async (tx) => {
@@ -306,6 +323,7 @@ export class WorkflowDefinitionsService {
         organizationId,
         userId,
         definition.draftFence,
+        editorInstanceId,
         leaseToken,
       );
 
@@ -357,15 +375,17 @@ export class WorkflowDefinitionsService {
     id: string,
     organizationId: string,
     userId: string,
+    editorInstanceId: string,
   ): Promise<WorkflowDraftLeaseStatus> {
     await this.findOne(id, organizationId);
-    return this.requireLeases().status(id, organizationId, userId);
+    return this.requireLeases().status(id, organizationId, userId, editorInstanceId);
   }
 
   async acquireDraftLease(
     id: string,
     organizationId: string,
     userId: string,
+    editorInstanceId: string,
     holderName?: string,
   ): Promise<WorkflowDraftLeaseStatus> {
     const leases = this.requireLeases();
@@ -389,6 +409,7 @@ export class WorkflowDefinitionsService {
           id,
           organizationId,
           userId,
+          editorInstanceId,
           resolvedHolderName,
           definition.draftFence,
         );
@@ -420,26 +441,29 @@ export class WorkflowDefinitionsService {
     id: string,
     organizationId: string,
     userId: string,
+    editorInstanceId: string,
     leaseToken: string,
   ): Promise<WorkflowDraftLeaseStatus> {
     await this.findOne(id, organizationId);
-    return this.requireLeases().renew(id, organizationId, userId, leaseToken);
+    return this.requireLeases().renew(id, organizationId, userId, editorInstanceId, leaseToken);
   }
 
   async releaseDraftLease(
     id: string,
     organizationId: string,
     userId: string,
+    editorInstanceId: string,
     leaseToken: string,
   ): Promise<WorkflowDraftLeaseStatus> {
     await this.findOne(id, organizationId);
-    return this.requireLeases().release(id, organizationId, userId, leaseToken);
+    return this.requireLeases().release(id, organizationId, userId, editorInstanceId, leaseToken);
   }
 
   async takeoverDraftLease(
     id: string,
     organizationId: string,
     userId: string,
+    editorInstanceId: string,
     holderName?: string,
   ): Promise<WorkflowDraftLeaseStatus> {
     const leases = this.requireLeases();
@@ -463,6 +487,7 @@ export class WorkflowDefinitionsService {
           id,
           organizationId,
           userId,
+          editorInstanceId,
           resolvedHolderName,
           definition.draftFence,
         );
@@ -532,9 +557,16 @@ export class WorkflowDefinitionsService {
     organizationId: string,
     userId: string,
     expectedFence: number,
+    editorInstanceId: string,
     leaseToken: string,
   ) {
-    const lease = await this.leases.assertOwned(id, organizationId, userId, leaseToken);
+    const lease = await this.leases.assertOwned(
+      id,
+      organizationId,
+      userId,
+      editorInstanceId,
+      leaseToken,
+    );
     if (lease.fence !== expectedFence) {
       throw new ConflictException('Workflow draft lease fence is stale');
     }
@@ -601,4 +633,9 @@ export class WorkflowDefinitionsService {
     if (!user?.name) throw new NotFoundException('Current user not found');
     return user.name;
   }
+}
+
+function sameWorkflowDraft(stored: unknown, expected: WorkflowDraft): boolean {
+  const parsed = workflowDraftSchema.safeParse(stored);
+  return parsed.success && JSON.stringify(parsed.data) === JSON.stringify(expected);
 }

@@ -719,4 +719,41 @@ describe('validateWorkflowGraph', () => {
     assert.equal(result.topologicalOrder, null);
     assert.deepEqual(cycle?.path, ['approved', 'finance', 'approved']);
   });
+
+  it('rejects enabled graph behavior that the runtime cannot execute yet', () => {
+    const allTrue = validGraph();
+    const condition = allTrue.nodes.find((node) => node.id === 'amount-check');
+    assert.ok(condition?.type === 'condition');
+    condition.config.mode = 'all_true';
+
+    for (const type of ['collect_form', 'notify'] as const) {
+      const graph = validGraph();
+      graph.nodes.splice(2, 0, {
+        id: `unsupported-${type}`,
+        name: `Unsupported ${type}`,
+        type,
+        config:
+          type === 'collect_form'
+            ? { fields: [{ key: 'reason', label: 'Reason', type: 'text', required: true }] }
+            : {
+                channels: ['in_app'],
+                recipients: [{ type: 'role', role: 'finance', scope: 'global' }],
+                message: 'Review required',
+              },
+      } as WorkflowNode);
+      assert.ok(issueCodes(graph).includes('runtime_unsupported'));
+    }
+
+    assert.ok(issueCodes(allTrue).includes('runtime_unsupported'));
+  });
+
+  it('allows unsupported node shapes to remain stored when they are disabled', () => {
+    const graph = validGraph();
+    const condition = graph.nodes.find((node) => node.id === 'amount-check');
+    assert.ok(condition?.type === 'condition');
+    condition.config.mode = 'all_true';
+    condition.disabled = true;
+
+    assert.equal(issueCodes(graph).includes('runtime_unsupported'), false);
+  });
 });

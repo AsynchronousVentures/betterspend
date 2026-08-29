@@ -71,7 +71,7 @@ if not storedSequence then
   redis.call('SET', KEYS[2], storedSequence)
 end
 local floor = tonumber(ARGV[4]) or 0
-local previousFence = tonumber(string.match(previous, '^[^|]+|[^|]+|([0-9]+)|')) or 0
+local previousFence = tonumber(string.match(previous, '^[^|]+|[^|]+|[^|]+|([0-9]+)|')) or 0
 local sequence = storedSequence
 if sequence < floor then sequence = floor end
 if sequence < previousFence then sequence = previousFence end
@@ -138,19 +138,24 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     definitionId: string,
     organizationId: string,
     userId?: string,
+    editorInstanceId?: string,
   ): Promise<WorkflowDraftLeaseStatus> {
     const stored = await this.read(definitionId, organizationId);
     if (!stored) return { state: 'available' };
-    if (stored.lease.holderUserId === userId) {
+    if (
+      stored.lease.holderUserId === userId &&
+      stored.lease.editorInstanceId === editorInstanceId
+    ) {
       return { state: 'owned', lease: stored.lease, leaseToken: stored.token };
     }
-    return { state: 'held', lease: stored.lease };
+    return { state: 'held', lease: publicLeaseMetadata(stored.lease) };
   }
 
   async acquire(
     definitionId: string,
     organizationId: string,
     holderUserId: string,
+    editorInstanceId: string,
     holderName: string,
     minimumFence = 0,
   ): Promise<WorkflowDraftLeaseStatus> {
@@ -159,6 +164,7 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
         definitionId,
         organizationId,
         holderUserId,
+        editorInstanceId,
         holderName,
         minimumFence,
       )
@@ -169,10 +175,16 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     definitionId: string,
     organizationId: string,
     holderUserId: string,
+    editorInstanceId: string,
     holderName: string,
     minimumFence = 0,
   ): Promise<WorkflowDraftLeaseAcquisition> {
-    const leaseDocument = createLeaseDocument(definitionId, holderUserId, holderName);
+    const leaseDocument = createLeaseDocument(
+      definitionId,
+      holderUserId,
+      editorInstanceId,
+      holderName,
+    );
     const token = randomBytes(32).toString('base64url');
     const key = this.key(organizationId, definitionId);
     const rawResult = await this.redisCall(() =>
@@ -181,7 +193,7 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
         2,
         key,
         this.fenceKey(organizationId, definitionId),
-        ownershipPrefix(token, holderUserId),
+        ownershipPrefix(token, holderUserId, editorInstanceId),
         JSON.stringify(leaseDocument),
         WORKFLOW_DRAFT_LEASE_TTL_MS,
         normalizeMinimumFence(minimumFence),
@@ -189,10 +201,8 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     );
     const result = readRedisArray(rawResult, 2);
     if (Number(result[0]) !== 1) {
-      // An idempotent acquire by the current holder is useful after a tab refresh. The
-      // status path can safely return its token because the caller's identity is known.
       return {
-        status: await this.status(definitionId, organizationId, holderUserId),
+        status: await this.status(definitionId, organizationId, holderUserId, editorInstanceId),
         created: false,
         restore: async () => false,
       };
@@ -204,6 +214,7 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
       !stored ||
       stored.lease.definitionId !== definitionId ||
       stored.lease.holderUserId !== holderUserId ||
+      stored.lease.editorInstanceId !== editorInstanceId ||
       stored.lease.fence <= normalizeMinimumFence(minimumFence)
     ) {
       throw new ServiceUnavailableException(
@@ -221,11 +232,17 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     definitionId: string,
     organizationId: string,
     holderUserId: string,
+    editorInstanceId: string,
     token: string,
   ): Promise<WorkflowDraftLeaseStatus> {
     const stored = await this.read(definitionId, organizationId);
-    if (!stored || stored.token !== token || stored.lease.holderUserId !== holderUserId) {
-      return this.status(definitionId, organizationId, holderUserId);
+    if (
+      !stored ||
+      stored.token !== token ||
+      stored.lease.holderUserId !== holderUserId ||
+      stored.lease.editorInstanceId !== editorInstanceId
+    ) {
+      return this.status(definitionId, organizationId, holderUserId, editorInstanceId);
     }
 
     const lease: WorkflowDraftLease = {
@@ -240,17 +257,18 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
         this.key(organizationId, definitionId),
         raw,
         WORKFLOW_DRAFT_LEASE_TTL_MS,
-        ownershipPrefix(token, holderUserId),
+        ownershipPrefix(token, holderUserId, editorInstanceId),
       ),
     );
     if (Number(renewed) === 1) return { state: 'owned', lease, leaseToken: token };
-    return this.status(definitionId, organizationId, holderUserId);
+    return this.status(definitionId, organizationId, holderUserId, editorInstanceId);
   }
 
   async release(
     definitionId: string,
     organizationId: string,
     holderUserId: string,
+    editorInstanceId: string,
     token: string,
   ): Promise<WorkflowDraftLeaseStatus> {
     await this.redisCall(() =>
@@ -258,16 +276,17 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
         RELEASE_SCRIPT,
         1,
         this.key(organizationId, definitionId),
-        ownershipPrefix(token, holderUserId),
+        ownershipPrefix(token, holderUserId, editorInstanceId),
       ),
     );
-    return this.status(definitionId, organizationId, holderUserId);
+    return this.status(definitionId, organizationId, holderUserId, editorInstanceId);
   }
 
   async takeover(
     definitionId: string,
     organizationId: string,
     holderUserId: string,
+    editorInstanceId: string,
     holderName: string,
     minimumFence = 0,
   ): Promise<WorkflowDraftLeaseStatus> {
@@ -276,6 +295,7 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
         definitionId,
         organizationId,
         holderUserId,
+        editorInstanceId,
         holderName,
         minimumFence,
       )
@@ -286,10 +306,16 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     definitionId: string,
     organizationId: string,
     holderUserId: string,
+    editorInstanceId: string,
     holderName: string,
     minimumFence = 0,
   ): Promise<WorkflowDraftLeaseTakeover> {
-    const leaseDocument = createLeaseDocument(definitionId, holderUserId, holderName);
+    const leaseDocument = createLeaseDocument(
+      definitionId,
+      holderUserId,
+      editorInstanceId,
+      holderName,
+    );
     const token = randomBytes(32).toString('base64url');
     const key = this.key(organizationId, definitionId);
     const rawResult = await this.redisCall(() =>
@@ -298,7 +324,7 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
         2,
         key,
         this.fenceKey(organizationId, definitionId),
-        ownershipPrefix(token, holderUserId),
+        ownershipPrefix(token, holderUserId, editorInstanceId),
         JSON.stringify(leaseDocument),
         WORKFLOW_DRAFT_LEASE_TTL_MS,
         normalizeMinimumFence(minimumFence),
@@ -313,6 +339,7 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
       !stored ||
       stored.lease.definitionId !== definitionId ||
       stored.lease.holderUserId !== holderUserId ||
+      stored.lease.editorInstanceId !== editorInstanceId ||
       stored.lease.fence <= normalizeMinimumFence(minimumFence)
     ) {
       throw new ServiceUnavailableException(
@@ -343,6 +370,7 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     definitionId: string,
     organizationId: string,
     holderUserId: string,
+    editorInstanceId: string,
     token: string,
   ): Promise<WorkflowDraftLease> {
     const stored = await this.read(definitionId, organizationId);
@@ -350,6 +378,7 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
       !stored ||
       stored.token !== token ||
       stored.lease.holderUserId !== holderUserId ||
+      stored.lease.editorInstanceId !== editorInstanceId ||
       new Date(stored.lease.expiresAt).getTime() <= Date.now()
     ) {
       throw new ConflictException('Workflow draft lease is missing, expired, or not owned by you');
@@ -408,8 +437,13 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
   }
 }
 
-function ownershipPrefix(token: string, holderUserId: string): string {
-  return `${token}|${holderUserId}|`;
+function ownershipPrefix(token: string, holderUserId: string, editorInstanceId: string): string {
+  return `${token}|${holderUserId}|${editorInstanceId}|`;
+}
+
+function publicLeaseMetadata(lease: WorkflowDraftLease) {
+  const { editorInstanceId: _privateEditorInstanceId, ...metadata } = lease;
+  return metadata;
 }
 
 type WorkflowDraftLeaseDocument = Omit<WorkflowDraftLease, 'fence'>;
@@ -417,12 +451,14 @@ type WorkflowDraftLeaseDocument = Omit<WorkflowDraftLease, 'fence'>;
 function createLeaseDocument(
   definitionId: string,
   holderUserId: string,
+  editorInstanceId: string,
   holderName: string,
 ): WorkflowDraftLeaseDocument {
   const now = new Date();
   return {
     definitionId,
     holderUserId,
+    editorInstanceId,
     holderName,
     acquiredAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + WORKFLOW_DRAFT_LEASE_TTL_MS).toISOString(),
@@ -431,27 +467,31 @@ function createLeaseDocument(
 
 function encodeLease(token: string, lease: WorkflowDraftLease): string {
   const { fence, ...document } = lease;
-  return `${ownershipPrefix(token, lease.holderUserId)}${fence}|${JSON.stringify(document)}`;
+  return `${ownershipPrefix(token, lease.holderUserId, lease.editorInstanceId)}${fence}|${JSON.stringify(document)}`;
 }
 
 function decodeLease(raw: string): StoredLease | null {
   const firstSeparator = raw.indexOf('|');
   const secondSeparator = raw.indexOf('|', firstSeparator + 1);
   const thirdSeparator = raw.indexOf('|', secondSeparator + 1);
+  const fourthSeparator = raw.indexOf('|', thirdSeparator + 1);
   if (
     firstSeparator <= 0 ||
     secondSeparator <= firstSeparator ||
-    thirdSeparator <= secondSeparator
+    thirdSeparator <= secondSeparator ||
+    fourthSeparator <= thirdSeparator
   ) {
     return null;
   }
 
   const token = raw.slice(0, firstSeparator);
   const holderUserId = raw.slice(firstSeparator + 1, secondSeparator);
-  const fence = Number(raw.slice(secondSeparator + 1, thirdSeparator));
+  const editorInstanceId = raw.slice(secondSeparator + 1, thirdSeparator);
+  const fence = Number(raw.slice(thirdSeparator + 1, fourthSeparator));
   if (
     !workflowDraftLeaseTokenSchema.safeParse(token).success ||
     !holderUserId ||
+    !editorInstanceId ||
     !Number.isSafeInteger(fence) ||
     fence <= 0
   ) {
@@ -461,9 +501,10 @@ function decodeLease(raw: string): StoredLease | null {
   try {
     const document = workflowDraftLeaseSchema
       .omit({ fence: true })
-      .parse(JSON.parse(raw.slice(thirdSeparator + 1)));
+      .parse(JSON.parse(raw.slice(fourthSeparator + 1)));
     const lease = workflowDraftLeaseSchema.parse({ ...document, fence });
-    if (lease.holderUserId !== holderUserId) return null;
+    if (lease.holderUserId !== holderUserId || lease.editorInstanceId !== editorInstanceId)
+      return null;
     return { token, lease };
   } catch {
     return null;

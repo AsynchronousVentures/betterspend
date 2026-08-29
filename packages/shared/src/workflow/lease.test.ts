@@ -5,6 +5,7 @@ import { leasedWorkflowDraftUpdateSchema, workflowDraftLeaseStatusSchema } from 
 const lease = {
   definitionId: '00000000-0000-4000-8000-000000000001',
   holderUserId: '00000000-0000-4000-8000-000000000002',
+  editorInstanceId: '00000000-0000-4000-8000-000000000003',
   holderName: 'Finance editor',
   fence: 1,
   acquiredAt: '2026-08-29T12:00:00.000Z',
@@ -14,7 +15,11 @@ const lease = {
 describe('workflow draft lease contract', () => {
   it('distinguishes available, held, and owned editor states', () => {
     assert.equal(workflowDraftLeaseStatusSchema.parse({ state: 'available' }).state, 'available');
-    assert.equal(workflowDraftLeaseStatusSchema.parse({ state: 'held', lease }).state, 'held');
+    const { editorInstanceId: _privateEditorInstanceId, ...heldLease } = lease;
+    assert.equal(_privateEditorInstanceId, lease.editorInstanceId);
+    const held = workflowDraftLeaseStatusSchema.parse({ state: 'held', lease: heldLease });
+    assert.equal(held.state, 'held');
+    if (held.state === 'held') assert.equal('editorInstanceId' in held.lease, false);
     assert.equal(
       workflowDraftLeaseStatusSchema.parse({
         state: 'owned',
@@ -25,7 +30,7 @@ describe('workflow draft lease contract', () => {
     );
   });
 
-  it('requires a lease token at the autosave boundary', () => {
+  it('requires an editor instance and lease token at the autosave boundary', () => {
     const result = leasedWorkflowDraftUpdateSchema.safeParse({
       draft: {
         graph: {

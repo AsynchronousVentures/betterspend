@@ -8,6 +8,8 @@ const otherOrganizationId = '00000000-0000-4000-8000-000000000002';
 const definitionId = '00000000-0000-4000-8000-000000000003';
 const firstUserId = '00000000-0000-4000-8000-000000000004';
 const secondUserId = '00000000-0000-4000-8000-000000000005';
+const firstEditorInstanceId = '00000000-0000-4000-8000-000000000006';
+const secondEditorInstanceId = '00000000-0000-4000-8000-000000000007';
 
 type StoredValue = { value: string; expiresAt: number };
 
@@ -63,7 +65,7 @@ class FakeRedis implements WorkflowDraftLeaseRedis {
       const document = String(args[3]);
       const ttl = Number(args[4]);
       const minimumFence = Number(args[5]);
-      const previousFence = previous ? Number(previous.split('|', 4)[2]) : 0;
+      const previousFence = previous ? Number(previous.split('|', 5)[3]) : 0;
       const fence = Math.max(this.sequences.get(counterKey) ?? 0, minimumFence, previousFence) + 1;
       this.sequences.set(counterKey, fence);
       const value = `${prefix}${fence}|${document}`;
@@ -125,7 +127,13 @@ describe('WorkflowDraftLeaseService', () => {
     const redis = new FakeRedis();
     const service = new WorkflowDraftLeaseService(redis);
 
-    const first = await service.acquire(definitionId, organizationId, firstUserId, 'First editor');
+    const first = await service.acquire(
+      definitionId,
+      organizationId,
+      firstUserId,
+      firstEditorInstanceId,
+      'First editor',
+    );
     assert.equal(first.state, 'owned');
     if (first.state !== 'owned') return;
     assert.equal(first.lease.fence, 1);
@@ -134,6 +142,7 @@ describe('WorkflowDraftLeaseService', () => {
       definitionId,
       organizationId,
       firstUserId,
+      firstEditorInstanceId,
       'First editor',
     );
     assert.equal(refreshed.state, 'owned');
@@ -141,7 +150,33 @@ describe('WorkflowDraftLeaseService', () => {
     assert.equal(refreshed.lease.fence, first.lease.fence);
     assert.equal(refreshed.leaseToken, first.leaseToken);
 
-    const second = await service.status(definitionId, organizationId, secondUserId);
+    const sameUserOtherTab = await service.status(
+      definitionId,
+      organizationId,
+      firstUserId,
+      secondEditorInstanceId,
+    );
+    assert.equal(sameUserOtherTab.state, 'held');
+    assert.equal('leaseToken' in sameUserOtherTab, false);
+    if (sameUserOtherTab.state === 'held') {
+      assert.equal('editorInstanceId' in sameUserOtherTab.lease, false);
+    }
+    const sameUserOtherTabAcquire = await service.acquire(
+      definitionId,
+      organizationId,
+      firstUserId,
+      secondEditorInstanceId,
+      'First editor',
+    );
+    assert.equal(sameUserOtherTabAcquire.state, 'held');
+    assert.equal('leaseToken' in sameUserOtherTabAcquire, false);
+
+    const second = await service.status(
+      definitionId,
+      organizationId,
+      secondUserId,
+      secondEditorInstanceId,
+    );
     assert.equal(second.state, 'held');
     if (second.state !== 'held') return;
     assert.equal('leaseToken' in second, false);
@@ -150,6 +185,7 @@ describe('WorkflowDraftLeaseService', () => {
       definitionId,
       otherOrganizationId,
       secondUserId,
+      secondEditorInstanceId,
       'Second editor',
     );
     assert.equal(otherOrganization.state, 'owned');
@@ -162,6 +198,7 @@ describe('WorkflowDraftLeaseService', () => {
       definitionId,
       organizationId,
       firstUserId,
+      firstEditorInstanceId,
       'First editor',
     );
     assert.equal(acquired.state, 'owned');
@@ -171,14 +208,34 @@ describe('WorkflowDraftLeaseService', () => {
       definitionId,
       organizationId,
       secondUserId,
+      secondEditorInstanceId,
       acquired.leaseToken,
     );
     assert.equal(wrongUserRelease.state, 'held');
+
+    const wrongInstanceRenew = await service.renew(
+      definitionId,
+      organizationId,
+      firstUserId,
+      secondEditorInstanceId,
+      acquired.leaseToken,
+    );
+    assert.equal(wrongInstanceRenew.state, 'held');
+
+    const wrongInstanceRelease = await service.release(
+      definitionId,
+      organizationId,
+      firstUserId,
+      secondEditorInstanceId,
+      acquired.leaseToken,
+    );
+    assert.equal(wrongInstanceRelease.state, 'held');
 
     const renewed = await service.renew(
       definitionId,
       organizationId,
       firstUserId,
+      firstEditorInstanceId,
       acquired.leaseToken,
     );
     assert.equal(renewed.state, 'owned');
@@ -192,6 +249,7 @@ describe('WorkflowDraftLeaseService', () => {
       definitionId,
       organizationId,
       firstUserId,
+      firstEditorInstanceId,
       renewed.leaseToken,
     );
     assert.deepEqual(released, { state: 'available' });
@@ -204,6 +262,7 @@ describe('WorkflowDraftLeaseService', () => {
       definitionId,
       organizationId,
       firstUserId,
+      firstEditorInstanceId,
       'First editor',
     );
     assert.equal(acquired.state, 'owned');
@@ -211,14 +270,18 @@ describe('WorkflowDraftLeaseService', () => {
 
     const key = `workflow:draft-lease:${organizationId}:${definitionId}`;
     redis.values.get(key)!.expiresAt = Date.now() - 1;
-    assert.deepEqual(await service.status(definitionId, organizationId, firstUserId), {
-      state: 'available',
-    });
+    assert.deepEqual(
+      await service.status(definitionId, organizationId, firstUserId, firstEditorInstanceId),
+      {
+        state: 'available',
+      },
+    );
 
     const reacquired = await service.acquire(
       definitionId,
       organizationId,
       firstUserId,
+      firstEditorInstanceId,
       'First editor',
     );
     assert.equal(reacquired.state, 'owned');
@@ -228,6 +291,7 @@ describe('WorkflowDraftLeaseService', () => {
       definitionId,
       organizationId,
       secondUserId,
+      secondEditorInstanceId,
       'Second editor',
     );
     assert.equal(takenOver.state, 'owned');
@@ -238,6 +302,7 @@ describe('WorkflowDraftLeaseService', () => {
       definitionId,
       organizationId,
       firstUserId,
+      firstEditorInstanceId,
       reacquired.leaseToken,
     );
     assert.equal(oldTokenRenewal.state, 'held');
@@ -246,16 +311,29 @@ describe('WorkflowDraftLeaseService', () => {
   it('atomically reports each takeover predecessor and can restore its predecessor', async () => {
     const redis = new FakeRedis();
     const service = new WorkflowDraftLeaseService(redis);
-    const first = await service.acquire(definitionId, organizationId, firstUserId, 'First editor');
+    const first = await service.acquire(
+      definitionId,
+      organizationId,
+      firstUserId,
+      firstEditorInstanceId,
+      'First editor',
+    );
     assert.equal(first.state, 'owned');
     if (first.state !== 'owned') return;
 
     const [second, third] = await Promise.all([
-      service.takeoverWithResult(definitionId, organizationId, secondUserId, 'Second editor'),
+      service.takeoverWithResult(
+        definitionId,
+        organizationId,
+        secondUserId,
+        secondEditorInstanceId,
+        'Second editor',
+      ),
       service.takeoverWithResult(
         definitionId,
         organizationId,
         '00000000-0000-4000-8000-000000000006',
+        '00000000-0000-4000-8000-000000000008',
         'Third editor',
       ),
     ]);
@@ -268,7 +346,12 @@ describe('WorkflowDraftLeaseService', () => {
     assert.equal(await second.restore(), false);
     assert.equal(await third.restore(), true);
     assert.equal(await second.restore(), true);
-    const restored = await service.status(definitionId, organizationId, firstUserId);
+    const restored = await service.status(
+      definitionId,
+      organizationId,
+      firstUserId,
+      firstEditorInstanceId,
+    );
     assert.equal(restored.state, 'owned');
     if (restored.state !== 'owned') return;
     assert.equal(restored.lease.fence, first.lease.fence);

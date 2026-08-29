@@ -40,14 +40,29 @@ describe('WorkflowDraftLeaseService Redis integration', () => {
     const firstUserId = randomUUID();
     const secondUserId = randomUUID();
     const thirdUserId = randomUUID();
+    const firstEditorInstanceId = randomUUID();
+    const secondEditorInstanceId = randomUUID();
+    const thirdEditorInstanceId = randomUUID();
     const leaseKey = `workflow:draft-lease:${organizationId}:${definitionId}`;
     const fenceKey = `workflow:draft-lease-fence:${organizationId}:${definitionId}`;
     const service = new WorkflowDraftLeaseService(redis as unknown as WorkflowDraftLeaseRedis);
 
     try {
       const acquisitions = await Promise.all([
-        service.acquire(definitionId, organizationId, firstUserId, 'First editor'),
-        service.acquire(definitionId, organizationId, secondUserId, 'Second editor'),
+        service.acquire(
+          definitionId,
+          organizationId,
+          firstUserId,
+          firstEditorInstanceId,
+          'First editor',
+        ),
+        service.acquire(
+          definitionId,
+          organizationId,
+          secondUserId,
+          secondEditorInstanceId,
+          'Second editor',
+        ),
       ]);
       assert.equal(
         acquisitions.filter((status) => status.state === 'owned').length,
@@ -58,12 +73,33 @@ describe('WorkflowDraftLeaseService Redis integration', () => {
 
       const firstOwner = acquisitions.find((status) => status.state === 'owned');
       assert.ok(firstOwner?.state === 'owned');
+      const sameUserOtherTab = await service.acquire(
+        definitionId,
+        organizationId,
+        firstOwner.lease.holderUserId,
+        randomUUID(),
+        'Same user, other tab',
+      );
+      assert.equal(sameUserOtherTab.state, 'held');
+      assert.equal('leaseToken' in sameUserOtherTab, false);
       const ttl = await redis.pttl(leaseKey);
       assert.ok(ttl > 0 && ttl <= WORKFLOW_DRAFT_LEASE_TTL_MS);
 
       const [secondTakeover, thirdTakeover] = await Promise.all([
-        service.takeover(definitionId, organizationId, secondUserId, 'Second editor'),
-        service.takeover(definitionId, organizationId, thirdUserId, 'Third editor'),
+        service.takeover(
+          definitionId,
+          organizationId,
+          secondUserId,
+          secondEditorInstanceId,
+          'Second editor',
+        ),
+        service.takeover(
+          definitionId,
+          organizationId,
+          thirdUserId,
+          thirdEditorInstanceId,
+          'Third editor',
+        ),
       ]);
       assert.equal(secondTakeover.state, 'owned');
       assert.equal(thirdTakeover.state, 'owned');
@@ -72,8 +108,18 @@ describe('WorkflowDraftLeaseService Redis integration', () => {
       assert.ok(secondTakeover.lease.fence > firstOwner.lease.fence);
       assert.ok(thirdTakeover.lease.fence > firstOwner.lease.fence);
 
-      const secondStatus = await service.status(definitionId, organizationId, secondUserId);
-      const thirdStatus = await service.status(definitionId, organizationId, thirdUserId);
+      const secondStatus = await service.status(
+        definitionId,
+        organizationId,
+        secondUserId,
+        secondEditorInstanceId,
+      );
+      const thirdStatus = await service.status(
+        definitionId,
+        organizationId,
+        thirdUserId,
+        thirdEditorInstanceId,
+      );
       assert.equal(
         [secondStatus, thirdStatus].filter((status) => status.state === 'owned').length,
         1,
@@ -84,6 +130,7 @@ describe('WorkflowDraftLeaseService Redis integration', () => {
         definitionId,
         organizationId,
         firstOwner.lease.holderUserId,
+        firstOwner.lease.editorInstanceId,
         firstOwner.leaseToken,
       );
       assert.equal(staleRenewal.state, 'held');

@@ -13,9 +13,12 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   createWorkflowDefinitionSchema,
   leasedWorkflowDraftUpdateSchema,
+  publishWorkflowDefinitionSchema,
   workflowAssistantProposalRequestSchema,
   workflowDomainSchema,
+  workflowDraftLeaseAcquireSchema,
   workflowDraftLeaseMutationSchema,
+  workflowEditorInstanceIdSchema,
 } from '@betterspend/shared';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -59,8 +62,8 @@ export class WorkflowDefinitionsController {
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
   ) {
-    const { draft, leaseToken } = leasedWorkflowDraftUpdateSchema.parse(body);
-    return this.service.saveDraft(id, orgId, userId, draft, leaseToken);
+    const { draft, editorInstanceId, leaseToken } = leasedWorkflowDraftUpdateSchema.parse(body);
+    return this.service.saveDraft(id, orgId, userId, draft, editorInstanceId, leaseToken);
   }
 
   @Get(':id/draft-lease')
@@ -70,8 +73,14 @@ export class WorkflowDefinitionsController {
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
+    @Query('editorInstanceId') editorInstanceId: string,
   ) {
-    return this.service.getDraftLease(id, orgId, userId);
+    return this.service.getDraftLease(
+      id,
+      orgId,
+      userId,
+      workflowEditorInstanceIdSchema.parse(editorInstanceId),
+    );
   }
 
   @Post(':id/draft-lease')
@@ -79,11 +88,13 @@ export class WorkflowDefinitionsController {
   @ApiOperation({ summary: 'Acquire the mutable workflow draft lease' })
   acquireDraftLease(
     @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
     @CurrentUser() currentUser?: AuthUser,
   ) {
-    return this.service.acquireDraftLease(id, orgId, userId, currentUser?.name);
+    const { editorInstanceId } = workflowDraftLeaseAcquireSchema.parse(body);
+    return this.service.acquireDraftLease(id, orgId, userId, editorInstanceId, currentUser?.name);
   }
 
   @Post(':id/draft-lease/renew')
@@ -95,8 +106,8 @@ export class WorkflowDefinitionsController {
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
   ) {
-    const { leaseToken } = workflowDraftLeaseMutationSchema.parse(body);
-    return this.service.renewDraftLease(id, orgId, userId, leaseToken);
+    const { editorInstanceId, leaseToken } = workflowDraftLeaseMutationSchema.parse(body);
+    return this.service.renewDraftLease(id, orgId, userId, editorInstanceId, leaseToken);
   }
 
   @Delete(':id/draft-lease')
@@ -108,8 +119,8 @@ export class WorkflowDefinitionsController {
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
   ) {
-    const { leaseToken } = workflowDraftLeaseMutationSchema.parse(body);
-    return this.service.releaseDraftLease(id, orgId, userId, leaseToken);
+    const { editorInstanceId, leaseToken } = workflowDraftLeaseMutationSchema.parse(body);
+    return this.service.releaseDraftLease(id, orgId, userId, editorInstanceId, leaseToken);
   }
 
   @Post(':id/draft-lease/takeover')
@@ -117,11 +128,13 @@ export class WorkflowDefinitionsController {
   @ApiOperation({ summary: 'Explicitly take over the mutable workflow draft lease' })
   takeoverDraftLease(
     @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
     @CurrentUser() currentUser?: AuthUser,
   ) {
-    return this.service.takeoverDraftLease(id, orgId, userId, currentUser?.name);
+    const { editorInstanceId } = workflowDraftLeaseAcquireSchema.parse(body);
+    return this.service.takeoverDraftLease(id, orgId, userId, editorInstanceId, currentUser?.name);
   }
 
   @Post(':id/publish')
@@ -133,8 +146,9 @@ export class WorkflowDefinitionsController {
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
   ) {
-    const { leaseToken } = workflowDraftLeaseMutationSchema.parse(body);
-    return this.service.publish(id, orgId, userId, leaseToken);
+    const { editorInstanceId, leaseToken, expectedDraft } =
+      publishWorkflowDefinitionSchema.parse(body);
+    return this.service.publish(id, orgId, userId, editorInstanceId, leaseToken, expectedDraft);
   }
 
   @Get(':id/versions')
@@ -154,8 +168,8 @@ export class WorkflowDefinitionsController {
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
   ) {
-    const { leaseToken } = workflowDraftLeaseMutationSchema.parse(body);
-    return this.service.restoreVersion(id, versionId, orgId, userId, leaseToken);
+    const { editorInstanceId, leaseToken } = workflowDraftLeaseMutationSchema.parse(body);
+    return this.service.restoreVersion(id, versionId, orgId, userId, editorInstanceId, leaseToken);
   }
 
   @Post(':id/assistant/proposals')
