@@ -175,7 +175,12 @@ export class OAuthService {
         tenant.tenantName ?? undefined,
       );
       const consumed = await this.oauthRedis.consumeXeroPendingGrant(grantId);
-      if (!consumed) throw new BadRequestException('Xero grant is no longer available');
+      if (!consumed) {
+        this.logger.log(
+          `Xero connection stored for org ${organizationId}, but the pending grant expired`,
+        );
+        return;
+      }
       this.logger.log(
         `Xero connection stored for org ${organizationId}, tenantId=${tenant.tenantId}`,
       );
@@ -454,8 +459,14 @@ export class OAuthService {
         );
         if (provider === 'xero') {
           const tenants = await this.fetchXeroTenants(response.data.access_token);
-          if (tenants.length === 0) {
-            await this.transitionToRevoked(connection, 'empty_connections');
+          const configuredTenantStillAvailable = tenants.some(
+            (tenant) => tenant.tenantId === connection.realmId,
+          );
+          if (!configuredTenantStillAvailable) {
+            await this.transitionToRevoked(
+              connection,
+              tenants.length === 0 ? 'empty_connections' : 'configured_tenant_missing',
+            );
             return;
           }
           if (!response.data.refresh_token) {
@@ -509,7 +520,7 @@ export class OAuthService {
     token: TokenResponse,
   ): Promise<void> {
     await this.db.transaction(async (transaction) => {
-      await transaction
+      const [updated] = await transaction
         .update(integrationConnections)
         .set({
           accessTokenEncrypted: this.crypto.encrypt(token.access_token),
@@ -529,7 +540,19 @@ export class OAuthService {
               : isNull(integrationConnections.accessTokenEncrypted),
             eq(integrationConnections.refreshTokenEncrypted, encryptedRefreshToken),
           ),
-        );
+        )
+        .returning({ id: integrationConnections.id });
+      if (!updated) return;
+
+      await transaction.insert(auditLog).values({
+        organizationId: connection.organizationId,
+        userId: null,
+        entityType: 'integration_connection',
+        entityId: connection.id,
+        action: 'token_refreshed',
+        changes: { accessTokenRotated: true, refreshTokenRotated: true },
+        metadata: { actor: 'system', provider: 'xero', reason: 'token_refresh' },
+      });
     });
   }
 
@@ -717,7 +740,7 @@ export class OAuthService {
       ConnectionRow,
       'id' | 'organizationId' | 'provider' | 'accessTokenEncrypted' | 'status' | 'realmId'
     >,
-    reason: 'empty_connections',
+    reason: 'empty_connections' | 'configured_tenant_missing',
   ): Promise<void> {
     const encryptedAccessToken = connection.accessTokenEncrypted;
     if (!encryptedAccessToken || connection.status !== INTEGRATION_CONNECTION_STATUS.ACTIVE) return;

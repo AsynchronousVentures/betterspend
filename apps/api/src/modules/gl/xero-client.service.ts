@@ -17,6 +17,7 @@ export const XERO_INTERACTIVE_RESERVE_RATIO = 0.1;
 const MAX_BATCH_ELEMENTS = 50;
 const MAX_ATTEMPTS = 5;
 const BACKOFF_BASE_MS = 250;
+const MAX_RETRY_AFTER_MS = 60_000;
 
 export type XeroRequestMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 export type XeroRequestPriority = 'interactive' | 'background';
@@ -532,13 +533,24 @@ function responseStatus(error: unknown): number | undefined {
 function retryAfterMs(error: unknown): number | undefined {
   if (!axios.isAxiosError(error)) return undefined;
   const value = headerValue(error.response?.headers, 'retry-after');
+  return parseRetryAfterMs(value);
+}
+
+function parseRetryAfterMs(value: unknown): number | undefined {
+  if (Array.isArray(value)) return parseRetryAfterMs(value[0]);
   if (typeof value === 'string') {
     const seconds = Number(value);
-    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
+    }
     const date = Date.parse(value);
-    if (Number.isFinite(date)) return Math.max(0, date - Date.now());
+    if (Number.isFinite(date)) {
+      return Math.min(Math.max(0, date - Date.now()), MAX_RETRY_AFTER_MS);
+    }
   }
-  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value * 1000;
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return Math.min(value * 1000, MAX_RETRY_AFTER_MS);
+  }
   return undefined;
 }
 

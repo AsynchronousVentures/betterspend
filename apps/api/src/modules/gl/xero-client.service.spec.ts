@@ -23,7 +23,7 @@ function oauth(overrides: Partial<OAuthService> = {}): OAuthService {
   } as unknown as OAuthService;
 }
 
-function axiosError(status: number, data?: unknown, headers?: Record<string, string>) {
+function axiosError(status: number, data?: unknown, headers?: Record<string, unknown>) {
   return Object.assign(new Error(`HTTP ${status}`), {
     isAxiosError: true,
     response: { status, data, headers: headers ?? {} },
@@ -33,13 +33,14 @@ function axiosError(status: number, data?: unknown, headers?: Record<string, str
 describe('XeroDailyBudgetLedger', () => {
   it('keeps the interactive reserve unavailable to background work', async () => {
     const ledger = new XeroDailyBudgetLedger(10, 2);
+    const now = Date.parse('2026-08-29T12:00:00.000Z');
 
     for (let index = 0; index < 8; index += 1) {
-      await expect(ledger.tryConsume('tenant-1', 'background')).resolves.toBe(true);
+      await expect(ledger.tryConsume('tenant-1', 'background', now)).resolves.toBe(true);
     }
-    await expect(ledger.tryConsume('tenant-1', 'background')).resolves.toBe(false);
-    await expect(ledger.tryConsume('tenant-1', 'interactive')).resolves.toBe(true);
-    await expect(ledger.snapshot('tenant-1')).resolves.toEqual(
+    await expect(ledger.tryConsume('tenant-1', 'background', now)).resolves.toBe(false);
+    await expect(ledger.tryConsume('tenant-1', 'interactive', now)).resolves.toBe(true);
+    await expect(ledger.snapshot('tenant-1', now)).resolves.toEqual(
       expect.objectContaining({ used: 9, remaining: 1, backgroundRemaining: 0 }),
     );
   });
@@ -56,8 +57,9 @@ describe('XeroDailyBudgetLedger', () => {
 
   it('enforces the reserve across concurrent consumers', async () => {
     const ledger = new XeroDailyBudgetLedger(10, 2);
+    const now = Date.parse('2026-08-29T12:00:00.000Z');
     const results = await Promise.all(
-      Array.from({ length: 20 }, () => ledger.tryConsume('tenant-1', 'background')),
+      Array.from({ length: 20 }, () => ledger.tryConsume('tenant-1', 'background', now)),
     );
 
     expect(results.filter(Boolean)).toHaveLength(8);
@@ -223,6 +225,27 @@ describe('XeroClientService', () => {
     request.mockRejectedValue(axiosError(429, undefined, { 'x-daylimit-remaining': '0' }));
     await expect(client.get('organization-1', 'Organisation')).rejects.toBeInstanceOf(XeroApiError);
     expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['delta-seconds', '86400'],
+    ['HTTP-date', 'Wed, 01 Jan 2031 00:00:00 GMT'],
+    ['numeric', 86400],
+  ])('caps %s Retry-After values before scheduling a retry', async (_form, retryAfter) => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-08-29T12:00:00.000Z'));
+    jest.spyOn(Math, 'random').mockReturnValue(0);
+    const request = jest
+      .spyOn(axios, 'request')
+      .mockRejectedValueOnce(axiosError(503, undefined, { 'retry-after': retryAfter }))
+      .mockResolvedValueOnce({ status: 200, data: { ok: true } });
+    const client = new XeroClientService(oauth());
+    const result = client.get('organization-1', 'Organisation');
+
+    await jest.advanceTimersByTimeAsync(60_000);
+
+    expect(request).toHaveBeenCalledTimes(2);
+    await expect(result).resolves.toEqual(expect.objectContaining({ data: { ok: true } }));
   });
 
   it('fails before HTTP when no active tenant connection exists', async () => {
