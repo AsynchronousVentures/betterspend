@@ -69,6 +69,10 @@ export const artifactOperations = pgTable(
       'artifact_operations_artifact_shape_check',
       sql`(${table.artifactId} IS NULL AND ${table.artifactKind} IS NULL) OR (${table.artifactId} IS NOT NULL AND ${table.artifactKind} IS NOT NULL)`,
     ),
+    check(
+      'artifact_operations_artifact_kind_check',
+      sql`${table.artifactKind} IS NULL OR ${table.artifactKind} IN ('requisition', 'rfq', 'message')`,
+    ),
   ],
 );
 

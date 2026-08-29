@@ -278,7 +278,7 @@ test('artifact operation resumes linkage without creating a second artifact', as
   assert.equal(store.rows[0]?.artifactId, 'message-1');
 });
 
-test('reservations target only their organization-scoped idempotency constraints', async () => {
+test('operation and delivery reservations target their exact unique indexes', async () => {
   const store = new ArtifactOperationStore();
   const service = new ArtifactIdempotencyService(store as unknown as Db);
   const plan = createPlan(store, {

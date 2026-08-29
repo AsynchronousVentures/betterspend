@@ -1,0 +1,1 @@
+ALTER TABLE "artifact_operations" ADD CONSTRAINT "artifact_operations_artifact_kind_check" CHECK ("artifact_operations"."artifact_kind" IS NULL OR "artifact_operations"."artifact_kind" IN ('requisition', 'rfq', 'message'));

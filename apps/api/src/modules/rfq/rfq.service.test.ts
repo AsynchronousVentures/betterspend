@@ -30,6 +30,22 @@ test('public RFQ input rejects invalid due dates at the validation boundary', ()
   );
 });
 
+test('public RFQ input accepts date-only and offset datetime due dates', () => {
+  const dateOnly = parseCreateRfqBody({
+    title: 'Date-only RFQ',
+    dueDate: '2026-08-29',
+    lines: [{ description: 'Seats', quantity: 1 }],
+  });
+  const withOffset = parseCreateRfqBody({
+    title: 'Timed RFQ',
+    dueDate: '2026-08-29T12:00:00-06:00',
+    lines: [{ description: 'Seats', quantity: 1 }],
+  });
+
+  assert.equal(dateOnly.dueDate, '2026-08-29');
+  assert.equal(withOffset.dueDate, '2026-08-29T12:00:00-06:00');
+});
+
 test('RFQ response projections hide private owner idempotency keys', () => {
   const response = withoutOwnerIdempotencyKey({
     id: 'rfq-1',
