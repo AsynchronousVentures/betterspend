@@ -13,6 +13,7 @@ import { auditLog, catalogItems, catalogPriceProposals, vendors } from '@betters
 import type { PermissionKey } from '@betterspend/shared';
 import { z } from 'zod';
 import { MailService } from '../../common/mail/mail.service';
+import { formatMoney } from '../../common/utils/money';
 import { SettingsService } from '../settings/settings.service';
 import type { AccessPolicy } from '../auth/access-policy';
 import { operationalScope, scopedVendorPredicate } from '../auth/operational-access';
@@ -399,7 +400,12 @@ export class CatalogService {
       await this.applyProposalIfDue(updated);
     }
 
-    await this.notifyVendorOfDecision(updated, input.status, input.reviewNote);
+    await this.notifyVendorOfDecision(
+      updated,
+      input.status,
+      input.reviewNote,
+      proposal.item?.currency,
+    );
 
     return this.db.query.catalogPriceProposals.findFirst({
       where: (p, { and, eq }) =>
@@ -440,6 +446,7 @@ export class CatalogService {
     const proposal = await this.db.query.catalogPriceProposals.findFirst({
       where: (p, { and, eq }) =>
         and(eq(p.id, proposalId), eq(p.organizationId, organizationId), eq(p.status, 'pending')),
+      with: { item: true },
     });
     if (!proposal) return false;
 
@@ -482,7 +489,12 @@ export class CatalogService {
     if (!approved) return false;
 
     await this.applyProposalIfDue(approved);
-    await this.notifyVendorOfDecision(approved, 'approved', approved.reviewNote);
+    await this.notifyVendorOfDecision(
+      approved,
+      'approved',
+      approved.reviewNote,
+      proposal.item?.currency,
+    );
     this.logger.log(
       `Auto-approved catalog price proposal ${approved.id} (${formatBasisPoints(changeBasisPoints)}% <= ${formatBasisPoints(thresholdBasisPoints)}%)`,
     );
@@ -588,6 +600,7 @@ export class CatalogService {
     proposal: typeof catalogPriceProposals.$inferSelect,
     status: 'approved' | 'rejected',
     reviewNote?: string | null,
+    currency?: string | null,
   ): Promise<void> {
     try {
       const vendor = await this.db.query.vendors.findFirst({
@@ -609,6 +622,8 @@ export class CatalogService {
       const vendorName = escapeHtml(vendor.name);
       const statusLabel = status === 'approved' ? 'Approved' : 'Rejected';
       const escapedNote = reviewNote ? escapeHtml(reviewNote) : null;
+      const formattedCurrentPrice = formatMoney(proposal.currentPrice, currency);
+      const formattedProposedPrice = formatMoney(proposal.proposedPrice, currency);
       const sent = await this.mailService.sendMail(
         {
           host: smtpHost,
@@ -625,13 +640,13 @@ export class CatalogService {
             <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
               <h2 style="color:#0f172a">Catalog Price Proposal ${statusLabel}</h2>
               <p>Dear ${vendorName},</p>
-              <p>Your price proposal for <strong>${escapeHtml(proposal.currentPrice)} &rarr; ${escapeHtml(proposal.proposedPrice)}</strong> has been <strong>${statusLabel}</strong>.</p>
+              <p>Your price proposal for <strong>${formattedCurrentPrice} &rarr; ${formattedProposedPrice}</strong> has been <strong>${statusLabel}</strong>.</p>
               ${escapedNote ? `<p><strong>Note from the buyer:</strong> ${escapedNote}</p>` : ''}
               <hr style="margin:24px 0;border:none;border-top:1px solid #e2e8f0">
               <p style="color:#94a3b8;font-size:12px">This is an automated notification from ${appName}.</p>
             </div>
           `,
-          text: `Your price proposal (${proposal.currentPrice} -> ${proposal.proposedPrice}) has been ${statusLabel}.${reviewNote ? `\n\nBuyer note: ${reviewNote}` : ''}`,
+          text: `Your price proposal (${formattedCurrentPrice} -> ${formattedProposedPrice}) has been ${statusLabel}.${reviewNote ? `\n\nBuyer note: ${reviewNote}` : ''}`,
         },
       );
       if (sent) {
