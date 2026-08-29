@@ -22,9 +22,13 @@ const PUBLIC_PATH_PREFIXES = [
   '/vendor-portal',
   '/account/verify-email',
 ];
+const PROTOTYPE_PATH = '/vendors/prototype-punchout';
 
 function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PATH_PREFIXES.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  return (
+    (process.env.NODE_ENV !== 'production' && pathname === PROTOTYPE_PATH) ||
+    PUBLIC_PATH_PREFIXES.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+  );
 }
 
 interface AccessContextValue {

@@ -14,6 +14,7 @@ import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
 import { Select } from '../../../components/ui/select';
+import { PunchoutConfigPrototype } from './punchout-config-prototype';
 import {
   Table,
   TableBody,
@@ -47,6 +48,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export default function VendorDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const prototypeMode = process.env.NODE_ENV !== 'production' && id === 'prototype-punchout';
   const { toast } = useToast();
   const [vendor, setVendor] = useState<any>(null);
   const [screeningBusy, setScreeningBusy] = useState(false);
@@ -63,6 +65,8 @@ export default function VendorDetailPage() {
   const [portalMsg, setPortalMsg] = useState('');
 
   useEffect(() => {
+    if (prototypeMode) return;
+
     api.vendors
       .get(id)
       .then((vendorRecord) => {
@@ -94,7 +98,7 @@ export default function VendorDetailPage() {
       .onboardingDetail(id)
       .then(setOnboarding)
       .catch(() => {});
-  }, [id]);
+  }, [id, prototypeMode]);
 
   function set(key: string, value: string) {
     setForm((current: any) => ({ ...current, [key]: value }));
@@ -201,6 +205,7 @@ export default function VendorDetailPage() {
     }
   }
 
+  if (prototypeMode) return <PunchoutConfigPrototype />;
   if (loading) return <div className="p-8 text-sm text-muted-foreground">Loading...</div>;
   if (error && !vendor) return <div className="p-8 text-sm text-rose-700">{error}</div>;
   if (!vendor) return null;

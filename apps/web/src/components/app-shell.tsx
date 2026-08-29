@@ -552,6 +552,10 @@ function ProductRouteAccessBoundary({ children }: { children: React.ReactNode })
   const route = productRouteForPathname(pathname);
   const action = productActionForPathname(pathname);
 
+  if (process.env.NODE_ENV !== 'production' && pathname === '/vendors/prototype-punchout') {
+    return <>{children}</>;
+  }
+
   if (!resolved || loading) {
     return (
       <div role="status" aria-live="polite" className="p-8 text-sm text-muted-foreground">

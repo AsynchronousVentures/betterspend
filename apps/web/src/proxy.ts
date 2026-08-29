@@ -3,9 +3,11 @@ import type { NextRequest } from 'next/server';
 
 const PUBLIC_PATH_PREFIXES = ['/login', '/signup', '/punchout'];
 const PUBLIC_EXACT_PATHS = new Set(['/runtime-version']);
+const PROTOTYPE_PATH = '/vendors/prototype-punchout';
 
 export function isPublicPath(pathname: string): boolean {
   return (
+    (process.env.NODE_ENV !== 'production' && pathname === PROTOTYPE_PATH) ||
     PUBLIC_EXACT_PATHS.has(pathname) ||
     PUBLIC_PATH_PREFIXES.some((path) => pathname === path || pathname.startsWith(`${path}/`))
   );

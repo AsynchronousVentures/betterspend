@@ -20,6 +20,7 @@
   "scripts": {
     "prepare": "node .husky/install.mjs",
     "dev": "turbo dev",
+    "prototype:punchout": "pnpm --filter @betterspend/web dev",
     "build": "turbo build",
     "lint": "turbo lint",
     "test": "turbo test",
