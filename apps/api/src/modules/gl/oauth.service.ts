@@ -5,6 +5,7 @@ import {
   InternalServerErrorException,
   Logger,
   Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
@@ -423,7 +424,11 @@ export class OAuthService {
   }
 
   private async enqueueQboInitialSync(organizationId: string): Promise<void> {
-    if (!this.qboSyncQueue) return;
+    if (!this.qboSyncQueue) {
+      throw new ServiceUnavailableException(
+        'QBO connection was stored, but the initial sync queue is unavailable',
+      );
+    }
     try {
       await this.qboSyncQueue.add(
         'initial-sync',
@@ -437,8 +442,10 @@ export class OAuthService {
         },
       );
     } catch (error: unknown) {
-      // Connection setup must remain successful if Redis is briefly unavailable.
-      this.logger.warn(`Unable to queue initial QBO sync for ${organizationId}: ${String(error)}`);
+      this.logger.error(`Unable to queue initial QBO sync for ${organizationId}: ${String(error)}`);
+      throw new ServiceUnavailableException(
+        'QBO connection was stored, but its initial import could not be queued',
+      );
     }
   }
 

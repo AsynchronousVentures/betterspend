@@ -13,31 +13,18 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiBody, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
-import { z } from 'zod';
+import {
+  QBO_SYNC_ENTITY_TYPES,
+  qboMappingLinkInputSchema,
+  qboSyncRequestSchema,
+} from '@betterspend/shared';
 import { CurrentOrgId } from '../../../common/decorators/current-org-id.decorator';
 import { Permissions } from '../../../common/decorators/permissions.decorator';
 import { Public } from '../../../common/decorators/public.decorator';
-import {
-  QBO_CATALOG_ENTITY_TYPES,
-  QBO_TAX_ENTITY_TYPES,
-  QboInboundService,
-  type QboSyncEntity,
-} from './qbo-inbound.service';
-
-const syncRequestSchema = z.object({
-  entityTypes: z
-    .array(z.enum([...QBO_CATALOG_ENTITY_TYPES, ...QBO_TAX_ENTITY_TYPES]))
-    .min(1)
-    .optional(),
-});
-
-const mappingLinkSchema = z.object({
-  localId: z.string().uuid().nullable(),
-  autoCreated: z.boolean().optional(),
-});
+import { QboInboundService } from './qbo-inbound.service';
 
 @ApiTags('integrations/qbo')
 @Controller('integrations/qbo')
@@ -58,27 +45,51 @@ export class QboInboundController {
   @Patch('mappings/:id')
   @Permissions('reports:export')
   @ApiOperation({ summary: 'Link a cached QuickBooks Online row to a local record' })
+  @ApiBody({
+    description: 'Set or clear the local record linked to this cached QBO entity.',
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['localId'],
+      properties: {
+        localId: { type: 'string', format: 'uuid', nullable: true },
+        autoCreated: {
+          type: 'boolean',
+          description: 'Whether BetterSpend created the linked local record during mapping.',
+        },
+      },
+    },
+  })
   linkMapping(
     @Param('id', ParseUUIDPipe) mappingId: string,
     @CurrentOrgId() organizationId: string,
     @Body() body: unknown,
   ) {
-    const input = mappingLinkSchema.parse(body);
+    const input = qboMappingLinkInputSchema.parse(body);
     return this.qboInboundService.linkMapping(mappingId, organizationId, input);
   }
 
   @Post('sync')
   @Permissions('reports:export')
   @ApiOperation({ summary: 'Queue a QuickBooks Online master-data sync' })
+  @ApiBody({
+    required: false,
+    description: 'Optionally limit the queued import to selected QBO entity types.',
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        entityTypes: {
+          type: 'array',
+          minItems: 1,
+          items: { type: 'string', enum: [...QBO_SYNC_ENTITY_TYPES] },
+        },
+      },
+    },
+  })
   async enqueueSync(@CurrentOrgId() organizationId: string, @Body() body: unknown) {
-    const input = syncRequestSchema.parse(body ?? {});
-    return this.qboInboundService.enqueueInitialSync(
-      organizationId,
-      (input.entityTypes ?? [
-        ...QBO_CATALOG_ENTITY_TYPES,
-        ...QBO_TAX_ENTITY_TYPES,
-      ]) as QboSyncEntity[],
-    );
+    const input = qboSyncRequestSchema.parse(body ?? {});
+    return this.qboInboundService.enqueueInitialSync(organizationId, input.entityTypes);
   }
 
   @Post('cdc')

@@ -13,34 +13,30 @@ import type { Queue } from 'bullmq';
 import { and, eq } from 'drizzle-orm';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { externalEntityMappings, integrationConnections, type Db } from '@betterspend/db';
+import {
+  QBO_CATALOG_ENTITY_TYPES,
+  QBO_TAX_ENTITY_TYPES,
+  QBO_TRANSACTION_ENTITY_TYPES,
+  type QboMappingLinkInput,
+  type QboSyncEntity,
+} from '@betterspend/shared';
 import { DB_TOKEN } from '../../../database/database.module';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { resolveOrganizationAdminId } from '../../../common/demo-identity';
 import { QboClientService } from '../../gl/qbo-client.service';
 
-export const QBO_CATALOG_ENTITY_TYPES = [
-  'Account',
-  'Vendor',
-  'Class',
-  'Department',
-  'Customer',
-  'Term',
-] as const;
-
-export const QBO_TAX_ENTITY_TYPES = ['TaxCode', 'TaxRate'] as const;
-
 export type QboCatalogEntity = (typeof QBO_CATALOG_ENTITY_TYPES)[number];
 export type QboTaxEntity = (typeof QBO_TAX_ENTITY_TYPES)[number];
-export type QboSyncEntity = QboCatalogEntity | QboTaxEntity;
 
-const CDC_ENTITY_TYPES = [
+const CDC_ENTITY_TYPES = [...QBO_CATALOG_ENTITY_TYPES, ...QBO_TRANSACTION_ENTITY_TYPES] as const;
+
+const QBO_WEBHOOK_ENTITY_TYPES = [
   ...QBO_CATALOG_ENTITY_TYPES,
-  'Bill',
-  'Invoice',
-  'Payment',
-  'BillPayment',
-  'PurchaseOrder',
+  ...QBO_TAX_ENTITY_TYPES,
+  ...QBO_TRANSACTION_ENTITY_TYPES,
 ] as const;
+
+const QBO_WEBHOOK_OPERATIONS = ['create', 'update', 'delete', 'merge'] as const;
 
 const QBO_ACCOUNT_TYPES = new Set([
   'Accounts Payable',
@@ -86,12 +82,15 @@ export type QboSyncJobData = {
 
 export type QboWebhookEvent = {
   realmId: string;
-  entityName: string;
+  entityName: QboWebhookEntity;
   entityId: string;
-  operation: string;
+  operation: QboWebhookOperation;
   lastUpdated?: string;
   payload: QboObject;
 };
+
+export type QboWebhookEntity = (typeof QBO_WEBHOOK_ENTITY_TYPES)[number];
+export type QboWebhookOperation = (typeof QBO_WEBHOOK_OPERATIONS)[number];
 
 export type QboCdcJobData =
   | { kind: 'webhook'; event: QboWebhookEvent }
@@ -104,15 +103,19 @@ export type QboSyncResult = {
   completedAt: string;
 };
 
-export type QboMappingLinkInput = {
-  localId: string | null;
-  autoCreated?: boolean;
-};
-
 type CdcEntry = {
   entityName: string;
   entity: QboObject;
   deleted: boolean;
+};
+
+type MappingUpsert = {
+  organizationId: string;
+  connectionId: string;
+  entityName: string;
+  entity: QboObject;
+  deleted: boolean;
+  mergedIntoExternalId?: string | null;
 };
 
 /**
@@ -256,16 +259,7 @@ export class QboInboundService implements OnModuleInit {
       imported += await this.syncCatalogEntity(organizationId, connection.id, entityName);
     }
 
-    const completedAt = new Date();
-    await this.db
-      .update(integrationConnections)
-      .set({ lastSyncAt: completedAt, updatedAt: completedAt })
-      .where(
-        and(
-          eq(integrationConnections.id, connection.id),
-          eq(integrationConnections.organizationId, organizationId),
-        ),
-      );
+    const completedAt = await this.completeConnectionSync(connection.id, organizationId);
 
     return {
       organizationId,
@@ -306,13 +300,13 @@ export class QboInboundService implements OnModuleInit {
 
         if (entry.deleted) {
           if (isSupportedCdcEntity(entry.entityName) && entry.entity.Id) {
-            await this.upsertMapping(
+            await this.upsertMapping({
               organizationId,
-              connection.id,
-              entry.entityName,
-              entry.entity,
-              true,
-            );
+              connectionId: connection.id,
+              entityName: entry.entityName,
+              entity: entry.entity,
+              deleted: true,
+            });
             tombstones += 1;
           }
           continue;
@@ -322,13 +316,13 @@ export class QboInboundService implements OnModuleInit {
           const definition = ENTITY_DEFINITIONS[entry.entityName];
           if (definition.shouldStore?.(entry.entity) === false) continue;
           if (entry.entity.Id) {
-            await this.upsertMapping(
+            await this.upsertMapping({
               organizationId,
-              connection.id,
-              entry.entityName,
-              entry.entity,
-              false,
-            );
+              connectionId: connection.id,
+              entityName: entry.entityName,
+              entity: entry.entity,
+              deleted: false,
+            });
             imported += 1;
           }
         }
@@ -338,16 +332,7 @@ export class QboInboundService implements OnModuleInit {
       startPosition += entries.length;
     }
 
-    const completedAt = new Date();
-    await this.db
-      .update(integrationConnections)
-      .set({ lastSyncAt: completedAt, updatedAt: completedAt })
-      .where(
-        and(
-          eq(integrationConnections.id, connection.id),
-          eq(integrationConnections.organizationId, organizationId),
-        ),
-      );
+    const completedAt = await this.completeConnectionSync(connection.id, organizationId);
 
     return {
       organizationId,
@@ -398,20 +383,19 @@ export class QboInboundService implements OnModuleInit {
     const connection = await this.connectionForRealm(event.realmId);
     if (!connection) return;
 
-    const operation = event.operation.toLowerCase();
-    if (operation === 'merge' && event.entityName === 'Vendor') {
+    if (event.operation === 'merge' && event.entityName === 'Vendor') {
       await this.handleVendorMerge(connection.organizationId, connection.id, event);
       return;
     }
 
-    if (operation === 'delete') {
-      await this.upsertMapping(
-        connection.organizationId,
-        connection.id,
-        event.entityName,
-        { ...event.payload, Id: event.entityId },
-        true,
-      );
+    if (event.operation === 'delete') {
+      await this.upsertMapping({
+        organizationId: connection.organizationId,
+        connectionId: connection.id,
+        entityName: event.entityName,
+        entity: { ...event.payload, Id: event.entityId },
+        deleted: true,
+      });
       return;
     }
 
@@ -423,24 +407,24 @@ export class QboInboundService implements OnModuleInit {
     );
     const entity = rows[0];
     if (!entity) {
-      await this.upsertMapping(
-        connection.organizationId,
-        connection.id,
-        event.entityName,
-        { Id: event.entityId },
-        true,
-      );
+      await this.upsertMapping({
+        organizationId: connection.organizationId,
+        connectionId: connection.id,
+        entityName: event.entityName,
+        entity: { Id: event.entityId },
+        deleted: true,
+      });
       return;
     }
     const definition = ENTITY_DEFINITIONS[event.entityName];
     if (definition.shouldStore?.(entity) === false) return;
-    await this.upsertMapping(
-      connection.organizationId,
-      connection.id,
-      event.entityName,
+    await this.upsertMapping({
+      organizationId: connection.organizationId,
+      connectionId: connection.id,
+      entityName: event.entityName,
       entity,
-      false,
-    );
+      deleted: false,
+    });
   }
 
   private async scheduleOrganization(organizationId: string): Promise<void> {
@@ -488,6 +472,23 @@ export class QboInboundService implements OnModuleInit {
     });
   }
 
+  private async completeConnectionSync(
+    connectionId: string,
+    organizationId: string,
+  ): Promise<Date> {
+    const completedAt = new Date();
+    await this.db
+      .update(integrationConnections)
+      .set({ lastSyncAt: completedAt, updatedAt: completedAt })
+      .where(
+        and(
+          eq(integrationConnections.id, connectionId),
+          eq(integrationConnections.organizationId, organizationId),
+        ),
+      );
+    return completedAt;
+  }
+
   private async syncCatalogEntity(
     organizationId: string,
     connectionId: string,
@@ -498,7 +499,13 @@ export class QboInboundService implements OnModuleInit {
     let imported = 0;
     for (const entity of rows) {
       if (!entity.Id || definition.shouldStore?.(entity) === false) continue;
-      await this.upsertMapping(organizationId, connectionId, entityName, entity, false);
+      await this.upsertMapping({
+        organizationId,
+        connectionId,
+        entityName,
+        entity,
+        deleted: false,
+      });
       imported += 1;
     }
     return imported;
@@ -535,14 +542,9 @@ export class QboInboundService implements OnModuleInit {
     return rows;
   }
 
-  private async upsertMapping(
-    organizationId: string,
-    connectionId: string,
-    entityName: string,
-    entity: QboObject,
-    deleted: boolean,
-    mergedIntoExternalId?: string | null,
-  ): Promise<void> {
+  private async upsertMapping(input: MappingUpsert): Promise<void> {
+    const { organizationId, connectionId, entityName, entity, deleted, mergedIntoExternalId } =
+      input;
     const externalId = stringValue(entity.Id);
     if (!externalId) return;
     const definition = isCatalogEntity(entityName) ? ENTITY_DEFINITIONS[entityName] : undefined;
@@ -596,16 +598,22 @@ export class QboInboundService implements OnModuleInit {
     connectionId: string,
     event: QboWebhookEvent,
   ): Promise<void> {
-    const sourceId =
-      firstString(event.payload, ['sourceId', 'oldId', 'deletedId', 'mergedFromId', 'fromId']) ??
-      event.entityId;
-    const targetId = firstString(event.payload, [
+    const payloadSourceId = firstString(event.payload, [
+      'sourceId',
+      'oldId',
+      'deletedId',
+      'mergedFromId',
+      'fromId',
+    ]);
+    const payloadTargetId = firstString(event.payload, [
       'targetId',
       'newId',
       'mergeTo',
       'mergedIntoId',
       'toId',
     ]);
+    const sourceId = payloadSourceId ?? event.entityId;
+    const targetId = payloadTargetId ?? (payloadSourceId ? event.entityId : null);
     if (!sourceId || !targetId || sourceId === targetId) {
       this.logger.warn(`Ignoring QBO Vendor Merge without distinct source and target IDs`);
       return;
@@ -643,14 +651,14 @@ export class QboInboundService implements OnModuleInit {
         })
         .where(eq(externalEntityMappings.id, source.id));
     } else {
-      await this.upsertMapping(
+      await this.upsertMapping({
         organizationId,
         connectionId,
-        'Vendor',
-        { Id: sourceId, Name: firstString(event.payload, ['Name', 'DisplayName']) },
-        true,
-        targetId,
-      );
+        entityName: 'Vendor',
+        entity: { Id: sourceId, Name: firstString(event.payload, ['Name', 'DisplayName']) },
+        deleted: true,
+        mergedIntoExternalId: targetId,
+      });
     }
 
     if (source?.localId && target && !target.localId) {
@@ -746,7 +754,11 @@ function extractCdcEntries(data: unknown): CdcEntry[] {
               entries.push({ entityName: deletedName, entity: deletedEntity, deleted: true });
             }
           } else {
-            entries.push({ entityName, entity: rawRow, deleted: false });
+            entries.push({
+              entityName,
+              entity: rawRow,
+              deleted: hasDeletedStatus(rawRow),
+            });
           }
         }
       }
@@ -755,7 +767,15 @@ function extractCdcEntries(data: unknown): CdcEntry[] {
   return entries;
 }
 
+function hasDeletedStatus(entity: QboObject): boolean {
+  const status = stringValue(entity.status) ?? stringValue(entity.Status);
+  return status?.trim().toLowerCase() === 'deleted';
+}
+
 function parseQboWebhookEvents(payload: unknown): QboWebhookEvent[] {
+  if (Array.isArray(payload)) {
+    return payload.flatMap((event) => parseQboCloudEvent(event));
+  }
   if (!isRecord(payload) || !Array.isArray(payload.eventNotifications)) return [];
   const events: QboWebhookEvent[] = [];
   for (const rawNotification of payload.eventNotifications) {
@@ -766,9 +786,9 @@ function parseQboWebhookEvents(payload: unknown): QboWebhookEvent[] {
       continue;
     for (const rawEntity of dataChangeEvent.entities) {
       if (!isRecord(rawEntity)) continue;
-      const entityName = stringValue(rawEntity.name);
+      const entityName = parseQboWebhookEntity(stringValue(rawEntity.name));
       const entityId = stringValue(rawEntity.id);
-      const operation = stringValue(rawEntity.operation);
+      const operation = parseQboWebhookOperation(stringValue(rawEntity.operation));
       if (!entityName || !entityId || !operation) continue;
       const lastUpdated = stringValue(rawEntity.lastUpdated);
       events.push({
@@ -782,6 +802,61 @@ function parseQboWebhookEvents(payload: unknown): QboWebhookEvent[] {
     }
   }
   return events;
+}
+
+function parseQboCloudEvent(value: unknown): QboWebhookEvent[] {
+  if (!isRecord(value) || !stringValue(value.specversion)) return [];
+  const type = stringValue(value.type);
+  const realmId =
+    stringValue(value.intuitaccountid) ??
+    stringValue(value.intuitAccountId) ??
+    stringValue(value.realmId);
+  const entityId =
+    stringValue(value.intuitentityid) ??
+    stringValue(value.intuitEntityId) ??
+    stringValue(value.entityId);
+  if (!type || !realmId || !entityId) return [];
+
+  const tokens = type.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+  const entityName = tokens.map(parseQboWebhookEntity).find((entity) => entity !== null) ?? null;
+  const operation =
+    tokens.map(parseQboWebhookOperation).find((candidate) => candidate !== null) ?? null;
+  if (!entityName || !operation) return [];
+
+  const data = isRecord(value.data) ? value.data : {};
+  const lastUpdated =
+    stringValue(value.time) ?? stringValue(data.lastUpdated) ?? stringValue(data.lastupdated);
+  return [
+    {
+      realmId,
+      entityName,
+      entityId,
+      operation,
+      ...(lastUpdated ? { lastUpdated } : {}),
+      payload: data,
+    },
+  ];
+}
+
+function parseQboWebhookEntity(value: string | null): QboWebhookEntity | null {
+  if (!value) return null;
+  const normalized = value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  return (
+    QBO_WEBHOOK_ENTITY_TYPES.find(
+      (entity) => entity.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === normalized,
+    ) ?? null
+  );
+}
+
+function parseQboWebhookOperation(value: string | null): QboWebhookOperation | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  const canonical = normalized.endsWith('d') ? normalized.slice(0, -1) : normalized;
+  return (
+    QBO_WEBHOOK_OPERATIONS.find(
+      (operation) => operation === normalized || operation === canonical,
+    ) ?? null
+  );
 }
 
 function displayNameFromQbo(entity: QboObject): string | null {

@@ -172,6 +172,14 @@ function auditTransaction(captured: Array<Record<string, unknown>>) {
   };
 }
 
+function qboSyncQueue(error?: Error) {
+  return {
+    add: error
+      ? jest.fn(async () => Promise.reject(error))
+      : jest.fn(async () => ({ id: 'qbo-initial-sync-job' })),
+  };
+}
+
 describe('OAuthService', () => {
   const organizationId = '00000000-0000-0000-0000-000000000001';
   const userId = '00000000-0000-0000-0000-000000000002';
@@ -194,7 +202,13 @@ describe('OAuthService', () => {
   it('uses opaque server-side state and consumes it exactly once', async () => {
     const captured: Array<Record<string, unknown>> = [];
     const stateStore = new FakeOAuthRedis();
-    const service = new OAuthService(insertCapturingDb(captured), crypto, stateStore as never);
+    const queue = qboSyncQueue();
+    const service = new OAuthService(
+      insertCapturingDb(captured),
+      crypto,
+      stateStore as never,
+      queue as never,
+    );
     mockedAxios.post.mockResolvedValue({
       data: {
         access_token: 'plain-access-token',
@@ -226,6 +240,47 @@ describe('OAuthService', () => {
         entityType: 'integration_connection',
         action: 'connected',
       }),
+    );
+    expect(queue.add).toHaveBeenCalledWith(
+      'initial-sync',
+      { kind: 'initial', organizationId },
+      expect.objectContaining({ attempts: 3 }),
+    );
+  });
+
+  it('keeps the QBO connection durable but exposes an initial-sync enqueue failure', async () => {
+    const captured: Array<Record<string, unknown>> = [];
+    const stateStore = new FakeOAuthRedis();
+    const queue = qboSyncQueue(new Error('Redis unavailable'));
+    const service = new OAuthService(
+      insertCapturingDb(captured),
+      crypto,
+      stateStore as never,
+      queue as never,
+    );
+    mockedAxios.post.mockResolvedValue({
+      data: {
+        access_token: 'plain-access-token',
+        refresh_token: 'plain-refresh-token',
+        expires_in: 3600,
+      },
+    });
+    const url = new URL(await service.getQboAuthUrl(organizationId, userId, sessionId));
+
+    await expect(
+      service.completeQboOAuth(
+        url.searchParams.get('state')!,
+        'authorization-code',
+        'realm-1',
+        userId,
+        sessionId,
+      ),
+    ).rejects.toThrow('QBO connection was stored, but its initial import could not be queued');
+
+    expect(captured).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ provider: 'qbo', organizationId, realmId: 'realm-1' }),
+      ]),
     );
   });
 

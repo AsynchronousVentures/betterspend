@@ -18,6 +18,7 @@ function queue() {
 function database(options: {
   connection?: Record<string, unknown>;
   mappings?: Record<string, unknown>[];
+  adminId?: string;
 }) {
   const inserted: Record<string, unknown>[] = [];
   const updates: Record<string, unknown>[] = [];
@@ -28,6 +29,7 @@ function database(options: {
     realmId: 'realm-1',
     status: 'active',
   };
+  let mappingIndex = 0;
   const db = {
     query: {
       integrationConnections: {
@@ -35,10 +37,19 @@ function database(options: {
         findMany: jest.fn(async () => [connection]),
       },
       externalEntityMappings: {
-        findFirst: jest.fn(async () => options.mappings?.[0] ?? null),
+        findFirst: jest.fn(async () => options.mappings?.[mappingIndex++] ?? null),
         findMany: jest.fn(async () => options.mappings ?? []),
       },
     },
+    select: jest.fn(() => ({
+      from: jest.fn(() => ({
+        innerJoin: jest.fn(() => ({
+          where: jest.fn(() => ({
+            limit: jest.fn(async () => (options.adminId ? [{ id: options.adminId }] : [])),
+          })),
+        })),
+      })),
+    })),
     insert: jest.fn(() => ({
       values: jest.fn((values: Record<string, unknown>) => {
         inserted.push(values);
@@ -64,6 +75,7 @@ function service(
   options: {
     connection?: Record<string, unknown>;
     mappings?: Record<string, unknown>[];
+    adminId?: string;
     request?: jest.Mock;
   } = {},
 ) {
@@ -129,11 +141,58 @@ describe('QboInboundService', () => {
           realmId: 'realm-1',
           entityName: 'Vendor',
           entityId: '42',
+          operation: 'update',
         }),
       }),
       expect.objectContaining({ attempts: 5 }),
     );
     expect(harness.request).not.toHaveBeenCalled();
+  });
+
+  it('accepts bounded QBO CloudEvents and keeps merge data for async processing', async () => {
+    const secret = 'webhook-secret';
+    process.env.QBO_WEBHOOK_VERIFIER_TOKEN = secret;
+    const body = Buffer.from(
+      JSON.stringify([
+        {
+          specversion: '1.0',
+          type: 'qbo.vendor.merged.v1',
+          intuitaccountid: 'realm-1',
+          intuitentityid: 'vendor-target',
+          time: '2026-08-29T20:00:00.000Z',
+          data: { deletedId: 'vendor-source' },
+        },
+        {
+          specversion: '1.0',
+          type: 'qbo.employee.updated.v1',
+          intuitaccountid: 'realm-1',
+          intuitentityid: 'employee-1',
+          data: {},
+        },
+      ]),
+    );
+    const harness = service();
+    const signature = createHmac('sha256', secret).update(body).digest('base64');
+
+    await expect(harness.instance.receiveWebhook(body, signature)).resolves.toEqual({
+      accepted: true,
+      queued: 1,
+    });
+    expect(harness.cdcQueue.add).toHaveBeenCalledWith(
+      'webhook',
+      {
+        kind: 'webhook',
+        event: {
+          realmId: 'realm-1',
+          entityName: 'Vendor',
+          entityId: 'vendor-target',
+          operation: 'merge',
+          lastUpdated: '2026-08-29T20:00:00.000Z',
+          payload: { deletedId: 'vendor-source' },
+        },
+      },
+      expect.objectContaining({ attempts: 5 }),
+    );
   });
 
   it('rejects an invalid webhook signature before parsing or enqueueing', async () => {
@@ -277,6 +336,120 @@ describe('QboInboundService', () => {
           externalId: 'bill-2',
           isDeleted: true,
         }),
+      ]),
+    );
+  });
+
+  it('treats normal CDC rows with deleted status casing as tombstones', async () => {
+    const request = jest.fn(async () => ({
+      data: {
+        CDCResponse: [
+          {
+            QueryResponse: {
+              Vendor: [{ Id: 'vendor-deleted', Status: 'Deleted' }],
+              Bill: [{ Id: 'bill-deleted', status: 'deleted' }],
+            },
+          },
+        ],
+      },
+    }));
+    const harness = service({ request });
+
+    const result = await harness.instance.runCdcSweep('organization-1');
+
+    expect(result).toMatchObject({ imported: 0, tombstones: 2 });
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ externalId: 'vendor-deleted', isDeleted: true }),
+        expect.objectContaining({ externalId: 'bill-deleted', isDeleted: true }),
+      ]),
+    );
+  });
+
+  it('remaps and alerts for CloudEvent vendor merges', async () => {
+    const localVendorId = '00000000-0000-4000-8000-000000000010';
+    const harness = service({
+      adminId: '00000000-0000-4000-8000-000000000020',
+      mappings: [
+        {
+          id: 'source-mapping',
+          externalId: 'vendor-source',
+          localId: localVendorId,
+          autoCreated: true,
+        },
+        {
+          id: 'target-mapping',
+          externalId: 'vendor-target',
+          localId: null,
+          autoCreated: false,
+        },
+      ],
+    });
+
+    await harness.instance.processWebhookEvent({
+      realmId: 'realm-1',
+      entityName: 'Vendor',
+      entityId: 'vendor-target',
+      operation: 'merge',
+      payload: { deletedId: 'vendor-source' },
+    });
+
+    expect(harness.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          isDeleted: true,
+          isActive: false,
+          mergedIntoExternalId: 'vendor-target',
+        }),
+        expect.objectContaining({ localId: localVendorId, autoCreated: true }),
+      ]),
+    );
+    expect(harness.notifications.createIdempotent).toHaveBeenCalledWith(
+      'qbo-vendor-merge:organization-1:vendor-source:vendor-target',
+      'organization-1',
+      '00000000-0000-4000-8000-000000000020',
+      'qbo_vendor_merge',
+      'QuickBooks vendor merged',
+      expect.stringContaining('vendor-source was merged into vendor-target'),
+      'external_entity_mapping',
+      'source-mapping',
+    );
+  });
+
+  it('preserves legacy vendor merge aliases', async () => {
+    const localVendorId = '00000000-0000-4000-8000-000000000010';
+    const harness = service({
+      mappings: [
+        {
+          id: 'source-mapping',
+          externalId: 'vendor-source',
+          localId: localVendorId,
+          autoCreated: false,
+        },
+        {
+          id: 'target-mapping',
+          externalId: 'vendor-target',
+          localId: null,
+          autoCreated: false,
+        },
+      ],
+    });
+
+    await harness.instance.processWebhookEvent({
+      realmId: 'realm-1',
+      entityName: 'Vendor',
+      entityId: 'vendor-source',
+      operation: 'merge',
+      payload: { mergeTo: 'vendor-target' },
+    });
+
+    expect(harness.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          isDeleted: true,
+          mergedIntoExternalId: 'vendor-target',
+        }),
+        expect.objectContaining({ localId: localVendorId }),
       ]),
     );
   });
