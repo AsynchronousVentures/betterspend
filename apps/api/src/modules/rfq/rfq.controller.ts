@@ -112,26 +112,35 @@ export class RfqController {
   }
 }
 
-const createRfqBodySchema = z
-  .object({
-    title: z.string().min(1),
-    description: z.string().optional(),
-    dueDate: z.union([z.iso.datetime({ offset: true }), z.iso.date()]).optional(),
-    currency: z.string().optional(),
-    notes: z.string().optional(),
-    lines: z.array(
-      z
-        .object({
-          description: z.string().min(1),
-          quantity: z.number().positive(),
-          unitOfMeasure: z.string().optional(),
-          targetPrice: z.number().nonnegative().optional(),
-        })
-        .strict(),
-    ),
-    vendorIds: z.array(z.string().uuid()).optional(),
-  })
-  .strict();
+const createRfqBodySchema = z.preprocess(
+  (body) => {
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) return body;
+    const record = body as Record<string, unknown>;
+    if (record.dueDate !== '') return body;
+    const { dueDate: _dueDate, ...withoutEmptyDueDate } = record;
+    return withoutEmptyDueDate;
+  },
+  z
+    .object({
+      title: z.string().min(1),
+      description: z.string().optional(),
+      dueDate: z.union([z.iso.datetime({ offset: true }), z.iso.date()]).optional(),
+      currency: z.string().optional(),
+      notes: z.string().optional(),
+      lines: z.array(
+        z
+          .object({
+            description: z.string().min(1),
+            quantity: z.number().positive(),
+            unitOfMeasure: z.string().optional(),
+            targetPrice: z.number().nonnegative().optional(),
+          })
+          .strict(),
+      ),
+      vendorIds: z.array(z.string().uuid()).optional(),
+    })
+    .strict(),
+);
 
 export function parseCreateRfqBody(body: unknown) {
   const parsed = createRfqBodySchema.safeParse(body);

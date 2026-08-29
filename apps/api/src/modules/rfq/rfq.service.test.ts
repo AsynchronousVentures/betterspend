@@ -19,15 +19,27 @@ test('public RFQ input rejects private owner idempotency keys', () => {
 });
 
 test('public RFQ input rejects invalid due dates at the validation boundary', () => {
-  assert.throws(
-    () =>
-      parseCreateRfqBody({
-        title: 'Public RFQ',
-        dueDate: 'not-a-date',
-        lines: [{ description: 'Seats', quantity: 1 }],
-      }),
-    (error: unknown) => error instanceof BadRequestException,
-  );
+  for (const dueDate of ['not-a-date', ' ']) {
+    assert.throws(
+      () =>
+        parseCreateRfqBody({
+          title: 'Public RFQ',
+          dueDate,
+          lines: [{ description: 'Seats', quantity: 1 }],
+        }),
+      (error: unknown) => error instanceof BadRequestException,
+    );
+  }
+});
+
+test('public RFQ input omits an exact empty due date from optional form input', () => {
+  const parsed = parseCreateRfqBody({
+    title: 'No deadline RFQ',
+    dueDate: '',
+    lines: [{ description: 'Seats', quantity: 1 }],
+  });
+
+  assert.equal('dueDate' in parsed, false);
 });
 
 test('public RFQ input accepts date-only and offset datetime due dates', () => {
