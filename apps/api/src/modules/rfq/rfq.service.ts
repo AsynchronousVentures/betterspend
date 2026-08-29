@@ -274,8 +274,26 @@ export class RfqService {
         targetPrice?: number | string;
       }>;
       vendorIds?: string[];
-      ownerIdempotencyKey?: string;
     },
+  ) {
+    return this.createWithOwnerKey(orgId, userId, dto);
+  }
+
+  /** Internal artifact-owner path. Public HTTP input never reaches this parameter. */
+  async createInternal(
+    orgId: string,
+    userId: string,
+    dto: Parameters<RfqService['create']>[2],
+    ownerIdempotencyKey: string,
+  ) {
+    return this.createWithOwnerKey(orgId, userId, dto, ownerIdempotencyKey);
+  }
+
+  private async createWithOwnerKey(
+    orgId: string,
+    userId: string,
+    dto: Parameters<RfqService['create']>[2],
+    ownerIdempotencyKey?: string,
   ) {
     const vendorIds = [...new Set(dto.vendorIds ?? [])];
     if (vendorIds.length) {
@@ -301,7 +319,7 @@ export class RfqService {
         dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
         currency: dto.currency ?? 'USD',
         notes: dto.notes,
-        idempotencyKey: dto.ownerIdempotencyKey,
+        idempotencyKey: ownerIdempotencyKey,
       };
       const [rfq] = await tx.insert(rfqRequests).values(values).returning();
       if (!rfq) throw new Error('RFQ was not created');

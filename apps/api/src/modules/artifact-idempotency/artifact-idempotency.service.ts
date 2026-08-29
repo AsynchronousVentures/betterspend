@@ -47,8 +47,12 @@ export interface ArtifactOperationPlan<TResult> {
 }
 
 export interface ArtifactDeliveryContext {
-  /** Run one stable recipient/action delivery at most once after it succeeds. */
-  once(deliveryKey: string, deliver: () => Promise<unknown>): Promise<void>;
+  /**
+   * Run one stable recipient/action delivery after reserving it. The callback
+   * receives a deterministic downstream identity that remains unchanged when
+   * persistence of the delivered state fails and the operation retries.
+   */
+  once(deliveryKey: string, deliver: (identity: string) => Promise<unknown>): Promise<void>;
 }
 
 export interface ArtifactOperationResult<TResult> {
@@ -147,7 +151,7 @@ export class ArtifactIdempotencyService {
   private async deliverOnce(
     operationId: string,
     rawDeliveryKey: string,
-    deliver: () => Promise<unknown>,
+    deliver: (identity: string) => Promise<unknown>,
   ): Promise<void> {
     const deliveryKey = rawDeliveryKey.trim();
     if (!deliveryKey || deliveryKey.length > 255) {
@@ -213,7 +217,7 @@ export class ArtifactIdempotencyService {
     if (!claim) return;
 
     try {
-      await deliver();
+      await deliver(deliveryIdentity(operationId, deliveryKey));
       const [delivered] = await this.db
         .update(artifactNotificationDeliveries)
         .set({
@@ -409,6 +413,10 @@ export class ArtifactIdempotencyService {
       );
     }
   }
+}
+
+function deliveryIdentity(operationId: string, deliveryKey: string): string {
+  return `artifact-${createHash('sha256').update(`${operationId}:${deliveryKey}`).digest('hex')}@betterspend.local`;
 }
 
 function hashFingerprint(fingerprint: string): string {

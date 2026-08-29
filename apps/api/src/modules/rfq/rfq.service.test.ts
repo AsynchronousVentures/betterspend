@@ -4,6 +4,19 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { Db } from '@betterspend/db';
 import { RfqService } from './rfq.service';
+import { parseCreateRfqBody } from './rfq.controller';
+
+test('public RFQ input rejects private owner idempotency keys', () => {
+  assert.throws(
+    () =>
+      parseCreateRfqBody({
+        title: 'Public RFQ',
+        lines: [{ description: 'Seats', quantity: 1 }],
+        ownerIdempotencyKey: 'artifact-operation:attacker-controlled',
+      }),
+    (error: unknown) => error instanceof BadRequestException,
+  );
+});
 
 function createOpenFixture(input: { updateResult: unknown[]; existing?: { status: string } }) {
   let updateCondition: unknown;

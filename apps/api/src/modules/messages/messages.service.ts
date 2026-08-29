@@ -175,7 +175,7 @@ export class MessagesService {
             invitedVendorIds.add(threadContext.vendorId);
           }
           for (const vendorIdToNotify of invitedVendorIds) {
-            await delivery.once(`vendor-email:${vendorIdToNotify}`, () =>
+            await delivery.once(`vendor-email:${vendorIdToNotify}`, (identity) =>
               this.emailVendorContact(
                 organizationId,
                 threadType,
@@ -184,13 +184,14 @@ export class MessagesService {
                 message.body,
                 vendorIdToNotify,
                 true,
+                identity,
               ),
             );
           }
           return;
         }
         const vendorDeliveryKey = recipientVendorId ?? threadContext.vendorId ?? 'counterparty';
-        await delivery.once(`vendor-email:${vendorDeliveryKey}`, () =>
+        await delivery.once(`vendor-email:${vendorDeliveryKey}`, (identity) =>
           this.emailVendorContact(
             organizationId,
             threadType,
@@ -199,6 +200,7 @@ export class MessagesService {
             message.body,
             recipientVendorId ?? undefined,
             true,
+            identity,
           ),
         );
       },
@@ -261,8 +263,9 @@ export class MessagesService {
       link: (artifact) => this.loadMessage(organizationId, artifact),
       notify: async (message, delivery) => {
         if (!context.internalUserId) return;
-        await delivery.once(`internal-notification:${context.internalUserId}`, () =>
-          this.notificationsService.create(
+        await delivery.once(`internal-notification:${context.internalUserId}`, (identity) =>
+          this.notificationsService.createIdempotent(
+            identity,
             organizationId,
             context.internalUserId!,
             'new_message',
@@ -515,6 +518,7 @@ export class MessagesService {
     messageBody: string,
     recipientVendorOverride?: string,
     propagateErrors = false,
+    messageId?: string,
   ) {
     try {
       const context = await this.getThreadContext(organizationId, threadType, threadId);
@@ -560,6 +564,7 @@ export class MessagesService {
             </div>
           `,
           text: `New message from ${authorName}: ${messageBody}\n\nLog in to the vendor portal to read the full thread and reply.`,
+          messageId,
         },
       );
     } catch (error) {

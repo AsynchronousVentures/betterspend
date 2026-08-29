@@ -39,9 +39,11 @@ CREATE TABLE "artifact_notification_deliveries" (
 ALTER TABLE "requisitions" ADD COLUMN "idempotency_key" varchar(255);--> statement-breakpoint
 ALTER TABLE "rfq_requests" ADD COLUMN "idempotency_key" varchar(255);--> statement-breakpoint
 ALTER TABLE "messages" ADD COLUMN "idempotency_key" varchar(255);--> statement-breakpoint
+ALTER TABLE "notifications" ADD COLUMN "idempotency_key" varchar(255);--> statement-breakpoint
 ALTER TABLE "artifact_operations" ADD CONSTRAINT "artifact_operations_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "artifact_notification_deliveries" ADD CONSTRAINT "artifact_notification_deliveries_operation_id_artifact_operations_id_fk" FOREIGN KEY ("operation_id") REFERENCES "public"."artifact_operations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "artifact_operations_org_key_unique" ON "artifact_operations" USING btree ("organization_id","idempotency_key");--> statement-breakpoint
 CREATE INDEX "artifact_operations_org_status_idx" ON "artifact_operations" USING btree ("organization_id","operation_type","status","lease_expires_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "artifact_notification_deliveries_operation_key_unique" ON "artifact_notification_deliveries" USING btree ("operation_id","delivery_key");--> statement-breakpoint
 CREATE INDEX "artifact_notification_deliveries_retry_idx" ON "artifact_notification_deliveries" USING btree ("status","lease_expires_at");--> statement-breakpoint
+CREATE UNIQUE INDEX "notifications_idempotency_key_unique" ON "notifications" USING btree ("idempotency_key");--> statement-breakpoint

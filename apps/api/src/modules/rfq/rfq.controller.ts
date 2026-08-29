@@ -1,5 +1,15 @@
-import { Controller, Get, Post, Patch, Param, Body, Query } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Param,
+  Body,
+  Query,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { z } from 'zod';
 import { RfqService } from './rfq.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
@@ -31,22 +41,9 @@ export class RfqController {
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
     @Body()
-    dto: {
-      title: string;
-      description?: string;
-      dueDate?: string;
-      currency?: string;
-      notes?: string;
-      lines: Array<{
-        description: string;
-        quantity: number;
-        unitOfMeasure?: string;
-        targetPrice?: number;
-      }>;
-      vendorIds?: string[];
-    },
+    body: unknown,
   ) {
-    return this.rfqService.create(orgId, userId, dto);
+    return this.rfqService.create(orgId, userId, parseCreateRfqBody(body));
   }
 
   @Patch(':id')
@@ -113,4 +110,31 @@ export class RfqController {
   ) {
     return this.rfqService.submitResponse(orgId, id, dto);
   }
+}
+
+const createRfqBodySchema = z
+  .object({
+    title: z.string().min(1),
+    description: z.string().optional(),
+    dueDate: z.string().optional(),
+    currency: z.string().optional(),
+    notes: z.string().optional(),
+    lines: z.array(
+      z
+        .object({
+          description: z.string().min(1),
+          quantity: z.number().positive(),
+          unitOfMeasure: z.string().optional(),
+          targetPrice: z.number().optional(),
+        })
+        .strict(),
+    ),
+    vendorIds: z.array(z.string().uuid()).optional(),
+  })
+  .strict();
+
+export function parseCreateRfqBody(body: unknown) {
+  const parsed = createRfqBodySchema.safeParse(body);
+  if (!parsed.success) throw new BadRequestException('Invalid RFQ request body');
+  return parsed.data;
 }

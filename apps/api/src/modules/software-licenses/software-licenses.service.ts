@@ -305,8 +305,16 @@ export class SoftwareLicensesService {
           artifact,
         }),
       notify: (renewalRef, delivery) =>
-        delivery.once(`renewal-action:${license.ownerUserId ?? userId}:${action}`, () =>
-          this.notifyRenewalAction(license, organizationId, action, actionNote, renewalRef, true),
+        delivery.once(`renewal-action:${license.ownerUserId ?? userId}:${action}`, (identity) =>
+          this.notifyRenewalAction(
+            license,
+            organizationId,
+            action,
+            actionNote,
+            renewalRef,
+            true,
+            identity,
+          ),
         ),
       load: (artifact) => this.loadRenewalRef(id, organizationId, action, artifact, access),
     });
@@ -317,8 +325,8 @@ export class SoftwareLicensesService {
   private async createRenewalRequisition(
     license: LicenseWithRelations,
     userId: string,
-    note?: string,
-    ownerIdempotencyKey?: string,
+    note: string | undefined,
+    ownerIdempotencyKey: string,
   ): Promise<ArtifactReference> {
     const unitPrice = normalizeMoney(license.pricePerSeat);
     const requisition = await this.requisitionsService.create(
@@ -359,31 +367,35 @@ export class SoftwareLicensesService {
   private async createRenegotiationRfq(
     license: LicenseWithRelations,
     userId: string,
-    note?: string,
-    ownerIdempotencyKey?: string,
+    note: string | undefined,
+    ownerIdempotencyKey: string,
   ): Promise<ArtifactReference> {
     const targetPrice = normalizeMoney(license.pricePerSeat);
     const requestedDueDate = license.renewalDate
       ? new Date(license.renewalDate).getTime() - 7 * 24 * 60 * 60 * 1000
       : 0;
     const minimumDueDate = Date.now() + 7 * 24 * 60 * 60 * 1000;
-    const rfq = await this.rfqService.create(license.organizationId, userId, {
-      title: `Renegotiation: ${license.productName} renewal`,
-      description: `Competing quotes requested ahead of the ${license.renewalDate ? new Date(license.renewalDate).toLocaleDateString() : 'upcoming'} renewal of ${license.productName}. Current rate is ${license.currency} ${targetPrice} per seat.`,
-      notes: note,
-      currency: license.currency,
-      dueDate: new Date(Math.max(requestedDueDate, minimumDueDate)).toISOString(),
-      lines: [
-        {
-          description: `${license.productName} (${license.seatCount} seats, ${license.billingCycle})`,
-          quantity: license.seatCount,
-          unitOfMeasure: 'seats',
-          targetPrice,
-        },
-      ],
-      vendorIds: [license.vendorId],
+    const rfq = await this.rfqService.createInternal(
+      license.organizationId,
+      userId,
+      {
+        title: `Renegotiation: ${license.productName} renewal`,
+        description: `Competing quotes requested ahead of the ${license.renewalDate ? new Date(license.renewalDate).toLocaleDateString() : 'upcoming'} renewal of ${license.productName}. Current rate is ${license.currency} ${targetPrice} per seat.`,
+        notes: note,
+        currency: license.currency,
+        dueDate: new Date(Math.max(requestedDueDate, minimumDueDate)).toISOString(),
+        lines: [
+          {
+            description: `${license.productName} (${license.seatCount} seats, ${license.billingCycle})`,
+            quantity: license.seatCount,
+            unitOfMeasure: 'seats',
+            targetPrice,
+          },
+        ],
+        vendorIds: [license.vendorId],
+      },
       ownerIdempotencyKey,
-    });
+    );
     return {
       kind: 'rfq',
       id: rfq.id,
@@ -554,6 +566,7 @@ export class SoftwareLicensesService {
     actionNote: string | undefined,
     renewalRef: RenewalRef | null,
     shouldNotify: boolean,
+    idempotencyKey?: string,
   ): Promise<void> {
     if (!shouldNotify || !license.ownerUserId) return;
 
@@ -570,7 +583,7 @@ export class SoftwareLicensesService {
         : action === 'cancel'
           ? `${license.productName} auto-renew has been disabled and cancellation review is in progress.`
           : `An RFQ was issued to gather competing quotes before renewing ${license.productName}.${refSuffix}`;
-    await this.notificationsService.create(
+    const args = [
       organizationId,
       license.ownerUserId,
       'software_license_renewal_action',
@@ -578,7 +591,12 @@ export class SoftwareLicensesService {
       actionNote ? `${actionBody} Note: ${actionNote}` : actionBody,
       'software_license',
       license.id,
-    );
+    ] as const;
+    if (idempotencyKey) {
+      await this.notificationsService.createIdempotent(idempotencyKey, ...args);
+    } else {
+      await this.notificationsService.create(...args);
+    }
   }
 
   private async notifyIfRenewalDueSoon(license: typeof softwareLicenses.$inferSelect) {

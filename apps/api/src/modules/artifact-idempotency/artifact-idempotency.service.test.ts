@@ -401,6 +401,33 @@ test('a completed delivery is skipped when operation completion must retry', asy
   assert.equal(store.rows[0]?.status, 'completed');
 });
 
+test('delivery retries reuse the same downstream identity after status persistence fails', async () => {
+  const store = new ArtifactOperationStore();
+  const service = new ArtifactIdempotencyService(store as unknown as Db);
+  const identities: string[] = [];
+  let rejectDeliveredStatus = true;
+  store.beforeUpdate = (row, values) => {
+    if ('deliveryKey' in row && values.status === 'delivered' && rejectDeliveredStatus) {
+      rejectDeliveredStatus = false;
+      row.leaseToken = 'lease-stolen';
+    }
+  };
+  const plan = createPlan(store, {
+    notify: async (_value, delivery) =>
+      delivery.once('vendor-email:vendor-1', async (identity) => {
+        identities.push(identity);
+      }),
+  });
+
+  await assert.rejects(service.execute(plan), /Notification delivery lease was lost/);
+  store.deliveries[0]!.leaseExpiresAt = new Date(0);
+  await service.execute(plan);
+
+  assert.equal(identities.length, 2);
+  assert.equal(identities[0], identities[1]);
+  assert.match(identities[0]!, /^artifact-[a-f0-9]{64}@betterspend\.local$/);
+});
+
 test('an idempotency key cannot be reused for a different request', async () => {
   const store = new ArtifactOperationStore();
   const service = new ArtifactIdempotencyService(store as unknown as Db);

@@ -44,7 +44,7 @@ class RecordingArtifactCoordinator {
       once: async (deliveryKey, deliver) => {
         const key = `${plan.idempotencyKey}:${deliveryKey}`;
         if (this.deliveries.has(key)) return;
-        await deliver();
+        await deliver(`test-${key}@betterspend.local`);
         this.deliveries.add(key);
       },
     });
@@ -84,7 +84,7 @@ test('license renewal retries use the same artifact operation and do not recreat
   };
   const service = new SoftwareLicensesService(
     {} as never,
-    { create: async () => notificationCalls++ } as never,
+    { createIdempotent: async () => notificationCalls++ } as never,
     {} as never,
     {} as never,
     coordinator as never,
@@ -137,7 +137,7 @@ test('same-cycle competing renewal intents conflict before creating a second art
   let createCalls = 0;
   const service = new SoftwareLicensesService(
     {} as never,
-    { create: async () => {} } as never,
+    { createIdempotent: async () => {} } as never,
     {} as never,
     {} as never,
     coordinator as never,
@@ -199,7 +199,7 @@ test('advancing a license renewal date starts a new artifact cycle', async () =>
   let currentLicense = { ...license };
   const service = new SoftwareLicensesService(
     {} as never,
-    { create: async () => {} } as never,
+    { createIdempotent: async () => {} } as never,
     {} as never,
     {} as never,
     coordinator as never,
@@ -424,7 +424,7 @@ test('vendor message retries retain the caller key and do not duplicate notifica
         vendors: { findFirst: async () => ({ id: 'vendor-1', name: 'Supplier' }) },
       },
     } as never,
-    { create: async () => notificationCalls++ } as never,
+    { createIdempotent: async () => notificationCalls++ } as never,
     {} as never,
     {} as never,
     coordinator as never,
