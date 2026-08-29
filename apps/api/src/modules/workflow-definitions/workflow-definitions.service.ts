@@ -1,16 +1,37 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  Optional,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { and, desc, eq } from 'drizzle-orm';
 import type {
   CreateWorkflowDefinitionInput,
   WorkflowDomain,
   WorkflowDraft,
+  WorkflowAssistantProposalRequest,
+  WorkflowAssistantProposalResponse,
+  WorkflowDraftLeaseStatus,
 } from '@betterspend/shared';
-import { compileWorkflowGraph, workflowDraftSchema } from '@betterspend/shared';
-import type { Db } from '@betterspend/db';
+import {
+  compileWorkflowGraph,
+  workflowAssistantProposalRequestSchema,
+  workflowDraftSchema,
+} from '@betterspend/shared';
+import type { Db, DbTransaction } from '@betterspend/db';
 import { workflowDefinitions, workflowDefinitionVersions } from '@betterspend/db';
 import { DB_TOKEN } from '../../database/database.module';
 import { AuditService } from '../audit/audit.service';
 import { EntitiesService } from '../entities/entities.service';
+import { WorkflowAssistantService } from './workflow-assistant.service';
+import {
+  WorkflowDraftLeaseService,
+  type WorkflowDraftLeaseAcquisition,
+  type WorkflowDraftLeaseTakeover,
+} from './workflow-draft-lease.service';
 
 function newWorkflowDraft(domain: WorkflowDomain): WorkflowDraft {
   const event = {
@@ -53,6 +74,8 @@ export class WorkflowDefinitionsService {
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly entities: EntitiesService,
     private readonly audit: AuditService,
+    private readonly leases: WorkflowDraftLeaseService,
+    @Optional() private readonly assistant?: WorkflowAssistantService,
   ) {}
 
   findAll(organizationId: string, domain?: WorkflowDomain) {
@@ -110,10 +133,17 @@ export class WorkflowDefinitionsService {
     return this.findOne(definition.id, organizationId);
   }
 
-  async saveDraft(id: string, organizationId: string, userId: string, draft: WorkflowDraft) {
+  async saveDraft(
+    id: string,
+    organizationId: string,
+    userId: string,
+    draft: WorkflowDraft,
+    editorInstanceId: string,
+    leaseToken: string,
+  ) {
     await this.db.transaction(async (tx) => {
       const [definition] = await tx
-        .select({ domain: workflowDefinitions.domain })
+        .select({ domain: workflowDefinitions.domain, draftFence: workflowDefinitions.draftFence })
         .from(workflowDefinitions)
         .where(
           and(
@@ -123,12 +153,33 @@ export class WorkflowDefinitionsService {
         )
         .for('update');
       if (!definition) throw new NotFoundException(`Workflow definition ${id} not found`);
+      const lease = await this.assertOwnedLease(
+        id,
+        organizationId,
+        userId,
+        definition.draftFence,
+        editorInstanceId,
+        leaseToken,
+      );
       this.assertDraftDomain(definition.domain as WorkflowDomain, draft);
 
-      await tx
+      const [updated] = await tx
         .update(workflowDefinitions)
-        .set({ currentDraft: draft, updatedBy: userId, updatedAt: new Date() })
-        .where(eq(workflowDefinitions.id, id));
+        .set({
+          currentDraft: draft,
+          draftFence: lease.fence,
+          updatedBy: userId,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(workflowDefinitions.id, id),
+            eq(workflowDefinitions.organizationId, organizationId),
+            eq(workflowDefinitions.draftFence, lease.fence),
+          ),
+        )
+        .returning({ id: workflowDefinitions.id });
+      if (!updated) throw new ConflictException('Workflow draft lease is stale');
       await this.audit.log(
         organizationId,
         userId,
@@ -143,7 +194,14 @@ export class WorkflowDefinitionsService {
     return this.findOne(id, organizationId);
   }
 
-  async publish(id: string, organizationId: string, userId: string) {
+  async publish(
+    id: string,
+    organizationId: string,
+    userId: string,
+    editorInstanceId: string,
+    leaseToken: string,
+    expectedDraft: WorkflowDraft,
+  ) {
     const published = await this.db.transaction(async (tx) => {
       const [definition] = await tx
         .select()
@@ -156,6 +214,20 @@ export class WorkflowDefinitionsService {
         )
         .for('update');
       if (!definition) throw new NotFoundException(`Workflow definition ${id} not found`);
+      const lease = await this.assertOwnedLease(
+        id,
+        organizationId,
+        userId,
+        definition.draftFence,
+        editorInstanceId,
+        leaseToken,
+      );
+
+      if (!sameWorkflowDraft(definition.currentDraft, expectedDraft)) {
+        throw new ConflictException(
+          'Workflow draft changed after it was reviewed; review the latest draft before publishing',
+        );
+      }
 
       const compilation = compileWorkflowGraph(definition.currentDraft.graph);
       if (!compilation.success) {
@@ -180,15 +252,29 @@ export class WorkflowDefinitionsService {
           version: (latest?.version ?? 0) + 1,
           graphJson: compilation.graph,
           positionsJson: definition.currentDraft.positions,
+          notesJson: definition.currentDraft.notes,
           executableJson: compilation.executable,
           publishedBy: userId,
         })
         .returning();
 
-      await tx
+      const [updated] = await tx
         .update(workflowDefinitions)
-        .set({ publishedVersionId: version.id, updatedBy: userId, updatedAt: new Date() })
-        .where(eq(workflowDefinitions.id, id));
+        .set({
+          publishedVersionId: version.id,
+          draftFence: lease.fence,
+          updatedBy: userId,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(workflowDefinitions.id, id),
+            eq(workflowDefinitions.organizationId, organizationId),
+            eq(workflowDefinitions.draftFence, lease.fence),
+          ),
+        )
+        .returning({ id: workflowDefinitions.id });
+      if (!updated) throw new ConflictException('Workflow draft lease is stale');
       await this.audit.log(
         organizationId,
         userId,
@@ -212,7 +298,14 @@ export class WorkflowDefinitionsService {
     });
   }
 
-  async restoreVersion(id: string, versionId: string, organizationId: string, userId: string) {
+  async restoreVersion(
+    id: string,
+    versionId: string,
+    organizationId: string,
+    userId: string,
+    editorInstanceId: string,
+    leaseToken: string,
+  ) {
     const restored = await this.db.transaction(async (tx) => {
       const [definition] = await tx
         .select()
@@ -225,6 +318,14 @@ export class WorkflowDefinitionsService {
         )
         .for('update');
       if (!definition) throw new NotFoundException(`Workflow definition ${id} not found`);
+      const lease = await this.assertOwnedLease(
+        id,
+        organizationId,
+        userId,
+        definition.draftFence,
+        editorInstanceId,
+        leaseToken,
+      );
 
       const version = await tx.query.workflowDefinitionVersions.findFirst({
         where: (record, { and, eq }) =>
@@ -236,11 +337,25 @@ export class WorkflowDefinitionsService {
       const draft = workflowDraftSchema.parse({
         graph: version.graphJson,
         positions: version.positionsJson,
+        notes: version.notesJson,
       });
-      await tx
+      const [updated] = await tx
         .update(workflowDefinitions)
-        .set({ currentDraft: draft, updatedBy: userId, updatedAt: new Date() })
-        .where(eq(workflowDefinitions.id, definition.id));
+        .set({
+          currentDraft: draft,
+          draftFence: lease.fence,
+          updatedBy: userId,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(workflowDefinitions.id, definition.id),
+            eq(workflowDefinitions.organizationId, organizationId),
+            eq(workflowDefinitions.draftFence, lease.fence),
+          ),
+        )
+        .returning({ id: workflowDefinitions.id });
+      if (!updated) throw new ConflictException('Workflow draft lease is stale');
       await this.audit.log(
         organizationId,
         userId,
@@ -256,6 +371,179 @@ export class WorkflowDefinitionsService {
     return restored;
   }
 
+  async getDraftLease(
+    id: string,
+    organizationId: string,
+    userId: string,
+    editorInstanceId: string,
+  ): Promise<WorkflowDraftLeaseStatus> {
+    await this.findOne(id, organizationId);
+    return this.requireLeases().status(id, organizationId, userId, editorInstanceId);
+  }
+
+  async acquireDraftLease(
+    id: string,
+    organizationId: string,
+    userId: string,
+    editorInstanceId: string,
+    holderName?: string,
+  ): Promise<WorkflowDraftLeaseStatus> {
+    const leases = this.requireLeases();
+    const resolvedHolderName = await this.resolveHolderName(organizationId, userId, holderName);
+    let acquisition: WorkflowDraftLeaseAcquisition | undefined;
+    try {
+      const status = await this.db.transaction(async (tx) => {
+        const [definition] = await tx
+          .select({ draftFence: workflowDefinitions.draftFence })
+          .from(workflowDefinitions)
+          .where(
+            and(
+              eq(workflowDefinitions.id, id),
+              eq(workflowDefinitions.organizationId, organizationId),
+            ),
+          )
+          .for('update');
+        if (!definition) throw new NotFoundException(`Workflow definition ${id} not found`);
+
+        acquisition = await leases.acquireWithResult(
+          id,
+          organizationId,
+          userId,
+          editorInstanceId,
+          resolvedHolderName,
+          definition.draftFence,
+        );
+        if (!acquisition.created) return acquisition.status;
+        if (acquisition.status.state !== 'owned') {
+          throw new ServiceUnavailableException(
+            'Workflow draft lease acquisition returned no owner',
+          );
+        }
+
+        await this.persistLeaseFence(
+          tx,
+          id,
+          organizationId,
+          definition.draftFence,
+          acquisition.status.lease.fence,
+        );
+        return acquisition.status;
+      });
+      acquisition = undefined;
+      return status;
+    } catch (error) {
+      if (acquisition?.created) await this.compensateLeaseChange(acquisition, error);
+      throw error;
+    }
+  }
+
+  async renewDraftLease(
+    id: string,
+    organizationId: string,
+    userId: string,
+    editorInstanceId: string,
+    leaseToken: string,
+  ): Promise<WorkflowDraftLeaseStatus> {
+    await this.findOne(id, organizationId);
+    return this.requireLeases().renew(id, organizationId, userId, editorInstanceId, leaseToken);
+  }
+
+  async releaseDraftLease(
+    id: string,
+    organizationId: string,
+    userId: string,
+    editorInstanceId: string,
+    leaseToken: string,
+  ): Promise<WorkflowDraftLeaseStatus> {
+    await this.findOne(id, organizationId);
+    return this.requireLeases().release(id, organizationId, userId, editorInstanceId, leaseToken);
+  }
+
+  async takeoverDraftLease(
+    id: string,
+    organizationId: string,
+    userId: string,
+    editorInstanceId: string,
+    holderName?: string,
+  ): Promise<WorkflowDraftLeaseStatus> {
+    const leases = this.requireLeases();
+    const resolvedHolderName = await this.resolveHolderName(organizationId, userId, holderName);
+    let takeover: WorkflowDraftLeaseTakeover | undefined;
+    try {
+      const status = await this.db.transaction(async (tx) => {
+        const [definition] = await tx
+          .select({ draftFence: workflowDefinitions.draftFence })
+          .from(workflowDefinitions)
+          .where(
+            and(
+              eq(workflowDefinitions.id, id),
+              eq(workflowDefinitions.organizationId, organizationId),
+            ),
+          )
+          .for('update');
+        if (!definition) throw new NotFoundException(`Workflow definition ${id} not found`);
+
+        takeover = await leases.takeoverWithResult(
+          id,
+          organizationId,
+          userId,
+          editorInstanceId,
+          resolvedHolderName,
+          definition.draftFence,
+        );
+        await this.persistLeaseFence(
+          tx,
+          id,
+          organizationId,
+          definition.draftFence,
+          takeover.status.lease.fence,
+        );
+        const previous = takeover.previous;
+        await this.audit.log(
+          organizationId,
+          userId,
+          'workflow_definition',
+          id,
+          'draft_lease_taken_over',
+          previous
+            ? {
+                previousHolderUserId: previous.holderUserId,
+                previousHolderName: previous.holderName,
+                previousExpiresAt: previous.expiresAt,
+              }
+            : undefined,
+          undefined,
+          tx,
+        );
+        return takeover.status;
+      });
+      takeover = undefined;
+      return status;
+    } catch (error) {
+      if (takeover) await this.compensateLeaseChange(takeover, error);
+      throw error;
+    }
+  }
+
+  async proposeAssistant(
+    id: string,
+    organizationId: string,
+    input: WorkflowAssistantProposalRequest,
+  ): Promise<WorkflowAssistantProposalResponse> {
+    const parsed = workflowAssistantProposalRequestSchema.safeParse(input);
+    if (!parsed.success) throw new BadRequestException('Invalid workflow assistant request');
+    const definition = await this.findOne(id, organizationId);
+    if (parsed.data.graph.domain !== definition.domain) {
+      throw new BadRequestException(
+        `Workflow graph domain ${parsed.data.graph.domain} does not match definition domain ${definition.domain}`,
+      );
+    }
+    if (!this.assistant) {
+      throw new ServiceUnavailableException('Workflow assistant is unavailable');
+    }
+    return this.assistant.propose(organizationId, parsed.data);
+  }
+
   private assertDraftDomain(domain: WorkflowDomain, draft: WorkflowDraft): void {
     if (draft.graph.domain !== domain) {
       throw new BadRequestException(
@@ -263,4 +551,126 @@ export class WorkflowDefinitionsService {
       );
     }
   }
+
+  private async assertOwnedLease(
+    id: string,
+    organizationId: string,
+    userId: string,
+    expectedFence: number,
+    editorInstanceId: string,
+    leaseToken: string,
+  ) {
+    const lease = await this.leases.assertOwned(
+      id,
+      organizationId,
+      userId,
+      editorInstanceId,
+      leaseToken,
+    );
+    if (lease.fence !== expectedFence) {
+      throw new ConflictException('Workflow draft lease fence is stale');
+    }
+    return lease;
+  }
+
+  private async persistLeaseFence(
+    tx: DbTransaction,
+    id: string,
+    organizationId: string,
+    expectedFence: number,
+    nextFence: number,
+  ): Promise<void> {
+    const [updated] = await tx
+      .update(workflowDefinitions)
+      .set({ draftFence: nextFence })
+      .where(
+        and(
+          eq(workflowDefinitions.id, id),
+          eq(workflowDefinitions.organizationId, organizationId),
+          eq(workflowDefinitions.draftFence, expectedFence),
+        ),
+      )
+      .returning({ id: workflowDefinitions.id });
+    if (!updated)
+      throw new ConflictException('Workflow draft lease changed while acquiring ownership');
+  }
+
+  private async compensateLeaseChange(
+    change: WorkflowDraftLeaseAcquisition | WorkflowDraftLeaseTakeover,
+    originalError: unknown,
+  ): Promise<void> {
+    try {
+      if (await change.restore()) return;
+    } catch {
+      throw new ServiceUnavailableException(
+        'Workflow draft lease could not be rolled back after the database operation failed',
+      );
+    }
+    throw new ServiceUnavailableException(
+      'Workflow draft lease changed again before the failed operation could be rolled back',
+      { cause: originalError },
+    );
+  }
+
+  private requireLeases(): WorkflowDraftLeaseService {
+    return this.leases;
+  }
+
+  private async resolveHolderName(
+    organizationId: string,
+    userId: string,
+    suppliedName?: string,
+  ): Promise<string> {
+    if (suppliedName?.trim()) return suppliedName.trim();
+    const user = await this.db.query.users.findFirst({
+      where: (record, { and, eq }) =>
+        and(
+          eq(record.id, userId),
+          eq(record.organizationId, organizationId),
+          eq(record.isActive, true),
+        ),
+    });
+    if (!user) throw new NotFoundException('Current user not found');
+    return workflowLeaseHolderName(user.name, user.email);
+  }
+}
+
+export function workflowLeaseHolderName(name: string, email: string): string {
+  return name.trim() || email.trim() || 'Unknown editor';
+}
+
+function sameWorkflowDraft(stored: unknown, expected: WorkflowDraft): boolean {
+  const storedDraft = workflowDraftSchema.safeParse(stored);
+  const expectedDraft = workflowDraftSchema.safeParse(expected);
+  return (
+    storedDraft.success &&
+    expectedDraft.success &&
+    sameJsonValue(storedDraft.data, expectedDraft.data)
+  );
+}
+
+function sameJsonValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => sameJsonValue(value, right[index]))
+    );
+  }
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') {
+    return false;
+  }
+
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key) => Object.hasOwn(rightRecord, key) && sameJsonValue(leftRecord[key], rightRecord[key]),
+    )
+  );
 }

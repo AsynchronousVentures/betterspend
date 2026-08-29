@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { WORKFLOW_GRAPH_LIMITS, workflowGraphSchema } from './graph';
+import { WORKFLOW_GRAPH_LIMITS, workflowGraphSchema, type WorkflowDomain } from './graph';
+import type { WorkflowNode } from './node-types';
 import { validateWorkflowGraph } from './validate';
 
 const PRIMARY_APPROVER_ID = '00000000-0000-4000-8000-000000000001';
@@ -93,6 +94,62 @@ function issueCodes(input: unknown) {
   return validateWorkflowGraph(input).issues.map((issue) => issue.code);
 }
 
+function domainCheckGraph(
+  domain: WorkflowDomain,
+  node: WorkflowNode,
+  outputHandles: readonly [string, string],
+) {
+  const events = {
+    requisition: 'requisition_submitted',
+    invoice: 'invoice_submitted',
+    po_change: 'po_change_submitted',
+  } as const;
+  return workflowGraphSchema.parse({
+    schemaVersion: 1,
+    domain,
+    entryNodeId: 'start',
+    nodes: [
+      {
+        id: 'start',
+        name: 'Submitted',
+        type: 'trigger',
+        config: { event: events[domain] },
+      },
+      node,
+      { id: 'approved', name: 'Approved', type: 'approved', config: {} },
+      {
+        id: 'rejected',
+        name: 'Rejected',
+        type: 'reject',
+        config: { reasonRequired: true },
+      },
+    ],
+    edges: [
+      {
+        id: 'to-check',
+        sourceNodeId: 'start',
+        sourceHandle: 'out',
+        targetNodeId: node.id,
+        targetHandle: 'in',
+      },
+      {
+        id: 'check-approved',
+        sourceNodeId: node.id,
+        sourceHandle: outputHandles[0],
+        targetNodeId: 'approved',
+        targetHandle: 'in',
+      },
+      {
+        id: 'check-rejected',
+        sourceNodeId: node.id,
+        sourceHandle: outputHandles[1],
+        targetNodeId: 'rejected',
+        targetHandle: 'in',
+      },
+    ],
+  });
+}
+
 describe('validateWorkflowGraph', () => {
   it('parses a valid graph and returns a deterministic topological order', () => {
     const result = validateWorkflowGraph(validGraph());
@@ -106,6 +163,66 @@ describe('validateWorkflowGraph', () => {
       'approved',
       'rejected',
     ]);
+  });
+
+  it('rejects nodes that do not have runtime meaning in the workflow domain', () => {
+    const matchNode: WorkflowNode = {
+      id: 'match',
+      name: 'Match',
+      type: 'match_check',
+      disabled: false,
+      config: {},
+    };
+    const requisition = domainCheckGraph('requisition', matchNode, [
+      'within_tolerance',
+      'exception',
+    ]);
+
+    const result = validateWorkflowGraph(requisition);
+
+    assert.equal(result.valid, false);
+    assert.deepEqual(
+      result.issues
+        .filter((issue) => issue.code === 'node_domain_mismatch')
+        .map((issue) => issue.nodeIds),
+      [['match']],
+    );
+    assert.equal(
+      validateWorkflowGraph(
+        domainCheckGraph('invoice', matchNode, ['within_tolerance', 'exception']),
+      ).valid,
+      true,
+    );
+  });
+
+  it('enforces every domain-specific node catalog entry', () => {
+    const budgetNode: WorkflowNode = {
+      id: 'budget',
+      name: 'Budget',
+      type: 'budget_check',
+      disabled: false,
+      config: { policy: 'organization_default' },
+    };
+
+    const result = validateWorkflowGraph(
+      domainCheckGraph('invoice', budgetNode, ['available', 'breach']),
+    );
+
+    assert.ok(
+      result.issues.some(
+        (issue) => issue.code === 'node_domain_mismatch' && issue.nodeIds?.includes('budget'),
+      ),
+    );
+    assert.equal(
+      validateWorkflowGraph(domainCheckGraph('requisition', budgetNode, ['available', 'breach']))
+        .valid,
+      true,
+    );
+    assert.equal(
+      validateWorkflowGraph(domainCheckGraph('po_change', budgetNode, ['available', 'breach']))
+        .valid,
+      true,
+    );
   });
 
   it('omits disabled nodes from the execution order', () => {
@@ -601,5 +718,42 @@ describe('validateWorkflowGraph', () => {
 
     assert.equal(result.topologicalOrder, null);
     assert.deepEqual(cycle?.path, ['approved', 'finance', 'approved']);
+  });
+
+  it('rejects enabled graph behavior that the runtime cannot execute yet', () => {
+    const allTrue = validGraph();
+    const condition = allTrue.nodes.find((node) => node.id === 'amount-check');
+    assert.ok(condition?.type === 'condition');
+    condition.config.mode = 'all_true';
+
+    for (const type of ['collect_form', 'notify'] as const) {
+      const graph = validGraph();
+      graph.nodes.splice(2, 0, {
+        id: `unsupported-${type}`,
+        name: `Unsupported ${type}`,
+        type,
+        config:
+          type === 'collect_form'
+            ? { fields: [{ key: 'reason', label: 'Reason', type: 'text', required: true }] }
+            : {
+                channels: ['in_app'],
+                recipients: [{ type: 'role', role: 'finance', scope: 'global' }],
+                message: 'Review required',
+              },
+      } as WorkflowNode);
+      assert.ok(issueCodes(graph).includes('runtime_unsupported'));
+    }
+
+    assert.ok(issueCodes(allTrue).includes('runtime_unsupported'));
+  });
+
+  it('allows unsupported node shapes to remain stored when they are disabled', () => {
+    const graph = validGraph();
+    const condition = graph.nodes.find((node) => node.id === 'amount-check');
+    assert.ok(condition?.type === 'condition');
+    condition.config.mode = 'all_true';
+    condition.disabled = true;
+
+    assert.equal(issueCodes(graph).includes('runtime_unsupported'), false);
   });
 });

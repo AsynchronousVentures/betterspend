@@ -1,6 +1,6 @@
 {
-  "id": "ddc51d3b-5e37-4e70-ac4d-01db4b28ae4d",
-  "prevId": "22f11831-6683-43ab-9520-6af269b320ac",
+  "id": "622c4794-a733-4f3e-a9ec-b77f8c89c79b",
+  "prevId": "9d1b9ece-4a7d-48f8-b52e-4e84afe9f970",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1649,12 +1649,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "idempotency_key": {
-          "name": "idempotency_key",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false
-        },
         "submitted_at": {
           "name": "submitted_at",
           "type": "timestamp with time zone",
@@ -1688,27 +1682,6 @@
             },
             {
               "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "requisitions_org_idempotency_key_unique": {
-          "name": "requisitions_org_idempotency_key_unique",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "idempotency_key",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2765,6 +2738,13 @@
           "notNull": true,
           "default": "'{}'::jsonb"
         },
+        "notes_json": {
+          "name": "notes_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
         "executable_json": {
           "name": "executable_json",
           "type": "jsonb",
@@ -2922,6 +2902,13 @@
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
+        },
+        "draft_fence": {
+          "name": "draft_fence",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
         },
         "published_version_id": {
           "name": "published_version_id",
@@ -7404,37 +7391,9 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
-        },
-        "idempotency_key": {
-          "name": "idempotency_key",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false
         }
       },
-      "indexes": {
-        "notifications_org_idempotency_key_unique": {
-          "name": "notifications_org_idempotency_key_unique",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "idempotency_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "notifications_user_id_users_id_fk": {
           "name": "notifications_user_id_users_id_fk",
@@ -7879,12 +7838,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "idempotency_key": {
-          "name": "idempotency_key",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -7900,29 +7853,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "rfq_requests_org_idempotency_key_unique": {
-          "name": "rfq_requests_org_idempotency_key_unique",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "idempotency_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "rfq_requests_organization_id_organizations_id_fk": {
           "name": "rfq_requests_organization_id_organizations_id_fk",
@@ -11502,12 +11433,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "idempotency_key": {
-          "name": "idempotency_key",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false
-        },
         "author_name": {
           "name": "author_name",
           "type": "varchar(255)",
@@ -11559,27 +11484,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "messages_org_idempotency_key_unique": {
-          "name": "messages_org_idempotency_key_unique",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "idempotency_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -12442,388 +12346,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.artifact_notification_deliveries": {
-      "name": "artifact_notification_deliveries",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "operation_id": {
-          "name": "operation_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "delivery_key": {
-          "name": "delivery_key",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "attempts": {
-          "name": "attempts",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "last_error": {
-          "name": "last_error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "lease_token": {
-          "name": "lease_token",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "lease_expires_at": {
-          "name": "lease_expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "delivered_at": {
-          "name": "delivered_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "artifact_notification_deliveries_operation_key_unique": {
-          "name": "artifact_notification_deliveries_operation_key_unique",
-          "columns": [
-            {
-              "expression": "operation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "delivery_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "artifact_notification_deliveries_retry_idx": {
-          "name": "artifact_notification_deliveries_retry_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "lease_expires_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "artifact_notification_deliveries_organization_id_organizations_id_fk": {
-          "name": "artifact_notification_deliveries_organization_id_organizations_id_fk",
-          "tableFrom": "artifact_notification_deliveries",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "artifact_notification_deliveries_operation_org_fk": {
-          "name": "artifact_notification_deliveries_operation_org_fk",
-          "tableFrom": "artifact_notification_deliveries",
-          "tableTo": "artifact_operations",
-          "columnsFrom": [
-            "operation_id",
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id",
-            "organization_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "artifact_notification_deliveries_status_check": {
-          "name": "artifact_notification_deliveries_status_check",
-          "value": "\"artifact_notification_deliveries\".\"status\" IN ('pending', 'delivered', 'failed')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.artifact_operations": {
-      "name": "artifact_operations",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "operation_type": {
-          "name": "operation_type",
-          "type": "varchar(40)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "idempotency_key": {
-          "name": "idempotency_key",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "request_hash": {
-          "name": "request_hash",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "artifact_kind": {
-          "name": "artifact_kind",
-          "type": "varchar(30)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "artifact_id": {
-          "name": "artifact_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "artifact_number": {
-          "name": "artifact_number",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "attempts": {
-          "name": "attempts",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "last_error": {
-          "name": "last_error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "lease_token": {
-          "name": "lease_token",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "lease_expires_at": {
-          "name": "lease_expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "artifact_operations_id_organization_id_unique": {
-          "name": "artifact_operations_id_organization_id_unique",
-          "columns": [
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "artifact_operations_org_key_unique": {
-          "name": "artifact_operations_org_key_unique",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "idempotency_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "artifact_operations_org_status_idx": {
-          "name": "artifact_operations_org_status_idx",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "operation_type",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "lease_expires_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "artifact_operations_organization_id_organizations_id_fk": {
-          "name": "artifact_operations_organization_id_organizations_id_fk",
-          "tableFrom": "artifact_operations",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "artifact_operations_operation_type_check": {
-          "name": "artifact_operations_operation_type_check",
-          "value": "\"artifact_operations\".\"operation_type\" IN ('software_license_renewal', 'message_post')"
-        },
-        "artifact_operations_status_check": {
-          "name": "artifact_operations_status_check",
-          "value": "\"artifact_operations\".\"status\" IN ('pending', 'artifact_created', 'completed', 'failed')"
-        },
-        "artifact_operations_artifact_shape_check": {
-          "name": "artifact_operations_artifact_shape_check",
-          "value": "(\"artifact_operations\".\"artifact_id\" IS NULL AND \"artifact_operations\".\"artifact_kind\" IS NULL) OR (\"artifact_operations\".\"artifact_id\" IS NOT NULL AND \"artifact_operations\".\"artifact_kind\" IS NOT NULL)"
-        },
-        "artifact_operations_artifact_kind_check": {
-          "name": "artifact_operations_artifact_kind_check",
-          "value": "\"artifact_operations\".\"artifact_kind\" IS NULL OR \"artifact_operations\".\"artifact_kind\" IN ('requisition', 'rfq', 'message')"
-        }
-      },
       "isRLSEnabled": false
     }
   },

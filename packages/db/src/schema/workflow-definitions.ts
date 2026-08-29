@@ -26,6 +26,7 @@ export const workflowDefinitions = pgTable(
     domain: varchar('domain', { length: 30 }).notNull(),
     name: varchar('name', { length: 255 }).notNull(),
     currentDraft: jsonb('current_draft').$type<WorkflowDraft>().notNull(),
+    draftFence: integer('draft_fence').notNull().default(0),
     publishedVersionId: uuid('published_version_id'),
     createdBy: uuid('created_by').notNull(),
     updatedBy: uuid('updated_by').notNull(),
@@ -76,6 +77,7 @@ export const workflowDefinitionVersions = pgTable(
       .$type<WorkflowDraft['positions']>()
       .notNull()
       .default({}),
+    notesJson: jsonb('notes_json').$type<WorkflowDraft['notes']>().notNull().default([]),
     executableJson: jsonb('executable_json').$type<ExecutableDefinition>().notNull(),
     publishedBy: uuid('published_by').notNull(),
     publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow(),

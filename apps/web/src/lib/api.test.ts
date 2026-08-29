@@ -204,6 +204,102 @@ test('shared API methods omit authorization when no token cookie exists', async 
   assert.equal(headers.has('x-org-id'), false);
 });
 
+test('workflow definition responses are parsed at the API boundary', async () => {
+  const graph = {
+    schemaVersion: 1,
+    domain: 'requisition',
+    entryNodeId: 'trigger',
+    nodes: [
+      {
+        id: 'trigger',
+        name: 'Submitted',
+        type: 'trigger',
+        config: { event: 'requisition_submitted' },
+      },
+      { id: 'approved', name: 'Approved', type: 'approved', config: {} },
+    ],
+    edges: [
+      {
+        id: 'trigger-to-approved',
+        sourceNodeId: 'trigger',
+        sourceHandle: 'out',
+        targetNodeId: 'approved',
+        targetHandle: 'in',
+      },
+    ],
+  };
+  const response = {
+    id: '00000000-0000-4000-8000-000000000001',
+    organizationId: '00000000-0000-4000-8000-000000000002',
+    entityId: null,
+    domain: 'requisition',
+    name: 'Requisition approvals',
+    currentDraft: { graph, positions: {}, notes: [] },
+    draftFence: 1,
+    publishedVersionId: null,
+    publishedVersion: null,
+    createdBy: '00000000-0000-4000-8000-000000000003',
+    updatedBy: '00000000-0000-4000-8000-000000000003',
+    createdAt: '2026-08-29T12:00:00.000Z',
+    updatedAt: '2026-08-29T12:00:00.000Z',
+  };
+
+  const { result } = await runWithMockedRequest(jsonResponse(response), () =>
+    api.workflowDefinitions.get(response.id),
+  );
+  assert.equal(result.id, response.id);
+
+  await assert.rejects(
+    runWithMockedRequest(jsonResponse({ ...response, currentDraft: null }), () =>
+      api.workflowDefinitions.get(response.id),
+    ),
+  );
+});
+
+test('workflow lease and assistant responses are parsed at the API boundary', async () => {
+  const definitionId = '00000000-0000-4000-8000-000000000001';
+  const editorInstanceId = '00000000-0000-4000-8000-000000000002';
+  const credentials = { editorInstanceId, leaseToken: 'valid-lease-token' };
+  const invalidLeaseResponse = jsonResponse({ state: 'owned' });
+  const leaseCalls = [
+    () => api.workflowDefinitions.lease.status(definitionId, editorInstanceId),
+    () => api.workflowDefinitions.lease.acquire(definitionId, editorInstanceId),
+    () => api.workflowDefinitions.lease.renew(definitionId, credentials),
+    () => api.workflowDefinitions.lease.release(definitionId, credentials),
+    () => api.workflowDefinitions.lease.takeover(definitionId, editorInstanceId),
+  ];
+
+  for (const call of leaseCalls) {
+    await assert.rejects(runWithMockedRequest(invalidLeaseResponse.clone(), call));
+  }
+
+  await assert.rejects(
+    runWithMockedRequest(
+      jsonResponse({ summary: '', operations: [], validation: { valid: true, issues: [] } }),
+      () =>
+        api.workflowDefinitions.propose(definitionId, {
+          prompt: 'Add an approval',
+          graph: {
+            schemaVersion: 1,
+            domain: 'requisition',
+            entryNodeId: 'trigger',
+            nodes: [
+              {
+                id: 'trigger',
+                name: 'Submitted',
+                type: 'trigger',
+                disabled: false,
+                config: { event: 'requisition_submitted' },
+              },
+            ],
+            edges: [],
+          },
+          positions: {},
+        }),
+    ),
+  );
+});
+
 test('message lists accept RFC-compatible database UUIDs', async () => {
   const messages = [
     {

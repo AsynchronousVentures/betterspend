@@ -1,6 +1,6 @@
 {
-  "id": "22f11831-6683-43ab-9520-6af269b320ac",
-  "prevId": "a0519128-d269-41dd-a67f-173d5514bcfa",
+  "id": "cfe69b5e-5fb8-429a-baf4-75d9a6f942f6",
+  "prevId": "622c4794-a733-4f3e-a9ec-b77f8c89c79b",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2765,6 +2765,13 @@
           "notNull": true,
           "default": "'{}'::jsonb"
         },
+        "notes_json": {
+          "name": "notes_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
         "executable_json": {
           "name": "executable_json",
           "type": "jsonb",
@@ -2922,6 +2929,13 @@
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
+        },
+        "draft_fence": {
+          "name": "draft_fence",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
         },
         "published_version_id": {
           "name": "published_version_id",
@@ -12818,6 +12832,10 @@
         "artifact_operations_artifact_shape_check": {
           "name": "artifact_operations_artifact_shape_check",
           "value": "(\"artifact_operations\".\"artifact_id\" IS NULL AND \"artifact_operations\".\"artifact_kind\" IS NULL) OR (\"artifact_operations\".\"artifact_id\" IS NOT NULL AND \"artifact_operations\".\"artifact_kind\" IS NOT NULL)"
+        },
+        "artifact_operations_artifact_kind_check": {
+          "name": "artifact_operations_artifact_kind_check",
+          "value": "\"artifact_operations\".\"artifact_kind\" IS NULL OR \"artifact_operations\".\"artifact_kind\" IN ('requisition', 'rfq', 'message')"
         }
       },
       "isRLSEnabled": false

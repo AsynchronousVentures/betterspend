@@ -3,38 +3,39 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 
-const migrationTag = '20260829095118_large_natasha_romanoff';
-const artifactKindMigrationTag = '20260829102117_broad_magma';
+const migrationTag = '20260829155943_artifact_idempotency_after_workflow_merge';
 const migrationsDirectory = join(__dirname, 'migrations');
 const migrationRunner = join(__dirname, 'migrate.ts');
 
-test('artifact idempotency migrations are guarded and recorded in migration history', async () => {
-  const [migration, artifactKindMigration, journalText] = await Promise.all([
+test('artifact idempotency migration is recorded in migration history', async () => {
+  const [migration, journalText] = await Promise.all([
     readFile(join(migrationsDirectory, `${migrationTag}.sql`), 'utf8'),
-    readFile(join(migrationsDirectory, `${artifactKindMigrationTag}.sql`), 'utf8'),
     readFile(join(migrationsDirectory, 'meta', '_journal.json'), 'utf8'),
   ]);
   const journal = JSON.parse(journalText) as { entries: Array<{ idx: number; tag: string }> };
 
   assert.match(migration, /^SET LOCAL lock_timeout = '5s';/);
   assert.match(migration, /SET LOCAL statement_timeout = '30s';/);
-  assert.match(migration, /UPDATE "artifact_notification_deliveries"/);
+  assert.match(migration, /CREATE TABLE "artifact_operations"/);
+  assert.match(migration, /ADD COLUMN "idempotency_key" varchar\(255\)/);
   assert.match(
-    artifactKindMigration,
-    /ADD CONSTRAINT "artifact_operations_artifact_kind_check" CHECK .*'requisition'.*'rfq'.*'message'/s,
+    migration,
+    /artifact_operations_artifact_kind_check.*'requisition'.*'rfq'.*'message'/s,
   );
   const migrationEntry = journal.entries.find(({ tag }) => tag === migrationTag);
   assert.ok(migrationEntry, `migration ${migrationTag} is not recorded in the journal`);
-  const artifactKindMigrationEntry = journal.entries.find(
-    ({ tag }) => tag === artifactKindMigrationTag,
+
+  const parentIndexPosition = migration.indexOf(
+    'CREATE UNIQUE INDEX "artifact_operations_id_organization_id_unique"',
   );
-  assert.ok(
-    artifactKindMigrationEntry,
-    `migration ${artifactKindMigrationTag} is not recorded in the journal`,
+  const deliveryForeignKeyPosition = migration.indexOf(
+    'ADD CONSTRAINT "artifact_notification_deliveries_operation_org_fk"',
   );
+  assert.ok(parentIndexPosition >= 0, 'parent composite index must exist');
+  assert.ok(deliveryForeignKeyPosition >= 0, 'delivery composite foreign key must exist');
   assert.ok(
-    migrationEntry.idx < artifactKindMigrationEntry.idx,
-    'artifact kind migration must follow the notification delivery migration',
+    parentIndexPosition < deliveryForeignKeyPosition,
+    'parent composite index must be created before the delivery foreign key',
   );
 });
 

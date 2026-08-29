@@ -77,4 +77,17 @@ describe('compileWorkflowGraph', () => {
     if (result.success) return;
     assert.ok(result.issues.some((issue) => issue.code === 'unreachable_node'));
   });
+
+  it('does not compile enabled notify nodes until runtime support exists', () => {
+    const graph = graphWithDisabledStep();
+    const notice = graph.nodes.find((node) => node.id === 'notice');
+    assert.ok(notice);
+    notice.disabled = false;
+
+    const result = compileWorkflowGraph(graph);
+
+    assert.equal(result.success, false);
+    if (result.success) return;
+    assert.ok(result.issues.some((issue) => issue.code === 'runtime_unsupported'));
+  });
 });
