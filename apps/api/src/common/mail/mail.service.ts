@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import { formatMoney, type MoneyAmount } from '../utils/money';
 
 export interface MailOptions {
   to: string | string[];
@@ -59,12 +60,26 @@ export class MailService {
     entityType: string;
     entityNumber: string;
     requestedBy: string;
-    amount?: string;
+    amount?: MoneyAmount;
+    currency?: string;
+    locale?: string;
     appUrl: string;
     approvalId: string;
   }): MailOptions {
-    const { appName, approverName, entityType, entityNumber, requestedBy, amount, appUrl, approvalId } = params;
+    const {
+      appName,
+      approverName,
+      entityType,
+      entityNumber,
+      requestedBy,
+      amount,
+      currency,
+      locale,
+      appUrl,
+      approvalId,
+    } = params;
     const link = `${appUrl}/approvals/${approvalId}`;
+    const formattedAmount = amount == null ? undefined : formatMoney(amount, currency, locale);
     return {
       to: [],
       subject: `[${appName}] Approval Required: ${entityType} ${entityNumber}`,
@@ -76,7 +91,7 @@ export class MailService {
           <table style="width:100%;border-collapse:collapse;margin:16px 0">
             <tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:bold">Number</td><td style="padding:8px;border:1px solid #e2e8f0">${entityNumber}</td></tr>
             <tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:bold">Requested By</td><td style="padding:8px;border:1px solid #e2e8f0">${requestedBy}</td></tr>
-            ${amount ? `<tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:bold">Amount</td><td style="padding:8px;border:1px solid #e2e8f0">${amount}</td></tr>` : ''}
+            ${formattedAmount ? `<tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:bold">Amount</td><td style="padding:8px;border:1px solid #e2e8f0">${formattedAmount}</td></tr>` : ''}
           </table>
           <a href="${link}" style="display:inline-block;background:#3b82f6;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold">Review &amp; Approve</a>
           <hr style="margin:24px 0;border:none;border-top:1px solid #e2e8f0">
@@ -91,12 +106,24 @@ export class MailService {
     vendorName: string;
     vendorEmail: string;
     poNumber: string;
-    totalAmount: string;
-    currency: string;
+    totalAmount: MoneyAmount;
+    currency?: string;
+    locale?: string;
     appUrl: string;
     poId: string;
   }): MailOptions {
-    const { appName, vendorName, vendorEmail, poNumber, totalAmount, currency, appUrl, poId } = params;
+    const {
+      appName,
+      vendorName,
+      vendorEmail,
+      poNumber,
+      totalAmount,
+      currency,
+      locale,
+      appUrl,
+      poId,
+    } = params;
+    const formattedTotalAmount = formatMoney(totalAmount, currency, locale);
     return {
       to: vendorEmail,
       subject: `[${appName}] Purchase Order ${poNumber} Issued`,
@@ -107,7 +134,7 @@ export class MailService {
           <p>A new purchase order has been issued to your organization:</p>
           <table style="width:100%;border-collapse:collapse;margin:16px 0">
             <tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:bold">PO Number</td><td style="padding:8px;border:1px solid #e2e8f0">${poNumber}</td></tr>
-            <tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:bold">Total Amount</td><td style="padding:8px;border:1px solid #e2e8f0">${currency} ${totalAmount}</td></tr>
+            <tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:bold">Total Amount</td><td style="padding:8px;border:1px solid #e2e8f0">${formattedTotalAmount}</td></tr>
           </table>
           <hr style="margin:24px 0;border:none;border-top:1px solid #e2e8f0">
           <p style="color:#94a3b8;font-size:12px">This is an automated notification from ${appName}.</p>
