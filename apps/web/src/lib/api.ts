@@ -173,12 +173,12 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(apiUrl(`/api/v1${path}`), {
+      ...options,
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...options?.headers,
       },
-      ...options,
     });
   } catch {
     const error = networkError();
@@ -1190,9 +1190,11 @@ export const api = {
       threadId: string,
       body: string,
       recipientVendorId?: string,
+      idempotencyKey?: string,
     ) =>
       apiFetch<unknown>(`/messages/${threadType}/${threadId}`, {
         method: 'POST',
+        headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
         body: JSON.stringify({ body, ...(recipientVendorId ? { recipientVendorId } : {}) }),
       }).then((value) => messageSchema.parse(value)),
   },
@@ -1260,9 +1262,15 @@ export const api = {
       vendorPortalFetch<unknown>(`/vendor-portal/messages/${threadType}/${threadId}`).then(
         (value) => messageSchema.array().parse(value),
       ),
-    postMessage: (threadType: MessageThreadType, threadId: string, body: string) =>
+    postMessage: (
+      threadType: MessageThreadType,
+      threadId: string,
+      body: string,
+      idempotencyKey?: string,
+    ) =>
       vendorPortalFetch<unknown>(`/vendor-portal/messages/${threadType}/${threadId}`, {
         method: 'POST',
+        headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
         body: JSON.stringify({ body }),
       }).then((value) => messageSchema.parse(value)),
   },

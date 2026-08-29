@@ -14,6 +14,38 @@ interface Message {
   createdAt: string;
 }
 
+interface MessageIntent {
+  body: string;
+  recipientVendorId?: string;
+  attachments?: ReadonlyArray<{
+    documentId?: string;
+    url?: string;
+    name?: string;
+  }>;
+}
+
+interface PendingMessageIntent {
+  fingerprint: string;
+  idempotencyKey: string;
+}
+
+export function messageIntentFingerprint(intent: MessageIntent) {
+  return JSON.stringify({
+    body: intent.body.trim(),
+    recipientVendorId: intent.recipientVendorId ?? null,
+    attachments: intent.attachments ?? [],
+  });
+}
+
+export function idempotencyForMessageIntent(
+  pending: PendingMessageIntent | null,
+  fingerprint: string,
+  createKey: () => string,
+): PendingMessageIntent {
+  if (pending?.fingerprint === fingerprint) return pending;
+  return { fingerprint, idempotencyKey: createKey() };
+}
+
 /**
  * Append-only conversation attached to a procurement record. Buyers post
  * through the authenticated API; the vendor portal uses its scoped session.
@@ -36,19 +68,22 @@ export function MessageThread({
   const [error, setError] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const loadVersion = useRef(0);
+  const pendingMessageIntent = useRef<PendingMessageIntent | null>(null);
   const threadKey = `${portal ? 'portal' : 'buyer'}:${threadType}:${threadId}:${recipientVendorId ?? 'broadcast'}`;
   const activeThreadKey = useRef(threadKey);
   activeThreadKey.current = threadKey;
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<boolean> => {
     const version = ++loadVersion.current;
     try {
       const data = portal
         ? await api.vendorPortal.listMessages(threadType, threadId)
         : await api.messages.list(threadType, threadId);
       if (version === loadVersion.current) setMessages(data);
+      return true;
     } catch {
       if (version === loadVersion.current) setError('Failed to load messages.');
+      return false;
     }
   }, [portal, threadType, threadId]);
 
@@ -59,6 +94,7 @@ export function MessageThread({
     setDraft('');
     setError('');
     setSending(false);
+    pendingMessageIntent.current = null;
     load();
     const interval = setInterval(load, 30_000);
     return () => clearInterval(interval);
@@ -72,17 +108,27 @@ export function MessageThread({
     const body = draft.trim();
     if (!body || sending) return;
     const sendingThreadKey = threadKey;
+    const fingerprint = messageIntentFingerprint({ body, recipientVendorId });
+    const pending = idempotencyForMessageIntent(
+      pendingMessageIntent.current,
+      fingerprint,
+      () => crypto.randomUUID(),
+    );
+    pendingMessageIntent.current = pending;
+    const { idempotencyKey } = pending;
     setSending(true);
     setError('');
     try {
       if (portal) {
-        await api.vendorPortal.postMessage(threadType, threadId, body);
+        await api.vendorPortal.postMessage(threadType, threadId, body, idempotencyKey);
       } else {
-        await api.messages.post(threadType, threadId, body, recipientVendorId);
+        await api.messages.post(threadType, threadId, body, recipientVendorId, idempotencyKey);
       }
       if (activeThreadKey.current !== sendingThreadKey) return;
+      const refreshed = await load();
+      if (activeThreadKey.current !== sendingThreadKey || !refreshed) return;
+      pendingMessageIntent.current = null;
       setDraft('');
-      await load();
     } catch {
       if (activeThreadKey.current === sendingThreadKey) {
         setError('Failed to send message.');

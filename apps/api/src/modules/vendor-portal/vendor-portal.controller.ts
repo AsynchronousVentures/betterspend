@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -162,9 +163,13 @@ export class VendorPortalController {
     @Param('threadId', ParseUUIDPipe) threadId: string,
     @Req() request: Request,
     @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     const { vendorId, organizationId } = await this.getSessionContext(request);
-    const parsed = postMessageSchema.omit({ recipientVendorId: true }).parse(body);
+    const parsed = postMessageSchema.omit({ recipientVendorId: true }).parse({
+      ...(body && typeof body === 'object' ? body : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    });
     return this.messagesService.postAsVendor(
       organizationId,
       vendorId,

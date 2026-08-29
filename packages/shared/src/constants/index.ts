@@ -41,6 +41,7 @@ export const NUMBER_PREFIXES = {
   PURCHASE_ORDER: 'PO',
   GOODS_RECEIPT: 'GRN',
   INVOICE: 'INV',
+  RFQ: 'RFQ',
 } as const;
 
 export const INTEGRATION_CONNECTION_STATUS = {

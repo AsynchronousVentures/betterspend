@@ -7,8 +7,10 @@ import {
 } from '@nestjs/common';
 import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
+import { SequenceService } from '../../common/services/sequence.service';
 import type { Db } from '@betterspend/db';
 import {
+  auditLog,
   rfqRequests,
   rfqLines,
   rfqInvitations,
@@ -20,6 +22,7 @@ import {
   purchaseOrders,
   poLines,
 } from '@betterspend/db';
+import { normalizeMoney } from '@betterspend/shared';
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
 
@@ -27,6 +30,7 @@ import { SettingsService } from '../settings/settings.service';
 export class RfqService {
   constructor(
     @Inject(DB_TOKEN) private db: Db,
+    private readonly sequenceService: SequenceService,
     private readonly mailService: MailService,
     private readonly settingsService: SettingsService,
   ) {}
@@ -101,19 +105,6 @@ export class RfqService {
     );
   }
 
-  private async nextNumber(orgId: string): Promise<string> {
-    const year = new Date().getFullYear();
-    const [sequence] = await this.db
-      .insert(sequences)
-      .values({ organizationId: orgId, entityType: 'rfq', year, lastValue: 1 })
-      .onConflictDoUpdate({
-        target: [sequences.organizationId, sequences.entityType, sequences.year],
-        set: { lastValue: sql`${sequences.lastValue} + 1`, updatedAt: new Date() },
-      })
-      .returning({ lastValue: sequences.lastValue });
-    return `RFQ-${year}-${String(sequence.lastValue).padStart(4, '0')}`;
-  }
-
   private async nextPoNumber(orgId: string): Promise<string> {
     const year = new Date().getFullYear();
     const rows = await this.db
@@ -175,7 +166,7 @@ export class RfqService {
     const resMap = Object.fromEntries(resCounts.map((r) => [r.rfqId, Number(r.count)]));
 
     return rows.map((r) => ({
-      ...r.rfq,
+      ...withoutOwnerIdempotencyKey(r.rfq),
       requester: r.requester,
       awardedVendor: r.awardedVendor,
       invitationCount: invMap[r.rfq.id] ?? 0,
@@ -254,7 +245,7 @@ export class RfqService {
     }, {});
 
     return {
-      ...row.rfq,
+      ...withoutOwnerIdempotencyKey(row.rfq),
       requester: row.requester,
       awardedVendor: row.awardedVendor,
       lines,
@@ -280,10 +271,29 @@ export class RfqService {
         description: string;
         quantity: number;
         unitOfMeasure?: string;
-        targetPrice?: number;
+        targetPrice?: number | string;
       }>;
       vendorIds?: string[];
     },
+  ) {
+    return this.createWithOwnerKey(orgId, userId, dto);
+  }
+
+  /** Internal artifact-owner path. Public HTTP input never reaches this parameter. */
+  async createInternal(
+    orgId: string,
+    userId: string,
+    dto: Parameters<RfqService['create']>[2],
+    ownerIdempotencyKey: string,
+  ) {
+    return this.createWithOwnerKey(orgId, userId, dto, ownerIdempotencyKey);
+  }
+
+  private async createWithOwnerKey(
+    orgId: string,
+    userId: string,
+    dto: Parameters<RfqService['create']>[2],
+    ownerIdempotencyKey?: string,
   ) {
     const vendorIds = [...new Set(dto.vendorIds ?? [])];
     if (vendorIds.length) {
@@ -298,11 +308,9 @@ export class RfqService {
       }
     }
 
-    const number = await this.nextNumber(orgId);
-
-    const [rfq] = await this.db
-      .insert(rfqRequests)
-      .values({
+    const rfqId = await this.db.transaction(async (tx) => {
+      const number = await this.sequenceService.next(orgId, 'rfq', tx);
+      const values = {
         organizationId: orgId,
         requesterId: userId,
         number,
@@ -311,29 +319,34 @@ export class RfqService {
         dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
         currency: dto.currency ?? 'USD',
         notes: dto.notes,
-      })
-      .returning();
+        idempotencyKey: ownerIdempotencyKey,
+      };
+      const [rfq] = await tx.insert(rfqRequests).values(values).returning();
+      if (!rfq) throw new Error('RFQ was not created');
 
-    if (dto.lines?.length) {
-      await this.db.insert(rfqLines).values(
-        dto.lines.map((l, i) => ({
-          rfqId: rfq.id,
-          lineNumber: i + 1,
-          description: l.description,
-          quantity: String(l.quantity),
-          unitOfMeasure: l.unitOfMeasure ?? 'each',
-          targetPrice: l.targetPrice != null ? String(l.targetPrice) : undefined,
-        })),
-      );
-    }
+      if (dto.lines?.length) {
+        await tx.insert(rfqLines).values(
+          dto.lines.map((l, i) => ({
+            rfqId: rfq.id,
+            lineNumber: i + 1,
+            description: l.description,
+            quantity: String(l.quantity),
+            unitOfMeasure: l.unitOfMeasure ?? 'each',
+            targetPrice: l.targetPrice != null ? normalizeMoney(l.targetPrice) : undefined,
+          })),
+        );
+      }
 
-    if (vendorIds.length) {
-      await this.db
-        .insert(rfqInvitations)
-        .values(vendorIds.map((vendorId) => ({ rfqId: rfq.id, vendorId })));
-    }
+      if (vendorIds.length) {
+        await tx
+          .insert(rfqInvitations)
+          .values(vendorIds.map((vendorId) => ({ rfqId: rfq.id, vendorId })));
+      }
 
-    return this.findOne(orgId, rfq.id);
+      return rfq.id;
+    });
+
+    return this.findOne(orgId, rfqId);
   }
 
   async update(
@@ -361,13 +374,43 @@ export class RfqService {
       .returning();
 
     if (!rfq) throw new NotFoundException('RFQ not found');
-    return rfq;
+    return withoutOwnerIdempotencyKey(rfq);
   }
 
-  async open(orgId: string, id: string) {
-    const rfq = await this.findOne(orgId, id);
-    if (rfq.status !== 'draft') throw new BadRequestException('Only draft RFQs can be opened');
-    return this.update(orgId, id, { status: 'open' });
+  async open(orgId: string, id: string, userId: string) {
+    return this.db.transaction(async (tx) => {
+      const [rfq] = await tx
+        .update(rfqRequests)
+        .set({ status: 'open', updatedAt: new Date() })
+        .where(
+          and(
+            eq(rfqRequests.organizationId, orgId),
+            eq(rfqRequests.id, id),
+            eq(rfqRequests.status, 'draft'),
+          ),
+        )
+        .returning();
+
+      if (!rfq) {
+        const [existing] = await tx
+          .select({ status: rfqRequests.status })
+          .from(rfqRequests)
+          .where(and(eq(rfqRequests.organizationId, orgId), eq(rfqRequests.id, id)))
+          .limit(1);
+        if (!existing) throw new NotFoundException('RFQ not found');
+        throw new BadRequestException('Only draft RFQs can be opened');
+      }
+
+      await tx.insert(auditLog).values({
+        organizationId: orgId,
+        userId,
+        entityType: 'rfq',
+        entityId: id,
+        action: 'opened',
+        changes: { previousStatus: 'draft', status: 'open' },
+      });
+      return withoutOwnerIdempotencyKey(rfq);
+    });
   }
 
   async close(orgId: string, id: string) {
@@ -656,4 +699,9 @@ function escapeHtml(value: string): string {
     };
     return entities[character] ?? character;
   });
+}
+
+export function withoutOwnerIdempotencyKey<T extends { idempotencyKey?: unknown }>(row: T) {
+  const { idempotencyKey: _privateOwnerKey, ...publicRow } = row;
+  return publicRow;
 }

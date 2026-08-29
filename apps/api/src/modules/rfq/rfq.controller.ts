@@ -1,5 +1,15 @@
-import { Controller, Get, Post, Patch, Param, Body, Query } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Param,
+  Body,
+  Query,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { z } from 'zod';
 import { RfqService } from './rfq.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
@@ -31,22 +41,9 @@ export class RfqController {
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
     @Body()
-    dto: {
-      title: string;
-      description?: string;
-      dueDate?: string;
-      currency?: string;
-      notes?: string;
-      lines: Array<{
-        description: string;
-        quantity: number;
-        unitOfMeasure?: string;
-        targetPrice?: number;
-      }>;
-      vendorIds?: string[];
-    },
+    body: unknown,
   ) {
-    return this.rfqService.create(orgId, userId, dto);
+    return this.rfqService.create(orgId, userId, parseCreateRfqBody(body));
   }
 
   @Patch(':id')
@@ -63,8 +60,8 @@ export class RfqController {
   @Post(':id/open')
   @OperationalPermissions('rfqs:manage')
   @ApiOperation({ summary: 'Open an RFQ for vendor responses' })
-  open(@CurrentOrgId() orgId: string, @Param('id') id: string) {
-    return this.rfqService.open(orgId, id);
+  open(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string, @Param('id') id: string) {
+    return this.rfqService.open(orgId, id, userId);
   }
 
   @Post(':id/close')
@@ -113,4 +110,40 @@ export class RfqController {
   ) {
     return this.rfqService.submitResponse(orgId, id, dto);
   }
+}
+
+const createRfqBodySchema = z.preprocess(
+  (body) => {
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) return body;
+    const record = body as Record<string, unknown>;
+    if (record.dueDate !== '') return body;
+    const { dueDate: _dueDate, ...withoutEmptyDueDate } = record;
+    return withoutEmptyDueDate;
+  },
+  z
+    .object({
+      title: z.string().min(1),
+      description: z.string().optional(),
+      dueDate: z.union([z.iso.datetime({ offset: true }), z.iso.date()]).optional(),
+      currency: z.string().optional(),
+      notes: z.string().optional(),
+      lines: z.array(
+        z
+          .object({
+            description: z.string().min(1),
+            quantity: z.number().positive(),
+            unitOfMeasure: z.string().optional(),
+            targetPrice: z.number().nonnegative().optional(),
+          })
+          .strict(),
+      ),
+      vendorIds: z.array(z.string().uuid()).optional(),
+    })
+    .strict(),
+);
+
+export function parseCreateRfqBody(body: unknown) {
+  const parsed = createRfqBodySchema.safeParse(body);
+  if (!parsed.success) throw new BadRequestException('Invalid RFQ request body');
+  return parsed.data;
 }

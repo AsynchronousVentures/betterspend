@@ -77,6 +77,14 @@ type CustomRoleOrganizationIndexState = {
   indexIsValid: boolean;
 };
 
+type ArtifactOwnerIdempotencyIndexState = {
+  tableExists: boolean;
+  columnsExist: boolean;
+  indexExists: boolean;
+  indexIsValid: boolean;
+  indexIsCanonical: boolean;
+};
+
 type UserRoleOrganizationContractState = {
   columnIsNotNull: boolean;
   userOrganizationForeignKeyExists: boolean;
@@ -84,6 +92,13 @@ type UserRoleOrganizationContractState = {
 };
 
 const USER_ROLE_BACKFILL_BATCH_SIZE = 500;
+
+const ARTIFACT_OWNER_IDEMPOTENCY_INDEXES = [
+  { table: 'requisitions', index: 'requisitions_org_idempotency_key_unique' },
+  { table: 'rfq_requests', index: 'rfq_requests_org_idempotency_key_unique' },
+  { table: 'messages', index: 'messages_org_idempotency_key_unique' },
+  { table: 'notifications', index: 'notifications_org_idempotency_key_unique' },
+] as const;
 
 /** Build the parent key without blocking writes before transactional migrations add its FK. */
 async function prepareVendorOrganizationIndex(client: postgres.Sql): Promise<void> {
@@ -226,6 +241,58 @@ async function prepareCustomRoleOrganizationIndex(client: postgres.Sql): Promise
       CREATE UNIQUE INDEX CONCURRENTLY "custom_roles_id_organization_id_unique"
       ON "custom_roles" ("id", "organization_id")
     `;
+  } finally {
+    await client`RESET statement_timeout`;
+    await client`RESET lock_timeout`;
+  }
+}
+
+/** Build owner idempotency keys after the migration transaction so populated tables stay writable. */
+async function prepareArtifactOwnerIdempotencyIndexes(client: postgres.Sql): Promise<void> {
+  await client`SET lock_timeout = '5s'`;
+  await client`SET statement_timeout = '5min'`;
+  try {
+    for (const { table, index } of ARTIFACT_OWNER_IDEMPOTENCY_INDEXES) {
+      const [state] = await client<ArtifactOwnerIdempotencyIndexState[]>`
+        SELECT
+          to_regclass(${'public.' + table}) IS NOT NULL AS "tableExists",
+          (
+            SELECT count(*) = 2
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = ${table}
+              AND column_name IN ('organization_id', 'idempotency_key')
+          ) AS "columnsExist",
+          index_class.oid IS NOT NULL AS "indexExists",
+          COALESCE(index_state.indisvalid, false) AS "indexIsValid",
+          COALESCE(index_state.indisunique, false)
+            AND index_state.indrelid = to_regclass(${'public.' + table})
+            AND COALESCE(index_state.indnkeyatts, 0) = 2
+            AND COALESCE((
+              SELECT array_agg(attribute.attname::text ORDER BY indexed.ordinality)
+              FROM unnest(index_state.indkey) WITH ORDINALITY AS indexed(attnum, ordinality)
+              JOIN pg_attribute AS attribute
+                ON attribute.attrelid = index_state.indrelid
+                AND attribute.attnum = indexed.attnum
+            ) = ARRAY['organization_id', 'idempotency_key']::text[], false)
+            AS "indexIsCanonical"
+        FROM (VALUES (1)) AS singleton(value)
+        LEFT JOIN pg_class AS index_class
+          ON index_class.oid = to_regclass(${'public.' + index})
+        LEFT JOIN pg_index AS index_state ON index_state.indexrelid = index_class.oid
+      `;
+
+      if (!state?.tableExists || !state.columnsExist) continue;
+      if (state.indexIsValid && state.indexIsCanonical) continue;
+
+      if (state.indexExists) {
+        await client`DROP INDEX CONCURRENTLY ${client(index)}`;
+      }
+      await client`
+        CREATE UNIQUE INDEX CONCURRENTLY ${client(index)}
+        ON ${client(table)} ("organization_id", "idempotency_key")
+      `;
+    }
   } finally {
     await client`RESET statement_timeout`;
     await client`RESET lock_timeout`;
@@ -583,6 +650,7 @@ async function main(): Promise<void> {
     await validateLegacyUserRoleOrganizations(client);
     const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
+    await prepareArtifactOwnerIdempotencyIndexes(client);
     await prepareUserRoleAssignmentIndex(client);
     await prepareCustomRoleOrganizationIndex(client);
     await backfillUserRoleOrganizations(client);

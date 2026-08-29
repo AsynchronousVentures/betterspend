@@ -129,7 +129,11 @@ export class SoftwareLicensesController {
   @ApiOperation({ summary: 'Apply a renewal action to a software license' })
   renewalAction(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { action?: 'renew' | 'renegotiate' | 'cancel'; note?: string },
+    @Body()
+    body: {
+      action?: 'renew' | 'renegotiate' | 'cancel';
+      note?: string;
+    },
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
     @CurrentAccess() access?: AccessPolicy,
@@ -143,7 +147,7 @@ export class SoftwareLicensesController {
       orgId,
       userId,
       action,
-      body.note,
+      body?.note,
       access,
     );
   }

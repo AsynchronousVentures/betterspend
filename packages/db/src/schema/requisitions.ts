@@ -34,6 +34,7 @@ export const requisitions = pgTable(
     currency: varchar('currency', { length: 3 }).notNull().default('USD'),
     sourceType: varchar('source_type', { length: 30 }).notNull().default('manual'),
     sourceDocumentId: uuid('source_document_id'),
+    idempotencyKey: varchar('idempotency_key', { length: 255 }),
     submittedAt: timestamp('submitted_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -42,6 +43,10 @@ export const requisitions = pgTable(
     idOrganization: uniqueIndex('requisitions_id_organization_id_unique').on(
       table.id,
       table.organizationId,
+    ),
+    organizationIdempotencyKey: uniqueIndex('requisitions_org_idempotency_key_unique').on(
+      table.organizationId,
+      table.idempotencyKey,
     ),
   }),
 );

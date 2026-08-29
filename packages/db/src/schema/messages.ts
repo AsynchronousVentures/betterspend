@@ -1,4 +1,14 @@
-import { pgTable, uuid, varchar, text, jsonb, timestamp, index, check } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  varchar,
+  text,
+  jsonb,
+  timestamp,
+  index,
+  check,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { organizations } from './organizations';
 import { users } from './users';
@@ -27,6 +37,7 @@ export const messages = pgTable(
     // Null on buyer messages means visible to every invited vendor; vendor
     // messages never set it (they are inherently their own).
     recipientVendorId: uuid('recipient_vendor_id').references(() => vendors.id),
+    idempotencyKey: varchar('idempotency_key', { length: 255 }),
     authorName: varchar('author_name', { length: 255 }).notNull(),
     body: text('body').notNull(),
     // Metadata for attached files (document ids/urls); upload wiring is separate.
@@ -35,6 +46,10 @@ export const messages = pgTable(
   },
   (table) => [
     index('messages_thread_idx').on(table.threadType, table.threadId, table.createdAt),
+    uniqueIndex('messages_org_idempotency_key_unique').on(
+      table.organizationId,
+      table.idempotencyKey,
+    ),
     check(
       'messages_thread_type_check',
       sql`${table.threadType} IN ('po', 'rfq', 'grn', 'invoice')`,

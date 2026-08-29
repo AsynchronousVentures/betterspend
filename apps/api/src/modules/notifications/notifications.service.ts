@@ -49,6 +49,39 @@ export class NotificationsService {
     return notification;
   }
 
+  async createIdempotent(
+    idempotencyKey: string,
+    orgId: string,
+    userId: string,
+    type: string,
+    title: string,
+    body?: string,
+    entityType?: string,
+    entityId?: string,
+  ) {
+    const [notification] = await this.db
+      .insert(notifications)
+      .values({
+        organizationId: orgId,
+        userId,
+        type,
+        title,
+        body: body ?? null,
+        entityType: entityType ?? null,
+        entityId: entityId ?? null,
+        idempotencyKey,
+      })
+      .onConflictDoNothing({
+        target: [notifications.organizationId, notifications.idempotencyKey],
+      })
+      .returning();
+    if (notification) return notification;
+    return this.db.query.notifications.findFirst({
+      where: (row, { and, eq }) =>
+        and(eq(row.organizationId, orgId), eq(row.idempotencyKey, idempotencyKey)),
+    });
+  }
+
   async list(
     orgId: string,
     userId: string,
@@ -91,7 +124,7 @@ export class NotificationsService {
         .where(whereClause),
     ]);
     return {
-      items: rows,
+      items: rows.map(withoutDeliveryIdempotencyKey),
       total: totalRows[0]?.count ?? 0,
       limit,
       offset,
@@ -184,7 +217,7 @@ export class NotificationsService {
         ),
       )
       .returning();
-    return updated;
+    return updated ? withoutDeliveryIdempotencyKey(updated) : undefined;
   }
 
   async markAllRead(orgId: string, userId: string) {
@@ -214,4 +247,10 @@ export class NotificationsService {
       );
     return { count: result[0]?.count ?? 0 };
   }
+}
+
+/** Keep durable delivery identities inside notification persistence and retry paths. */
+function withoutDeliveryIdempotencyKey<T extends { idempotencyKey?: unknown }>(notification: T) {
+  const { idempotencyKey: _privateDeliveryKey, ...publicNotification } = notification;
+  return publicNotification;
 }

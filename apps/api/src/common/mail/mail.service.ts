@@ -7,6 +7,11 @@ export interface MailOptions {
   subject: string;
   html: string;
   text?: string;
+  /**
+   * Stable RFC Message-ID used by retrying callers and downstream deduplication.
+   * SMTP transport is still at-least-once because not every provider deduplicates Message-ID.
+   */
+  messageId?: string;
 }
 
 export interface SmtpConfig {
@@ -42,12 +47,15 @@ export class MailService {
         subject: options.subject,
         html: options.html,
         text: options.text,
+        messageId: options.messageId ? `<${options.messageId.replace(/^<|>$/g, '')}>` : undefined,
       });
 
       this.logger.log(`Email sent to ${options.to}: ${options.subject}`);
       return true;
     } catch (err) {
-      this.logger.error(`Failed to send email: ${err instanceof Error ? err.message : String(err)}`);
+      this.logger.error(
+        `Failed to send email: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return false;
     }
   }
@@ -153,7 +161,16 @@ export class MailService {
     appUrl: string;
     invoiceId: string;
   }): MailOptions {
-    const { appName, recipientName, recipientEmail, invoiceNumber, vendorName, matchStatus, appUrl, invoiceId } = params;
+    const {
+      appName,
+      recipientName,
+      recipientEmail,
+      invoiceNumber,
+      vendorName,
+      matchStatus,
+      appUrl,
+      invoiceId,
+    } = params;
     const link = `${appUrl}/invoices/${invoiceId}`;
     return {
       to: recipientEmail,
@@ -183,7 +200,18 @@ export class MailService {
     appUrl: string;
     contractId: string;
   }): MailOptions {
-    const { appName, recipientName, recipientEmail, contractTitle, contractNumber, vendorName, endDate, daysRemaining, appUrl, contractId } = params;
+    const {
+      appName,
+      recipientName,
+      recipientEmail,
+      contractTitle,
+      contractNumber,
+      vendorName,
+      endDate,
+      daysRemaining,
+      appUrl,
+      contractId,
+    } = params;
     const link = `${appUrl}/contracts/${contractId}`;
     return {
       to: recipientEmail,

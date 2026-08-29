@@ -55,6 +55,7 @@ import { MessagesModule } from './modules/messages/messages.module';
 import { RiskScreeningModule } from './modules/risk-screening/risk-screening.module';
 import { WorkflowDefinitionsModule } from './modules/workflow-definitions/workflow-definitions.module';
 import { BootstrapModule } from './modules/bootstrap/bootstrap.module';
+import { ArtifactIdempotencyModule } from './modules/artifact-idempotency/artifact-idempotency.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { BootstrapModule } from './modules/bootstrap/bootstrap.module';
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 300 }]),
     DatabaseModule,
     BootstrapModule,
+    ArtifactIdempotencyModule,
     QueueModule,
     StorageModule,
     NotificationsModule,

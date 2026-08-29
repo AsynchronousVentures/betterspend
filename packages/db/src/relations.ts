@@ -59,6 +59,7 @@ import { documents } from './schema/documents';
 import { intakeConciergeSessions, procurementPolicies } from './schema/procurement-concierge';
 import { aiProviderConnections, aiProviderOauthStates } from './schema/ai-providers';
 import { savedReports } from './schema/reports';
+import { artifactOperations } from './schema/artifact-operations';
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   legalEntities: many(legalEntities),
@@ -86,6 +87,7 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   integrationConnections: many(integrationConnections),
   syncRecords: many(syncRecords),
   savedReports: many(savedReports),
+  artifactOperations: many(artifactOperations),
   workflowDefinitions: many(workflowDefinitions),
   workflowDefinitionVersions: many(workflowDefinitionVersions),
 }));

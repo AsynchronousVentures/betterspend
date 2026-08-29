@@ -15,10 +15,23 @@ import { BudgetsService } from '../budgets/budgets.service';
 import { SpendGuardService } from '../spend-guard/spend-guard.service';
 import type { Db } from '@betterspend/db';
 import { approvalRequests, requisitions, requisitionLines } from '@betterspend/db';
-import type { CreateRequisitionInput } from '@betterspend/shared';
+import {
+  multiplyMoney,
+  normalizeMoney,
+  sumMoney,
+  type CreateRequisitionInput,
+  type DecimalInput,
+} from '@betterspend/shared';
 import type { AccessPolicy } from '../auth/access-policy';
 import { permissionScopePredicate, requirePermission } from '../auth/access-scope';
 import { canViewRelatedRecord } from '../auth/related-record-access';
+
+type RequisitionCreateInput = Omit<CreateRequisitionInput, 'lines'> & {
+  lines: Array<
+    Omit<CreateRequisitionInput['lines'][number], 'unitPrice'> & { unitPrice: DecimalInput }
+  >;
+  ownerIdempotencyKey?: string;
+};
 
 @Injectable()
 export class RequisitionsService {
@@ -37,7 +50,7 @@ export class RequisitionsService {
     filters?: { status?: string; departmentId?: string },
     access?: AccessPolicy,
   ) {
-    return this.db.query.requisitions.findMany({
+    const rows = await this.db.query.requisitions.findMany({
       where: (r, { and, eq }) => {
         const conditions = [
           eq(r.organizationId, organizationId),
@@ -59,6 +72,7 @@ export class RequisitionsService {
       with: { lines: true },
       orderBy: (r, { desc }) => desc(r.createdAt),
     });
+    return rows.map(withoutOwnerIdempotencyKey);
   }
 
   async findOne(id: string, organizationId: string, access?: AccessPolicy) {
@@ -94,22 +108,26 @@ export class RequisitionsService {
       },
     });
     if (!req) throw new NotFoundException(`Requisition ${id} not found`);
-    const activeApproval =
-      canViewRelatedRecord(access, 'approval', ['approvals:view', 'approvals:act'], {
+    const activeApproval = canViewRelatedRecord(
+      access,
+      'approval',
+      ['approvals:view', 'approvals:act'],
+      {
         departmentId: req.departmentId,
         projectId: req.projectId,
-      })
-        ? await this.db.query.approvalRequests.findFirst({
-            where: (approval, { and, eq }) =>
-              and(
-                eq(approval.organizationId, organizationId),
-                eq(approval.approvableType, 'requisition'),
-                eq(approval.approvableId, id),
-                eq(approval.status, 'pending'),
-              ),
-            columns: { id: true, currentStep: true, status: true },
-          })
-        : null;
+      },
+    )
+      ? await this.db.query.approvalRequests.findFirst({
+          where: (approval, { and, eq }) =>
+            and(
+              eq(approval.organizationId, organizationId),
+              eq(approval.approvableType, 'requisition'),
+              eq(approval.approvableId, id),
+              eq(approval.status, 'pending'),
+            ),
+          columns: { id: true, currentStep: true, status: true },
+        })
+      : null;
     const purchaseOrders = (req.purchaseOrders ?? [])
       .filter((purchaseOrder) =>
         canViewRelatedRecord(
@@ -147,9 +165,16 @@ export class RequisitionsService {
         return [];
       }
 
-      return [{ id: event.id, budgetId: event.budgetId, budget: { id: budget.id, name: budget.name } }];
+      return [
+        { id: event.id, budgetId: event.budgetId, budget: { id: budget.id, name: budget.name } },
+      ];
     });
-    const { purchaseOrders: _purchaseOrders, commitmentEvents: _commitmentEvents, ...requisition } = req;
+    const {
+      purchaseOrders: _purchaseOrders,
+      commitmentEvents: _commitmentEvents,
+      idempotencyKey: _privateOwnerKey,
+      ...requisition
+    } = req;
     return { ...requisition, purchaseOrders, commitmentEvents, activeApproval };
   }
 
@@ -182,7 +207,7 @@ export class RequisitionsService {
   async create(
     organizationId: string,
     requesterId: string,
-    input: CreateRequisitionInput,
+    input: RequisitionCreateInput,
     access?: AccessPolicy,
   ) {
     requirePermission(access, 'requisitions:create');
@@ -190,28 +215,35 @@ export class RequisitionsService {
       departmentId: input.departmentId ?? null,
       projectId: input.projectId ?? null,
     });
-    const createdId = await this.db.transaction(async (tx) => {
+    const creation = await this.db.transaction(async (tx) => {
       const number = await this.sequenceService.next(organizationId, 'requisition', tx);
-      const totalAmount = input.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
+      const amounts = input.lines.map((line) => {
+        const unitPrice = normalizeMoney(line.unitPrice);
+        return {
+          unitPrice,
+          totalPrice: multiplyMoney(line.quantity, unitPrice),
+        };
+      });
+      const totalAmount = sumMoney(amounts.map(({ totalPrice }) => totalPrice));
 
-      const [req] = await tx
-        .insert(requisitions)
-        .values({
-          organizationId,
-          requesterId,
-          number,
-          title: input.title,
-          description: input.description,
-          departmentId: input.departmentId,
-          projectId: input.projectId,
-          priority: input.priority ?? 'normal',
-          neededBy: input.neededBy ? new Date(input.neededBy) : null,
-          currency: input.currency ?? 'USD',
-          totalAmount: String(totalAmount),
-          status: 'draft',
-          sourceType: 'manual',
-        })
-        .returning();
+      const values = {
+        organizationId,
+        requesterId,
+        number,
+        title: input.title,
+        description: input.description,
+        departmentId: input.departmentId,
+        projectId: input.projectId,
+        priority: input.priority ?? 'normal',
+        neededBy: input.neededBy ? new Date(input.neededBy) : null,
+        currency: input.currency ?? 'USD',
+        totalAmount,
+        status: 'draft' as const,
+        sourceType: 'manual',
+        idempotencyKey: input.ownerIdempotencyKey,
+      };
+      const [req] = await tx.insert(requisitions).values(values).returning();
+      if (!req) throw new Error('Requisition was not created');
 
       await tx.insert(requisitionLines).values(
         input.lines.map((l, i) => ({
@@ -220,26 +252,39 @@ export class RequisitionsService {
           description: l.description,
           quantity: String(l.quantity),
           unitOfMeasure: l.unitOfMeasure,
-          unitPrice: String(l.unitPrice),
-          totalPrice: String(l.quantity * l.unitPrice),
+          unitPrice: amounts[i]?.unitPrice ?? '0.00',
+          totalPrice: amounts[i]?.totalPrice ?? '0.00',
           vendorId: l.vendorId,
           catalogItemId: l.catalogItemId,
           glAccount: l.glAccount,
         })),
       );
 
-      return req.id;
+      await this.audit.log(
+        organizationId,
+        requesterId,
+        'requisition',
+        req.id,
+        'created',
+        {
+          number: req.number,
+          title: input.title,
+        },
+        undefined,
+        tx,
+      );
+
+      return { id: req.id };
     });
 
-    const created = await this.findOne(createdId, organizationId);
-    this.audit
-      .log(organizationId, requesterId, 'requisition', createdId, 'created', {
-        number: (created as any).number,
-        title: input.title,
-      })
-      .catch(() => {});
-    await this.spendGuard.analyzeRequisition(organizationId, createdId).catch(() => {});
+    const created = await this.findOne(creation.id, organizationId);
+    await this.ensureSpendGuardAnalysis(organizationId, creation.id).catch(() => {});
     return created;
+  }
+
+  /** Re-run the idempotent analysis when a cross-module owner is recovered. */
+  async ensureSpendGuardAnalysis(organizationId: string, requisitionId: string): Promise<void> {
+    await this.spendGuard.analyzeRequisition(organizationId, requisitionId);
   }
 
   async update(
@@ -410,7 +455,7 @@ export class RequisitionsService {
       return transitioned;
     });
     this.audit.log(organizationId, null, 'requisition', id, 'cancelled').catch(() => {});
-    return updated;
+    return withoutOwnerIdempotencyKey(updated);
   }
 
   private assertCanMutate(
@@ -462,4 +507,9 @@ export class RequisitionsService {
     }
     throw new ForbiddenException('The requisition is outside your assigned scope');
   }
+}
+
+function withoutOwnerIdempotencyKey<T extends { idempotencyKey?: unknown }>(row: T) {
+  const { idempotencyKey: _privateOwnerKey, ...publicRow } = row;
+  return publicRow;
 }

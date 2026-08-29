@@ -4,7 +4,7 @@ import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { NUMBER_PREFIXES } from '@betterspend/shared';
 
-type EntityType = 'requisition' | 'purchase_order' | 'goods_receipt' | 'invoice';
+type EntityType = 'requisition' | 'purchase_order' | 'goods_receipt' | 'invoice' | 'rfq';
 type SequenceExecutor = Pick<Db, 'execute'>;
 
 @Injectable()
@@ -22,6 +22,7 @@ export class SequenceService {
       purchase_order: NUMBER_PREFIXES.PURCHASE_ORDER,
       goods_receipt: NUMBER_PREFIXES.GOODS_RECEIPT,
       invoice: NUMBER_PREFIXES.INVOICE,
+      rfq: NUMBER_PREFIXES.RFQ,
     }[entityType];
 
     const generate = async (connection: SequenceExecutor) => {
