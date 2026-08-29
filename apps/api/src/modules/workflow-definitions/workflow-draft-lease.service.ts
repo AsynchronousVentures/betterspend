@@ -40,6 +40,49 @@ redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
 return 1
 `;
 
+const ACQUIRE_SCRIPT = `
+local current = redis.call('GET', KEYS[1])
+if current then return {0, current} end
+
+local storedSequence = tonumber(redis.call('GET', KEYS[2]))
+if not storedSequence then
+  storedSequence = 0
+  redis.call('SET', KEYS[2], storedSequence)
+end
+local floor = tonumber(ARGV[4]) or 0
+local sequence = storedSequence
+if sequence < floor then sequence = floor end
+if sequence ~= storedSequence then redis.call('SET', KEYS[2], sequence) end
+
+local fence = redis.call('INCR', KEYS[2])
+local raw = ARGV[1] .. fence .. '|' .. ARGV[2]
+redis.call('SET', KEYS[1], raw, 'PX', ARGV[3])
+return {1, raw}
+`;
+
+const TAKEOVER_SCRIPT = `
+local previous = redis.call('GET', KEYS[1]) or ''
+local previousTtl = -1
+if previous ~= '' then previousTtl = redis.call('PTTL', KEYS[1]) end
+
+local storedSequence = tonumber(redis.call('GET', KEYS[2]))
+if not storedSequence then
+  storedSequence = 0
+  redis.call('SET', KEYS[2], storedSequence)
+end
+local floor = tonumber(ARGV[4]) or 0
+local previousFence = tonumber(string.match(previous, '^[^|]+|[^|]+|([0-9]+)|')) or 0
+local sequence = storedSequence
+if sequence < floor then sequence = floor end
+if sequence < previousFence then sequence = previousFence end
+if sequence ~= storedSequence then redis.call('SET', KEYS[2], sequence) end
+
+local fence = redis.call('INCR', KEYS[2])
+local raw = ARGV[1] .. fence .. '|' .. ARGV[2]
+redis.call('SET', KEYS[1], raw, 'PX', ARGV[3])
+return {previous, previousTtl, raw}
+`;
+
 const RELEASE_SCRIPT = `
 local current = redis.call('GET', KEYS[1])
 if not current then return 0 end
@@ -55,9 +98,32 @@ end
 return 0
 `;
 
+const RESTORE_SCRIPT = `
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+if ARGV[2] == '' or tonumber(ARGV[3]) <= 0 then
+  return redis.call('DEL', KEYS[1])
+end
+redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+return 1
+`;
+
 type StoredLease = {
   token: string;
   lease: WorkflowDraftLease;
+};
+
+type OwnedLeaseStatus = Extract<WorkflowDraftLeaseStatus, { state: 'owned' }>;
+
+export type WorkflowDraftLeaseAcquisition = {
+  status: WorkflowDraftLeaseStatus;
+  created: boolean;
+  restore: () => Promise<boolean>;
+};
+
+export type WorkflowDraftLeaseTakeover = {
+  status: OwnedLeaseStatus;
+  previous: WorkflowDraftLease | null;
+  restore: () => Promise<boolean>;
 };
 
 /** Owns the Redis lease protocol and never returns another user's token. */
@@ -86,31 +152,69 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     organizationId: string,
     holderUserId: string,
     holderName: string,
+    minimumFence = 0,
   ): Promise<WorkflowDraftLeaseStatus> {
-    const now = new Date();
-    const lease: WorkflowDraftLease = {
-      definitionId,
-      holderUserId,
-      holderName,
-      acquiredAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + WORKFLOW_DRAFT_LEASE_TTL_MS).toISOString(),
-    };
+    return (
+      await this.acquireWithResult(
+        definitionId,
+        organizationId,
+        holderUserId,
+        holderName,
+        minimumFence,
+      )
+    ).status;
+  }
+
+  async acquireWithResult(
+    definitionId: string,
+    organizationId: string,
+    holderUserId: string,
+    holderName: string,
+    minimumFence = 0,
+  ): Promise<WorkflowDraftLeaseAcquisition> {
+    const leaseDocument = createLeaseDocument(definitionId, holderUserId, holderName);
     const token = randomBytes(32).toString('base64url');
-    const raw = encodeLease(token, lease);
-    const result = await this.redisCall(() =>
-      this.redis.set(
-        this.key(organizationId, definitionId),
-        raw,
-        'PX',
+    const key = this.key(organizationId, definitionId);
+    const rawResult = await this.redisCall(() =>
+      this.redis.eval(
+        ACQUIRE_SCRIPT,
+        2,
+        key,
+        this.fenceKey(organizationId, definitionId),
+        ownershipPrefix(token, holderUserId),
+        JSON.stringify(leaseDocument),
         WORKFLOW_DRAFT_LEASE_TTL_MS,
-        'NX',
+        normalizeMinimumFence(minimumFence),
       ),
     );
+    const result = readRedisArray(rawResult, 2);
+    if (Number(result[0]) !== 1) {
+      // An idempotent acquire by the current holder is useful after a tab refresh. The
+      // status path can safely return its token because the caller's identity is known.
+      return {
+        status: await this.status(definitionId, organizationId, holderUserId),
+        created: false,
+        restore: async () => false,
+      };
+    }
 
-    if (result === 'OK') return { state: 'owned', lease, leaseToken: token };
-    // An idempotent acquire by the current holder is useful after a tab refresh. The
-    // status path can safely return its token because the caller's identity is known.
-    return this.status(definitionId, organizationId, holderUserId);
+    const raw = requireRedisString(result[1]);
+    const stored = decodeLease(raw);
+    if (
+      !stored ||
+      stored.lease.definitionId !== definitionId ||
+      stored.lease.holderUserId !== holderUserId ||
+      stored.lease.fence <= normalizeMinimumFence(minimumFence)
+    ) {
+      throw new ServiceUnavailableException(
+        'Workflow draft lease storage returned an invalid lease',
+      );
+    }
+    return {
+      status: { state: 'owned', lease: stored.lease, leaseToken: stored.token },
+      created: true,
+      restore: () => this.restoreRaw(key, raw, '', -1),
+    };
   }
 
   async renew(
@@ -165,25 +269,69 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     organizationId: string,
     holderUserId: string,
     holderName: string,
+    minimumFence = 0,
   ): Promise<WorkflowDraftLeaseStatus> {
-    const now = new Date();
-    const lease: WorkflowDraftLease = {
-      definitionId,
-      holderUserId,
-      holderName,
-      acquiredAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + WORKFLOW_DRAFT_LEASE_TTL_MS).toISOString(),
-    };
+    return (
+      await this.takeoverWithResult(
+        definitionId,
+        organizationId,
+        holderUserId,
+        holderName,
+        minimumFence,
+      )
+    ).status;
+  }
+
+  async takeoverWithResult(
+    definitionId: string,
+    organizationId: string,
+    holderUserId: string,
+    holderName: string,
+    minimumFence = 0,
+  ): Promise<WorkflowDraftLeaseTakeover> {
+    const leaseDocument = createLeaseDocument(definitionId, holderUserId, holderName);
     const token = randomBytes(32).toString('base64url');
-    await this.redisCall(() =>
-      this.redis.set(
-        this.key(organizationId, definitionId),
-        encodeLease(token, lease),
-        'PX',
+    const key = this.key(organizationId, definitionId);
+    const rawResult = await this.redisCall(() =>
+      this.redis.eval(
+        TAKEOVER_SCRIPT,
+        2,
+        key,
+        this.fenceKey(organizationId, definitionId),
+        ownershipPrefix(token, holderUserId),
+        JSON.stringify(leaseDocument),
         WORKFLOW_DRAFT_LEASE_TTL_MS,
+        normalizeMinimumFence(minimumFence),
       ),
     );
-    return { state: 'owned', lease, leaseToken: token };
+    const result = readRedisArray(rawResult, 3);
+    const previousRaw = requireRedisString(result[0]);
+    const previousTtl = Number(result[1]);
+    const raw = requireRedisString(result[2]);
+    const stored = decodeLease(raw);
+    if (
+      !stored ||
+      stored.lease.definitionId !== definitionId ||
+      stored.lease.holderUserId !== holderUserId ||
+      stored.lease.fence <= normalizeMinimumFence(minimumFence)
+    ) {
+      throw new ServiceUnavailableException(
+        'Workflow draft lease storage returned an invalid lease',
+      );
+    }
+
+    const previousStored = previousRaw && previousTtl > 0 ? decodeLease(previousRaw) : null;
+    const previous =
+      previousStored && new Date(previousStored.lease.expiresAt).getTime() > Date.now()
+        ? previousStored.lease
+        : null;
+    const restoreRaw = previous ? previousRaw : '';
+    const restoreTtl = previous ? previousTtl : -1;
+    return {
+      status: { state: 'owned', lease: stored.lease, leaseToken: stored.token },
+      previous,
+      restore: () => this.restoreRaw(key, raw, restoreRaw, restoreTtl),
+    };
   }
 
   /** Returns metadata for audit records without returning a stored token. */
@@ -196,7 +344,7 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     organizationId: string,
     holderUserId: string,
     token: string,
-  ): Promise<void> {
+  ): Promise<WorkflowDraftLease> {
     const stored = await this.read(definitionId, organizationId);
     if (
       !stored ||
@@ -206,6 +354,7 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     ) {
       throw new ConflictException('Workflow draft lease is missing, expired, or not owned by you');
     }
+    return stored.lease;
   }
 
   onModuleDestroy(): void {
@@ -233,6 +382,22 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     return `workflow:draft-lease:${organizationId}:${definitionId}`;
   }
 
+  private fenceKey(organizationId: string, definitionId: string): string {
+    return `workflow:draft-lease-fence:${organizationId}:${definitionId}`;
+  }
+
+  private async restoreRaw(
+    key: string,
+    currentRaw: string,
+    previousRaw: string,
+    previousTtl: number,
+  ): Promise<boolean> {
+    const restored = await this.redisCall(() =>
+      this.redis.eval(RESTORE_SCRIPT, 1, key, currentRaw, previousRaw, previousTtl),
+    );
+    return Number(restored) === 1;
+  }
+
   private async redisCall<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();
@@ -247,26 +412,83 @@ function ownershipPrefix(token: string, holderUserId: string): string {
   return `${token}|${holderUserId}|`;
 }
 
+type WorkflowDraftLeaseDocument = Omit<WorkflowDraftLease, 'fence'>;
+
+function createLeaseDocument(
+  definitionId: string,
+  holderUserId: string,
+  holderName: string,
+): WorkflowDraftLeaseDocument {
+  const now = new Date();
+  return {
+    definitionId,
+    holderUserId,
+    holderName,
+    acquiredAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + WORKFLOW_DRAFT_LEASE_TTL_MS).toISOString(),
+  };
+}
+
 function encodeLease(token: string, lease: WorkflowDraftLease): string {
-  return `${ownershipPrefix(token, lease.holderUserId)}${JSON.stringify(lease)}`;
+  const { fence, ...document } = lease;
+  return `${ownershipPrefix(token, lease.holderUserId)}${fence}|${JSON.stringify(document)}`;
 }
 
 function decodeLease(raw: string): StoredLease | null {
   const firstSeparator = raw.indexOf('|');
   const secondSeparator = raw.indexOf('|', firstSeparator + 1);
-  if (firstSeparator <= 0 || secondSeparator <= firstSeparator) {
+  const thirdSeparator = raw.indexOf('|', secondSeparator + 1);
+  if (
+    firstSeparator <= 0 ||
+    secondSeparator <= firstSeparator ||
+    thirdSeparator <= secondSeparator
+  ) {
     return null;
   }
 
   const token = raw.slice(0, firstSeparator);
   const holderUserId = raw.slice(firstSeparator + 1, secondSeparator);
-  if (!workflowDraftLeaseTokenSchema.safeParse(token).success || !holderUserId) return null;
+  const fence = Number(raw.slice(secondSeparator + 1, thirdSeparator));
+  if (
+    !workflowDraftLeaseTokenSchema.safeParse(token).success ||
+    !holderUserId ||
+    !Number.isSafeInteger(fence) ||
+    fence <= 0
+  ) {
+    return null;
+  }
 
   try {
-    const lease = workflowDraftLeaseSchema.parse(JSON.parse(raw.slice(secondSeparator + 1)));
+    const document = workflowDraftLeaseSchema
+      .omit({ fence: true })
+      .parse(JSON.parse(raw.slice(thirdSeparator + 1)));
+    const lease = workflowDraftLeaseSchema.parse({ ...document, fence });
     if (lease.holderUserId !== holderUserId) return null;
     return { token, lease };
   } catch {
     return null;
   }
+}
+
+function normalizeMinimumFence(minimumFence: number): number {
+  if (!Number.isSafeInteger(minimumFence) || minimumFence < 0) {
+    throw new ConflictException('Workflow draft fence is invalid');
+  }
+  return minimumFence;
+}
+
+function readRedisArray(result: unknown, expectedLength: number): Array<unknown> {
+  if (!Array.isArray(result) || result.length !== expectedLength) {
+    throw new ServiceUnavailableException(
+      'Workflow draft lease storage returned an invalid result',
+    );
+  }
+  return result;
+}
+
+function requireRedisString(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new ServiceUnavailableException('Workflow draft lease storage returned an invalid value');
+  }
+  return value;
 }

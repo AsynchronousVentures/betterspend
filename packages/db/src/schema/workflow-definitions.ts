@@ -26,6 +26,7 @@ export const workflowDefinitions = pgTable(
     domain: varchar('domain', { length: 30 }).notNull(),
     name: varchar('name', { length: 255 }).notNull(),
     currentDraft: jsonb('current_draft').$type<WorkflowDraft>().notNull(),
+    draftFence: integer('draft_fence').notNull().default(0),
     publishedVersionId: uuid('published_version_id'),
     createdBy: uuid('created_by').notNull(),
     updatedBy: uuid('updated_by').notNull(),

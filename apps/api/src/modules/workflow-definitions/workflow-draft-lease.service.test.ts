@@ -13,6 +13,7 @@ type StoredValue = { value: string; expiresAt: number };
 
 class FakeRedis implements WorkflowDraftLeaseRedis {
   readonly values = new Map<string, StoredValue>();
+  readonly sequences = new Map<string, number>();
 
   async get(key: string): Promise<string | null> {
     const stored = this.values.get(key);
@@ -38,31 +39,82 @@ class FakeRedis implements WorkflowDraftLeaseRedis {
     ...args: Array<string | number>
   ): Promise<unknown> {
     const key = String(args[0]);
-    const stored = this.values.get(key);
-    const current = await this.get(key);
+    const current = this.current(key);
+
+    if (script.includes('return {1, raw}')) {
+      const counterKey = String(args[1]);
+      if (current) return [0, current.value];
+      const prefix = String(args[2]);
+      const document = String(args[3]);
+      const ttl = Number(args[4]);
+      const minimumFence = Number(args[5]);
+      const fence = Math.max(this.sequences.get(counterKey) ?? 0, minimumFence) + 1;
+      this.sequences.set(counterKey, fence);
+      const value = `${prefix}${fence}|${document}`;
+      this.values.set(key, { value, expiresAt: Date.now() + ttl });
+      return [1, value];
+    }
+
+    if (script.includes('return {previous, previousTtl, raw}')) {
+      const counterKey = String(args[1]);
+      const previous = current?.value ?? '';
+      const previousTtl = current ? current.expiresAt - Date.now() : -1;
+      const prefix = String(args[2]);
+      const document = String(args[3]);
+      const ttl = Number(args[4]);
+      const minimumFence = Number(args[5]);
+      const previousFence = previous ? Number(previous.split('|', 4)[2]) : 0;
+      const fence = Math.max(this.sequences.get(counterKey) ?? 0, minimumFence, previousFence) + 1;
+      this.sequences.set(counterKey, fence);
+      const value = `${prefix}${fence}|${document}`;
+      this.values.set(key, { value, expiresAt: Date.now() + ttl });
+      return [previous, previousTtl, value];
+    }
+
+    if (script.includes("if ARGV[2] == ''")) {
+      const expected = String(args[1]);
+      if (current?.value !== expected) return 0;
+      const previous = String(args[2]);
+      const ttl = Number(args[3]);
+      if (!previous || ttl <= 0) {
+        this.values.delete(key);
+      } else {
+        this.values.set(key, { value: previous, expiresAt: Date.now() + ttl });
+      }
+      return 1;
+    }
 
     if (script.includes('local prefix = ARGV[3]')) {
       const raw = String(args[1]);
       const ttl = Number(args[2]);
       const prefix = String(args[3]);
-      if (!current || !current.startsWith(prefix)) return 0;
+      if (!current || !current.value.startsWith(prefix)) return 0;
       this.values.set(key, { value: raw, expiresAt: Date.now() + ttl });
       return 1;
     }
 
     if (script.includes("local current = redis.call('GET'")) {
       const prefix = String(args[1]);
-      if (!current || !current.startsWith(prefix)) return 0;
+      if (!current || !current.value.startsWith(prefix)) return 0;
       this.values.delete(key);
       return 1;
     }
 
     const expected = String(args[1]);
-    if (stored?.value === expected) {
+    if (current?.value === expected) {
       this.values.delete(key);
       return 1;
     }
     return 0;
+  }
+
+  private current(key: string): StoredValue | null {
+    const stored = this.values.get(key);
+    if (!stored || stored.expiresAt <= Date.now()) {
+      this.values.delete(key);
+      return null;
+    }
+    return stored;
   }
 
   disconnect(): void {}
@@ -76,6 +128,18 @@ describe('WorkflowDraftLeaseService', () => {
     const first = await service.acquire(definitionId, organizationId, firstUserId, 'First editor');
     assert.equal(first.state, 'owned');
     if (first.state !== 'owned') return;
+    assert.equal(first.lease.fence, 1);
+
+    const refreshed = await service.acquire(
+      definitionId,
+      organizationId,
+      firstUserId,
+      'First editor',
+    );
+    assert.equal(refreshed.state, 'owned');
+    if (refreshed.state !== 'owned') return;
+    assert.equal(refreshed.lease.fence, first.lease.fence);
+    assert.equal(refreshed.leaseToken, first.leaseToken);
 
     const second = await service.status(definitionId, organizationId, secondUserId);
     assert.equal(second.state, 'held');
@@ -119,9 +183,9 @@ describe('WorkflowDraftLeaseService', () => {
     );
     assert.equal(renewed.state, 'owned');
     if (renewed.state !== 'owned') return;
+    assert.equal(renewed.lease.fence, acquired.lease.fence);
     assert.ok(
-      new Date(renewed.lease.expiresAt).getTime() >=
-        new Date(acquired.lease.expiresAt).getTime(),
+      new Date(renewed.lease.expiresAt).getTime() >= new Date(acquired.lease.expiresAt).getTime(),
     );
 
     const released = await service.release(
@@ -177,5 +241,36 @@ describe('WorkflowDraftLeaseService', () => {
       reacquired.leaseToken,
     );
     assert.equal(oldTokenRenewal.state, 'held');
+  });
+
+  it('atomically reports each takeover predecessor and can restore its predecessor', async () => {
+    const redis = new FakeRedis();
+    const service = new WorkflowDraftLeaseService(redis);
+    const first = await service.acquire(definitionId, organizationId, firstUserId, 'First editor');
+    assert.equal(first.state, 'owned');
+    if (first.state !== 'owned') return;
+
+    const [second, third] = await Promise.all([
+      service.takeoverWithResult(definitionId, organizationId, secondUserId, 'Second editor'),
+      service.takeoverWithResult(
+        definitionId,
+        organizationId,
+        '00000000-0000-4000-8000-000000000006',
+        'Third editor',
+      ),
+    ]);
+
+    assert.equal(second.previous?.holderUserId, firstUserId);
+    assert.equal(third.previous?.holderUserId, secondUserId);
+    assert.ok(second.status.lease.fence > first.lease.fence);
+    assert.ok(third.status.lease.fence > second.status.lease.fence);
+
+    assert.equal(await second.restore(), false);
+    assert.equal(await third.restore(), true);
+    assert.equal(await second.restore(), true);
+    const restored = await service.status(definitionId, organizationId, firstUserId);
+    assert.equal(restored.state, 'owned');
+    if (restored.state !== 'owned') return;
+    assert.equal(restored.lease.fence, first.lease.fence);
   });
 });

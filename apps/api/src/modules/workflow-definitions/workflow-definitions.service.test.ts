@@ -43,10 +43,18 @@ function validDraft() {
 }
 
 function dependencies() {
+  const lease = {
+    definitionId: '00000000-0000-4000-8000-000000000001',
+    holderUserId: '00000000-0000-4000-8000-000000000002',
+    holderName: 'Finance editor',
+    fence: 1,
+    acquiredAt: '2026-08-29T12:00:00.000Z',
+    expiresAt: '2099-08-29T12:01:00.000Z',
+  };
   return {
     audit: { log: async () => ({}) } as unknown as AuditService,
     entities: { assertBelongsToOrg: async () => {} } as unknown as EntitiesService,
-    leases: { assertOwned: async () => {} } as unknown as WorkflowDraftLeaseService,
+    leases: { assertOwned: async () => lease } as unknown as WorkflowDraftLeaseService,
   };
 }
 
@@ -58,6 +66,7 @@ describe('WorkflowDefinitionsService', () => {
     const definition = {
       id: 'definition-1',
       organizationId: 'organization-1',
+      draftFence: 1,
       currentDraft: validDraft(),
     };
     const tx = {
@@ -89,7 +98,7 @@ describe('WorkflowDefinitionsService', () => {
         return {
           set(values: Record<string, unknown>) {
             updates.push(values);
-            return { where: async () => [] };
+            return { where: () => ({ returning: async () => [{ id: 'definition-1' }] }) };
           },
         };
       },
@@ -132,6 +141,7 @@ describe('WorkflowDefinitionsService', () => {
               {
                 id: 'definition-1',
                 organizationId: 'organization-1',
+                draftFence: 1,
                 currentDraft: draft,
               },
             ],
@@ -154,7 +164,7 @@ describe('WorkflowDefinitionsService', () => {
   it('restores a version as draft without changing the published pointer', async () => {
     const updateValues: Array<Record<string, unknown>> = [];
     const draft = validDraft();
-    const definition = { id: 'definition-1', organizationId: 'organization-1' };
+    const definition = { id: 'definition-1', organizationId: 'organization-1', draftFence: 1 };
     const tx = {
       select: () => ({
         from: () => ({ where: () => ({ for: async () => [definition] }) }),
@@ -172,7 +182,7 @@ describe('WorkflowDefinitionsService', () => {
       update: () => ({
         set(values: Record<string, unknown>) {
           updateValues.push(values);
-          return { where: async () => [] };
+          return { where: () => ({ returning: async () => [{ id: 'definition-1' }] }) };
         },
       }),
     };
@@ -192,5 +202,123 @@ describe('WorkflowDefinitionsService', () => {
     assert.equal(result.restoredFromVersion, 1);
     assert.deepEqual(updateValues[0]?.currentDraft, draft);
     assert.ok(!('publishedVersionId' in updateValues[0]!));
+  });
+
+  it('rejects a stale owner before the draft update can run', async () => {
+    let updateCalled = false;
+    const tx = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            for: async () => [
+              {
+                id: 'definition-1',
+                organizationId: 'organization-1',
+                domain: 'invoice',
+                draftFence: 2,
+                currentDraft: validDraft(),
+              },
+            ],
+          }),
+        }),
+      }),
+      update: () => {
+        updateCalled = true;
+        return {
+          set: () => ({
+            where: () => ({ returning: async () => [{ id: 'definition-1' }] }),
+          }),
+        };
+      },
+    };
+    const db = {
+      transaction: async (run: (transaction: typeof tx) => Promise<unknown>) => run(tx),
+    } as unknown as Db;
+    const { audit, entities, leases } = dependencies();
+    const service = new WorkflowDefinitionsService(db, entities, audit, leases);
+
+    await assert.rejects(
+      service.saveDraft('definition-1', 'organization-1', 'editor-1', validDraft(), 'old-token'),
+      /fence is stale/,
+    );
+    assert.equal(updateCalled, false);
+  });
+
+  it('restores Redis ownership when takeover audit fails', async () => {
+    let persistedFence = 4;
+    let restoreCalls = 0;
+    const definition = {
+      id: 'definition-1',
+      organizationId: 'organization-1',
+      draftFence: 4,
+    };
+    const tx = {
+      select: () => ({
+        from: () => ({
+          where: () => ({ for: async () => [definition] }),
+        }),
+      }),
+      update: () => ({
+        set: (values: { draftFence: number }) => {
+          persistedFence = values.draftFence;
+          return {
+            where: () => ({ returning: async () => [{ id: 'definition-1' }] }),
+          };
+        },
+      }),
+    };
+    const db = {
+      transaction: async (run: (transaction: typeof tx) => Promise<unknown>) => {
+        try {
+          return await run(tx);
+        } catch (error) {
+          persistedFence = definition.draftFence;
+          throw error;
+        }
+      },
+    } as unknown as Db;
+    const takeoverLease = {
+      status: {
+        state: 'owned' as const,
+        lease: {
+          definitionId: '00000000-0000-4000-8000-000000000001',
+          holderUserId: '00000000-0000-4000-8000-000000000003',
+          holderName: 'New editor',
+          fence: 5,
+          acquiredAt: '2026-08-29T12:00:00.000Z',
+          expiresAt: '2099-08-29T12:01:00.000Z',
+        },
+        leaseToken: 'new-owner-token-123456',
+      },
+      previous: {
+        definitionId: '00000000-0000-4000-8000-000000000001',
+        holderUserId: '00000000-0000-4000-8000-000000000002',
+        holderName: 'Old editor',
+        fence: 4,
+        acquiredAt: '2026-08-29T11:00:00.000Z',
+        expiresAt: '2099-08-29T11:01:00.000Z',
+      },
+      restore: async () => {
+        restoreCalls += 1;
+        return true;
+      },
+    };
+    const leases = {
+      takeoverWithResult: async () => takeoverLease,
+    } as unknown as WorkflowDraftLeaseService;
+    const audit = {
+      log: async () => {
+        throw new Error('audit failed');
+      },
+    } as unknown as AuditService;
+    const { entities } = dependencies();
+    const service = new WorkflowDefinitionsService(db, entities, audit, leases);
+
+    await assert.rejects(
+      service.takeoverDraftLease('definition-1', 'organization-1', 'editor-2', 'New editor'),
+      /audit failed/,
+    );
+    assert.equal(restoreCalls, 1);
+    assert.equal(persistedFence, 4);
   });
 });

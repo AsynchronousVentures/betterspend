@@ -5,6 +5,7 @@ export const workflowDraftLeaseSchema = z
     definitionId: z.string().uuid(),
     holderUserId: z.string().uuid(),
     holderName: z.string().trim().min(1).max(255),
+    fence: z.number().int().positive(),
     acquiredAt: z.iso.datetime(),
     expiresAt: z.iso.datetime(),
   })

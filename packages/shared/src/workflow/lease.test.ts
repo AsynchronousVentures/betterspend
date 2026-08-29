@@ -6,6 +6,7 @@ const lease = {
   definitionId: '00000000-0000-4000-8000-000000000001',
   holderUserId: '00000000-0000-4000-8000-000000000002',
   holderName: 'Finance editor',
+  fence: 1,
   acquiredAt: '2026-08-29T12:00:00.000Z',
   expiresAt: '2026-08-29T12:01:00.000Z',
 };
