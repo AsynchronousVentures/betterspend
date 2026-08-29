@@ -56,6 +56,7 @@ import { RiskScreeningModule } from './modules/risk-screening/risk-screening.mod
 import { WorkflowDefinitionsModule } from './modules/workflow-definitions/workflow-definitions.module';
 import { BootstrapModule } from './modules/bootstrap/bootstrap.module';
 import { ArtifactIdempotencyModule } from './modules/artifact-idempotency/artifact-idempotency.module';
+import { QboInboundModule } from './modules/integrations/qbo/qbo-inbound.module';
 
 @Module({
   imports: [
@@ -72,6 +73,7 @@ import { ArtifactIdempotencyModule } from './modules/artifact-idempotency/artifa
     CommonServicesModule,
     WebhooksModule,
     GlModule,
+    QboInboundModule,
     HealthModule,
     VendorsModule,
     UsersModule,

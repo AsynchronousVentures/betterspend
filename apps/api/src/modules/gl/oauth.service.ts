@@ -4,7 +4,10 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
 import axios from 'axios';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { appendAuditLog, integrationConnections, type Db } from '@betterspend/db';
@@ -76,6 +79,7 @@ export class OAuthService {
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly crypto: CredentialCryptoService,
     private readonly oauthRedis: OAuthRedisService,
+    @Optional() @InjectQueue('qbo-sync-in') private readonly qboSyncQueue?: Queue,
   ) {}
 
   async getQboAuthUrl(organizationId: string, userId: string, sessionId: string): Promise<string> {
@@ -108,6 +112,7 @@ export class OAuthService {
 
     const token = await this.exchangeToken('qbo', code);
     await this.saveConnection('qbo', binding, realmId, token);
+    await this.enqueueQboInitialSync(binding.organizationId);
     this.logger.log(`QBO connection stored for org ${binding.organizationId}, realmId=${realmId}`);
   }
 
@@ -415,6 +420,26 @@ export class OAuthService {
         changes: { provider, realmId, realmName: realmName ?? null },
       });
     });
+  }
+
+  private async enqueueQboInitialSync(organizationId: string): Promise<void> {
+    if (!this.qboSyncQueue) return;
+    try {
+      await this.qboSyncQueue.add(
+        'initial-sync',
+        { kind: 'initial', organizationId },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2_000 },
+          jobId: `qbo-initial-sync-${organizationId}`,
+          removeOnComplete: true,
+          removeOnFail: 100,
+        },
+      );
+    } catch (error: unknown) {
+      // Connection setup must remain successful if Redis is briefly unavailable.
+      this.logger.warn(`Unable to queue initial QBO sync for ${organizationId}: ${String(error)}`);
+    }
   }
 
   private async getValidConnection(

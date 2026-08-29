@@ -33,6 +33,8 @@ export function getRedisConnection() {
       { name: 'webhook-delivery' },
       { name: 'ocr' },
       { name: 'email-intake' },
+      { name: 'qbo-sync-in' },
+      { name: 'qbo-cdc' },
     ),
   ],
   exports: [BullModule],
