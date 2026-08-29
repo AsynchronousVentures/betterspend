@@ -125,7 +125,7 @@ const createRfqBodySchema = z
           description: z.string().min(1),
           quantity: z.number().positive(),
           unitOfMeasure: z.string().optional(),
-          targetPrice: z.number().optional(),
+          targetPrice: z.number().nonnegative().optional(),
         })
         .strict(),
     ),

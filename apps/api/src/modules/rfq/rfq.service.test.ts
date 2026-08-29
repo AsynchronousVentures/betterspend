@@ -46,6 +46,23 @@ test('public RFQ input accepts date-only and offset datetime due dates', () => {
   assert.equal(withOffset.dueDate, '2026-08-29T12:00:00-06:00');
 });
 
+test('public RFQ input rejects negative target prices and accepts nonnegative values', () => {
+  assert.throws(
+    () =>
+      parseCreateRfqBody({
+        title: 'Invalid target price',
+        lines: [{ description: 'Seats', quantity: 1, targetPrice: -0.01 }],
+      }),
+    (error: unknown) => error instanceof BadRequestException && error.getStatus() === 400,
+  );
+
+  const parsed = parseCreateRfqBody({
+    title: 'Valid target price',
+    lines: [{ description: 'Seats', quantity: 1, targetPrice: 0 }],
+  });
+  assert.equal(parsed.lines[0]?.targetPrice, 0);
+});
+
 test('RFQ response projections hide private owner idempotency keys', () => {
   const response = withoutOwnerIdempotencyKey({
     id: 'rfq-1',
