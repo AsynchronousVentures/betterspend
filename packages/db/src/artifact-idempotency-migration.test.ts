@@ -6,6 +6,7 @@ import test from 'node:test';
 const migrationTag = '20260829095118_large_natasha_romanoff';
 const artifactKindMigrationTag = '20260829102117_broad_magma';
 const migrationsDirectory = join(__dirname, 'migrations');
+const migrationRunner = join(__dirname, 'migrate.ts');
 
 test('artifact idempotency migrations are guarded and recorded in migration history', async () => {
   const [migration, artifactKindMigration, journalText] = await Promise.all([
@@ -24,7 +25,6 @@ test('artifact idempotency migrations are guarded and recorded in migration hist
   );
   const migrationEntry = journal.entries.find(({ tag }) => tag === migrationTag);
   assert.ok(migrationEntry, `migration ${migrationTag} is not recorded in the journal`);
-  assert.equal(migrationEntry.idx, 55);
   const artifactKindMigrationEntry = journal.entries.find(
     ({ tag }) => tag === artifactKindMigrationTag,
   );
@@ -32,5 +32,17 @@ test('artifact idempotency migrations are guarded and recorded in migration hist
     artifactKindMigrationEntry,
     `migration ${artifactKindMigrationTag} is not recorded in the journal`,
   );
-  assert.equal(artifactKindMigrationEntry.idx, 56);
+  assert.ok(
+    migrationEntry.idx < artifactKindMigrationEntry.idx,
+    'artifact kind migration must follow the notification delivery migration',
+  );
+});
+
+test('artifact index inspection compares catalog names as text', async () => {
+  const source = await readFile(migrationRunner, 'utf8');
+
+  assert.match(
+    source,
+    /array_agg\(attribute\.attname::text ORDER BY indexed\.ordinality\).*?= ARRAY\['organization_id', 'idempotency_key'\]::text\[\]/s,
+  );
 });

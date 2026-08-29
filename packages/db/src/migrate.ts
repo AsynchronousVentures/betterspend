@@ -269,7 +269,7 @@ async function prepareArtifactOwnerIdempotencyIndexes(client: postgres.Sql): Pro
             AND index_state.indrelid = to_regclass(${'public.' + table})
             AND COALESCE(index_state.indnkeyatts, 0) = 2
             AND COALESCE((
-              SELECT array_agg(attribute.attname ORDER BY indexed.ordinality)
+              SELECT array_agg(attribute.attname::text ORDER BY indexed.ordinality)
               FROM unnest(index_state.indkey) WITH ORDINALITY AS indexed(attnum, ordinality)
               JOIN pg_attribute AS attribute
                 ON attribute.attrelid = index_state.indrelid
