@@ -3,8 +3,15 @@ import {
   sanctionsIngestResultSchema,
   screenAllVendorsResultSchema,
   type CreateRequisitionInput,
+  type CreateWorkflowDefinitionInput,
   type MessageThreadType,
   type EffectiveAccessDocument,
+  type WorkflowAssistantProposalRequest,
+  type WorkflowAssistantProposalResponse,
+  type WorkflowDomain,
+  type WorkflowDraft,
+  type WorkflowDraftLeaseStatus,
+  type WorkflowGraph,
   vendorScreeningResultSchema,
   vendorScreeningStatusSchema,
 } from '@betterspend/shared';
@@ -273,6 +280,30 @@ export interface AiProviderStatus {
 export interface AiProvidersStatusResponse {
   defaultProvider: AiProviderId | null;
   providers: AiProviderStatus[];
+}
+
+export interface WorkflowDefinitionVersionRecord {
+  id: string;
+  definitionId: string;
+  organizationId: string;
+  version: number;
+  graphJson: WorkflowGraph;
+  positionsJson: WorkflowDraft['positions'];
+  publishedBy: string;
+  publishedAt: string;
+}
+
+export interface WorkflowDefinitionRecord {
+  id: string;
+  organizationId: string;
+  entityId: string | null;
+  domain: WorkflowDomain;
+  name: string;
+  currentDraft: WorkflowDraft;
+  publishedVersionId: string | null;
+  publishedVersion: WorkflowDefinitionVersionRecord | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AiRequisitionParseLine {
@@ -626,6 +657,62 @@ export const api = {
         body: JSON.stringify(withEntityBody(data)),
       }),
     remove: (id: string) => apiFetch<any>(`/approval-rules/${id}`, { method: 'DELETE' }),
+  },
+  workflowDefinitions: {
+    list: (domain?: WorkflowDomain) =>
+      apiFetch<WorkflowDefinitionRecord[]>(
+        `/workflow-definitions${domain ? `?domain=${encodeURIComponent(domain)}` : ''}`,
+      ),
+    get: (id: string) => apiFetch<WorkflowDefinitionRecord>(`/workflow-definitions/${id}`),
+    create: (data: CreateWorkflowDefinitionInput) =>
+      apiFetch<WorkflowDefinitionRecord>('/workflow-definitions', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    saveDraft: (id: string, draft: WorkflowDraft, leaseToken: string) =>
+      apiFetch<WorkflowDefinitionRecord>(`/workflow-definitions/${id}/draft`, {
+        method: 'PATCH',
+        body: JSON.stringify({ draft, leaseToken }),
+      }),
+    lease: {
+      status: (id: string) =>
+        apiFetch<WorkflowDraftLeaseStatus>(`/workflow-definitions/${id}/draft-lease`),
+      acquire: (id: string) =>
+        apiFetch<WorkflowDraftLeaseStatus>(`/workflow-definitions/${id}/draft-lease`, {
+          method: 'POST',
+        }),
+      renew: (id: string, leaseToken: string) =>
+        apiFetch<WorkflowDraftLeaseStatus>(`/workflow-definitions/${id}/draft-lease/renew`, {
+          method: 'POST',
+          body: JSON.stringify({ leaseToken }),
+        }),
+      release: (id: string, leaseToken: string) =>
+        apiFetch<WorkflowDraftLeaseStatus>(`/workflow-definitions/${id}/draft-lease`, {
+          method: 'DELETE',
+          body: JSON.stringify({ leaseToken }),
+        }),
+      takeover: (id: string) =>
+        apiFetch<WorkflowDraftLeaseStatus>(`/workflow-definitions/${id}/draft-lease/takeover`, {
+          method: 'POST',
+        }),
+    },
+    publish: (id: string, leaseToken: string) =>
+      apiFetch<WorkflowDefinitionVersionRecord>(`/workflow-definitions/${id}/publish`, {
+        method: 'POST',
+        body: JSON.stringify({ leaseToken }),
+      }),
+    versions: (id: string) =>
+      apiFetch<WorkflowDefinitionVersionRecord[]>(`/workflow-definitions/${id}/versions`),
+    restore: (id: string, versionId: string, leaseToken: string) =>
+      apiFetch<{ definitionId: string; restoredFromVersion: number; draft: WorkflowDraft }>(
+        `/workflow-definitions/${id}/versions/${versionId}/restore`,
+        { method: 'POST', body: JSON.stringify({ leaseToken }) },
+      ),
+    propose: (id: string, data: WorkflowAssistantProposalRequest) =>
+      apiFetch<WorkflowAssistantProposalResponse>(
+        `/workflow-definitions/${id}/assistant/proposals`,
+        { method: 'POST', body: JSON.stringify(data) },
+      ),
   },
   catalog: {
     list: (params?: { vendorId?: string; category?: string; activeOnly?: boolean }) => {
