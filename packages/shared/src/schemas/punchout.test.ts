@@ -56,6 +56,23 @@ test('requires HTTP(S) endpoints without embedded credentials or fragments', () 
   assert.equal(result.success, false);
 });
 
+test('rejects malformed endpoints without throwing', () => {
+  const result = punchoutConfigInputSchema.safeParse({
+    environments: { test: { setupUrl: 'not-a-url' } },
+  });
+
+  assert.equal(result.success, false);
+});
+
+test('preserves shared secrets exactly, including surrounding whitespace', () => {
+  const sharedSecret = '  opaque secret  ';
+  const parsed = punchoutConfigInputSchema.parse({
+    environments: { test: { sharedSecret } },
+  });
+
+  assert.equal(parsed.environments?.test?.sharedSecret, sharedSecret);
+});
+
 test('provides independent environment state defaults', () => {
   const parsed = punchoutStoredConfigSchema.parse({ environments: {} });
 

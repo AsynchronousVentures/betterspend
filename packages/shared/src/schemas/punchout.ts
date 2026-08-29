@@ -15,7 +15,13 @@ const endpointSchema = z
   .url()
   .max(2_048)
   .refine((value) => {
-    const url = new URL(value);
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      return false;
+    }
+
     return (
       (url.protocol === 'http:' || url.protocol === 'https:') &&
       !url.username &&
@@ -35,7 +41,7 @@ export const punchoutEnvironmentInputSchema = z
     toDomain: identitySchema,
     toIdentity: identitySchema,
     senderIdentity: identitySchema,
-    sharedSecret: z.string().trim().min(1).max(4_096),
+    sharedSecret: z.string().min(1).max(4_096),
   })
   .strict()
   .partial();
