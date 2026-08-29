@@ -256,13 +256,13 @@ export class RequisitionsService {
     });
 
     const created = await this.findOne(creation.id, organizationId);
-    await this.ensureSpendGuardAnalysis(organizationId, creation.id);
+    await this.ensureSpendGuardAnalysis(organizationId, creation.id).catch(() => {});
     return created;
   }
 
   /** Re-run the idempotent analysis when a cross-module owner is recovered. */
   async ensureSpendGuardAnalysis(organizationId: string, requisitionId: string): Promise<void> {
-    await this.spendGuard.analyzeRequisition(organizationId, requisitionId).catch(() => {});
+    await this.spendGuard.analyzeRequisition(organizationId, requisitionId);
   }
 
   async update(

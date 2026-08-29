@@ -444,6 +444,10 @@ export class SoftwareLicensesService {
     // Artifact owner modules have their own transactions. Resume a lifecycle
     // transition that completed before license linkage failed.
     if (input.action === 'renew') {
+      await this.requisitionsService.ensureSpendGuardAnalysis(
+        input.organizationId,
+        input.artifact.id,
+      );
       const requisition = await this.requisitionsService.findOne(
         input.artifact.id,
         input.organizationId,
