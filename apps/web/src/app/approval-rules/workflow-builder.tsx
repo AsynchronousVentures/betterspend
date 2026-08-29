@@ -82,7 +82,10 @@ function messageFor(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong.';
 }
 
-type BuilderCanvasHandle = { flushDraftBeforeNavigation: () => Promise<boolean> };
+type BuilderCanvasHandle = {
+  flushDraftBeforeNavigation: () => Promise<boolean>;
+  cancelPreparedNavigation: (error: unknown) => void;
+};
 
 const BuilderCanvas = forwardRef<
   BuilderCanvasHandle,
@@ -447,6 +450,10 @@ const BuilderCanvas = forwardRef<
     ref,
     () => ({
       flushDraftBeforeNavigation: async () => {
+        if (publishing || restoring || !beginWorkflowOperation(mutationLockRef)) {
+          setError('Wait for the current workflow operation to finish before leaving.');
+          return false;
+        }
         try {
           await savePromiseRef.current;
         } catch {
@@ -457,13 +464,10 @@ const BuilderCanvas = forwardRef<
         if (!state.dirty || !state.draft) return true;
         const leaseToken = leaseTokenRef.current;
         if (!leaseToken || leaseStatus?.state !== 'owned') {
+          endWorkflowOperation(mutationLockRef);
           setError(
             'Draft could not be saved because edit access was lost. Take over editing and try again.',
           );
-          return false;
-        }
-        if (publishing || restoring || !beginWorkflowOperation(mutationLockRef)) {
-          setError('Wait for the current workflow operation to finish before leaving.');
           return false;
         }
 
@@ -488,6 +492,7 @@ const BuilderCanvas = forwardRef<
             ) ||
             leaseTokenRef.current !== leaseToken
           ) {
+            endWorkflowOperation(mutationLockRef);
             setError('Draft save was superseded. Review the current workflow before leaving.');
             return false;
           }
@@ -495,6 +500,7 @@ const BuilderCanvas = forwardRef<
           onDefinitionChange(saved);
           return true;
         } catch (saveError) {
+          endWorkflowOperation(mutationLockRef);
           if (activeDefinitionIdRef.current === definition.id) setError(messageFor(saveError));
           return false;
         } finally {
@@ -505,10 +511,13 @@ const BuilderCanvas = forwardRef<
               request,
             )
           ) {
-            endWorkflowOperation(mutationLockRef);
             setSaving(false);
           }
         }
+      },
+      cancelPreparedNavigation: (navigationError) => {
+        endWorkflowOperation(mutationLockRef);
+        setError(messageFor(navigationError));
       },
     }),
     [
@@ -1212,7 +1221,10 @@ function WorkflowBuilderInner() {
         navigationLockRef,
         () => builderRef.current?.flushDraftBeforeNavigation() ?? Promise.resolve(true),
         navigate,
+        (navigationError) => builderRef.current?.cancelPreparedNavigation(navigationError),
       );
+    } catch {
+      // The mounted canvas keeps the user in place and surfaces the load failure.
     } finally {
       setNavigationBusy(false);
     }
