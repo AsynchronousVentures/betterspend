@@ -82,3 +82,58 @@ test('the same notification identity is independent across organizations', async
     ['org-1', 'org-2'],
   );
 });
+
+const durableNotification = {
+  id: 'notification-1',
+  organizationId: 'org-1',
+  userId: 'user-1',
+  type: 'new_message',
+  title: 'New message',
+  body: null,
+  entityType: 'message',
+  entityId: 'message-1',
+  readAt: null,
+  createdAt: new Date('2026-08-29T00:00:00.000Z'),
+  idempotencyKey: 'artifact-stable@betterspend.local',
+};
+
+test('notification list responses hide durable delivery identities', async () => {
+  const db = {
+    query: {
+      notifications: {
+        findMany: async () => [durableNotification],
+      },
+    },
+    select: () => ({
+      from: () => ({
+        where: async () => [{ count: 1 }],
+      }),
+    }),
+  } as unknown as Db;
+  const service = new NotificationsService(db);
+
+  const response = await service.list('org-1', 'user-1');
+
+  assert.equal(response.items.length, 1);
+  assert.equal('idempotencyKey' in response.items[0]!, false);
+  assert.equal(response.items[0]?.id, 'notification-1');
+});
+
+test('mark-read responses hide durable delivery identities', async () => {
+  const db = {
+    update: () => ({
+      set: () => ({
+        where: () => ({
+          returning: async () => [{ ...durableNotification, readAt: new Date() }],
+        }),
+      }),
+    }),
+  } as unknown as Db;
+  const service = new NotificationsService(db);
+
+  const response = await service.markRead('notification-1', 'user-1');
+
+  assert.ok(response);
+  assert.equal('idempotencyKey' in response, false);
+  assert.equal(response.id, 'notification-1');
+});

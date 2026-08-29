@@ -124,7 +124,7 @@ export class NotificationsService {
         .where(whereClause),
     ]);
     return {
-      items: rows,
+      items: rows.map(withoutDeliveryIdempotencyKey),
       total: totalRows[0]?.count ?? 0,
       limit,
       offset,
@@ -217,7 +217,7 @@ export class NotificationsService {
         ),
       )
       .returning();
-    return updated;
+    return updated ? withoutDeliveryIdempotencyKey(updated) : undefined;
   }
 
   async markAllRead(orgId: string, userId: string) {
@@ -247,4 +247,10 @@ export class NotificationsService {
       );
     return { count: result[0]?.count ?? 0 };
   }
+}
+
+/** Keep durable delivery identities inside notification persistence and retry paths. */
+function withoutDeliveryIdempotencyKey<T extends { idempotencyKey?: unknown }>(notification: T) {
+  const { idempotencyKey: _privateDeliveryKey, ...publicNotification } = notification;
+  return publicNotification;
 }
