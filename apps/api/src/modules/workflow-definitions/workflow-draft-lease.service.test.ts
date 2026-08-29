@@ -21,6 +21,7 @@ type StoredValue = { value: string; expiresAt: number };
 class FakeRedis implements WorkflowDraftLeaseRedis {
   readonly values = new Map<string, StoredValue>();
   readonly sequences = new Map<string, number>();
+  failAfterMutationFor: keyof typeof WORKFLOW_DRAFT_LEASE_LUA | null = null;
 
   async get(key: string): Promise<string | null> {
     const stored = this.values.get(key);
@@ -51,14 +52,20 @@ class FakeRedis implements WorkflowDraftLeaseRedis {
     if (script === WORKFLOW_DRAFT_LEASE_LUA.acquire) {
       const counterKey = String(args[1]);
       if (current) return [0, current.value];
-      const prefix = String(args[2]);
-      const document = String(args[3]);
-      const ttl = Number(args[4]);
-      const minimumFence = Number(args[5]);
+      const recoveryKey = String(args[2]);
+      const prefix = String(args[3]);
+      const document = String(args[4]);
+      const ttl = Number(args[5]);
+      const minimumFence = Number(args[6]);
       const fence = Math.max(this.sequences.get(counterKey) ?? 0, minimumFence) + 1;
       this.sequences.set(counterKey, fence);
       const value = `${prefix}${fence}|${document}`;
+      this.values.set(recoveryKey, { value: '0\n', expiresAt: Date.now() + ttl });
       this.values.set(key, { value, expiresAt: Date.now() + ttl });
+      if (this.failAfterMutationFor === 'acquire') {
+        this.failAfterMutationFor = null;
+        throw new Error('Redis command timed out after execution');
+      }
       return [1, value];
     }
 
@@ -66,16 +73,49 @@ class FakeRedis implements WorkflowDraftLeaseRedis {
       const counterKey = String(args[1]);
       const previous = current?.value ?? '';
       const previousTtl = current ? current.expiresAt - Date.now() : -1;
-      const prefix = String(args[2]);
-      const document = String(args[3]);
-      const ttl = Number(args[4]);
-      const minimumFence = Number(args[5]);
+      const recoveryKey = String(args[2]);
+      const prefix = String(args[3]);
+      const document = String(args[4]);
+      const ttl = Number(args[5]);
+      const minimumFence = Number(args[6]);
       const previousFence = previous ? Number(previous.split('|', 5)[3]) : 0;
       const fence = Math.max(this.sequences.get(counterKey) ?? 0, minimumFence, previousFence) + 1;
       this.sequences.set(counterKey, fence);
       const value = `${prefix}${fence}|${document}`;
+      const previousExpiresAt = previousTtl > 0 ? Date.now() + previousTtl : 0;
+      this.values.set(recoveryKey, {
+        value: `${previousExpiresAt}\n${previous}`,
+        expiresAt: Date.now() + ttl,
+      });
       this.values.set(key, { value, expiresAt: Date.now() + ttl });
+      if (this.failAfterMutationFor === 'takeover') {
+        this.failAfterMutationFor = null;
+        throw new Error('Redis command timed out after execution');
+      }
       return [previous, previousTtl, value];
+    }
+
+    if (script === WORKFLOW_DRAFT_LEASE_LUA.reconcileAttempt) {
+      const recoveryKey = String(args[1]);
+      const prefix = String(args[2]);
+      const recovery = this.current(recoveryKey);
+      if (!current || !recovery) return 0;
+      if (!current.value.startsWith(prefix)) {
+        this.values.delete(recoveryKey);
+        return 0;
+      }
+      const separator = recovery.value.indexOf('\n');
+      if (separator < 0) return 0;
+      const previousExpiresAt = Number(recovery.value.slice(0, separator));
+      const previous = recovery.value.slice(separator + 1);
+      const remainingTtl = previousExpiresAt - Date.now();
+      if (!previous || remainingTtl <= 0) {
+        this.values.delete(key);
+      } else {
+        this.values.set(key, { value: previous, expiresAt: Date.now() + remainingTtl });
+      }
+      this.values.delete(recoveryKey);
+      return 1;
     }
 
     if (script === WORKFLOW_DRAFT_LEASE_LUA.restore) {
@@ -381,6 +421,64 @@ describe('WorkflowDraftLeaseService', () => {
     );
     assert.equal(restored.state, 'owned');
     if (restored.state !== 'owned') return;
+    assert.equal(restored.lease.fence, first.lease.fence);
+  });
+
+  it('removes an acquired lease when Redis times out after executing the mutation', async () => {
+    const redis = new FakeRedis();
+    const service = new WorkflowDraftLeaseService(redis);
+    redis.failAfterMutationFor = 'acquire';
+
+    await assert.rejects(
+      service.acquireWithResult(
+        definitionId,
+        organizationId,
+        firstUserId,
+        firstEditorInstanceId,
+        'First editor',
+      ),
+      /storage is unavailable/,
+    );
+
+    assert.deepEqual(
+      await service.status(definitionId, organizationId, firstUserId, firstEditorInstanceId),
+      { state: 'available' },
+    );
+  });
+
+  it('restores the displaced holder when Redis times out after executing takeover', async () => {
+    const redis = new FakeRedis();
+    const service = new WorkflowDraftLeaseService(redis);
+    const first = await service.acquire(
+      definitionId,
+      organizationId,
+      firstUserId,
+      firstEditorInstanceId,
+      'First editor',
+    );
+    assert.equal(first.state, 'owned');
+    redis.failAfterMutationFor = 'takeover';
+
+    await assert.rejects(
+      service.takeoverWithResult(
+        definitionId,
+        organizationId,
+        secondUserId,
+        secondEditorInstanceId,
+        'Second editor',
+      ),
+      /storage is unavailable/,
+    );
+
+    const restored = await service.status(
+      definitionId,
+      organizationId,
+      firstUserId,
+      firstEditorInstanceId,
+    );
+    assert.equal(restored.state, 'owned');
+    if (restored.state !== 'owned' || first.state !== 'owned') return;
+    assert.equal(restored.leaseToken, first.leaseToken);
     assert.equal(restored.lease.fence, first.lease.fence);
   });
 });

@@ -63,6 +63,7 @@ if sequence ~= storedSequence then redis.call('SET', KEYS[2], sequence) end
 
 local fence = redis.call('INCR', KEYS[2])
 local raw = ARGV[1] .. fence .. '|' .. ARGV[2]
+redis.call('SET', KEYS[3], '0\\n', 'PX', ARGV[3])
 redis.call('SET', KEYS[1], raw, 'PX', ARGV[3])
 return {1, raw}
 `;
@@ -71,6 +72,9 @@ const TAKEOVER_SCRIPT = `
 local previous = redis.call('GET', KEYS[1]) or ''
 local previousTtl = -1
 if previous ~= '' then previousTtl = redis.call('PTTL', KEYS[1]) end
+local redisTime = redis.call('TIME')
+local nowMs = tonumber(redisTime[1]) * 1000 + math.floor(tonumber(redisTime[2]) / 1000)
+local previousExpiresAt = previousTtl > 0 and nowMs + previousTtl or 0
 
 local storedSequence = tonumber(redis.call('GET', KEYS[2]))
 if not storedSequence then
@@ -86,8 +90,35 @@ if sequence ~= storedSequence then redis.call('SET', KEYS[2], sequence) end
 
 local fence = redis.call('INCR', KEYS[2])
 local raw = ARGV[1] .. fence .. '|' .. ARGV[2]
+redis.call('SET', KEYS[3], previousExpiresAt .. '\\n' .. previous, 'PX', ARGV[3])
 redis.call('SET', KEYS[1], raw, 'PX', ARGV[3])
 return {previous, previousTtl, raw}
+`;
+
+const RECONCILE_ATTEMPT_SCRIPT = `
+local current = redis.call('GET', KEYS[1])
+local recovery = redis.call('GET', KEYS[2])
+if not current or not recovery then return 0 end
+local prefix = ARGV[1]
+if string.sub(current, 1, string.len(prefix)) ~= prefix then
+  redis.call('DEL', KEYS[2])
+  return 0
+end
+
+local separator = string.find(recovery, '\\n', 1, true)
+if not separator then return 0 end
+local previousExpiresAt = tonumber(string.sub(recovery, 1, separator - 1)) or 0
+local previous = string.sub(recovery, separator + 1)
+local redisTime = redis.call('TIME')
+local nowMs = tonumber(redisTime[1]) * 1000 + math.floor(tonumber(redisTime[2]) / 1000)
+local remainingTtl = previousExpiresAt - nowMs
+if previous == '' or remainingTtl <= 0 then
+  redis.call('DEL', KEYS[1])
+else
+  redis.call('SET', KEYS[1], previous, 'PX', remainingTtl)
+end
+redis.call('DEL', KEYS[2])
+return 1
 `;
 
 const RELEASE_SCRIPT = `
@@ -122,6 +153,7 @@ export const WORKFLOW_DRAFT_LEASE_LUA = {
   release: RELEASE_SCRIPT,
   deleteIfUnchanged: DELETE_IF_UNCHANGED_SCRIPT,
   restore: RESTORE_SCRIPT,
+  reconcileAttempt: RECONCILE_ATTEMPT_SCRIPT,
 } as const;
 
 type StoredLease = {
@@ -204,18 +236,26 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     );
     const token = randomBytes(32).toString('base64url');
     const key = this.key(organizationId, definitionId);
-    const rawResult = await this.redisCall(() =>
-      this.redis.eval(
-        WORKFLOW_DRAFT_LEASE_LUA.acquire,
-        2,
-        key,
-        this.fenceKey(organizationId, definitionId),
-        ownershipPrefix(token, holderUserId, editorInstanceId),
-        JSON.stringify(leaseDocument),
-        WORKFLOW_DRAFT_LEASE_TTL_MS,
-        normalizeMinimumFence(minimumFence),
-      ),
-    );
+    const prefix = ownershipPrefix(token, holderUserId, editorInstanceId);
+    const recoveryKey = this.recoveryKey(organizationId, definitionId, token);
+    let rawResult: unknown;
+    try {
+      rawResult = await this.redisCall(() =>
+        this.redis.eval(
+          WORKFLOW_DRAFT_LEASE_LUA.acquire,
+          3,
+          key,
+          this.fenceKey(organizationId, definitionId),
+          recoveryKey,
+          prefix,
+          JSON.stringify(leaseDocument),
+          WORKFLOW_DRAFT_LEASE_TTL_MS,
+          normalizeMinimumFence(minimumFence),
+        ),
+      );
+    } catch (error) {
+      await this.reconcileAmbiguousAttempt(key, recoveryKey, prefix, error);
+    }
     const result = readRedisArray(rawResult, 2);
     if (Number(result[0]) !== 1) {
       return {
@@ -335,18 +375,26 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
     );
     const token = randomBytes(32).toString('base64url');
     const key = this.key(organizationId, definitionId);
-    const rawResult = await this.redisCall(() =>
-      this.redis.eval(
-        WORKFLOW_DRAFT_LEASE_LUA.takeover,
-        2,
-        key,
-        this.fenceKey(organizationId, definitionId),
-        ownershipPrefix(token, holderUserId, editorInstanceId),
-        JSON.stringify(leaseDocument),
-        WORKFLOW_DRAFT_LEASE_TTL_MS,
-        normalizeMinimumFence(minimumFence),
-      ),
-    );
+    const prefix = ownershipPrefix(token, holderUserId, editorInstanceId);
+    const recoveryKey = this.recoveryKey(organizationId, definitionId, token);
+    let rawResult: unknown;
+    try {
+      rawResult = await this.redisCall(() =>
+        this.redis.eval(
+          WORKFLOW_DRAFT_LEASE_LUA.takeover,
+          3,
+          key,
+          this.fenceKey(organizationId, definitionId),
+          recoveryKey,
+          prefix,
+          JSON.stringify(leaseDocument),
+          WORKFLOW_DRAFT_LEASE_TTL_MS,
+          normalizeMinimumFence(minimumFence),
+        ),
+      );
+    } catch (error) {
+      await this.reconcileAmbiguousAttempt(key, recoveryKey, prefix, error);
+    }
     const result = readRedisArray(rawResult, 3);
     const previousRaw = requireRedisString(result[0]);
     const previousTtl = Number(result[1]);
@@ -432,6 +480,29 @@ export class WorkflowDraftLeaseService implements OnModuleDestroy {
 
   private fenceKey(organizationId: string, definitionId: string): string {
     return `workflow:draft-lease-fence:${organizationId}:${definitionId}`;
+  }
+
+  private recoveryKey(organizationId: string, definitionId: string, token: string): string {
+    return `workflow:draft-lease-recovery:${organizationId}:${definitionId}:${token}`;
+  }
+
+  private async reconcileAmbiguousAttempt(
+    key: string,
+    recoveryKey: string,
+    ownership: string,
+    originalError: unknown,
+  ): Promise<never> {
+    try {
+      await this.redisCall(() =>
+        this.redis.eval(WORKFLOW_DRAFT_LEASE_LUA.reconcileAttempt, 2, key, recoveryKey, ownership),
+      );
+    } catch {
+      throw new ServiceUnavailableException(
+        'Workflow draft lease outcome could not be reconciled after a storage timeout',
+        { cause: originalError },
+      );
+    }
+    throw originalError;
   }
 
   private async restoreRaw(
