@@ -10,7 +10,7 @@
       "effect": "3.20.0",
       "hono": "4.12.34",
       "lodash": "4.18.1",
-      "next>sharp": "0.35.0",
+      "next>sharp": "0.35.4",
       "postcss": "8.5.26",
       "uuid": "11.1.1",
       "valibot": "1.4.2"
@@ -36,10 +36,9 @@
     "release:push": "git push origin main --follow-tags"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3.3.6",
     "@types/node": "^22.0.0",
     "eslint": "^9.39.5",
-    "eslint-config-next": "15.5.21",
+    "eslint-config-next": "16.3.3",
     "husky": "^9.1.7",
     "prettier": "^3.9.6",
     "turbo": "^2.10.11",

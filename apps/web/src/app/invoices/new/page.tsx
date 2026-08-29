@@ -76,6 +76,10 @@ interface OcrJob {
   } | null;
 }
 
+function createInlineStorageKey(filename: string) {
+  return `inline/${Date.now()}-${filename}`;
+}
+
 export default function NewInvoicePage() {
   const router = useRouter();
   const [pos, setPOs] = useState<PO[]>([]);
@@ -209,7 +213,7 @@ export default function NewInvoicePage() {
       });
 
       setOcrStatus('Extracting...');
-      const storageKey = `inline/${Date.now()}-${file.name}`;
+      const storageKey = createInlineStorageKey(file.name);
       const job = (await api.ocr.createJob({
         filename: file.name,
         contentType: file.type,

@@ -11,7 +11,7 @@ BetterSpend is a single-tenant, open-source **Purchase Order Management** system
 ### Prerequisites
 
 - Docker & Docker Compose
-- Node.js 20+
+- Node.js 22
 - pnpm (`wget -qO- https://get.pnpm.io/install.sh | bash`)
 
 ### Environment
@@ -93,7 +93,7 @@ pnpm ci:preflight:docker      # also build all production images locally
 | ------------ | ------------------------------------- |
 | Monorepo     | Turborepo + pnpm workspaces           |
 | Backend      | NestJS v10 (TypeScript)               |
-| Frontend     | Next.js 15 App Router                 |
+| Frontend     | Next.js 16 App Router                 |
 | ORM          | Drizzle ORM                           |
 | Database     | PostgreSQL 18                         |
 | Auth         | better-auth                           |

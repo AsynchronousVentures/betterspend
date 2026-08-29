@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '../../../lib/api';
 import Breadcrumbs from '../../../components/breadcrumbs';
@@ -24,13 +24,13 @@ function formatPrice(price: string | number, currency: string) {
   );
 }
 
-export default function CatalogItemDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default function CatalogItemDetailPage(props: { params: Promise<{ id: string }> }) {
+  const { id } = use(props.params);
   const [item, setItem] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState(false);
-  const [id, setId] = useState('');
   const [error, setError] = useState('');
   const [form, setForm] = useState({
     name: '',
@@ -43,26 +43,23 @@ export default function CatalogItemDetailPage({ params }: { params: Promise<{ id
   });
 
   useEffect(() => {
-    params.then(({ id: pid }) => {
-      setId(pid);
-      api.catalog
-        .get(pid)
-        .then((data) => {
-          setItem(data);
-          setForm({
-            name: data.name || '',
-            sku: data.sku || '',
-            description: data.description || '',
-            category: data.category || '',
-            unitOfMeasure: data.unitOfMeasure || 'each',
-            unitPrice: String(data.unitPrice || '0'),
-            currency: data.currency || 'USD',
-          });
-        })
-        .catch(() => setItem(null))
-        .finally(() => setLoading(false));
-    });
-  }, [params]);
+    api.catalog
+      .get(id)
+      .then((data) => {
+        setItem(data);
+        setForm({
+          name: data.name || '',
+          sku: data.sku || '',
+          description: data.description || '',
+          category: data.category || '',
+          unitOfMeasure: data.unitOfMeasure || 'each',
+          unitPrice: String(data.unitPrice || '0'),
+          currency: data.currency || 'USD',
+        });
+      })
+      .catch(() => setItem(null))
+      .finally(() => setLoading(false));
+  }, [id]);
 
   function setField(key: string, value: string) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -305,8 +302,7 @@ export default function CatalogItemDetailPage({ params }: { params: Promise<{ id
                   </div>
                   <div>
                     Reviewed by:{' '}
-                    {proposal.reviewer?.name ??
-                      (proposal.status === 'approved' ? 'Auto-approved (policy)' : 'Pending review')}
+                    {proposal.reviewer?.name ?? (proposal.status === 'approved' ? 'Auto-approved (policy)' : 'Pending review')}
                   </div>
                   {proposal.status === 'approved' ? (
                     proposal.appliedAt ? (

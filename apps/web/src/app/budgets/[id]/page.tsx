@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Pencil, Plus } from 'lucide-react';
 import { api } from '../../../lib/api';
@@ -40,31 +40,28 @@ function commitmentSource(event: any): RelatedRecord | null {
   return null;
 }
 
-export default function BudgetDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default function BudgetDetailPage(props: { params: Promise<{ id: string }> }) {
+  const { id } = use(props.params);
   const [budget, setBudget] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', totalAmount: '' });
   const [saving, setSaving] = useState(false);
-  const [id, setId] = useState('');
   const [addPeriodOpen, setAddPeriodOpen] = useState(false);
   const [periodForm, setPeriodForm] = useState({ periodStart: '', periodEnd: '', allocatedAmount: '' });
   const [periodSaving, setPeriodSaving] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    params.then(({ id: pid }) => {
-      setId(pid);
-      api.budgets
-        .get(pid)
-        .then((data) => {
-          setBudget(data);
-          setEditForm({ name: data.name, totalAmount: String(data.totalAmount) });
-        })
-        .catch(console.error)
-        .finally(() => setLoading(false));
-    });
-  }, []);
+    api.budgets
+      .get(id)
+      .then((data) => {
+        setBudget(data);
+        setEditForm({ name: data.name, totalAmount: String(data.totalAmount) });
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [id]);
 
   async function handleSave() {
     setSaving(true);

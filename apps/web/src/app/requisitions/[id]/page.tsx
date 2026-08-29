@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -92,9 +92,9 @@ function formatCurrency(amount: string | number | null, currency = 'USD') {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(amount));
 }
 
-export default function RequisitionDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default function RequisitionDetailPage(props: { params: Promise<{ id: string }> }) {
+  const { id } = use(props.params);
   const router = useRouter();
-  const [id, setId] = useState('');
   const [req, setReq] = useState<Requisition | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -116,15 +116,12 @@ export default function RequisitionDetailPage({ params }: { params: Promise<{ id
   const templateDialogTriggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    params.then(({ id: pid }) => {
-      setId(pid);
-      api.requisitions
-        .get(pid)
-        .then((data) => setReq(data))
-        .catch(() => setReq(null))
-        .finally(() => setLoading(false));
-    });
-  }, [params]);
+    api.requisitions
+      .get(id)
+      .then((data) => setReq(data))
+      .catch(() => setReq(null))
+      .finally(() => setLoading(false));
+  }, [id]);
 
   async function openPoDialog() {
     if (vendors.length === 0) {

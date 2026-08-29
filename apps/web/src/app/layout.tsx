@@ -32,7 +32,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
+    <html lang="en" className={`${sans.variable} ${mono.variable}`} data-scroll-behavior="smooth">
       <head>
         <meta name="theme-color" content="#d4522e" />
         <meta name="apple-mobile-web-app-capable" content="yes" />

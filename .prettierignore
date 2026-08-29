@@ -2,3 +2,5 @@ node_modules
 dist
 .next
 .turbo
+apps/web/next-env.d.ts
+apps/web/AGENTS.md

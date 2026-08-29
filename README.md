@@ -3,7 +3,7 @@
 **Open-source, self-hosted procure-to-pay management.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Next.js](https://img.shields.io/badge/Next.js-15-black)](https://nextjs.org)
+[![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org)
 [![NestJS](https://img.shields.io/badge/NestJS-11-red)](https://nestjs.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-blue)](https://postgresql.org)
 
@@ -27,7 +27,7 @@ Some integrations require provider credentials or external services. The core lo
 | -------------- | -------------------------------------------------------- |
 | Monorepo       | Turborepo 2 + pnpm 10 workspaces                         |
 | API            | NestJS 11, TypeScript 5.7, OpenAPI                       |
-| Web            | Next.js 15 App Router, React 19, TanStack Query          |
+| Web            | Next.js 16 App Router, React 19, TanStack Query          |
 | Database       | PostgreSQL 18, Drizzle ORM                               |
 | Auth           | better-auth with organization-scoped roles               |
 | Validation     | Zod 4 shared schemas and Nest validation pipes           |

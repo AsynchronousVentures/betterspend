@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, use, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Brain, CheckCircle2, ClipboardCheck, Power, ShieldAlert, XCircle } from 'lucide-react';
@@ -62,8 +62,8 @@ function riskVariant(risk?: string) {
   return 'subtle' as const;
 }
 
-export default function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const [id, setId] = useState('');
+export default function ContractDetailPage(props: { params: Promise<{ id: string }> }) {
+  const { id } = use(props.params);
   const [contract, setContract] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -79,13 +79,6 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
   const [updatingId, setUpdatingId] = useState('');
 
   useEffect(() => {
-    params.then(({ id: resolvedId }) => {
-      setId(resolvedId);
-    });
-  }, [params]);
-
-  useEffect(() => {
-    if (!id) return;
     setLoading(true);
     Promise.all([
       api.contracts.get(id),
@@ -270,10 +263,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
           <OverviewField label="Start Date" value={fmtDate(contract.startDate)} />
           <OverviewField label="End Date" value={fmtDate(contract.endDate)} />
           <OverviewField label="Total Value" value={contract.totalValue != null ? fmt(contract.totalValue, contract.currency ?? 'USD') : '—'} />
-          <OverviewField
-            label="Auto-Renew"
-            value={contract.autoRenew ? `Yes${contract.renewalNoticeDays ? ` (${contract.renewalNoticeDays} days notice)` : ''}` : 'No'}
-          />
+          <OverviewField label="Auto-Renew" value={contract.autoRenew ? `Yes${contract.renewalNoticeDays ? ` (${contract.renewalNoticeDays} days notice)` : ''}` : 'No'} />
           <OverviewField label="Currency" value={contract.currency ?? 'USD'} />
           <OverviewField label="Status" value={STATUS_LABELS[contract.status] ?? contract.status} />
 
@@ -376,9 +366,7 @@ export default function ContractDetailPage({ params }: { params: Promise<{ id: s
                           {extraction.status.replace(/_/g, ' ')}
                         </Badge>
                       </div>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Confidence {Math.round(Number(extraction.confidence ?? 0) * 100)}% - {fmtDate(extraction.createdAt)}
-                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">Confidence {Math.round(Number(extraction.confidence ?? 0) * 100)}% - {fmtDate(extraction.createdAt)}</p>
                     </div>
                     {extraction.status === 'pending_review' ? (
                       <div className="flex gap-2">

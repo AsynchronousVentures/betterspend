@@ -171,7 +171,7 @@ function countByCategory(done: Record<string, boolean>) {
 }
 
 export default function CompliancePage() {
-  const initialRange = useMemo(defaultDateRange, []);
+  const initialRange = useMemo(() => defaultDateRange(), []);
   const [framework, setFramework] = useState('soc2');
   const [from, setFrom] = useState(initialRange.from);
   const [to, setTo] = useState(initialRange.to);
