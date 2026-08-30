@@ -178,6 +178,11 @@ export const externalEntityMappings = pgTable(
       table.localEntity,
       table.localId,
     ),
+    linkedLocalIdentity: uniqueIndex('external_entity_mappings_linked_local_identity_unique')
+      .on(table.organizationId, table.provider, table.direction, table.localEntity, table.localId)
+      .where(
+        sql`${table.localId} is not null and ${table.isActive} = true and ${table.isDeleted} = false`,
+      ),
     catalogLookup: index('external_entity_mappings_catalog_lookup_idx').on(
       table.organizationId,
       table.provider,

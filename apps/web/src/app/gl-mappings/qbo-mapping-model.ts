@@ -22,24 +22,14 @@ export function normalizeMappingText(value: string | null | undefined): string {
     .trim();
 }
 
-function matchRank(local: LocalMappingRecord, external: QboExternalEntityMapping): number {
-  const localName = normalizeMappingText(local.name);
-  const localCode = normalizeMappingText(local.code);
-  const externalName = normalizeMappingText(external.displayName);
-  const externalCode = normalizeMappingText(mappingCode(external));
-
-  if (localCode && localCode === externalCode) return 2;
-  if (localName && localName === externalName) return 1;
-  return 0;
-}
-
 export function mappingCode(mapping: QboExternalEntityMapping): string | null {
-  if (!mapping.payload || typeof mapping.payload !== 'object' || Array.isArray(mapping.payload)) {
+  const payload = mapping.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return null;
   }
-  const payload = mapping.payload as Record<string, unknown>;
+  const record = payload as Record<string, unknown>;
   for (const key of ['AcctNum', 'DisplayName', 'Name']) {
-    if (typeof payload[key] === 'string' && payload[key].trim()) return payload[key].trim();
+    if (typeof record[key] === 'string' && record[key].trim()) return record[key].trim();
   }
   return null;
 }
@@ -49,29 +39,61 @@ export function mappingRows(
   mappings: QboExternalEntityMapping[],
 ): LocalMappingRow[] {
   const activeCatalog = mappings.filter((mapping) => mapping.isActive && !mapping.isDeleted);
-  const available = activeCatalog.filter((mapping) => mapping.localId === null);
-  const suggestions = new Map<string, QboExternalEntityMapping>();
-  const availableIds = new Set(available.map((mapping) => mapping.id));
-
-  const suggestionPairs = localRecords
-    .filter((local) => !activeCatalog.some((mapping) => mapping.localId === local.id))
-    .flatMap((local) =>
-      available.map((mapping) => ({ local, mapping, rank: matchRank(local, mapping) })),
-    )
-    .filter((pair) => pair.rank > 0)
+  const available = activeCatalog
+    .filter((mapping) => mapping.localId === null)
     .sort(
       (left, right) =>
-        right.rank - left.rank ||
-        left.local.name.localeCompare(right.local.name) ||
-        left.local.id.localeCompare(right.local.id) ||
-        left.mapping.externalEntity.localeCompare(right.mapping.externalEntity) ||
-        left.mapping.id.localeCompare(right.mapping.id),
+        left.externalEntity.localeCompare(right.externalEntity) || left.id.localeCompare(right.id),
     );
+  const suggestions = new Map<string, QboExternalEntityMapping>();
+  const availableIds = new Set(available.map((mapping) => mapping.id));
+  const linkedLocalIds = new Set(
+    activeCatalog.flatMap((mapping) => (mapping.localId ? [mapping.localId] : [])),
+  );
+  const openLocals = localRecords
+    .filter((local) => !linkedLocalIds.has(local.id))
+    .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
 
-  for (const pair of suggestionPairs) {
-    if (suggestions.has(pair.local.id) || !availableIds.has(pair.mapping.id)) continue;
-    suggestions.set(pair.local.id, pair.mapping);
-    availableIds.delete(pair.mapping.id);
+  interface CandidateBucket {
+    candidates: QboExternalEntityMapping[];
+    cursor: number;
+  }
+
+  const byCode = new Map<string, CandidateBucket>();
+  const byName = new Map<string, CandidateBucket>();
+
+  function indexCandidate(index: Map<string, CandidateBucket>, key: string, mapping: QboExternalEntityMapping) {
+    if (!key) return;
+    const bucket = index.get(key);
+    if (bucket) {
+      bucket.candidates.push(mapping);
+    } else {
+      index.set(key, { candidates: [mapping], cursor: 0 });
+    }
+  }
+
+  function takeCandidate(index: Map<string, CandidateBucket>, key: string) {
+    const bucket = index.get(key);
+    while (bucket && bucket.cursor < bucket.candidates.length) {
+      const candidate = bucket.candidates[bucket.cursor++];
+      if (candidate && availableIds.delete(candidate.id)) return candidate;
+    }
+    return null;
+  }
+
+  for (const mapping of available) {
+    indexCandidate(byCode, normalizeMappingText(mappingCode(mapping)), mapping);
+    indexCandidate(byName, normalizeMappingText(mapping.displayName), mapping);
+  }
+
+  for (const local of openLocals) {
+    const candidate = takeCandidate(byCode, normalizeMappingText(local.code));
+    if (candidate) suggestions.set(local.id, candidate);
+  }
+  for (const local of openLocals) {
+    if (suggestions.has(local.id)) continue;
+    const candidate = takeCandidate(byName, normalizeMappingText(local.name));
+    if (candidate) suggestions.set(local.id, candidate);
   }
 
   return localRecords
@@ -83,7 +105,7 @@ export function mappingRows(
     .sort((left, right) => {
       if (Boolean(left.mapping) !== Boolean(right.mapping)) return left.mapping ? 1 : -1;
       if (left.active !== right.active) return left.active ? -1 : 1;
-      return left.name.localeCompare(right.name);
+      return left.name.localeCompare(right.name) || left.id.localeCompare(right.id);
     });
 }
 

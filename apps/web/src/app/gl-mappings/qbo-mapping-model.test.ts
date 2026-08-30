@@ -142,3 +142,24 @@ test('normalizes punctuation and whitespace when searching the QBO catalog', () 
   assert.equal(searchText.includes(normalizeMappingText('OPS 100')), true);
   assert.equal(searchText.includes(normalizeMappingText('operations north')), true);
 });
+
+test('indexes each QBO candidate once instead of comparing every local-candidate pair', () => {
+  let payloadReads = 0;
+  const mapping = { ...BASE_MAPPING };
+  Object.defineProperty(mapping, 'payload', {
+    get() {
+      payloadReads += 1;
+      return { AcctNum: 'OPS-100' };
+    },
+  });
+
+  mappingRows(
+    [
+      { id: 'local-one', name: 'Field Team', code: 'OPS-100', active: true },
+      { id: 'local-two', name: 'Operations', code: 'OPS-200', active: true },
+    ],
+    [mapping],
+  );
+
+  assert.equal(payloadReads, 1);
+});
