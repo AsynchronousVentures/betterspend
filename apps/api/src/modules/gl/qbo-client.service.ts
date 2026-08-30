@@ -19,6 +19,8 @@ export type QboRequestOptions = {
   data?: unknown;
   query?: Readonly<Record<string, string | number | boolean>>;
   requestId?: string;
+  expectedConnectionId?: string;
+  expectedRealmId?: string;
 };
 
 export type QboResponse<T> = {
@@ -164,6 +166,13 @@ export class QboClientService {
   async request<T>(options: QboRequestOptions): Promise<QboResponse<T>> {
     const initialToken = await this.oauthService.getQboToken(options.organizationId);
     if (!initialToken) throw new QboConnectionRequiredError();
+    if (
+      (options.expectedConnectionId &&
+        initialToken.connectionId !== options.expectedConnectionId) ||
+      (options.expectedRealmId && initialToken.realmId !== options.expectedRealmId)
+    ) {
+      throw new QboConnectionRequiredError();
+    }
     let token: QboToken = initialToken;
 
     const requestId = isWrite(options.method) ? (options.requestId ?? randomUUID()) : undefined;

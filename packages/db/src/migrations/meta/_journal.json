@@ -421,6 +421,13 @@
       "when": 1788105735677,
       "tag": "20260830160215_qbo_mapping_local_identity_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1788108223729,
+      "tag": "20260830164343_qbo_mapping_export_safety",
+      "breakpoints": true
     }
   ]
 }

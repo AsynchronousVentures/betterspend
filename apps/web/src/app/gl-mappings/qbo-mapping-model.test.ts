@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { QboExternalEntityMapping } from '@betterspend/shared';
-import {
-  catalogSearchText,
-  mappingRows,
-  normalizeMappingText,
-} from './qbo-mapping-model';
+import { catalogSearchText, mappingRows, normalizeMappingText } from './qbo-mapping-model';
 
 const BASE_MAPPING: QboExternalEntityMapping = {
   id: '00000000-0000-4000-8000-000000000001',
@@ -21,6 +17,7 @@ const BASE_MAPPING: QboExternalEntityMapping = {
   localId: null,
   direction: 'inbound',
   autoCreated: false,
+  isDefault: false,
   isActive: true,
   isDeleted: false,
   mergedIntoExternalId: null,
@@ -83,7 +80,10 @@ test('does not promote partial-name matches to one-action suggestions', () => {
     [BASE_MAPPING],
   );
 
-  assert.equal(rows.every((row) => row.suggestion === null), true);
+  assert.equal(
+    rows.every((row) => row.suggestion === null),
+    true,
+  );
 });
 
 test('does not reuse an exact-match suggestion', () => {

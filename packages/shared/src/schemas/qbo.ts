@@ -26,8 +26,11 @@ export const qboSyncRequestSchema = z
 
 export const qboMappingLinkInputSchema = z
   .object({
-    localId: z.string().uuid().nullable(),
+    // Some local entities use UUIDs while GL account codes are bounded strings.
+    // The API validates UUID-backed entities again against the organization.
+    localId: z.string().trim().min(1).max(255).nullable(),
     autoCreated: z.boolean().optional(),
+    isDefault: z.boolean().optional(),
   })
   .strict();
 
@@ -47,7 +50,8 @@ export const qboExternalEntityMappingSchema = z.object({
   displayName: z.string().nullable(),
   syncToken: z.string().nullable(),
   localEntity: z.string(),
-  localId: z.string().uuid().nullable(),
+  localId: z.string().nullable(),
+  isDefault: z.boolean(),
   direction: z.literal('inbound'),
   autoCreated: z.boolean(),
   isActive: z.boolean(),

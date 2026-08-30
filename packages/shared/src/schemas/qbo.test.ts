@@ -16,7 +16,7 @@ describe('QBO integration schemas', () => {
     assert.equal(qboSyncRequestSchema.safeParse({ entityTypes: ['Employee'] }).success, false);
   });
 
-  it('requires a UUID or null for mapping links and rejects extra fields', () => {
+  it('accepts bounded UUID or code local identifiers and rejects extra fields', () => {
     assert.deepEqual(
       qboMappingLinkInputSchema.parse({
         localId: '00000000-0000-4000-8000-000000000001',
@@ -25,7 +25,9 @@ describe('QBO integration schemas', () => {
       { localId: '00000000-0000-4000-8000-000000000001', autoCreated: false },
     );
     assert.deepEqual(qboMappingLinkInputSchema.parse({ localId: null }), { localId: null });
-    assert.equal(qboMappingLinkInputSchema.safeParse({ localId: 'not-a-uuid' }).success, false);
+    assert.deepEqual(qboMappingLinkInputSchema.parse({ localId: ' 6100 ' }), { localId: '6100' });
+    assert.equal(qboMappingLinkInputSchema.safeParse({ localId: '' }).success, false);
+    assert.equal(qboMappingLinkInputSchema.safeParse({ localId: 'x'.repeat(256) }).success, false);
     assert.equal(
       qboMappingLinkInputSchema.safeParse({ localId: null, organizationId: 'other-org' }).success,
       false,
@@ -46,6 +48,7 @@ describe('QBO integration schemas', () => {
       syncToken: '3',
       localEntity: 'vendor',
       localId: null,
+      isDefault: false,
       direction: 'inbound',
       autoCreated: false,
       isActive: true,
