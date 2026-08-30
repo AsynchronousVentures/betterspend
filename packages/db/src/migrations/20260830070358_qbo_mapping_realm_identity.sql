@@ -2,6 +2,7 @@ CREATE TABLE "external_entity_mappings" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"organization_id" uuid NOT NULL,
 	"connection_id" uuid,
+	"realm_id" varchar(255) NOT NULL,
 	"provider" varchar(20) NOT NULL,
 	"external_entity" varchar(40) NOT NULL,
 	"external_id" varchar(255) NOT NULL,
@@ -23,6 +24,6 @@ CREATE TABLE "external_entity_mappings" (
 --> statement-breakpoint
 ALTER TABLE "external_entity_mappings" ADD CONSTRAINT "external_entity_mappings_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "external_entity_mappings" ADD CONSTRAINT "external_entity_mappings_connection_org_fk" FOREIGN KEY ("connection_id","organization_id") REFERENCES "public"."integration_connections"("id","organization_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-CREATE UNIQUE INDEX "external_entity_mappings_external_identity_unique" ON "external_entity_mappings" USING btree ("organization_id","provider","direction","external_entity","external_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "external_entity_mappings_external_identity_unique" ON "external_entity_mappings" USING btree ("organization_id","provider","direction","external_entity","external_id","realm_id");--> statement-breakpoint
 CREATE INDEX "external_entity_mappings_local_lookup_idx" ON "external_entity_mappings" USING btree ("organization_id","provider","local_entity","local_id");--> statement-breakpoint
 CREATE INDEX "external_entity_mappings_catalog_lookup_idx" ON "external_entity_mappings" USING btree ("organization_id","provider","external_entity","is_deleted","display_name");

@@ -43,6 +43,15 @@ export class QboConnectionRequiredError extends Error {
   }
 }
 
+export class QboResourceNotFoundError extends Error {
+  readonly status = 404;
+
+  constructor() {
+    super('QBO resource was not found');
+    this.name = 'QboResourceNotFoundError';
+  }
+}
+
 export class QboFaultError extends Error {
   constructor(
     readonly faultType: string,
@@ -259,6 +268,7 @@ export class QboClientService {
 
   private toQboError(error: unknown): unknown {
     if (!axios.isAxiosError(error)) return error;
+    if (error.response?.status === 404) return new QboResourceNotFoundError();
     return this.faultError(error.response?.data, error.response?.status) ?? error;
   }
 

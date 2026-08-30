@@ -38,6 +38,7 @@ describe('QBO integration schemas', () => {
       id: '00000000-0000-4000-8000-000000000001',
       organizationId: '00000000-0000-4000-8000-000000000002',
       connectionId: '00000000-0000-4000-8000-000000000003',
+      realmId: 'realm-1',
       provider: 'qbo',
       externalEntity: 'Vendor',
       externalId: '42',

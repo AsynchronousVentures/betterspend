@@ -14,6 +14,15 @@ export class QboSyncProcessor extends WorkerHost {
 
   async process(job: Job<unknown>): Promise<void> {
     const data = qboSyncJobDataSchema.parse(job.data);
+    if (data.kind === 'reconcile') {
+      await this.qboInboundService.reconcileCatalogWebhook(
+        data.organizationId,
+        data.connectionId,
+        data.realmId,
+        data.entityName,
+      );
+      return;
+    }
     this.logger.log(`Processing QBO ${data.kind} sync for ${data.organizationId}`);
     if (data.kind === 'initial') {
       await this.qboInboundService.syncNow(data.organizationId, data.entityTypes);

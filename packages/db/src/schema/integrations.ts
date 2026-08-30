@@ -144,6 +144,8 @@ export const externalEntityMappings = pgTable(
       .notNull()
       .references(() => organizations.id),
     connectionId: uuid('connection_id'),
+    /** Provider account identity at the time this mapping was observed. */
+    realmId: varchar('realm_id', { length: 255 }).notNull(),
     provider: varchar('provider', { length: 20 }).notNull(),
     externalEntity: varchar('external_entity', { length: 40 }).notNull(),
     externalId: varchar('external_id', { length: 255 }).notNull(),
@@ -168,6 +170,7 @@ export const externalEntityMappings = pgTable(
       table.direction,
       table.externalEntity,
       table.externalId,
+      table.realmId,
     ),
     localLookup: index('external_entity_mappings_local_lookup_idx').on(
       table.organizationId,

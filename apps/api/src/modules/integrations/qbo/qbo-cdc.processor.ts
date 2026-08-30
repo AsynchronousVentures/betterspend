@@ -17,6 +17,19 @@ export class QboCdcProcessor extends WorkerHost {
       await this.qboInboundService.processWebhookEvent(data.event);
       return;
     }
+    if (data.kind === 'cdc-recovery') {
+      await this.qboInboundService.runCdcRecovery(
+        data.organizationId,
+        data.connectionId,
+        data.realmId,
+        data.lookbackDays,
+      );
+      return;
+    }
+    if (data.kind === 'vendor-merge-recovery') {
+      await this.qboInboundService.processVendorMergeRecovery(data);
+      return;
+    }
     this.logger.log(`Processing QBO CDC sweep for ${data.organizationId}`);
     await this.qboInboundService.runCdcSweep(data.organizationId, data.lookbackDays);
   }

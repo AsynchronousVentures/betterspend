@@ -54,6 +54,7 @@ export const qboExternalEntityMappingSchema = z.object({
   id: z.string().uuid(),
   organizationId: z.string().uuid(),
   connectionId: z.string().uuid().nullable(),
+  realmId: z.string().min(1).max(255),
   provider: z.literal('qbo'),
   externalEntity: qboMappingEntitySchema,
   externalId: z.string(),

@@ -455,6 +455,7 @@ export class OAuthService {
                 eq(externalEntityMappings.organizationId, binding.organizationId),
                 eq(externalEntityMappings.connectionId, existingConnection.id),
                 eq(externalEntityMappings.provider, 'qbo'),
+                eq(externalEntityMappings.direction, 'inbound'),
                 or(
                   isNotNull(externalEntityMappings.localId),
                   eq(externalEntityMappings.autoCreated, true),
@@ -474,6 +475,7 @@ export class OAuthService {
                   eq(externalEntityMappings.organizationId, binding.organizationId),
                   eq(externalEntityMappings.connectionId, existingConnection.id),
                   eq(externalEntityMappings.provider, 'qbo'),
+                  eq(externalEntityMappings.direction, 'inbound'),
                   or(
                     isNotNull(externalEntityMappings.localId),
                     eq(externalEntityMappings.autoCreated, true),
@@ -835,7 +837,7 @@ export class OAuthService {
     const repeatableJobs = await queue.getRepeatableJobs();
     await Promise.all(
       repeatableJobs
-        .filter((job) => job.id === jobId)
+        .filter((job) => job.id === jobId || job.key === jobId)
         .map((job) => queue.removeRepeatableByKey(job.key)),
     );
   }

@@ -62,10 +62,38 @@ describe('QboSyncProcessor', () => {
     expect(inbound.ensureScheduledSync).not.toHaveBeenCalled();
   });
 
+  it('dispatches a validated catalog reconciliation with its connection fence', async () => {
+    const inbound = {
+      syncNow: jest.fn(),
+      ensureScheduledSync: jest.fn(),
+      reconcileCatalogWebhook: jest.fn(async () => undefined),
+    };
+    const processor = new QboSyncProcessor(inbound as never);
+
+    await processor.process({
+      data: {
+        kind: 'reconcile',
+        organizationId: 'organization-1',
+        connectionId: 'connection-1',
+        realmId: 'realm-1',
+        entityName: 'TaxRate',
+      },
+    } as never);
+
+    expect(inbound.reconcileCatalogWebhook).toHaveBeenCalledWith(
+      'organization-1',
+      'connection-1',
+      'realm-1',
+      'TaxRate',
+    );
+    expect(inbound.syncNow).not.toHaveBeenCalled();
+  });
+
   it('rejects unknown fields and empty entity selections', async () => {
     const inbound = {
       syncNow: jest.fn(),
       ensureScheduledSync: jest.fn(),
+      reconcileCatalogWebhook: jest.fn(),
     };
     const processor = new QboSyncProcessor(inbound as never);
 
@@ -79,6 +107,18 @@ describe('QboSyncProcessor', () => {
         data: { kind: 'initial', organizationId: 'organization-1', entityTypes: [] },
       } as never),
     ).rejects.toThrow();
+    await expect(
+      processor.process({
+        data: {
+          kind: 'reconcile',
+          organizationId: 'organization-1',
+          connectionId: 'connection-1',
+          realmId: 'realm-1',
+          entityName: 'User',
+        },
+      } as never),
+    ).rejects.toThrow();
     expect(inbound.syncNow).not.toHaveBeenCalled();
+    expect(inbound.reconcileCatalogWebhook).not.toHaveBeenCalled();
   });
 });

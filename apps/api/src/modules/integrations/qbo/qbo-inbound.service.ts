@@ -17,6 +17,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import {
   appendAuditLog,
+  appendAuditLogIfAbsent,
   departments,
   externalEntityMappings,
   integrationConnections,
@@ -43,7 +44,7 @@ import {
 } from '../../../common/qbo-sync-queue';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { resolveOrganizationAdminId } from '../../../common/demo-identity';
-import { QboClientService } from '../../gl/qbo-client.service';
+import { QboClientService, QboResourceNotFoundError } from '../../gl/qbo-client.service';
 import { OAuthRedisService, type OAuthLockGuard } from '../../gl/oauth-redis.service';
 
 export type QboCatalogEntity = (typeof QBO_CATALOG_ENTITY_TYPES)[number];
@@ -59,6 +60,9 @@ const QBO_WEBHOOK_ENTITY_TYPES = [
 
 const QBO_WEBHOOK_OPERATIONS = ['create', 'update', 'delete', 'merge'] as const;
 const qboOrganizationIdSchema = z.string().min(1).max(255);
+const qboConnectionIdSchema = z.string().min(1).max(255);
+const qboRealmIdSchema = z.string().min(1).max(255);
+const qboExternalIdSchema = z.string().min(1).max(255);
 const qboSyncEntityTypesSchema = z.array(qboSyncEntitySchema).min(1).optional();
 
 const QBO_ACCOUNT_TYPES = new Set([
@@ -73,6 +77,11 @@ const QUERY_PAGE_SIZE = 1000;
 const DEFAULT_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const MAX_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const MAX_LOOKBACK_DAYS = 30;
+const QBO_RECOVERY_ATTEMPTS = 5;
+const QBO_RECOVERY_BACKOFF_DELAY_MS = 5_000;
+const QBO_RECONCILIATION_JOB_NAME = 'webhook-reconciliation';
+const QBO_CDC_RECOVERY_JOB_NAME = 'cdc-recovery';
+const QBO_VENDOR_MERGE_RECOVERY_JOB_NAME = 'vendor-merge-recovery';
 const PENDING_INITIAL_SYNC_RECOVERY_INTERVAL_MS = 30_000;
 const QBO_ACTIVE_ENTITY_TYPES = new Set<QboSyncEntity>(QBO_CATALOG_ENTITY_TYPES);
 
@@ -101,6 +110,25 @@ export const qboCdcJobDataSchema = z.discriminatedUnion('kind', [
       lookbackDays: z.number().int().min(1).max(MAX_LOOKBACK_DAYS).optional(),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal('cdc-recovery'),
+      organizationId: qboOrganizationIdSchema,
+      connectionId: qboConnectionIdSchema,
+      realmId: qboRealmIdSchema,
+      lookbackDays: z.number().int().min(1).max(MAX_LOOKBACK_DAYS).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('vendor-merge-recovery'),
+      organizationId: qboOrganizationIdSchema,
+      connectionId: qboConnectionIdSchema,
+      realmId: qboRealmIdSchema,
+      sourceId: qboExternalIdSchema,
+      targetId: qboExternalIdSchema,
+    })
+    .strict(),
 ]);
 
 export const qboSyncJobDataSchema = z.discriminatedUnion('kind', [
@@ -116,6 +144,15 @@ export const qboSyncJobDataSchema = z.discriminatedUnion('kind', [
       kind: z.literal('scheduled'),
       organizationId: qboOrganizationIdSchema,
       entityTypes: qboSyncEntityTypesSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('reconcile'),
+      organizationId: qboOrganizationIdSchema,
+      connectionId: qboConnectionIdSchema,
+      realmId: qboRealmIdSchema,
+      entityName: qboSyncEntitySchema,
     })
     .strict(),
 ]);
@@ -143,11 +180,19 @@ const ENTITY_DEFINITIONS: Readonly<Record<QboSyncEntity, QboEntityDefinition>> =
   TaxRate: { localEntity: 'tax_rate', displayName: displayNameFromQbo },
 };
 
-export type QboSyncJobData = {
-  kind: 'initial' | 'scheduled';
-  organizationId: string;
-  entityTypes?: readonly QboSyncEntity[];
-};
+export type QboSyncJobData =
+  | {
+      kind: 'initial' | 'scheduled';
+      organizationId: string;
+      entityTypes?: readonly QboSyncEntity[];
+    }
+  | {
+      kind: 'reconcile';
+      organizationId: string;
+      connectionId: string;
+      realmId: string;
+      entityName: QboSyncEntity;
+    };
 
 export type QboWebhookEvent = {
   realmId: string;
@@ -163,7 +208,22 @@ export type QboWebhookOperation = (typeof QBO_WEBHOOK_OPERATIONS)[number];
 
 export type QboCdcJobData =
   | { kind: 'webhook'; event: QboWebhookEvent }
-  | { kind: 'cdc-sweep'; organizationId: string; lookbackDays?: number };
+  | { kind: 'cdc-sweep'; organizationId: string; lookbackDays?: number }
+  | {
+      kind: 'cdc-recovery';
+      organizationId: string;
+      connectionId: string;
+      realmId: string;
+      lookbackDays?: number;
+    }
+  | {
+      kind: 'vendor-merge-recovery';
+      organizationId: string;
+      connectionId: string;
+      realmId: string;
+      sourceId: string;
+      targetId: string;
+    };
 
 export type QboSyncResult = {
   organizationId: string;
@@ -189,6 +249,8 @@ type MappingUpsert = {
   mergedIntoExternalId?: string | null;
   localId?: string | null;
   autoCreated?: boolean;
+  /** Merge events must not mutate a mapping that belongs to an older QBO realm. */
+  connectionScoped?: boolean;
   auditSource?: 'snapshot' | 'cdc' | 'webhook' | 'merge';
   auditReason?: string;
 };
@@ -304,7 +366,6 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
    * application restart to receive its hourly import and daily CDC sweep.
    */
   async ensureScheduledSync(organizationId: string): Promise<void> {
-    if (!(await this.activeConnection(organizationId))) return;
     await this.scheduleOrganization(organizationId);
   }
 
@@ -330,11 +391,210 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
     return { queued: true, jobId: job.id };
   }
 
+  async enqueueCatalogReconciliation(
+    connection: { id: string; organizationId: string; realmId: string },
+    entityName: QboSyncEntity,
+  ): Promise<{ queued: true; jobId: string | undefined }> {
+    const data: QboSyncJobData = {
+      kind: 'reconcile',
+      organizationId: connection.organizationId,
+      connectionId: connection.id,
+      realmId: connection.realmId,
+      entityName,
+    };
+    qboSyncJobDataSchema.parse(data);
+    const jobId = qboRecoveryJobId('catalog', [
+      connection.organizationId,
+      connection.id,
+      connection.realmId,
+      entityName,
+    ]);
+    const existing = await this.existingDurableQueueJob(this.syncQueue, jobId);
+    if (existing) return { queued: true, jobId: existing.id };
+
+    const job = await this.syncQueue.add(QBO_RECONCILIATION_JOB_NAME, data, {
+      attempts: QBO_RECOVERY_ATTEMPTS,
+      backoff: { type: 'exponential', delay: QBO_RECOVERY_BACKOFF_DELAY_MS },
+      jobId,
+      removeOnComplete: true,
+      // Keep the failed recovery job available for operator inspection/retry.
+      removeOnFail: false,
+    });
+    return { queued: true, jobId: job.id };
+  }
+
+  async enqueueCdcRecovery(
+    connection: { id: string; organizationId: string; realmId: string },
+    lookbackDays = MAX_LOOKBACK_DAYS,
+  ): Promise<{ queued: true; jobId: string | undefined }> {
+    const data: QboCdcJobData = {
+      kind: 'cdc-recovery',
+      organizationId: connection.organizationId,
+      connectionId: connection.id,
+      realmId: connection.realmId,
+      lookbackDays,
+    };
+    qboCdcJobDataSchema.parse(data);
+    const jobId = qboRecoveryJobId('cdc', [
+      connection.organizationId,
+      connection.id,
+      connection.realmId,
+    ]);
+    const existing = await this.existingDurableQueueJob(this.cdcQueue, jobId);
+    if (existing) return { queued: true, jobId: existing.id };
+
+    const job = await this.cdcQueue.add(QBO_CDC_RECOVERY_JOB_NAME, data, {
+      attempts: QBO_RECOVERY_ATTEMPTS,
+      backoff: { type: 'exponential', delay: QBO_RECOVERY_BACKOFF_DELAY_MS },
+      jobId,
+      removeOnComplete: true,
+      // A failed reconciliation is evidence that the webhook stream needs attention.
+      removeOnFail: false,
+    });
+    return { queued: true, jobId: job.id };
+  }
+
+  async enqueueVendorMergeRecovery(
+    connection: { id: string; organizationId: string; realmId: string },
+    event: QboWebhookEvent,
+  ): Promise<{ queued: true; jobId: string | undefined }> {
+    const { sourceId, targetId } = vendorMergeIds(event);
+    if (!sourceId || !targetId || sourceId === targetId) {
+      throw new ServiceUnavailableException(
+        'QBO Vendor Merge cannot be recovered without distinct source and target IDs',
+      );
+    }
+
+    const data: QboCdcJobData = {
+      kind: 'vendor-merge-recovery',
+      organizationId: connection.organizationId,
+      connectionId: connection.id,
+      realmId: connection.realmId,
+      sourceId,
+      targetId,
+    };
+    qboCdcJobDataSchema.parse(data);
+    const jobId = qboRecoveryJobId('vendor-merge', [
+      connection.organizationId,
+      connection.id,
+      connection.realmId,
+      sourceId,
+      targetId,
+    ]);
+    const existing = await this.existingDurableQueueJob(this.cdcQueue, jobId);
+    if (existing) return { queued: true, jobId: existing.id };
+
+    const job = await this.cdcQueue.add(QBO_VENDOR_MERGE_RECOVERY_JOB_NAME, data, {
+      attempts: QBO_RECOVERY_ATTEMPTS,
+      backoff: { type: 'exponential', delay: QBO_RECOVERY_BACKOFF_DELAY_MS },
+      jobId,
+      removeOnComplete: true,
+      // Preserve permanent merge failures instead of losing the remapping evidence.
+      removeOnFail: false,
+    });
+    return { queued: true, jobId: job.id };
+  }
+
+  private async recordUnrecoverableVendorMerge(
+    connection: { id: string; organizationId: string; realmId: string },
+    event: QboWebhookEvent,
+    assertLock: OAuthLockGuard,
+  ): Promise<void> {
+    const { sourceId, targetId } = vendorMergeIds(event);
+    const auditId = qboStableUuid(
+      'qbo-vendor-merge-recovery-failed',
+      connection.organizationId,
+      connection.id,
+      connection.realmId,
+      event.entityName,
+      event.operation,
+      event.entityId,
+      sourceId ?? '',
+      targetId ?? '',
+    );
+    let recorded = false;
+
+    await assertLock();
+    await this.db.transaction(async (transaction) => {
+      await assertLock();
+      if (
+        !(await this.lockCurrentQboConnection(
+          transaction,
+          connection.id,
+          connection.organizationId,
+          connection.realmId,
+        ))
+      ) {
+        return;
+      }
+
+      await appendAuditLogIfAbsent(transaction, {
+        id: auditId,
+        organizationId: connection.organizationId,
+        userId: null,
+        entityType: 'integration_connection',
+        entityId: connection.id,
+        action: 'vendor_merge_recovery_failed',
+        changes: {
+          reason: 'missing_or_invalid_merge_ids',
+          sourceIdPresent: sourceId !== null,
+          targetIdPresent: targetId !== null,
+          distinctIds: sourceId !== null && targetId !== null && sourceId !== targetId,
+        },
+        metadata: {
+          actor: 'system',
+          provider: 'qbo',
+          source: 'webhook',
+          connectionId: connection.id,
+          realmId: connection.realmId,
+          event: {
+            entityName: event.entityName,
+            operation: event.operation,
+            entityId: event.entityId,
+            payloadKeys: Object.keys(event.payload)
+              .filter((key) => /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key))
+              .sort()
+              .slice(0, 32),
+          },
+        },
+      });
+      recorded = true;
+    });
+
+    if (!recorded) return;
+
+    await assertLock();
+    try {
+      const adminId = await resolveOrganizationAdminId(this.db, connection.organizationId);
+      if (!adminId) return;
+      await assertLock();
+      await this.notifications.createIdempotent(
+        `qbo-vendor-merge-recovery-failed:${auditId}`,
+        connection.organizationId,
+        adminId,
+        'qbo_vendor_merge_recovery_failed',
+        'QuickBooks vendor merge needs attention',
+        'QuickBooks sent a vendor merge event without distinct source and target IDs. The event was retained for manual reconciliation.',
+        'integration_connection',
+        connection.id,
+      );
+    } catch (error: unknown) {
+      this.logger.error(
+        `Unable to notify the QBO administrator about a retained merge failure: ${String(error)}`,
+      );
+    }
+  }
+
   async listMappings(organizationId: string, externalEntity?: string) {
+    const connection = await this.activeConnection(organizationId);
+    if (!connection) return [];
+
     return this.db.query.externalEntityMappings.findMany({
       where: (mapping, { and, eq }) =>
         and(
           eq(mapping.organizationId, organizationId),
+          eq(mapping.connectionId, connection.id),
+          eq(mapping.realmId, connection.realmId),
           eq(mapping.provider, 'qbo'),
           eq(mapping.direction, 'inbound'),
           externalEntity ? eq(mapping.externalEntity, externalEntity) : undefined,
@@ -350,6 +610,20 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
     userId?: string,
   ) {
     return this.db.transaction(async (transaction) => {
+      const [connection] = await transaction
+        .select({ id: integrationConnections.id, realmId: integrationConnections.realmId })
+        .from(integrationConnections)
+        .where(
+          and(
+            eq(integrationConnections.organizationId, organizationId),
+            eq(integrationConnections.provider, 'qbo'),
+            eq(integrationConnections.status, 'active'),
+          ),
+        )
+        .for('update')
+        .limit(1);
+      if (!connection) throw new ServiceUnavailableException('QBO is not connected');
+
       const [mapping] = await transaction
         .select()
         .from(externalEntityMappings)
@@ -357,6 +631,8 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
           and(
             eq(externalEntityMappings.id, mappingId),
             eq(externalEntityMappings.organizationId, organizationId),
+            eq(externalEntityMappings.connectionId, connection.id),
+            eq(externalEntityMappings.realmId, connection.realmId),
             eq(externalEntityMappings.provider, 'qbo'),
             eq(externalEntityMappings.direction, 'inbound'),
           ),
@@ -390,6 +666,8 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
           and(
             eq(externalEntityMappings.id, mappingId),
             eq(externalEntityMappings.organizationId, organizationId),
+            eq(externalEntityMappings.connectionId, connection.id),
+            eq(externalEntityMappings.realmId, connection.realmId),
             eq(externalEntityMappings.provider, 'qbo'),
             eq(externalEntityMappings.direction, 'inbound'),
           ),
@@ -476,11 +754,24 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
   async runCdcSweep(
     organizationId: string,
     lookbackDays = MAX_LOOKBACK_DAYS,
+    expectedConnection?: { id: string; realmId: string },
   ): Promise<QboSyncResult> {
     return this.withOrganizationLock(organizationId, async (assertLock) => {
       await assertLock();
       const connection = await this.activeConnection(organizationId);
       if (!connection) throw new ServiceUnavailableException('QBO is not connected');
+      if (
+        expectedConnection &&
+        (connection.id !== expectedConnection.id ||
+          connection.realmId !== expectedConnection.realmId)
+      ) {
+        return {
+          organizationId,
+          imported: 0,
+          tombstones: 0,
+          completedAt: new Date().toISOString(),
+        };
+      }
 
       const boundedLookback = Math.min(Math.max(1, Math.floor(lookbackDays)), MAX_LOOKBACK_DAYS);
       const changedSince = new Date(Date.now() - boundedLookback * 24 * 60 * 60 * 1000);
@@ -528,6 +819,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
                   realmId: connection.realmId,
                   entityName: entry.entityName,
                   entity: entry.entity,
+                  providerUpdatedAt: qboEntityUpdatedAt(entry.entity),
                   deleted: true,
                   auditSource: 'cdc',
                 },
@@ -547,6 +839,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
                 connection.realmId,
                 entry.entityName,
                 entry.entity,
+                qboEntityUpdatedAt(entry.entity),
                 'cdc',
                 assertLock,
               );
@@ -560,6 +853,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
                   realmId: connection.realmId,
                   entityName: entry.entityName,
                   entity: entry.entity,
+                  providerUpdatedAt: qboEntityUpdatedAt(entry.entity),
                   deleted: false,
                   auditSource: 'cdc',
                 },
@@ -591,6 +885,83 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
         tombstones,
         completedAt: completedAt.toISOString(),
       };
+    });
+  }
+
+  async reconcileCatalogWebhook(
+    organizationId: string,
+    connectionId: string,
+    realmId: string,
+    entityName: QboSyncEntity,
+  ): Promise<void> {
+    await this.withOrganizationLock(organizationId, async (assertLock) => {
+      await assertLock();
+      const connection = await this.activeConnection(organizationId);
+      if (!connection || connection.id !== connectionId || connection.realmId !== realmId) {
+        return;
+      }
+      await this.syncCatalogEntity(organizationId, connectionId, realmId, entityName, assertLock);
+    });
+  }
+
+  async runCdcRecovery(
+    organizationId: string,
+    connectionId: string,
+    realmId: string,
+    lookbackDays = MAX_LOOKBACK_DAYS,
+  ): Promise<QboSyncResult> {
+    return this.runCdcSweep(organizationId, lookbackDays, { id: connectionId, realmId });
+  }
+
+  async processVendorMergeRecovery(input: {
+    organizationId: string;
+    connectionId: string;
+    realmId: string;
+    sourceId: string;
+    targetId: string;
+  }): Promise<void> {
+    if (input.sourceId === input.targetId) {
+      throw new BadRequestException(
+        'QBO Vendor Merge recovery requires distinct source and target IDs',
+      );
+    }
+
+    await this.withOrganizationLock(input.organizationId, async (assertLock) => {
+      await assertLock();
+      const connection = await this.activeConnection(input.organizationId);
+      if (
+        !connection ||
+        connection.id !== input.connectionId ||
+        connection.realmId !== input.realmId
+      ) {
+        return;
+      }
+
+      const event: QboWebhookEvent = {
+        realmId: input.realmId,
+        entityName: 'Vendor',
+        entityId: input.targetId,
+        operation: 'merge',
+        payload: { deletedId: input.sourceId },
+      };
+      const providerUpdatedAt = await this.fetchVendorMergeTimestamp(
+        input.organizationId,
+        event,
+        assertLock,
+      );
+      if (!providerUpdatedAt) {
+        throw new ServiceUnavailableException(
+          `QBO Vendor Merge recovery for ${input.sourceId} -> ${input.targetId} has no authoritative target timestamp`,
+        );
+      }
+      await this.handleVendorMerge(
+        input.organizationId,
+        input.connectionId,
+        input.realmId,
+        event,
+        providerUpdatedAt,
+        assertLock,
+      );
     });
   }
 
@@ -648,19 +1019,46 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
     assertLock: OAuthLockGuard,
   ): Promise<void> {
     await assertLock();
-    const providerUpdatedAt = parseQboTimestamp(event.lastUpdated);
+    // The webhook envelope is not the only place QBO puts its version. CloudEvents
+    // and delete notifications can carry the provider timestamp in their payload,
+    // while a fetched resource can provide MetaData.LastUpdatedTime below.
+    const envelopeProviderUpdatedAt = latestQboTimestamp(
+      parseQboTimestamp(event.lastUpdated),
+      qboEntityUpdatedAt(event.payload),
+    );
     if (event.operation === 'merge' && event.entityName === 'Vendor') {
+      const { sourceId, targetId } = vendorMergeIds(event);
+      if (!isValidVendorMergeIds(sourceId, targetId)) {
+        await this.recordUnrecoverableVendorMerge(connection, event, assertLock);
+        return;
+      }
+      const providerUpdatedAt =
+        envelopeProviderUpdatedAt ??
+        (await this.fetchVendorMergeTimestamp(connection.organizationId, event, assertLock));
+      if (!providerUpdatedAt) {
+        await this.enqueueVendorMergeRecovery(connection, event);
+        return;
+      }
       await this.handleVendorMerge(
         connection.organizationId,
         connection.id,
         connection.realmId,
         event,
+        providerUpdatedAt,
         assertLock,
       );
       return;
     }
 
+    let providerUpdatedAt = envelopeProviderUpdatedAt;
+
+    if (!isSupportedWebhookEntity(event.entityName)) return;
+
     if (event.operation === 'delete') {
+      if (!providerUpdatedAt) {
+        await this.reconcileUnversionedWebhook(connection, event);
+        return;
+      }
       await this.upsertMapping(
         {
           organizationId: connection.organizationId,
@@ -677,15 +1075,20 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    if (!isCatalogEntity(event.entityName) || isTaxEntity(event.entityName)) return;
     await assertLock();
-    const response = await this.qboClient.request<QboObject>({
-      organizationId: connection.organizationId,
-      method: 'GET',
-      path: `${event.entityName.toLowerCase()}/${encodeURIComponent(event.entityId)}`,
-    });
-    const entity = extractResourceEntity(response.data, event.entityName);
-    if (!entity) {
+    let response: { data: QboObject };
+    try {
+      response = await this.qboClient.request<QboObject>({
+        organizationId: connection.organizationId,
+        method: 'GET',
+        path: `${event.entityName.toLowerCase()}/${encodeURIComponent(event.entityId)}`,
+      });
+    } catch (error: unknown) {
+      if (!(error instanceof QboResourceNotFoundError)) throw error;
+      if (!providerUpdatedAt) {
+        await this.reconcileUnversionedWebhook(connection, event);
+        return;
+      }
       await this.upsertMapping(
         {
           organizationId: connection.organizationId,
@@ -701,14 +1104,45 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
       );
       return;
     }
-    const definition = ENTITY_DEFINITIONS[event.entityName];
-    if (definition.shouldStore?.(entity) === false) {
+    const entity = extractResourceEntity(response.data, event.entityName);
+    if (!entity) {
+      if (!providerUpdatedAt) {
+        await this.reconcileUnversionedWebhook(connection, event);
+        return;
+      }
+      await this.upsertMapping(
+        {
+          organizationId: connection.organizationId,
+          connectionId: connection.id,
+          realmId: connection.realmId,
+          entityName: event.entityName,
+          entity: { Id: event.entityId },
+          providerUpdatedAt,
+          deleted: true,
+          auditSource: 'webhook',
+        },
+        assertLock,
+      );
+      return;
+    }
+    // A valid resource snapshot is authoritative for create/update events and
+    // can repair a missing or malformed envelope timestamp.
+    providerUpdatedAt = latestQboTimestamp(providerUpdatedAt, qboEntityUpdatedAt(entity));
+    if (!providerUpdatedAt) {
+      await this.reconcileUnversionedWebhook(connection, event);
+      return;
+    }
+    const definition = isSyncEntity(event.entityName)
+      ? ENTITY_DEFINITIONS[event.entityName]
+      : undefined;
+    if (isCatalogEntity(event.entityName) && definition?.shouldStore?.(entity) === false) {
       await this.deactivateFilteredCatalogMapping(
         connection.organizationId,
         connection.id,
         connection.realmId,
         event.entityName,
         entity,
+        providerUpdatedAt,
         'webhook',
         assertLock,
       );
@@ -729,27 +1163,81 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  /**
+   * Missing provider versions are queued for a durable reconciliation job. The
+   * webhook worker acknowledges that job after enqueueing instead of guessing
+   * a processing-time version or retrying the event once per delivery attempt.
+   */
+  private async reconcileUnversionedWebhook(
+    connection: { id: string; organizationId: string; realmId: string },
+    event: QboWebhookEvent,
+  ): Promise<void> {
+    if (isSyncEntity(event.entityName)) {
+      await this.enqueueCatalogReconciliation(connection, event.entityName);
+      return;
+    }
+    await this.enqueueCdcRecovery(connection);
+  }
+
+  /**
+   * A merge has no resource GET for its source. Use the target's current QBO
+   * metadata as the authoritative version when possible.
+   */
+  private async fetchVendorMergeTimestamp(
+    organizationId: string,
+    event: QboWebhookEvent,
+    assertLock: OAuthLockGuard,
+  ): Promise<Date | undefined> {
+    const { targetId } = vendorMergeIds(event);
+    if (!targetId) return undefined;
+
+    await assertLock();
+    try {
+      const response = await this.qboClient.request<QboObject>({
+        organizationId,
+        method: 'GET',
+        path: `vendor/${encodeURIComponent(targetId)}`,
+      });
+      const target = extractResourceEntity(response.data, 'Vendor');
+      return target ? qboEntityUpdatedAt(target) : undefined;
+    } catch (error: unknown) {
+      if (error instanceof QboResourceNotFoundError) return undefined;
+      throw error;
+    }
+  }
+
   private async scheduleOrganization(organizationId: string): Promise<void> {
-    await this.syncQueue.add(
-      'scheduled-sync',
-      { kind: 'scheduled', organizationId },
-      {
-        jobId: `qbo-hourly-sync-${organizationId}`,
-        repeat: { every: readSyncInterval() },
-        removeOnComplete: true,
-        removeOnFail: 100,
-      },
-    );
-    await this.cdcQueue.add(
-      'daily-cdc-sweep',
-      { kind: 'cdc-sweep', organizationId, lookbackDays: MAX_LOOKBACK_DAYS },
-      {
-        jobId: `qbo-daily-cdc-${organizationId}`,
-        repeat: { pattern: process.env.QBO_CDC_CRON ?? '0 2 * * *' },
-        removeOnComplete: true,
-        removeOnFail: 100,
-      },
-    );
+    await this.oauthRedis.withLock(`qbo-sync:${organizationId}`, async (assertLock) => {
+      await assertLock();
+      if (!(await this.activeConnection(organizationId))) return;
+
+      const syncJobId = `qbo-hourly-sync-${organizationId}`;
+      await this.syncQueue.add(
+        'scheduled-sync',
+        { kind: 'scheduled', organizationId },
+        {
+          jobId: syncJobId,
+          // A stable repeat key makes BullMQ update the schedule when the interval changes.
+          repeat: { every: readSyncInterval(), key: syncJobId },
+          removeOnComplete: true,
+          removeOnFail: 100,
+        },
+      );
+
+      await assertLock();
+      const cdcJobId = `qbo-daily-cdc-${organizationId}`;
+      await this.cdcQueue.add(
+        'daily-cdc-sweep',
+        { kind: 'cdc-sweep', organizationId, lookbackDays: MAX_LOOKBACK_DAYS },
+        {
+          jobId: cdcJobId,
+          // Keep the CDC schedule identity independent of its cron expression.
+          repeat: { pattern: process.env.QBO_CDC_CRON ?? '0 2 * * *', key: cdcJobId },
+          removeOnComplete: true,
+          removeOnFail: 100,
+        },
+      );
+    });
   }
 
   private async activeConnection(organizationId: string) {
@@ -868,6 +1356,15 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
     return { id: existing.id };
   }
 
+  private async existingDurableQueueJob(
+    queue: Queue<QboSyncJobData> | Queue<QboCdcJobData>,
+    jobId: string,
+  ): Promise<{ id: string | undefined } | null> {
+    const existing = await queue.getJob(jobId);
+    if (!existing) return null;
+    return { id: existing.id };
+  }
+
   private async withOrganizationLock<T>(
     organizationId: string,
     callback: (assertLock: OAuthLockGuard) => Promise<T>,
@@ -959,6 +1456,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
           realmId,
           entityName,
           entity,
+          qboEntityUpdatedAt(entity),
           'snapshot',
           assertLock,
         );
@@ -971,6 +1469,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
           realmId,
           entityName,
           entity,
+          providerUpdatedAt: qboEntityUpdatedAt(entity),
           deleted: false,
           auditSource: 'snapshot',
         },
@@ -999,6 +1498,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
     realmId: string,
     entityName: QboSyncEntity,
     entity: QboObject,
+    providerUpdatedAt: Date | undefined,
     auditSource: 'snapshot' | 'cdc' | 'webhook',
     assertLock: OAuthLockGuard,
   ): Promise<void> {
@@ -1017,6 +1517,8 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
         where: (mapping, { and, eq }) =>
           and(
             eq(mapping.organizationId, organizationId),
+            eq(mapping.connectionId, connectionId),
+            eq(mapping.realmId, realmId),
             eq(mapping.provider, 'qbo'),
             eq(mapping.direction, 'inbound'),
             eq(mapping.externalEntity, entityName),
@@ -1030,11 +1532,19 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
           syncToken: true,
           isActive: true,
           payload: true,
+          syncedAt: true,
         },
       });
       if (!existing) return;
 
       const now = new Date();
+      if (
+        providerUpdatedAt &&
+        existing.syncedAt &&
+        providerUpdatedAt.getTime() <= existing.syncedAt.getTime()
+      ) {
+        return;
+      }
       const displayName = ENTITY_DEFINITIONS[entityName].displayName(entity);
       const syncToken = stringValue(entity.SyncToken);
       await assertLock();
@@ -1042,18 +1552,21 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
         .update(externalEntityMappings)
         .set({
           connectionId,
+          realmId,
           displayName,
           syncToken,
           isActive: false,
           isDeleted: false,
           payload: entity,
-          syncedAt: now,
+          syncedAt: providerUpdatedAt ?? now,
           updatedAt: now,
         })
         .where(
           and(
             eq(externalEntityMappings.id, existing.id),
             eq(externalEntityMappings.organizationId, organizationId),
+            eq(externalEntityMappings.connectionId, connectionId),
+            eq(externalEntityMappings.realmId, realmId),
             eq(externalEntityMappings.provider, 'qbo'),
             eq(externalEntityMappings.direction, 'inbound'),
             eq(externalEntityMappings.isDeleted, false),
@@ -1142,6 +1655,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
           and(
             eq(mapping.organizationId, organizationId),
             eq(mapping.connectionId, connectionId),
+            eq(mapping.realmId, realmId),
             eq(mapping.provider, 'qbo'),
             eq(mapping.direction, 'inbound'),
             eq(mapping.externalEntity, entityName),
@@ -1161,6 +1675,9 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
               eq(externalEntityMappings.id, mapping.id),
               eq(externalEntityMappings.organizationId, organizationId),
               eq(externalEntityMappings.connectionId, connectionId),
+              eq(externalEntityMappings.realmId, realmId),
+              eq(externalEntityMappings.provider, 'qbo'),
+              eq(externalEntityMappings.direction, 'inbound'),
               eq(externalEntityMappings.isDeleted, false),
             ),
           )
@@ -1222,6 +1739,8 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
       where: (mapping, { and, eq }) =>
         and(
           eq(mapping.organizationId, organizationId),
+          eq(mapping.connectionId, connectionId),
+          eq(mapping.realmId, input.realmId),
           eq(mapping.provider, 'qbo'),
           eq(mapping.direction, 'inbound'),
           eq(mapping.externalEntity, entityName),
@@ -1242,6 +1761,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
       },
     });
     const connectionChanged = existing != null && existing.connectionId !== connectionId;
+    if (input.connectionScoped && connectionChanged) return undefined;
     if (
       !connectionChanged &&
       existing?.syncedAt &&
@@ -1257,6 +1777,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
     const values = {
       organizationId,
       connectionId,
+      realmId: input.realmId,
       provider: 'qbo',
       externalEntity: entityName,
       externalId,
@@ -1289,9 +1810,11 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
           externalEntityMappings.direction,
           externalEntityMappings.externalEntity,
           externalEntityMappings.externalId,
+          externalEntityMappings.realmId,
         ],
         set: {
           connectionId: values.connectionId,
+          realmId: values.realmId,
           displayName: values.displayName,
           syncToken: values.syncToken,
           isActive: values.isActive,
@@ -1384,24 +1907,10 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
     connectionId: string,
     realmId: string,
     event: QboWebhookEvent,
+    providerUpdatedAt: Date,
     assertLock: OAuthLockGuard,
   ): Promise<void> {
-    const payloadSourceId = firstString(event.payload, [
-      'sourceId',
-      'oldId',
-      'deletedId',
-      'mergedFromId',
-      'fromId',
-    ]);
-    const payloadTargetId = firstString(event.payload, [
-      'targetId',
-      'newId',
-      'mergeTo',
-      'mergedIntoId',
-      'toId',
-    ]);
-    const sourceId = payloadSourceId ?? event.entityId;
-    const targetId = payloadTargetId ?? (payloadSourceId ? event.entityId : null);
+    const { sourceId, targetId } = vendorMergeIds(event);
     if (!sourceId || !targetId || sourceId === targetId) {
       this.logger.warn(`Ignoring QBO Vendor Merge without distinct source and target IDs`);
       return;
@@ -1416,26 +1925,36 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
       ) {
         return;
       }
-      const source = await transaction.query.externalEntityMappings.findFirst({
-        where: (mapping, { and, eq }) =>
-          and(
-            eq(mapping.organizationId, organizationId),
-            eq(mapping.provider, 'qbo'),
-            eq(mapping.direction, 'inbound'),
-            eq(mapping.externalEntity, 'Vendor'),
-            eq(mapping.externalId, sourceId),
-          ),
-      });
-      const target = await transaction.query.externalEntityMappings.findFirst({
-        where: (mapping, { and, eq }) =>
-          and(
-            eq(mapping.organizationId, organizationId),
-            eq(mapping.provider, 'qbo'),
-            eq(mapping.direction, 'inbound'),
-            eq(mapping.externalEntity, 'Vendor'),
-            eq(mapping.externalId, targetId),
-          ),
-      });
+      const lockedMappings = new Map<string, (typeof externalEntityMappings)['$inferSelect']>();
+      for (const externalId of [sourceId, targetId].sort()) {
+        const [mapping] = await transaction
+          .select()
+          .from(externalEntityMappings)
+          .where(
+            and(
+              eq(externalEntityMappings.organizationId, organizationId),
+              eq(externalEntityMappings.connectionId, connectionId),
+              eq(externalEntityMappings.realmId, realmId),
+              eq(externalEntityMappings.provider, 'qbo'),
+              eq(externalEntityMappings.direction, 'inbound'),
+              eq(externalEntityMappings.externalEntity, 'Vendor'),
+              eq(externalEntityMappings.externalId, externalId),
+            ),
+          )
+          .for('update')
+          .limit(1);
+        if (mapping) lockedMappings.set(externalId, mapping);
+      }
+      const source = lockedMappings.get(sourceId);
+      const target = lockedMappings.get(targetId);
+
+      if (
+        [source, target].some(
+          (mapping) => mapping?.syncedAt && providerUpdatedAt <= mapping.syncedAt,
+        )
+      ) {
+        return;
+      }
 
       if (source?.isDeleted && source.mergedIntoExternalId === targetId) {
         sourceIdForNotification = source.id;
@@ -1450,12 +1969,15 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
             isActive: false,
             isDeleted: true,
             mergedIntoExternalId: targetId,
+            syncedAt: providerUpdatedAt,
             updatedAt: new Date(),
           })
           .where(
             and(
               eq(externalEntityMappings.id, source.id),
               eq(externalEntityMappings.organizationId, organizationId),
+              eq(externalEntityMappings.connectionId, connectionId),
+              eq(externalEntityMappings.realmId, realmId),
               eq(externalEntityMappings.provider, 'qbo'),
               eq(externalEntityMappings.direction, 'inbound'),
             ),
@@ -1488,8 +2010,10 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
             realmId,
             entityName: 'Vendor',
             entity: { Id: sourceId, Name: firstString(event.payload, ['Name', 'DisplayName']) },
+            providerUpdatedAt,
             deleted: true,
             mergedIntoExternalId: targetId,
+            connectionScoped: true,
             auditSource: 'merge',
           },
           assertLock,
@@ -1504,12 +2028,15 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
             .set({
               localId: source.localId,
               autoCreated: source.autoCreated,
+              syncedAt: providerUpdatedAt,
               updatedAt: new Date(),
             })
             .where(
               and(
                 eq(externalEntityMappings.id, target.id),
                 eq(externalEntityMappings.organizationId, organizationId),
+                eq(externalEntityMappings.connectionId, connectionId),
+                eq(externalEntityMappings.realmId, realmId),
                 eq(externalEntityMappings.provider, 'qbo'),
                 eq(externalEntityMappings.direction, 'inbound'),
                 isNull(externalEntityMappings.localId),
@@ -1538,9 +2065,11 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
               realmId,
               entityName: 'Vendor',
               entity: { Id: targetId },
+              providerUpdatedAt,
               deleted: false,
               localId: source.localId,
               autoCreated: source.autoCreated,
+              connectionScoped: true,
               auditSource: 'merge',
               auditReason: 'vendor_merge',
             },
@@ -1601,6 +2130,10 @@ function isTaxEntity(value: string): value is QboTaxEntity {
 
 function isSupportedCdcEntity(value: string): boolean {
   return (CDC_ENTITY_TYPES as readonly string[]).includes(value);
+}
+
+function isSupportedWebhookEntity(value: string): value is QboWebhookEntity {
+  return (QBO_WEBHOOK_ENTITY_TYPES as readonly string[]).includes(value);
 }
 
 function extractQueryRows(data: unknown, entityName: string): QboObject[] {
@@ -1668,10 +2201,49 @@ function hasDeletedStatus(entity: QboObject): boolean {
   return status?.trim().toLowerCase() === 'deleted';
 }
 
-function parseQboTimestamp(value: string | undefined): Date | undefined {
+function parseQboTimestamp(value: string | null | undefined): Date | undefined {
   if (!value) return undefined;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
+function qboEntityUpdatedAt(entity: QboObject): Date | undefined {
+  const metadata = isRecord(entity.MetaData) ? entity.MetaData : undefined;
+  for (const value of [
+    stringValue(metadata?.LastUpdatedTime),
+    stringValue(metadata?.lastUpdatedTime),
+    stringValue(entity.LastUpdatedTime),
+    stringValue(entity.lastUpdatedTime),
+    stringValue(entity.DeletedTime),
+    stringValue(entity.deletedTime),
+    stringValue(entity.LastUpdated),
+    stringValue(entity.lastUpdated),
+  ]) {
+    const parsed = parseQboTimestamp(value);
+    if (parsed) return parsed;
+  }
+  return undefined;
+}
+
+function latestQboTimestamp(...timestamps: (Date | undefined)[]): Date | undefined {
+  return timestamps.reduce<Date | undefined>((latest, timestamp) => {
+    if (!timestamp) return latest;
+    if (!latest || timestamp.getTime() > latest.getTime()) return timestamp;
+    return latest;
+  }, undefined);
+}
+
+function qboRecoveryJobId(kind: string, identity: readonly string[]): string {
+  const digest = createHash('sha256').update(JSON.stringify(identity)).digest('hex');
+  return `qbo-${kind}-recovery-${digest}`;
+}
+
+function qboStableUuid(...parts: string[]): string {
+  const bytes = createHash('sha256').update(parts.join('\0')).digest().subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function parseQboWebhookEvents(payload: unknown): QboWebhookEvent[] {
@@ -1782,6 +2354,40 @@ function firstString(payload: QboObject, keys: readonly string[]): string | null
     if (value) return value;
   }
   return null;
+}
+
+function vendorMergeIds(event: QboWebhookEvent): {
+  sourceId: string | null;
+  targetId: string | null;
+} {
+  const payloadSourceId = firstString(event.payload, [
+    'sourceId',
+    'oldId',
+    'deletedId',
+    'mergedFromId',
+    'fromId',
+  ]);
+  const payloadTargetId = firstString(event.payload, [
+    'targetId',
+    'newId',
+    'mergeTo',
+    'mergedIntoId',
+    'toId',
+  ]);
+  return {
+    sourceId: payloadSourceId ?? event.entityId,
+    targetId: payloadTargetId ?? (payloadSourceId ? event.entityId : null),
+  };
+}
+
+function isValidVendorMergeIds(sourceId: string | null, targetId: string | null): boolean {
+  return (
+    sourceId !== null &&
+    targetId !== null &&
+    sourceId !== targetId &&
+    qboExternalIdSchema.safeParse(sourceId).success &&
+    qboExternalIdSchema.safeParse(targetId).success
+  );
 }
 
 function isRecord(value: unknown): value is QboObject {

@@ -37,6 +37,7 @@ const EXPECTED_COLUMNS = [
   { table: 'workflow_definition_versions', column: 'notes_json' },
   { table: 'workflow_runtime_publications', column: 'outcome_status' },
   { table: 'external_entity_mappings', column: 'external_id' },
+  { table: 'external_entity_mappings', column: 'realm_id' },
   { table: 'external_entity_mappings', column: 'sync_token' },
   { table: 'external_entity_mappings', column: 'local_id' },
 ] as const;
@@ -69,7 +70,14 @@ const EXPECTED_INDEXES = [
   {
     name: 'external_entity_mappings_external_identity_unique',
     table: 'external_entity_mappings',
-    columns: ['organization_id', 'provider', 'direction', 'external_entity', 'external_id'],
+    columns: [
+      'organization_id',
+      'provider',
+      'direction',
+      'external_entity',
+      'external_id',
+      'realm_id',
+    ],
     unique: true,
   },
 ] as const;

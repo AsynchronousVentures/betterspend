@@ -1,6 +1,6 @@
 {
-  "id": "2b0bf384-c4d3-4981-ad49-c36418192226",
-  "prevId": "cfe69b5e-5fb8-429a-baf4-75d9a6f942f6",
+  "id": "1182e5c5-f708-4e53-bb39-ccc5c8e8c591",
+  "prevId": "f5233eac-3742-4c41-b7d4-1128a0b107d5",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1243,6 +1243,18 @@
           "notNull": false,
           "default": "'{}'::jsonb"
         },
+        "prev_hash": {
+          "name": "prev_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "entry_hash": {
+          "name": "entry_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1251,7 +1263,35 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "audit_log_organization_created_at_id_idx": {
+          "name": "audit_log_organization_created_at_id_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -11959,6 +11999,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "realm_id": {
+          "name": "realm_id",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
         "provider": {
           "name": "provider",
           "type": "varchar(20)",
@@ -12092,6 +12138,12 @@
             },
             {
               "expression": "external_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "realm_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
