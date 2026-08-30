@@ -9,6 +9,7 @@ import { AiProvidersModule } from '../ai-providers/ai-providers.module';
 import { OAuthRedisService } from './oauth-redis.service';
 import { QboClientService } from './qbo-client.service';
 import { XeroClientService, XeroDailyBudgetLedger } from './xero-client.service';
+import { ExternalEntityMappingsService } from './external-entity-mappings.service';
 
 @Global()
 @Module({
@@ -16,6 +17,7 @@ import { XeroClientService, XeroDailyBudgetLedger } from './xero-client.service'
   controllers: [GlController],
   providers: [
     GlMappingsService,
+    ExternalEntityMappingsService,
     GlExportService,
     GlExportProcessor,
     OAuthService,
@@ -29,6 +31,13 @@ import { XeroClientService, XeroDailyBudgetLedger } from './xero-client.service'
     },
     XeroClientService,
   ],
-  exports: [GlExportService, OAuthService, OAuthRedisService, QboClientService, XeroClientService],
+  exports: [
+    GlExportService,
+    OAuthService,
+    OAuthRedisService,
+    QboClientService,
+    XeroClientService,
+    ExternalEntityMappingsService,
+  ],
 })
 export class GlModule {}

@@ -54,10 +54,19 @@ export class QboInboundController {
       additionalProperties: false,
       required: ['localId'],
       properties: {
-        localId: { type: 'string', format: 'uuid', nullable: true },
+        localId: {
+          type: 'string',
+          maxLength: 255,
+          nullable: true,
+          description: 'UUID for UUID-backed records or a bounded local code such as a GL account.',
+        },
         autoCreated: {
           type: 'boolean',
           description: 'Whether BetterSpend created the linked local record during mapping.',
+        },
+        isDefault: {
+          type: 'boolean',
+          description: 'Whether this QBO Class is the default for otherwise-unmapped departments.',
         },
       },
     },

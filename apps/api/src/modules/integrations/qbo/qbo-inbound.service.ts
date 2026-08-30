@@ -1,10 +1,8 @@
 import {
   BadRequestException,
-  ConflictException,
   Inject,
   Injectable,
   Logger,
-  NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
   ServiceUnavailableException,
@@ -19,14 +17,10 @@ import { z } from 'zod';
 import {
   appendAuditLog,
   appendAuditLogIfAbsent,
-  departments,
   externalEntityMappings,
   integrationConnections,
-  projects,
-  taxCodes,
   type Db,
   type DbTransaction,
-  vendors,
 } from '@betterspend/db';
 import {
   QBO_CATALOG_ENTITY_TYPES,
@@ -47,6 +41,12 @@ import { NotificationsService } from '../../notifications/notifications.service'
 import { resolveOrganizationAdminId } from '../../../common/demo-identity';
 import { QboClientService, QboResourceNotFoundError } from '../../gl/qbo-client.service';
 import { OAuthRedisService, type OAuthLockGuard } from '../../gl/oauth-redis.service';
+import {
+  ExternalEntityMappingsService,
+  lockExternalMappingScope,
+  serializeExternalMapping,
+  type ExternalMappingGateway,
+} from '../../gl/external-entity-mappings.service';
 
 export type QboCatalogEntity = (typeof QBO_CATALOG_ENTITY_TYPES)[number];
 export type QboTaxEntity = (typeof QBO_TAX_ENTITY_TYPES)[number];
@@ -80,24 +80,6 @@ const DEFAULT_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const MAX_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const MAX_LOOKBACK_DAYS = 30;
 
-const QBO_LINKED_LOCAL_IDENTITY_UNIQUE = 'external_entity_mappings_linked_local_identity_unique';
-
-function isQboLinkedLocalIdentityUniqueViolation(error: unknown): boolean {
-  const seen = new Set<object>();
-  let current = error;
-  while (typeof current === 'object' && current !== null && !seen.has(current)) {
-    seen.add(current);
-    const candidate = current as Record<string, unknown>;
-    if (
-      candidate.code === '23505' &&
-      candidate.constraint_name === QBO_LINKED_LOCAL_IDENTITY_UNIQUE
-    ) {
-      return true;
-    }
-    current = candidate.cause;
-  }
-  return false;
-}
 const QBO_RECOVERY_ATTEMPTS = 5;
 const QBO_RECOVERY_BACKOFF_DELAY_MS = 5_000;
 const QBO_RECONCILIATION_JOB_NAME = 'webhook-reconciliation';
@@ -318,6 +300,8 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy, QboMast
     @InjectQueue(QBO_SYNC_QUEUE_NAME) private readonly syncQueue: Queue<QboSyncJobData>,
     @InjectQueue('qbo-cdc') private readonly cdcQueue: Queue<QboCdcJobData>,
     private readonly oauthRedis: OAuthRedisService,
+    @Inject(ExternalEntityMappingsService)
+    private readonly externalEntityMappingsService: ExternalMappingGateway,
   ) {}
 
   async synchronize(operation: QboMasterDataOperation): Promise<QboSyncResult | void> {
@@ -633,7 +617,9 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy, QboMast
         ),
       orderBy: (mapping, { asc }) => asc(mapping.displayName),
     });
-    return mappings.filter((mapping) => isSyncEntity(mapping.externalEntity));
+    return mappings
+      .filter((mapping) => isSyncEntity(mapping.externalEntity))
+      .map(serializeExternalMapping);
   }
 
   async linkMapping(
@@ -642,128 +628,15 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy, QboMast
     input: QboMappingLinkInput,
     userId?: string,
   ) {
-    return this.db.transaction(async (transaction) => {
-      const [connection] = await transaction
-        .select({ id: integrationConnections.id, realmId: integrationConnections.realmId })
-        .from(integrationConnections)
-        .where(
-          and(
-            eq(integrationConnections.organizationId, organizationId),
-            eq(integrationConnections.provider, 'qbo'),
-            eq(integrationConnections.status, 'active'),
-          ),
-        )
-        .for('update')
-        .limit(1);
-      if (!connection) throw new ServiceUnavailableException('QBO is not connected');
-
-      const [mapping] = await transaction
-        .select()
-        .from(externalEntityMappings)
-        .where(
-          and(
-            eq(externalEntityMappings.id, mappingId),
-            eq(externalEntityMappings.organizationId, organizationId),
-            eq(externalEntityMappings.connectionId, connection.id),
-            eq(externalEntityMappings.realmId, connection.realmId),
-            eq(externalEntityMappings.provider, 'qbo'),
-            eq(externalEntityMappings.direction, 'inbound'),
-            inArray(externalEntityMappings.externalEntity, QBO_SYNC_ENTITY_TYPES),
-            eq(externalEntityMappings.isActive, true),
-            eq(externalEntityMappings.isDeleted, false),
-          ),
-        )
-        .for('update')
-        .limit(1);
-      if (!mapping || !isSyncEntity(mapping.externalEntity)) {
-        throw new NotFoundException(`QBO mapping ${mappingId} not found`);
-      }
-
-      if (
-        input.localId !== null &&
-        !(await this.localRecordExists(
-          transaction,
-          mapping.localEntity,
-          input.localId,
-          organizationId,
-        ))
-      ) {
-        throw new BadRequestException(
-          `QBO ${mapping.externalEntity} mappings require a valid ${mapping.localEntity} record in this organization`,
-        );
-      }
-
-      if (input.localId !== null) {
-        const [existingLink] = await transaction
-          .select({ id: externalEntityMappings.id })
-          .from(externalEntityMappings)
-          .where(
-            and(
-              eq(externalEntityMappings.organizationId, organizationId),
-              eq(externalEntityMappings.provider, 'qbo'),
-              eq(externalEntityMappings.direction, 'inbound'),
-              eq(externalEntityMappings.localEntity, mapping.localEntity),
-              eq(externalEntityMappings.localId, input.localId),
-              eq(externalEntityMappings.isActive, true),
-              eq(externalEntityMappings.isDeleted, false),
-            ),
-          )
-          .for('update')
-          .limit(1);
-        if (existingLink && existingLink.id !== mapping.id) {
-          throw new ConflictException(
-            `The ${mapping.localEntity} record is already linked to another active QBO mapping`,
-          );
-        }
-      }
-
-      const [updated] = await transaction
-        .update(externalEntityMappings)
-        .set({
-          localId: input.localId,
-          autoCreated: input.autoCreated ?? mapping.autoCreated,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(externalEntityMappings.id, mappingId),
-            eq(externalEntityMappings.organizationId, organizationId),
-            eq(externalEntityMappings.connectionId, connection.id),
-            eq(externalEntityMappings.realmId, connection.realmId),
-            eq(externalEntityMappings.provider, 'qbo'),
-            eq(externalEntityMappings.direction, 'inbound'),
-            inArray(externalEntityMappings.externalEntity, QBO_SYNC_ENTITY_TYPES),
-            eq(externalEntityMappings.isActive, true),
-            eq(externalEntityMappings.isDeleted, false),
-          ),
-        )
-        .returning()
-        .catch((error: unknown) => {
-          if (isQboLinkedLocalIdentityUniqueViolation(error)) {
-            throw new ConflictException(
-              'The local record is already linked to another active QBO mapping',
-            );
-          }
-          throw error;
-        });
-      if (!updated) throw new NotFoundException(`QBO mapping ${mappingId} not found`);
-
-      await this.auditMappingMutation(transaction, {
-        organizationId,
-        userId: userId ?? null,
-        mappingId,
-        action: input.localId === null ? 'unlinked' : 'linked',
-        changes: {
-          localId: { from: mapping.localId, to: input.localId },
-          autoCreated: {
-            from: mapping.autoCreated,
-            to: input.autoCreated ?? mapping.autoCreated,
-          },
-        },
-        source: 'user',
-      });
-
-      return updated;
+    return this.externalEntityMappingsService.replaceLink({
+      mappingId,
+      organizationId,
+      provider: 'qbo',
+      direction: 'inbound',
+      localId: input.localId,
+      autoCreated: input.autoCreated,
+      isDefault: input.isDefault,
+      userId,
     });
   }
 
@@ -1324,73 +1197,6 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy, QboMast
       .for('update')
       .limit(1);
     return rows.length > 0;
-  }
-
-  private async localRecordExists(
-    transaction: DbTransaction,
-    localEntity: string,
-    localId: string,
-    organizationId: string,
-  ): Promise<boolean> {
-    switch (localEntity) {
-      case 'gl_account':
-        throw new BadRequestException(
-          'QBO Account links are not supported until the local chart of accounts is available',
-        );
-      case 'vendor':
-        return Boolean(
-          (
-            await transaction
-              .select({ id: vendors.id })
-              .from(vendors)
-              .where(and(eq(vendors.id, localId), eq(vendors.organizationId, organizationId)))
-              .for('update')
-              .limit(1)
-          )[0],
-        );
-      case 'department':
-        return Boolean(
-          (
-            await transaction
-              .select({ id: departments.id })
-              .from(departments)
-              .where(
-                and(eq(departments.id, localId), eq(departments.organizationId, organizationId)),
-              )
-              .for('update')
-              .limit(1)
-          )[0],
-        );
-      case 'project':
-        return Boolean(
-          (
-            await transaction
-              .select({ id: projects.id })
-              .from(projects)
-              .where(and(eq(projects.id, localId), eq(projects.organizationId, organizationId)))
-              .for('update')
-              .limit(1)
-          )[0],
-        );
-      case 'tax_code':
-        return Boolean(
-          (
-            await transaction
-              .select({ id: taxCodes.id })
-              .from(taxCodes)
-              .where(and(eq(taxCodes.id, localId), eq(taxCodes.orgId, organizationId)))
-              .for('update')
-              .limit(1)
-          )[0],
-        );
-      case 'payment_term':
-      case 'tax_rate':
-        throw new BadRequestException(
-          `QBO ${localEntity} links are not supported by the current local data model`,
-        );
-      default:
-        throw new BadRequestException(`Unsupported QBO local entity ${localEntity}`);
-    }
   }
 
   private async existingQueueJob(
@@ -1994,6 +1800,13 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy, QboMast
       ) {
         return;
       }
+      await lockExternalMappingScope(transaction, {
+        organizationId,
+        provider: 'qbo',
+        direction: 'inbound',
+        externalEntity: 'Vendor',
+        localEntity: 'vendor',
+      });
       const lockedMappings = new Map<string, (typeof externalEntityMappings)['$inferSelect']>();
       for (const externalId of [sourceId, targetId].sort()) {
         const [mapping] = await transaction

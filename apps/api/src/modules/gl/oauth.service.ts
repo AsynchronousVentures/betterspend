@@ -448,6 +448,8 @@ export class OAuthService {
             .select({
               id: externalEntityMappings.id,
               localId: externalEntityMappings.localId,
+              localKey: externalEntityMappings.localKey,
+              isDefault: externalEntityMappings.isDefault,
               autoCreated: externalEntityMappings.autoCreated,
             })
             .from(externalEntityMappings)
@@ -459,6 +461,8 @@ export class OAuthService {
                 eq(externalEntityMappings.direction, 'inbound'),
                 or(
                   isNotNull(externalEntityMappings.localId),
+                  isNotNull(externalEntityMappings.localKey),
+                  eq(externalEntityMappings.isDefault, true),
                   eq(externalEntityMappings.autoCreated, true),
                 ),
               ),
@@ -470,7 +474,13 @@ export class OAuthService {
             await assertHeld?.();
             await transaction
               .update(externalEntityMappings)
-              .set({ localId: null, autoCreated: false, updatedAt: resetAt })
+              .set({
+                localId: null,
+                localKey: null,
+                isDefault: false,
+                autoCreated: false,
+                updatedAt: resetAt,
+              })
               .where(
                 and(
                   eq(externalEntityMappings.organizationId, binding.organizationId),
@@ -479,6 +489,8 @@ export class OAuthService {
                   eq(externalEntityMappings.direction, 'inbound'),
                   or(
                     isNotNull(externalEntityMappings.localId),
+                    isNotNull(externalEntityMappings.localKey),
+                    eq(externalEntityMappings.isDefault, true),
                     eq(externalEntityMappings.autoCreated, true),
                   ),
                 ),
@@ -495,6 +507,8 @@ export class OAuthService {
                 action: 'unlinked',
                 changes: {
                   localId: { from: mapping.localId, to: null },
+                  localKey: { from: mapping.localKey, to: null },
+                  isDefault: { from: mapping.isDefault, to: false },
                   autoCreated: { from: mapping.autoCreated, to: false },
                 },
                 metadata: {
@@ -543,11 +557,7 @@ export class OAuthService {
     const options = qboInitialSyncJobOptions(organizationId);
     let existing: { id: string | undefined } | null;
     try {
-      existing = await findReusableQboInitialSyncJob(
-        this.qboSyncQueue,
-        organizationId,
-        assertHeld,
-      );
+      existing = await findReusableQboInitialSyncJob(this.qboSyncQueue, organizationId, assertHeld);
     } catch (error: unknown) {
       await assertHeld?.();
       this.logger.error(`Unable to queue initial QBO sync for ${organizationId}: ${String(error)}`);
@@ -838,11 +848,7 @@ export class OAuthService {
     assertHeld?: OAuthLockGuard,
   ): Promise<void> {
     await Promise.all([
-      this.removeQboSchedule(
-        this.qboSyncQueue,
-        `qbo-hourly-sync-${organizationId}`,
-        assertHeld,
-      ),
+      this.removeQboSchedule(this.qboSyncQueue, `qbo-hourly-sync-${organizationId}`, assertHeld),
       this.removeQboSchedule(this.qboCdcQueue, `qbo-daily-cdc-${organizationId}`, assertHeld),
     ]);
   }

@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import * as dbModule from '@betterspend/db';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { QboResourceNotFoundError } from '../../gl/qbo-client.service';
+import { ExternalEntityMappingsService } from '../../gl/external-entity-mappings.service';
 import {
   QboInboundService,
   qboCdcJobDataSchema,
@@ -61,6 +62,7 @@ function whereCriteria(where: unknown): Record<string, unknown> {
       }
       return true;
     },
+    ne: () => true,
   };
   (where as WhereFactory)(row, operators);
   return criteria;
@@ -229,6 +231,7 @@ function database(options: {
         };
       }),
     })),
+    execute: jest.fn(async () => []),
     transaction: undefined as unknown as jest.Mock,
   };
   db.transaction = jest.fn(async (callback: (transaction: unknown) => Promise<unknown>) =>
@@ -273,6 +276,7 @@ function service(
     syncQueue as never,
     cdcQueue as never,
     oauthRedis as never,
+    new ExternalEntityMappingsService(harness.db as never),
   );
   return {
     ...harness,
@@ -2772,7 +2776,7 @@ describe('QboInboundService', () => {
     );
   });
 
-  it('rejects linking a local record that is already linked to another active QBO mapping', async () => {
+  it('atomically replaces a local record link held by another active QBO mapping', async () => {
     const localVendorId = '00000000-0000-4000-8000-000000000010';
     const harness = service({
       mappings: [
@@ -2809,9 +2813,11 @@ describe('QboInboundService', () => {
       harness.instance.linkMapping('mapping-1', '00000000-0000-4000-8000-000000000001', {
         localId: localVendorId,
       }),
-    ).rejects.toThrow('already linked');
-    expect(harness.updates).toHaveLength(0);
-    expect(harness.inserted).toHaveLength(0);
+    ).resolves.toEqual(expect.objectContaining({ localId: localVendorId }));
+    expect(harness.updates).toEqual(
+      expect.arrayContaining([expect.objectContaining({ localId: null })]),
+    );
+    expect(harness.inserted.length).toBeGreaterThan(0);
   });
 
   it('translates a linked-local unique violation into a conflict', async () => {
@@ -2873,7 +2879,7 @@ describe('QboInboundService', () => {
     expect(harness.inserted).toHaveLength(0);
   });
 
-  it('rejects GL links until a local chart-of-accounts record exists', async () => {
+  it('accepts bounded GL account codes as string-backed local identities', async () => {
     const harness = service({
       mappings: [
         {
@@ -2895,8 +2901,13 @@ describe('QboInboundService', () => {
       harness.instance.linkMapping('mapping-1', '00000000-0000-4000-8000-000000000001', {
         localId: '00000000-0000-0000-0000-000000000010',
       }),
-    ).rejects.toThrow('chart of accounts');
-    expect(harness.updates).toHaveLength(0);
-    expect(harness.inserted).toHaveLength(0);
+    ).resolves.toEqual(
+      expect.objectContaining({ localId: '00000000-0000-0000-0000-000000000010' }),
+    );
+    expect(harness.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ localKey: '00000000-0000-0000-0000-000000000010' }),
+      ]),
+    );
   });
 });

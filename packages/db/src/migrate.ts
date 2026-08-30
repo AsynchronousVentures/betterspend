@@ -91,6 +91,13 @@ type ArtifactOwnerIdempotencyIndexState = {
   indexIsCanonical: boolean;
 };
 
+type ExternalEntityMappingsLocalKeyIndexState = {
+  tableExists: boolean;
+  indexExists: boolean;
+  indexIsValid: boolean;
+  indexIsCanonical: boolean;
+};
+
 type LinkedLocalMappingIndexState = {
   tableExists: boolean;
   indexExists: boolean;
@@ -113,6 +120,9 @@ const ARTIFACT_OWNER_IDEMPOTENCY_INDEXES = [
   { table: 'messages', index: 'messages_org_idempotency_key_unique' },
   { table: 'notifications', index: 'notifications_org_idempotency_key_unique' },
 ] as const;
+
+const EXTERNAL_ENTITY_MAPPINGS_LOCAL_KEY_INDEX =
+  'external_entity_mappings_local_key_lookup_idx' as const;
 
 function isPostgresUniqueViolation(error: unknown): boolean {
   const seen = new Set<object>();
@@ -586,6 +596,53 @@ async function prepareArtifactOwnerIdempotencyIndexes(client: postgres.Sql): Pro
   }
 }
 
+/** Build the local-key lookup without blocking QBO catalog writes during deploy. */
+async function prepareExternalEntityMappingsLocalKeyIndex(client: postgres.Sql): Promise<void> {
+  const [state] = await client<ExternalEntityMappingsLocalKeyIndexState[]>`
+    SELECT
+      to_regclass('public.external_entity_mappings') IS NOT NULL AS "tableExists",
+      index_class.oid IS NOT NULL AS "indexExists",
+      COALESCE(index_state.indisvalid, false) AS "indexIsValid",
+      COALESCE(
+        index_state.indrelid = to_regclass('public.external_entity_mappings')
+          AND COALESCE(index_state.indnkeyatts, 0) = 6
+          AND COALESCE((
+            SELECT array_agg(attribute.attname::text ORDER BY indexed.ordinality)
+            FROM unnest(index_state.indkey) WITH ORDINALITY AS indexed(attnum, ordinality)
+            JOIN pg_attribute AS attribute
+              ON attribute.attrelid = index_state.indrelid
+              AND attribute.attnum = indexed.attnum
+          ) = ARRAY[
+            'organization_id', 'provider', 'direction', 'external_entity', 'local_entity', 'local_key'
+          ]::text[], false),
+        false
+      ) AS "indexIsCanonical"
+    FROM (VALUES (1)) AS singleton(value)
+    LEFT JOIN pg_class AS index_class
+      ON index_class.oid = to_regclass(${'public.' + EXTERNAL_ENTITY_MAPPINGS_LOCAL_KEY_INDEX})
+    LEFT JOIN pg_index AS index_state ON index_state.indexrelid = index_class.oid
+  `;
+
+  if (!state?.tableExists || (state.indexIsValid && state.indexIsCanonical)) return;
+
+  await client`SET lock_timeout = '5s'`;
+  await client`SET statement_timeout = '5min'`;
+  try {
+    if (state.indexExists) {
+      await client`DROP INDEX CONCURRENTLY ${client(EXTERNAL_ENTITY_MAPPINGS_LOCAL_KEY_INDEX)}`;
+    }
+    await client`
+      CREATE INDEX CONCURRENTLY ${client(EXTERNAL_ENTITY_MAPPINGS_LOCAL_KEY_INDEX)}
+      ON ${client('external_entity_mappings')} (
+        "organization_id", "provider", "direction", "external_entity", "local_entity", "local_key"
+      )
+    `;
+  } finally {
+    await client`RESET statement_timeout`;
+    await client`RESET lock_timeout`;
+  }
+}
+
 /** Backfill tenant ownership in small commits so large role tables stay writable. */
 async function backfillUserRoleOrganizations(client: postgres.Sql): Promise<void> {
   await client`SET lock_timeout = '5s'`;
@@ -937,6 +994,7 @@ async function main(): Promise<void> {
     await validateLegacyUserRoleOrganizations(client);
     const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
+    await prepareExternalEntityMappingsLocalKeyIndex(client);
     await prepareLinkedLocalMappingIndex(client);
     await prepareAuditHashIndex(client);
     await ensureAuditHashChain(client);

@@ -152,9 +152,13 @@ export const externalEntityMappings = pgTable(
     displayName: varchar('display_name', { length: 255 }),
     syncToken: varchar('sync_token', { length: 100 }),
     localEntity: varchar('local_entity', { length: 40 }).notNull(),
+    // UUID-backed records use local_id. Provider-neutral string identities,
+    // such as a chart-of-accounts code, use local_key.
     localId: uuid('local_id'),
+    localKey: varchar('local_key', { length: 255 }),
     direction: varchar('direction', { length: 10 }).notNull().default('inbound'),
     autoCreated: boolean('auto_created').notNull().default(false),
+    isDefault: boolean('is_default').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
     isDeleted: boolean('is_deleted').notNull().default(false),
     mergedIntoExternalId: varchar('merged_into_external_id', { length: 255 }),
@@ -183,6 +187,14 @@ export const externalEntityMappings = pgTable(
       .where(
         sql`${table.localId} is not null and ${table.isActive} = true and ${table.isDeleted} = false`,
       ),
+    localKeyLookup: index('external_entity_mappings_local_key_lookup_idx').on(
+      table.organizationId,
+      table.provider,
+      table.direction,
+      table.externalEntity,
+      table.localEntity,
+      table.localKey,
+    ),
     catalogLookup: index('external_entity_mappings_catalog_lookup_idx').on(
       table.organizationId,
       table.provider,
@@ -198,6 +210,14 @@ export const externalEntityMappings = pgTable(
     providerDirectionCheck: check(
       'external_entity_mappings_direction_check',
       sql`${table.direction} in ('inbound', 'outbound')`,
+    ),
+    defaultShapeCheck: check(
+      'external_entity_mappings_default_shape_check',
+      sql`${table.isDefault} = false or (${table.localId} is null and ${table.localKey} is null)`,
+    ),
+    localIdentityShapeCheck: check(
+      'external_entity_mappings_local_identity_shape_check',
+      sql`${table.localId} is null or ${table.localKey} is null`,
     ),
   }),
 );

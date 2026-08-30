@@ -10,6 +10,11 @@ import { GlMappingsService } from './gl-mappings.service';
 import { OAuthService } from './oauth.service';
 import { QboClientService, QboConnectionRequiredError } from './qbo-client.service';
 import { XeroClientService, XeroConnectionRequiredError } from './xero-client.service';
+import {
+  ExternalEntityMappingsService,
+  type ExternalMappingResolution,
+  type ExternalMappingResolver,
+} from './external-entity-mappings.service';
 
 export type GlTargetSystem = 'qbo' | 'xero';
 
@@ -36,6 +41,11 @@ export interface GlExportPayload {
   totalAmount: number;
   lines: GlExportLine[];
   unmappedAccounts: string[];
+  qboDepartmentId: string | null;
+  qboClassId: string | null;
+  qboConnectionId: string | null;
+  qboRealmId: string | null;
+  unmappedQboClass: boolean;
 }
 
 type SendOutcome =
@@ -67,6 +77,8 @@ export class GlExportService {
     private readonly qboClient: QboClientService,
     @InjectQueue('gl-export') private readonly glQueue: Queue,
     private readonly xeroClient: XeroClientService,
+    @Inject(ExternalEntityMappingsService)
+    private readonly externalEntityMappingsService: ExternalMappingResolver,
   ) {}
 
   /** Enqueues the one shared path used by first attempts, queue retries, and manual retries. */
@@ -157,6 +169,35 @@ export class GlExportService {
         errorMessage: error instanceof Error ? error.message : String(error),
       });
       throw error;
+    }
+
+    if (targetSystem === 'qbo') {
+      const unmappedLines = payload.lines
+        .filter((line) => line.unmapped)
+        .map((line) =>
+          line.glAccount ? `GL account ${line.glAccount}` : `line ${line.lineNumber}`,
+        );
+      const unmappedDimensions = payload.unmappedQboClass
+        ? [`department ${payload.qboDepartmentId}`]
+        : [];
+      const errorCode = payload.unmappedQboClass
+        ? unmappedLines.length > 0
+          ? 'UNMAPPED_GL_ACCOUNT'
+          : 'UNMAPPED_QBO_CLASS'
+        : unmappedLines.length > 0
+          ? 'UNMAPPED_GL_ACCOUNT'
+          : null;
+      if (errorCode) {
+        await this.markRecord(record.id, attemptId, {
+          status: 'failed',
+          errorCode,
+          errorMessage: `QBO export blocked before provider call: unmapped ${[
+            ...unmappedDimensions,
+            ...unmappedLines,
+          ].join(', ')}`,
+        });
+        return;
+      }
     }
 
     const allUnmapped = payload.lines.length > 0 && payload.lines.every((line) => line.unmapped);
@@ -343,24 +384,97 @@ export class GlExportService {
     const invoice = await this.db.query.invoices.findFirst({
       where: (row, { and: andFn, eq: eqFn }) =>
         andFn(eqFn(row.id, invoiceId), eqFn(row.organizationId, organizationId)),
-      with: { vendor: { columns: { punchoutConfig: false } }, lines: true },
+      with: {
+        vendor: { columns: { punchoutConfig: false } },
+        lines: true,
+        purchaseOrder: { with: { requisition: { columns: { departmentId: true } } } },
+      },
     });
     if (!invoice) throw new BadRequestException(`Invoice ${invoiceId} not found`);
 
-    const exportLines: GlExportLine[] = [];
-    const unmappedAccounts: string[] = [];
-    for (const line of invoice.lines as Array<{
+    let qboClassId: string | null = null;
+    let qboConnectionId: string | null = null;
+    let qboRealmId: string | null = null;
+    const departmentId = invoice.purchaseOrder?.requisition?.departmentId;
+    if (targetSystem === 'qbo' && departmentId) {
+      const mapping = await this.externalEntityMappingsService.resolve({
+        organizationId,
+        provider: 'qbo',
+        direction: 'inbound',
+        externalEntity: 'Class',
+        localEntity: 'department',
+        localId: departmentId,
+        fallbackToDefault: true,
+      });
+      qboClassId = mapping?.externalId ?? null;
+      qboConnectionId = mapping?.connectionId ?? null;
+      qboRealmId = mapping?.realmId ?? null;
+    }
+    const unmappedQboClass = targetSystem === 'qbo' && departmentId != null && qboClassId === null;
+
+    const lines = invoice.lines as Array<{
       lineNumber: string;
       description: string;
       quantity: string;
       unitPrice: string;
       totalPrice: string;
       glAccount: string | null;
-    }>) {
-      const mapping = line.glAccount
-        ? await this.glMappingsService.findByGlAccount(organizationId, line.glAccount, targetSystem)
-        : null;
-      const unmapped = !mapping;
+    }>;
+    const qboAccountIds = [
+      ...new Set(
+        lines
+          .map((line) => line.glAccount)
+          .filter((glAccount): glAccount is string => Boolean(glAccount)),
+      ),
+    ];
+    let qboAccountMappings: ReadonlyMap<string, ExternalMappingResolution> = new Map();
+    if (targetSystem === 'qbo' && qboAccountIds.length > 0) {
+      qboAccountMappings = await this.externalEntityMappingsService.resolveMany({
+        organizationId,
+        provider: 'qbo',
+        direction: 'inbound',
+        externalEntity: 'Account',
+        localEntity: 'gl_account',
+        localIds: qboAccountIds,
+      });
+      const mappingRealms = [...qboAccountMappings.values()];
+      const firstMapping = mappingRealms[0];
+      qboConnectionId ??= firstMapping?.connectionId ?? null;
+      qboRealmId ??= firstMapping?.realmId ?? null;
+      if (
+        mappingRealms.some(
+          (mapping) =>
+            (mapping.connectionId != null && mapping.connectionId !== qboConnectionId) ||
+            (mapping.realmId != null && mapping.realmId !== qboRealmId),
+        )
+      ) {
+        throw new BadRequestException('QBO mappings changed realms while building the export');
+      }
+    }
+
+    const exportLines: GlExportLine[] = [];
+    const unmappedAccounts: string[] = [];
+    for (const line of lines) {
+      let externalAccountCode: string | null = null;
+      let externalAccountName: string | null = null;
+      if (line.glAccount) {
+        if (targetSystem === 'qbo') {
+          // Legacy QBO gl_mappings contain no authoritative Account identity,
+          // so they stay out of this provider call until a later backfill.
+          const mapping = qboAccountMappings.get(line.glAccount);
+          externalAccountCode = mapping?.externalId ?? null;
+          externalAccountName = mapping?.displayName ?? null;
+        } else {
+          const mapping = await this.glMappingsService.findByGlAccount(
+            organizationId,
+            line.glAccount,
+            targetSystem,
+          );
+          externalAccountCode = mapping?.externalAccountCode ?? null;
+          externalAccountName = mapping?.externalAccountName ?? null;
+        }
+      }
+      const unmapped = externalAccountCode === null;
       if (unmapped && line.glAccount && !unmappedAccounts.includes(line.glAccount)) {
         unmappedAccounts.push(line.glAccount);
       }
@@ -371,8 +485,8 @@ export class GlExportService {
         unitPrice: Number(line.unitPrice),
         totalPrice: Number(line.totalPrice),
         glAccount: line.glAccount,
-        externalAccountCode: mapping?.externalAccountCode ?? null,
-        externalAccountName: mapping?.externalAccountName ?? null,
+        externalAccountCode,
+        externalAccountName,
         unmapped,
       });
     }
@@ -389,6 +503,11 @@ export class GlExportService {
       totalAmount: Number(invoice.totalAmount),
       lines: exportLines,
       unmappedAccounts,
+      qboDepartmentId: departmentId ?? null,
+      qboClassId,
+      qboConnectionId,
+      qboRealmId,
+      unmappedQboClass,
     };
   }
 
@@ -414,7 +533,10 @@ export class GlExportService {
         Amount: line.totalPrice,
         DetailType: 'AccountBasedExpenseLineDetail',
         Description: line.description,
-        AccountBasedExpenseLineDetail: { AccountRef: { value: line.externalAccountCode } },
+        AccountBasedExpenseLineDetail: {
+          AccountRef: { value: line.externalAccountCode },
+          ...(payload.qboClassId ? { ClassRef: { value: payload.qboClassId } } : {}),
+        },
       }));
     if (lineItems.length === 0)
       return { kind: 'pending', reason: 'No mapped QBO lines are available' };
@@ -426,6 +548,8 @@ export class GlExportService {
         method: 'POST',
         path: 'bill',
         requestId,
+        expectedConnectionId: payload.qboConnectionId ?? undefined,
+        expectedRealmId: payload.qboRealmId ?? undefined,
         data: {
           VendorRef: { name: payload.vendorName },
           TxnDate: payload.invoiceDate.split('T')[0],
