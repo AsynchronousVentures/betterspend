@@ -34,6 +34,15 @@ async function createDatabase() {
       prev_hash varchar(64),
       entry_hash varchar(64),
       created_at timestamptz NOT NULL
+    );
+    CREATE TABLE audit_idempotency_keys (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id uuid NOT NULL,
+      action varchar(50) NOT NULL,
+      idempotency_key varchar(255) NOT NULL,
+      audit_log_id uuid REFERENCES audit_log(id),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (organization_id, action, idempotency_key)
     )
   `);
   return { database, db: drizzle(database, { schema }) };
@@ -142,6 +151,66 @@ test('appendAuditLogIfAbsent makes stable retries a no-op', async () => {
       .from(schema.auditLog)
       .where(eq(schema.auditLog.organizationId, organizationId));
     assert.equal(rows.length, 1);
+  } finally {
+    await database.close();
+  }
+});
+
+test('appendAuditLogIfAbsent deduplicates by key without reusing the audit row identity', async () => {
+  const { database, db } = await createDatabase();
+  try {
+    const base = input('00000000-0000-4000-8000-000000000022');
+    const first = await db.transaction((transaction) =>
+      appendAuditLogIfAbsent(asTransaction(transaction), {
+        ...base,
+        id: undefined,
+        idempotencyKey: 'qbo:test:retry',
+      }),
+    );
+    const retry = await db.transaction((transaction) =>
+      appendAuditLogIfAbsent(asTransaction(transaction), {
+        ...base,
+        id: undefined,
+        idempotencyKey: 'qbo:test:retry',
+      }),
+    );
+
+    assert.ok(first);
+    assert.equal(retry?.id, first.id);
+    assert.notEqual(first.id, base.id);
+  } finally {
+    await database.close();
+  }
+});
+
+test('audit idempotency claims serialize retries and stay scoped by organization and action', async () => {
+  const { database, db } = await createDatabase();
+  try {
+    const base = input('00000000-0000-4000-8000-000000000023');
+    const append = (organizationId: string, action: string) =>
+      db.transaction((transaction) =>
+        appendAuditLogIfAbsent(asTransaction(transaction), {
+          ...base,
+          id: undefined,
+          organizationId,
+          action,
+          idempotencyKey: 'shared-retry-key',
+        }),
+      );
+
+    const [first, retry] = await Promise.all([
+      append(organizationId, 'vendor_merge_recovery_failed'),
+      append(organizationId, 'vendor_merge_recovery_failed'),
+    ]);
+    const otherAction = await append(organizationId, 'vendor_merge_recovered');
+    const otherOrganization = await append(otherOrganizationId, 'vendor_merge_recovery_failed');
+
+    assert.ok(first);
+    assert.equal(retry?.id, first.id);
+    assert.notEqual(otherAction?.id, first.id);
+    assert.notEqual(otherOrganization?.id, first.id);
+    const claims = await db.select().from(schema.auditIdempotencyKeys);
+    assert.equal(claims.length, 3);
   } finally {
     await database.close();
   }

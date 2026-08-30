@@ -9,7 +9,7 @@ import { assertDemoModeIsSafe } from './common/demo-mode';
 
 async function bootstrap() {
   assertDemoModeIsSafe();
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   // Security headers (CSP disabled — Swagger UI needs inline scripts)
   app.use(helmet({ contentSecurityPolicy: false }));

@@ -6,6 +6,7 @@ const EXPECTED_TABLES = [
   'notifications',
   'integration_connections',
   'sync_records',
+  'external_entity_mappings',
   'workflow_definitions',
   'workflow_definition_versions',
   'workflow_approval_assignments',
@@ -35,6 +36,10 @@ const EXPECTED_COLUMNS = [
   { table: 'workflow_definition_versions', column: 'organization_id' },
   { table: 'workflow_definition_versions', column: 'notes_json' },
   { table: 'workflow_runtime_publications', column: 'outcome_status' },
+  { table: 'external_entity_mappings', column: 'external_id' },
+  { table: 'external_entity_mappings', column: 'realm_id' },
+  { table: 'external_entity_mappings', column: 'sync_token' },
+  { table: 'external_entity_mappings', column: 'local_id' },
 ] as const;
 
 const EXPECTED_INDEXES = [
@@ -60,6 +65,19 @@ const EXPECTED_INDEXES = [
     name: 'users_email_normalized_unique',
     table: 'users',
     columns: ['lower(email::text)'],
+    unique: true,
+  },
+  {
+    name: 'external_entity_mappings_external_identity_unique',
+    table: 'external_entity_mappings',
+    columns: [
+      'organization_id',
+      'provider',
+      'direction',
+      'external_entity',
+      'external_id',
+      'realm_id',
+    ],
     unique: true,
   },
 ] as const;
@@ -116,6 +134,20 @@ const EXPECTED_FOREIGN_KEYS = [
   {
     name: 'sync_records_connection_org_fk',
     child: 'sync_records',
+    parent: 'integration_connections',
+    childColumns: ['connection_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'external_entity_mappings_organization_id_organizations_id_fk',
+    child: 'external_entity_mappings',
+    parent: 'organizations',
+    childColumns: ['organization_id'],
+    parentColumns: ['id'],
+  },
+  {
+    name: 'external_entity_mappings_connection_org_fk',
+    child: 'external_entity_mappings',
     parent: 'integration_connections',
     childColumns: ['connection_id', 'organization_id'],
     parentColumns: ['id', 'organization_id'],

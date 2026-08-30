@@ -18,7 +18,7 @@ import {
 import { workflowDefinitions, workflowDefinitionVersions } from './schema/workflow-definitions';
 import { webhookEndpoints, webhookDeliveries } from './schema/webhooks';
 import { glMappings, glExportJobs } from './schema/gl';
-import { integrationConnections, syncRecords } from './schema/integrations';
+import { externalEntityMappings, integrationConnections, syncRecords } from './schema/integrations';
 import { ocrJobs } from './schema/ocr';
 import { authSessions, authAccounts } from './schema/auth';
 import {
@@ -86,6 +86,7 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   aiProviderOauthStates: many(aiProviderOauthStates),
   integrationConnections: many(integrationConnections),
   syncRecords: many(syncRecords),
+  externalEntityMappings: many(externalEntityMappings),
   savedReports: many(savedReports),
   artifactOperations: many(artifactOperations),
   workflowDefinitions: many(workflowDefinitions),
@@ -656,6 +657,7 @@ export const integrationConnectionsRelations = relations(
       references: [users.id],
     }),
     syncRecords: many(syncRecords),
+    externalEntityMappings: many(externalEntityMappings),
   }),
 );
 
@@ -666,6 +668,17 @@ export const syncRecordsRelations = relations(syncRecords, ({ one }) => ({
   }),
   connection: one(integrationConnections, {
     fields: [syncRecords.connectionId],
+    references: [integrationConnections.id],
+  }),
+}));
+
+export const externalEntityMappingsRelations = relations(externalEntityMappings, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [externalEntityMappings.organizationId],
+    references: [organizations.id],
+  }),
+  connection: one(integrationConnections, {
+    fields: [externalEntityMappings.connectionId],
     references: [integrationConnections.id],
   }),
 }));
