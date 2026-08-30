@@ -108,7 +108,8 @@ function syncedLabel(mappings: QboExternalEntityMapping[]): string {
 
 export function QboMappingWorkbench() {
   const { access, resolved: accessResolved } = useAccess();
-  const canManage = access?.permissions.includes('reports:export') ?? false;
+  const canView = access?.permissions.includes('reports:view') ?? false;
+  const canManage = canView && (access?.permissions.includes('reports:export') ?? false);
   const canViewVendors = access?.permissions.includes('vendors:view') ?? false;
   const [section, setSection] = useState<MappingSection>('departments');
   const [data, setData] = useState<MappingData | null>(null);
@@ -155,12 +156,15 @@ export function QboMappingWorkbench() {
   }, [canViewVendors]);
 
   useEffect(() => {
-    if (!accessResolved) return;
+    if (!accessResolved || !canView) {
+      loadRequestId.current += 1;
+      return;
+    }
     void Promise.resolve().then(load);
     return () => {
       loadRequestId.current += 1;
     };
-  }, [accessResolved, load]);
+  }, [accessResolved, canView, load]);
 
   const mappingsBySection = useMemo(() => {
     const result = {} as Record<MappingSection, QboExternalEntityMapping[]>;
@@ -264,6 +268,9 @@ export function QboMappingWorkbench() {
     }
   }
 
+  if (accessResolved && !canView) {
+    return <ListState state="denied" loadingLabel="" emptyTitle="" emptyDescription="" />;
+  }
   if (loading) {
     return (
       <ListState
