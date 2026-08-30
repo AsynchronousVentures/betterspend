@@ -1,0 +1,3 @@
+-- migrate.ts builds external_entity_mappings_linked_local_identity_unique concurrently
+-- after Drizzle commits this transactional migration. It refuses duplicate active
+-- links without rewriting them and retries interrupted index builds safely.

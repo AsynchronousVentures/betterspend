@@ -135,6 +135,7 @@ function database(options: {
   mappings?: Record<string, unknown>[];
   adminId?: string;
   localRecordExists?: boolean;
+  updateError?: unknown;
 }) {
   const inserted: Record<string, unknown>[] = [];
   const updates: Record<string, unknown>[] = [];
@@ -220,7 +221,10 @@ function database(options: {
         updates.push(values);
         return {
           where: jest.fn(() => ({
-            returning: jest.fn(async () => [{ ...values, id: 'mapping-1' }]),
+            returning: jest.fn(async () => {
+              if (options.updateError) throw options.updateError;
+              return [{ ...values, id: 'mapping-1' }];
+            }),
           })),
         };
       }),
@@ -242,6 +246,7 @@ function service(
     adminId?: string;
     request?: jest.Mock;
     localRecordExists?: boolean;
+    updateError?: unknown;
     syncJob?: QueueJob;
     cdcJob?: QueueJob;
     lockGuard?: jest.Mock<Promise<void>, []>;
@@ -2765,6 +2770,79 @@ describe('QboInboundService', () => {
         }),
       ]),
     );
+  });
+
+  it('rejects linking a local record that is already linked to another active QBO mapping', async () => {
+    const localVendorId = '00000000-0000-4000-8000-000000000010';
+    const harness = service({
+      mappings: [
+        {
+          id: 'mapping-1',
+          organizationId: '00000000-0000-4000-8000-000000000001',
+          connectionId: '00000000-0000-4000-8000-000000000002',
+          provider: 'qbo',
+          externalEntity: 'Vendor',
+          externalId: 'vendor-1',
+          localEntity: 'vendor',
+          localId: null,
+          direction: 'inbound',
+          isActive: true,
+          isDeleted: false,
+        },
+        {
+          id: 'existing-link',
+          organizationId: '00000000-0000-4000-8000-000000000001',
+          connectionId: '00000000-0000-4000-8000-000000000002',
+          provider: 'qbo',
+          externalEntity: 'Vendor',
+          externalId: 'vendor-2',
+          localEntity: 'vendor',
+          localId: localVendorId,
+          direction: 'inbound',
+          isActive: true,
+          isDeleted: false,
+        },
+      ],
+    });
+
+    await expect(
+      harness.instance.linkMapping('mapping-1', '00000000-0000-4000-8000-000000000001', {
+        localId: localVendorId,
+      }),
+    ).rejects.toThrow('already linked');
+    expect(harness.updates).toHaveLength(0);
+    expect(harness.inserted).toHaveLength(0);
+  });
+
+  it('translates a linked-local unique violation into a conflict', async () => {
+    const localVendorId = '00000000-0000-4000-8000-000000000010';
+    const harness = service({
+      updateError: {
+        code: '23505',
+        constraint_name: 'external_entity_mappings_linked_local_identity_unique',
+      },
+      mappings: [
+        {
+          id: 'mapping-1',
+          organizationId: '00000000-0000-4000-8000-000000000001',
+          connectionId: '00000000-0000-4000-8000-000000000002',
+          provider: 'qbo',
+          externalEntity: 'Vendor',
+          externalId: 'vendor-1',
+          localEntity: 'vendor',
+          localId: null,
+          direction: 'inbound',
+          isActive: true,
+          isDeleted: false,
+        },
+      ],
+    });
+
+    await expect(
+      harness.instance.linkMapping('mapping-1', '00000000-0000-4000-8000-000000000001', {
+        localId: localVendorId,
+      }),
+    ).rejects.toThrow('already linked');
   });
 
   it('rejects links to a missing local record without mutating or auditing the mapping', async () => {

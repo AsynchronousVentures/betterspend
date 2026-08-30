@@ -2,6 +2,9 @@ import {
   messageSchema,
   sanctionsIngestResultSchema,
   screenAllVendorsResultSchema,
+  qboExternalEntityMappingListSchema,
+  qboExternalEntityMappingSchema,
+  qboQueuedSyncResponseSchema,
   workflowDefinitionListResponseSchema,
   workflowDefinitionRecordSchema,
   workflowDefinitionRestoreResponseSchema,
@@ -13,6 +16,8 @@ import {
   type CreateRequisitionInput,
   type CreateWorkflowDefinitionInput,
   type MessageThreadType,
+  type QboMappingLinkInput,
+  type QboSyncEntity,
   type EffectiveAccessDocument,
   type WorkflowAssistantProposalRequest,
   type WorkflowDomain,
@@ -780,6 +785,25 @@ export const api = {
     update: (id: string, data: unknown) =>
       apiFetch<any>(`/gl/mappings/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     remove: (id: string) => apiFetch<void>(`/gl/mappings/${id}`, { method: 'DELETE' }),
+  },
+  qboMappings: {
+    list: (externalEntity?: QboSyncEntity) => {
+      const query = externalEntity ? `?externalEntity=${encodeURIComponent(externalEntity)}` : '';
+      return apiFetchParsed(
+        qboExternalEntityMappingListSchema,
+        `/integrations/qbo/mappings${query}`,
+      );
+    },
+    link: (id: string, data: QboMappingLinkInput) =>
+      apiFetchParsed(qboExternalEntityMappingSchema, `/integrations/qbo/mappings/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    sync: (entityTypes?: QboSyncEntity[]) =>
+      apiFetchParsed(qboQueuedSyncResponseSchema, '/integrations/qbo/sync', {
+        method: 'POST',
+        body: JSON.stringify(entityTypes ? { entityTypes } : {}),
+      }),
   },
   glExportJobs: {
     list: () => apiFetch<any[]>('/gl/export-jobs'),

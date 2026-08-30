@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -78,6 +79,25 @@ const QUERY_PAGE_SIZE = 1000;
 const DEFAULT_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const MAX_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const MAX_LOOKBACK_DAYS = 30;
+
+const QBO_LINKED_LOCAL_IDENTITY_UNIQUE = 'external_entity_mappings_linked_local_identity_unique';
+
+function isQboLinkedLocalIdentityUniqueViolation(error: unknown): boolean {
+  const seen = new Set<object>();
+  let current = error;
+  while (typeof current === 'object' && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const candidate = current as Record<string, unknown>;
+    if (
+      candidate.code === '23505' &&
+      candidate.constraint_name === QBO_LINKED_LOCAL_IDENTITY_UNIQUE
+    ) {
+      return true;
+    }
+    current = candidate.cause;
+  }
+  return false;
+}
 const QBO_RECOVERY_ATTEMPTS = 5;
 const QBO_RECOVERY_BACKOFF_DELAY_MS = 5_000;
 const QBO_RECONCILIATION_JOB_NAME = 'webhook-reconciliation';
@@ -673,6 +693,30 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy, QboMast
         );
       }
 
+      if (input.localId !== null) {
+        const [existingLink] = await transaction
+          .select({ id: externalEntityMappings.id })
+          .from(externalEntityMappings)
+          .where(
+            and(
+              eq(externalEntityMappings.organizationId, organizationId),
+              eq(externalEntityMappings.provider, 'qbo'),
+              eq(externalEntityMappings.direction, 'inbound'),
+              eq(externalEntityMappings.localEntity, mapping.localEntity),
+              eq(externalEntityMappings.localId, input.localId),
+              eq(externalEntityMappings.isActive, true),
+              eq(externalEntityMappings.isDeleted, false),
+            ),
+          )
+          .for('update')
+          .limit(1);
+        if (existingLink && existingLink.id !== mapping.id) {
+          throw new ConflictException(
+            `The ${mapping.localEntity} record is already linked to another active QBO mapping`,
+          );
+        }
+      }
+
       const [updated] = await transaction
         .update(externalEntityMappings)
         .set({
@@ -693,7 +737,15 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy, QboMast
             eq(externalEntityMappings.isDeleted, false),
           ),
         )
-        .returning();
+        .returning()
+        .catch((error: unknown) => {
+          if (isQboLinkedLocalIdentityUniqueViolation(error)) {
+            throw new ConflictException(
+              'The local record is already linked to another active QBO mapping',
+            );
+          }
+          throw error;
+        });
       if (!updated) throw new NotFoundException(`QBO mapping ${mappingId} not found`);
 
       await this.auditMappingMutation(transaction, {

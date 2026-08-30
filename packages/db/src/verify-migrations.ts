@@ -80,6 +80,12 @@ const EXPECTED_INDEXES = [
     ],
     unique: true,
   },
+  {
+    name: 'external_entity_mappings_linked_local_identity_unique',
+    table: 'external_entity_mappings',
+    columns: ['organization_id', 'provider', 'direction', 'local_entity', 'local_id'],
+    unique: true,
+  },
 ] as const;
 
 const EXPECTED_TRIGGERS = [
