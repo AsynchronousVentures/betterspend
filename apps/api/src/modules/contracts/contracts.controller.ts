@@ -1,7 +1,12 @@
 import { Controller, Get, Post, Patch, Param, Body, ParseUUIDPipe, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { ContractsService } from './contracts.service';
-import { contractSchema, contractLineSchema, contractAmendmentSchema } from '@betterspend/shared';
+import {
+  contractSchema,
+  contractLineSchema,
+  contractAmendmentSchema,
+  updateContractObligationSchema,
+} from '@betterspend/shared';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
 import { OperationalPermissions } from '../../common/decorators/operational-permissions.decorator';
@@ -165,20 +170,13 @@ export class ContractsController {
   updateObligation(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('obligationId', ParseUUIDPipe) obligationId: string,
-    @Body()
-    body: {
-      status?: string;
-      ownerId?: string | null;
-      dueDate?: string | null;
-      title?: string;
-      description?: string;
-      notificationLeadDays?: number;
-    },
+    @Body() body: unknown,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
     @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.contractsService.updateObligation(id, orgId, userId, obligationId, body, access);
+    const parsed = updateContractObligationSchema.parse(body);
+    return this.contractsService.updateObligation(id, orgId, userId, obligationId, parsed, access);
   }
 
   @Post(':id/terminate')

@@ -4,6 +4,7 @@ import { and, aliasedTable, eq, isNotNull, sql } from 'drizzle-orm';
 import type { Queue } from 'bullmq';
 import type { Db, DbTransaction } from '@betterspend/db';
 import { contractObligations, contracts, users } from '@betterspend/db';
+import { contractObligationNotificationLeadDaysSchema } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CONTRACT_OBLIGATION_REMINDER_QUEUE_NAME } from '../../common/contract-obligation-reminder-queue';
@@ -165,6 +166,7 @@ export class ContractObligationReminderService implements OnModuleInit, OnModule
     const conditions = [
       eq(contractObligations.status, 'open'),
       isNotNull(contractObligations.dueDate),
+      sql`${contractObligations.notificationLeadDays} >= 0`,
       sql`${contractObligations.dueDate} <= ${now} + ${contractObligations.notificationLeadDays} * interval '1 day'`,
     ];
     if (scope.organizationId) {
@@ -270,6 +272,8 @@ export class ContractObligationReminderService implements OnModuleInit, OnModule
     return (
       candidate.organizationId === candidate.contractOrganizationId &&
       candidate.status === 'open' &&
+      contractObligationNotificationLeadDaysSchema.safeParse(candidate.notificationLeadDays)
+        .success &&
       isContractObligationReminderDue(candidate.dueDate, candidate.notificationLeadDays, now) &&
       (!scope.organizationId || candidate.organizationId === scope.organizationId) &&
       (!scope.contractId || candidate.contractId === scope.contractId)

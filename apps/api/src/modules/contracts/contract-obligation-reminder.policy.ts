@@ -1,3 +1,5 @@
+import { contractObligationNotificationLeadDaysSchema } from '@betterspend/shared';
+
 export const CONTRACT_OBLIGATION_REMINDER_JOB_NAME = 'scan-due-obligations';
 export const CONTRACT_OBLIGATION_REMINDER_JOB_ID = 'contract-obligation-reminders-daily';
 export const CONTRACT_OBLIGATION_REMINDER_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -29,20 +31,18 @@ export function contractObligationReminderTitle(obligationTitle: string) {
 /** A reminder becomes eligible at the due date minus its configured lead window. */
 export function isContractObligationReminderDue(
   dueDate: Date | null | undefined,
-  notificationLeadDays: number,
+  notificationLeadDays: unknown,
   now: Date,
 ) {
   const dueAt = dueDate?.getTime() ?? Number.NaN;
   const nowAt = now.getTime();
-  if (
-    !Number.isFinite(dueAt) ||
-    !Number.isFinite(nowAt) ||
-    !Number.isFinite(notificationLeadDays)
-  ) {
+  const parsedLeadDays =
+    contractObligationNotificationLeadDaysSchema.safeParse(notificationLeadDays);
+  if (!Number.isFinite(dueAt) || !Number.isFinite(nowAt) || !parsedLeadDays.success) {
     return false;
   }
 
-  return dueAt - notificationLeadDays * MILLISECONDS_PER_DAY <= nowAt;
+  return dueAt - parsedLeadDays.data * MILLISECONDS_PER_DAY <= nowAt;
 }
 
 /** Resolve ownership without crossing the organization boundary. */

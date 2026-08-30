@@ -25,8 +25,19 @@ describe('contract obligation reminder policy', () => {
 
     expect(isContractObligationReminderDue(null, 7, now)).toBe(false);
     expect(isContractObligationReminderDue(new Date('invalid'), 7, now)).toBe(false);
+    expect(isContractObligationReminderDue(dueDate, -1, now)).toBe(false);
+    expect(isContractObligationReminderDue(dueDate, 1.5, now)).toBe(false);
     expect(isContractObligationReminderDue(dueDate, Number.NaN, now)).toBe(false);
+    expect(isContractObligationReminderDue(dueDate, Number.POSITIVE_INFINITY, now)).toBe(false);
+    expect(isContractObligationReminderDue(dueDate, Number.NEGATIVE_INFINITY, now)).toBe(false);
     expect(isContractObligationReminderDue(dueDate, 7, new Date('invalid'))).toBe(false);
+  });
+
+  it('accepts a zero-day lead window at the due date boundary', () => {
+    expect(isContractObligationReminderDue(dueDate, 0, dueDate)).toBe(true);
+    expect(isContractObligationReminderDue(dueDate, 0, new Date(dueDate.getTime() - 1))).toBe(
+      false,
+    );
   });
 
   it('resolves the most specific owner before the contract owner and creator', () => {

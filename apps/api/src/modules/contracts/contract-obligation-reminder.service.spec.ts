@@ -432,4 +432,22 @@ describe('ContractObligationReminderService scanning', () => {
       expect.anything(),
     );
   });
+
+  it('skips legacy negative lead windows while continuing with valid reminders', async () => {
+    const harness = serviceWith([
+      row({
+        obligationId: 'legacy-negative',
+        notificationLeadDays: -1,
+        dueDate: new Date('2026-09-20T12:00:00.000Z'),
+      }),
+      row({ obligationId: 'valid-zero', notificationLeadDays: 0, dueDate: now }),
+    ]);
+
+    await expect(harness.service.scanAndNotifyDueObligations(now)).resolves.toEqual({
+      scanned: 2,
+      notified: 1,
+    });
+    expect(harness.notifications.createIdempotent).toHaveBeenCalledTimes(1);
+    expect(harness.notifications.createIdempotent.mock.calls[0]?.[0]).toContain(':valid-zero:');
+  });
 });

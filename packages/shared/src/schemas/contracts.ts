@@ -1,7 +1,23 @@
 import { z } from 'zod';
 
-export const CONTRACT_TYPES = ['msa', 'sow', 'nda', 'sla', 'purchase_agreement', 'framework', 'other'] as const;
-export const CONTRACT_STATUSES = ['draft', 'pending_approval', 'active', 'expiring_soon', 'expired', 'terminated', 'cancelled'] as const;
+export const CONTRACT_TYPES = [
+  'msa',
+  'sow',
+  'nda',
+  'sla',
+  'purchase_agreement',
+  'framework',
+  'other',
+] as const;
+export const CONTRACT_STATUSES = [
+  'draft',
+  'pending_approval',
+  'active',
+  'expiring_soon',
+  'expired',
+  'terminated',
+  'cancelled',
+] as const;
 
 export const contractSchema = z.object({
   title: z.string().min(1).max(500),
@@ -39,3 +55,28 @@ export const contractAmendmentSchema = z.object({
   valueChange: z.string().optional(),
   newEndDate: z.string().datetime({ offset: true }).optional(),
 });
+
+export const contractObligationNotificationLeadDaysSchema = z.number().int().min(0);
+
+export const createContractObligationSchema = z.object({
+  obligationType: z.string(),
+  title: z.string(),
+  description: z.string(),
+  dueDate: z.date().optional(),
+  recurrence: z.string().optional(),
+  notificationLeadDays: contractObligationNotificationLeadDaysSchema.default(30),
+  sourceReference: z.string(),
+  sourceClauseType: z.string().optional(),
+});
+
+export const updateContractObligationSchema = z.object({
+  status: z.string().optional(),
+  ownerId: z.string().nullable().optional(),
+  dueDate: z.string().nullable().optional(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  notificationLeadDays: contractObligationNotificationLeadDaysSchema.optional(),
+});
+
+export type CreateContractObligationInput = z.infer<typeof createContractObligationSchema>;
+export type UpdateContractObligationInput = z.infer<typeof updateContractObligationSchema>;

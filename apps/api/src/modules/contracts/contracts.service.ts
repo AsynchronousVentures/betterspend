@@ -18,7 +18,12 @@ import {
   contracts,
   vendors,
 } from '@betterspend/db';
-import type { PermissionKey } from '@betterspend/shared';
+import {
+  createContractObligationSchema,
+  updateContractObligationSchema,
+  type PermissionKey,
+  type UpdateContractObligationInput,
+} from '@betterspend/shared';
 import { AuditService } from '../audit/audit.service';
 import { DocumentsService } from '../documents/documents.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -484,22 +489,25 @@ export class ContractsService {
         ? await tx
             .insert(contractObligations)
             .values(
-              extracted.obligations.map((obligation) => ({
-                organizationId,
-                contractId,
-                clauseId: obligation.sourceClauseType
-                  ? clauseByType.get(obligation.sourceClauseType)
-                  : undefined,
-                ownerId: lockedContract.ownerId ?? lockedContract.createdBy,
-                obligationType: obligation.obligationType,
-                title: obligation.title,
-                description: obligation.description,
-                dueDate: obligation.dueDate,
-                recurrence: obligation.recurrence,
-                notificationLeadDays: obligation.notificationLeadDays,
-                sourceReference: obligation.sourceReference,
-                status: 'open',
-              })),
+              extracted.obligations.map((rawObligation) => {
+                const obligation = createContractObligationSchema.parse(rawObligation);
+                return {
+                  organizationId,
+                  contractId,
+                  clauseId: obligation.sourceClauseType
+                    ? clauseByType.get(obligation.sourceClauseType)
+                    : undefined,
+                  ownerId: lockedContract.ownerId ?? lockedContract.createdBy,
+                  obligationType: obligation.obligationType,
+                  title: obligation.title,
+                  description: obligation.description,
+                  dueDate: obligation.dueDate,
+                  recurrence: obligation.recurrence,
+                  notificationLeadDays: obligation.notificationLeadDays,
+                  sourceReference: obligation.sourceReference,
+                  status: 'open',
+                };
+              }),
             )
             .returning()
         : [];
@@ -647,31 +655,25 @@ export class ContractsService {
     organizationId: string,
     userId: string,
     obligationId: string,
-    input: {
-      status?: string;
-      ownerId?: string | null;
-      dueDate?: string | null;
-      title?: string;
-      description?: string;
-      notificationLeadDays?: number;
-    },
+    input: UpdateContractObligationInput,
     access?: AccessPolicy,
   ) {
+    const validatedInput = updateContractObligationSchema.parse(input);
     const updated = await this.db.transaction(async (tx) => {
       await this.lockManagedContract(tx, contractId, organizationId, access);
       const [changed] = await tx
         .update(contractObligations)
         .set({
-          status: input.status,
-          ownerId: input.ownerId === null ? null : input.ownerId,
-          dueDate: input.dueDate
-            ? new Date(input.dueDate)
-            : input.dueDate === null
+          status: validatedInput.status,
+          ownerId: validatedInput.ownerId === null ? null : validatedInput.ownerId,
+          dueDate: validatedInput.dueDate
+            ? new Date(validatedInput.dueDate)
+            : validatedInput.dueDate === null
               ? null
               : undefined,
-          title: input.title,
-          description: input.description,
-          notificationLeadDays: input.notificationLeadDays,
+          title: validatedInput.title,
+          description: validatedInput.description,
+          notificationLeadDays: validatedInput.notificationLeadDays,
           updatedAt: new Date(),
         })
         .where(
