@@ -91,6 +91,13 @@ type ArtifactOwnerIdempotencyIndexState = {
   indexIsCanonical: boolean;
 };
 
+type LinkedLocalMappingIndexState = {
+  tableExists: boolean;
+  indexExists: boolean;
+  indexIsValid: boolean;
+  indexIsCanonical: boolean;
+};
+
 type UserRoleOrganizationContractState = {
   columnIsNotNull: boolean;
   userOrganizationForeignKeyExists: boolean;
@@ -106,6 +113,18 @@ const ARTIFACT_OWNER_IDEMPOTENCY_INDEXES = [
   { table: 'messages', index: 'messages_org_idempotency_key_unique' },
   { table: 'notifications', index: 'notifications_org_idempotency_key_unique' },
 ] as const;
+
+function isPostgresUniqueViolation(error: unknown): boolean {
+  const seen = new Set<object>();
+  let current = error;
+  while (typeof current === 'object' && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const candidate = current as Record<string, unknown>;
+    if (candidate.code === '23505') return true;
+    current = candidate.cause;
+  }
+  return false;
+}
 
 type AuditHashColumnState = {
   tableExists: boolean;
@@ -253,6 +272,94 @@ async function ensureAuditHashChain(client: postgres.Sql): Promise<void> {
         return backfillAuditOrganizationBatch(transaction, organizationId);
       });
     }
+  }
+}
+
+/** Build the linked-local identity index after the migration transaction without blocking writes. */
+async function prepareLinkedLocalMappingIndex(client: postgres.Sql): Promise<void> {
+  await client`SET lock_timeout = '5s'`;
+  await client`SET statement_timeout = '5min'`;
+  try {
+    const [state] = await client<LinkedLocalMappingIndexState[]>`
+      SELECT
+        to_regclass('public.external_entity_mappings') IS NOT NULL AS "tableExists",
+        index_class.oid IS NOT NULL AS "indexExists",
+        COALESCE(index_state.indisvalid, false) AS "indexIsValid",
+        COALESCE(
+          index_state.indisunique
+          AND index_state.indrelid = to_regclass('public.external_entity_mappings')
+          AND COALESCE(index_state.indnkeyatts, 0) = 5
+          AND COALESCE((
+            SELECT array_agg(attribute.attname::text ORDER BY indexed.ordinality)
+            FROM unnest(index_state.indkey) WITH ORDINALITY AS indexed(attnum, ordinality)
+            JOIN pg_attribute AS attribute
+              ON attribute.attrelid = index_state.indrelid
+              AND attribute.attnum = indexed.attnum
+          ) = ARRAY[
+            'organization_id',
+            'provider',
+            'direction',
+            'local_entity',
+            'local_id'
+          ]::text[], false)
+          AND pg_get_expr(index_state.indpred, index_state.indrelid) =
+            '((local_id IS NOT NULL) AND (is_active = true) AND (is_deleted = false))',
+          false
+        ) AS "indexIsCanonical"
+      FROM (VALUES (1)) AS singleton(value)
+      LEFT JOIN pg_class AS index_class
+        ON index_class.oid = to_regclass('public.external_entity_mappings_linked_local_identity_unique')
+      LEFT JOIN pg_index AS index_state ON index_state.indexrelid = index_class.oid
+    `;
+
+    if (!state?.tableExists || (state.indexIsValid && state.indexIsCanonical)) return;
+
+    const [duplicate] = await client`
+      SELECT 1
+      FROM "external_entity_mappings"
+      WHERE "local_id" IS NOT NULL
+        AND "is_active" = true
+        AND "is_deleted" = false
+      GROUP BY "organization_id", "provider", "direction", "local_entity", "local_id"
+      HAVING count(*) > 1
+      LIMIT 1
+    `;
+    if (duplicate) {
+      throw new Error(
+        'Cannot enforce linked local mapping uniqueness: duplicate active links exist. Resolve them explicitly before retrying this migration.',
+      );
+    }
+
+    if (state.indexExists) {
+      await client`DROP INDEX CONCURRENTLY "external_entity_mappings_linked_local_identity_unique"`;
+    }
+
+    try {
+      await client`
+        CREATE UNIQUE INDEX CONCURRENTLY "external_entity_mappings_linked_local_identity_unique"
+        ON "external_entity_mappings" (
+          "organization_id",
+          "provider",
+          "direction",
+          "local_entity",
+          "local_id"
+        )
+        WHERE "external_entity_mappings"."local_id" is not null
+          AND "external_entity_mappings"."is_active" = true
+          AND "external_entity_mappings"."is_deleted" = false
+      `;
+    } catch (error: unknown) {
+      if (isPostgresUniqueViolation(error)) {
+        throw new Error(
+          'Cannot enforce linked local mapping uniqueness: duplicate active links exist. Resolve them explicitly before retrying this migration.',
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+  } finally {
+    await client`RESET statement_timeout`;
+    await client`RESET lock_timeout`;
   }
 }
 
@@ -830,6 +937,7 @@ async function main(): Promise<void> {
     await validateLegacyUserRoleOrganizations(client);
     const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
+    await prepareLinkedLocalMappingIndex(client);
     await prepareAuditHashIndex(client);
     await ensureAuditHashChain(client);
     await prepareArtifactOwnerIdempotencyIndexes(client);
