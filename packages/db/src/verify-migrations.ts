@@ -14,6 +14,8 @@ const EXPECTED_TABLES = [
   'email_intake_addresses',
   'email_intake_messages',
   'email_intake_attachments',
+  'invoice_review_cases',
+  'invoice_review_signals',
 ] as const;
 
 const EXPECTED_COLUMNS = [
@@ -84,6 +86,18 @@ const EXPECTED_INDEXES = [
     name: 'external_entity_mappings_linked_local_identity_unique',
     table: 'external_entity_mappings',
     columns: ['organization_id', 'provider', 'direction', 'local_entity', 'local_id'],
+    unique: true,
+  },
+  {
+    name: 'invoice_review_cases_org_invoice_unique',
+    table: 'invoice_review_cases',
+    columns: ['organization_id', 'invoice_id'],
+    unique: true,
+  },
+  {
+    name: 'invoice_review_signals_identity_unique',
+    table: 'invoice_review_signals',
+    columns: ['case_id', 'signal_type', 'source_module', 'source_record_id'],
     unique: true,
   },
 ] as const;
@@ -296,6 +310,34 @@ const EXPECTED_FOREIGN_KEYS = [
     child: 'email_intake_messages',
     parent: 'vendors',
     childColumns: ['vendor_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'invoice_review_cases_invoice_org_fk',
+    child: 'invoice_review_cases',
+    parent: 'invoices',
+    childColumns: ['invoice_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'invoice_review_cases_owner_org_fk',
+    child: 'invoice_review_cases',
+    parent: 'users',
+    childColumns: ['owner_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'invoice_review_signals_case_org_fk',
+    child: 'invoice_review_signals',
+    parent: 'invoice_review_cases',
+    childColumns: ['case_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'invoice_review_signals_resolution_actor_org_fk',
+    child: 'invoice_review_signals',
+    parent: 'users',
+    childColumns: ['resolution_actor_id', 'organization_id'],
     parentColumns: ['id', 'organization_id'],
   },
 ] as const;

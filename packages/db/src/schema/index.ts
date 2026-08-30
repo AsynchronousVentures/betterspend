@@ -10,6 +10,7 @@ export * from './workflow-definitions';
 export * from './purchase-orders';
 export * from './receiving';
 export * from './invoices';
+export * from './invoice-reviews';
 export * from './budgets';
 export * from './webhooks';
 export * from './gl';

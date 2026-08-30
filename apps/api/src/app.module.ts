@@ -57,6 +57,7 @@ import { WorkflowDefinitionsModule } from './modules/workflow-definitions/workfl
 import { BootstrapModule } from './modules/bootstrap/bootstrap.module';
 import { ArtifactIdempotencyModule } from './modules/artifact-idempotency/artifact-idempotency.module';
 import { QboInboundModule } from './modules/integrations/qbo/qbo-inbound.module';
+import { InvoiceReviewsModule } from './modules/invoice-reviews/invoice-reviews.module';
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { QboInboundModule } from './modules/integrations/qbo/qbo-inbound.module'
     WebhooksModule,
     GlModule,
     QboInboundModule,
+    InvoiceReviewsModule,
     HealthModule,
     VendorsModule,
     UsersModule,
