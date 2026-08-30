@@ -127,8 +127,9 @@ export class OAuthService {
     await this.oauthRedis.withLock(`qbo-sync:${binding.organizationId}`, async (assertHeld) => {
       await assertHeld();
       await this.saveConnection('qbo', binding, realmId, token, undefined, assertHeld);
+      await assertHeld();
+      await this.enqueueQboInitialSync(binding.organizationId, assertHeld);
     });
-    await this.enqueueQboInitialSync(binding.organizationId);
     this.logger.log(`QBO connection stored for org ${binding.organizationId}, realmId=${realmId}`);
   }
 
@@ -508,6 +509,7 @@ export class OAuthService {
           }
         }
       }
+      await assertHeld?.();
       const [connection] = await transaction
         .insert(integrationConnections)
         .values(values)
@@ -528,7 +530,10 @@ export class OAuthService {
     });
   }
 
-  private async enqueueQboInitialSync(organizationId: string): Promise<void> {
+  private async enqueueQboInitialSync(
+    organizationId: string,
+    assertHeld?: OAuthLockGuard,
+  ): Promise<void> {
     if (!this.qboSyncQueue) {
       this.logger.error(
         `Unable to queue initial QBO sync for ${organizationId}: QBO sync queue is unavailable`,
@@ -536,12 +541,22 @@ export class OAuthService {
       return;
     }
     const options = qboInitialSyncJobOptions(organizationId);
+    let existing: { id: string | undefined } | null;
     try {
-      const existing = await findReusableQboInitialSyncJob(this.qboSyncQueue, organizationId);
-      if (existing) {
-        return;
-      }
+      existing = await findReusableQboInitialSyncJob(
+        this.qboSyncQueue,
+        organizationId,
+        assertHeld,
+      );
+    } catch (error: unknown) {
+      await assertHeld?.();
+      this.logger.error(`Unable to queue initial QBO sync for ${organizationId}: ${String(error)}`);
+      return;
+    }
+    if (existing) return;
 
+    await assertHeld?.();
+    try {
       await this.qboSyncQueue.add(
         QBO_INITIAL_SYNC_JOB_NAME,
         { kind: 'initial', organizationId },
@@ -806,7 +821,7 @@ export class OAuthService {
         if (provider === 'qbo') {
           try {
             await assertHeld?.();
-            await this.removeQboSchedules(organizationId);
+            await this.removeQboSchedules(organizationId, assertHeld);
           } catch (error: unknown) {
             this.logger.error(
               `Unable to remove QBO schedules for ${organizationId}: ${String(error)}`,
@@ -825,20 +840,35 @@ export class OAuthService {
     await run();
   }
 
-  private async removeQboSchedules(organizationId: string): Promise<void> {
+  private async removeQboSchedules(
+    organizationId: string,
+    assertHeld?: OAuthLockGuard,
+  ): Promise<void> {
     await Promise.all([
-      this.removeQboSchedule(this.qboSyncQueue, `qbo-hourly-sync-${organizationId}`),
-      this.removeQboSchedule(this.qboCdcQueue, `qbo-daily-cdc-${organizationId}`),
+      this.removeQboSchedule(
+        this.qboSyncQueue,
+        `qbo-hourly-sync-${organizationId}`,
+        assertHeld,
+      ),
+      this.removeQboSchedule(this.qboCdcQueue, `qbo-daily-cdc-${organizationId}`, assertHeld),
     ]);
   }
 
-  private async removeQboSchedule(queue: Queue | undefined, jobId: string): Promise<void> {
+  private async removeQboSchedule(
+    queue: Queue | undefined,
+    jobId: string,
+    assertHeld?: OAuthLockGuard,
+  ): Promise<void> {
     if (!queue) return;
+    await assertHeld?.();
     const repeatableJobs = await queue.getRepeatableJobs();
     await Promise.all(
       repeatableJobs
         .filter((job) => job.id === jobId || job.key === jobId)
-        .map((job) => queue.removeRepeatableByKey(job.key)),
+        .map(async (job) => {
+          await assertHeld?.();
+          await queue.removeRepeatableByKey(job.key);
+        }),
     );
   }
 

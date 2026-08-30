@@ -40,7 +40,11 @@ class FakeOAuthRedis {
     _key: string,
     callback: (assertHeld: () => Promise<void>) => Promise<T>,
   ): Promise<T> {
-    const result = this.lockTail.then(() => callback(this.lockGuard));
+    const result = this.lockTail.then(async () => {
+      const value = await callback(this.lockGuard);
+      await this.lockGuard();
+      return value;
+    });
     this.lockTail = result.then(
       () => undefined,
       () => undefined,
@@ -276,6 +280,85 @@ describe('OAuthService', () => {
     );
   });
 
+  it('rechecks the OAuth lease before the QBO connection upsert', async () => {
+    const lockLost = new Error('OAuth lock was lost');
+    let assertions = 0;
+    const stateStore = new FakeOAuthRedis();
+    stateStore.setLockGuard(async () => {
+      assertions += 1;
+      if (assertions >= 4) throw lockLost;
+    });
+    const captured: Array<Record<string, unknown>> = [];
+    const queue = qboSyncQueue();
+    const service = new OAuthService(
+      insertCapturingDb(captured),
+      crypto,
+      stateStore as never,
+      queue as never,
+    );
+    mockedAxios.post.mockResolvedValue({
+      data: {
+        access_token: 'plain-access-token',
+        refresh_token: 'plain-refresh-token',
+        expires_in: 3600,
+      },
+    });
+    const url = new URL(await service.getQboAuthUrl(organizationId, userId, sessionId));
+
+    await expect(
+      service.completeQboOAuth(
+        url.searchParams.get('state')!,
+        'authorization-code',
+        'realm-1',
+        userId,
+        sessionId,
+      ),
+    ).rejects.toBe(lockLost);
+
+    expect(assertions).toBeGreaterThanOrEqual(4);
+    expect(captured).toHaveLength(0);
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it('does not enqueue the initial sync after the OAuth lease is lost', async () => {
+    const lockLost = new Error('OAuth lock was lost');
+    let assertions = 0;
+    const stateStore = new FakeOAuthRedis();
+    stateStore.setLockGuard(async () => {
+      assertions += 1;
+      if (assertions >= 8) throw lockLost;
+    });
+    const captured: Array<Record<string, unknown>> = [];
+    const queue = qboSyncQueue();
+    const service = new OAuthService(
+      insertCapturingDb(captured),
+      crypto,
+      stateStore as never,
+      queue as never,
+    );
+    mockedAxios.post.mockResolvedValue({
+      data: {
+        access_token: 'plain-access-token',
+        refresh_token: 'plain-refresh-token',
+        expires_in: 3600,
+      },
+    });
+    const url = new URL(await service.getQboAuthUrl(organizationId, userId, sessionId));
+
+    await expect(
+      service.completeQboOAuth(
+        url.searchParams.get('state')!,
+        'authorization-code',
+        'realm-1',
+        userId,
+        sessionId,
+      ),
+    ).rejects.toBe(lockLost);
+
+    expect(assertions).toBeGreaterThanOrEqual(8);
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
   it('keeps the QBO connection durable when initial-sync enqueue fails', async () => {
     const captured: Array<Record<string, unknown>> = [];
     const stateStore = new FakeOAuthRedis();
@@ -378,6 +461,68 @@ describe('OAuthService', () => {
     expect(syncQueue.removeRepeatableByKey).toHaveBeenCalledTimes(1);
     expect(cdcQueue.removeRepeatableByKey).toHaveBeenCalledWith('daily-key');
     expect(cdcQueue.removeRepeatableByKey).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not remove QBO schedules after the OAuth lease is lost', async () => {
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
+      provider: 'qbo',
+      realmId: 'realm-1',
+      accessTokenEncrypted: crypto.encrypt('access-token'),
+      refreshTokenEncrypted: crypto.encrypt('refresh-token'),
+      status: 'active',
+    };
+    const db = insertCapturingDb([]) as unknown as {
+      query: { integrationConnections: { findMany: jest.Mock } };
+      update: jest.Mock;
+    };
+    db.query = {
+      integrationConnections: { findMany: jest.fn(async () => [connection]) },
+    };
+    db.update = jest.fn(() => ({
+      set: jest.fn(() => ({
+        where: jest.fn(() => ({
+          returning: jest.fn(async () => [connection]),
+        })),
+      })),
+    }));
+
+    const syncQueue = {
+      getRepeatableJobs: jest.fn(async () => [
+        { id: `qbo-hourly-sync-${organizationId}`, key: 'hourly-key' },
+      ]),
+      removeRepeatableByKey: jest.fn(async () => undefined),
+    };
+    const cdcQueue = {
+      getRepeatableJobs: jest.fn(async () => [
+        { id: `qbo-daily-cdc-${organizationId}`, key: 'daily-key' },
+      ]),
+      removeRepeatableByKey: jest.fn(async () => undefined),
+    };
+    const lockLost = new Error('OAuth lock was lost');
+    let assertions = 0;
+    const stateStore = new FakeOAuthRedis();
+    stateStore.setLockGuard(async () => {
+      assertions += 1;
+      if (assertions >= 11) throw lockLost;
+    });
+    mockedAxios.post.mockResolvedValue({ data: {} });
+    const service = new OAuthService(
+      db as never,
+      crypto,
+      stateStore as never,
+      syncQueue as never,
+      cdcQueue as never,
+    );
+
+    await expect(service.disconnectQbo(organizationId, userId)).rejects.toBe(lockLost);
+
+    expect(assertions).toBeGreaterThanOrEqual(11);
+    expect(syncQueue.getRepeatableJobs).toHaveBeenCalledTimes(1);
+    expect(cdcQueue.getRepeatableJobs).toHaveBeenCalledTimes(1);
+    expect(syncQueue.removeRepeatableByKey).not.toHaveBeenCalled();
+    expect(cdcQueue.removeRepeatableByKey).not.toHaveBeenCalled();
   });
 
   it('removes a failed initial-sync job before enqueueing a fresh import', async () => {

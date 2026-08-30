@@ -31,10 +31,13 @@ type QboInitialSyncQueue = {
 export async function findReusableQboInitialSyncJob(
   queue: QboInitialSyncQueue,
   organizationId: string,
+  assertHeld?: () => Promise<void>,
 ): Promise<{ id: string | undefined } | null> {
+  await assertHeld?.();
   const existing = await queue.getJob(qboInitialSyncJobId(organizationId));
   if (!existing) return null;
   if ((await existing.getState()) === 'failed') {
+    await assertHeld?.();
     await existing.remove();
     return null;
   }

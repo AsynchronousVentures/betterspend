@@ -1252,6 +1252,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
       if (!(await this.activeConnection(organizationId))) return;
 
       const syncJobId = `qbo-hourly-sync-${organizationId}`;
+      await assertLock();
       await this.syncQueue.add(
         'scheduled-sync',
         { kind: 'scheduled', organizationId },
@@ -1264,8 +1265,8 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
         },
       );
 
-      await assertLock();
       const cdcJobId = `qbo-daily-cdc-${organizationId}`;
+      await assertLock();
       await this.cdcQueue.add(
         'daily-cdc-sweep',
         { kind: 'cdc-sweep', organizationId, lookbackDays: MAX_LOOKBACK_DAYS },

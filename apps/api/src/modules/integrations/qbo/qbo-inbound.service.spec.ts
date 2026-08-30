@@ -2250,6 +2250,32 @@ describe('QboInboundService', () => {
     );
   });
 
+  it('does not recreate the sync schedule after the connection lookup loses the lock', async () => {
+    const lockLost = new Error('QBO sync lock was lost');
+    const lockGuard = jest.fn(async () => {
+      if (lockGuard.mock.calls.length >= 2) throw lockLost;
+    });
+    const harness = service({ lockGuard });
+
+    await expect(harness.instance.ensureScheduledSync('organization-1')).rejects.toBe(lockLost);
+
+    expect(harness.syncQueue.add).not.toHaveBeenCalled();
+    expect(harness.cdcQueue.add).not.toHaveBeenCalled();
+  });
+
+  it('checks the lock again before creating the CDC schedule', async () => {
+    const lockLost = new Error('QBO sync lock was lost');
+    const lockGuard = jest.fn(async () => {
+      if (lockGuard.mock.calls.length >= 3) throw lockLost;
+    });
+    const harness = service({ lockGuard });
+
+    await expect(harness.instance.ensureScheduledSync('organization-1')).rejects.toBe(lockLost);
+
+    expect(harness.syncQueue.add).toHaveBeenCalledTimes(1);
+    expect(harness.cdcQueue.add).not.toHaveBeenCalled();
+  });
+
   it('does not mutate or re-audit a duplicate vendor merge webhook', async () => {
     const source = {
       id: 'source-mapping',
