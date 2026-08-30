@@ -665,6 +665,7 @@ describe('QboInboundService', () => {
     const result = await harness.instance.syncNow('organization-1', ['Vendor']);
 
     expect(result.imported).toBe(0);
+    expect(result.tombstones).toBe(1);
     expect(harness.updates).toEqual(
       expect.arrayContaining([expect.objectContaining({ isActive: false, isDeleted: true })]),
     );

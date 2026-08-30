@@ -324,16 +324,21 @@ export class QboInboundService implements OnModuleInit {
 
       const requested = new Set(entityTypes);
       let imported = 0;
+      let tombstones = 0;
       for (const entityName of QBO_CATALOG_ENTITY_TYPES) {
         if (!requested.has(entityName)) continue;
-        imported += await this.syncCatalogEntity(organizationId, connection.id, entityName);
+        const result = await this.syncCatalogEntity(organizationId, connection.id, entityName);
+        imported += result.imported;
+        tombstones += result.tombstones;
       }
 
       // TaxCode and TaxRate are deliberately polled through the normal query
       // endpoint. Intuit excludes them from CDC notifications.
       for (const entityName of QBO_TAX_ENTITY_TYPES) {
         if (!requested.has(entityName)) continue;
-        imported += await this.syncCatalogEntity(organizationId, connection.id, entityName);
+        const result = await this.syncCatalogEntity(organizationId, connection.id, entityName);
+        imported += result.imported;
+        tombstones += result.tombstones;
       }
 
       const completedAt = await this.completeConnectionSync(connection.id, organizationId);
@@ -341,7 +346,7 @@ export class QboInboundService implements OnModuleInit {
       return {
         organizationId,
         imported,
-        tombstones: 0,
+        tombstones,
         completedAt: completedAt.toISOString(),
       };
     });
@@ -373,7 +378,9 @@ export class QboInboundService implements OnModuleInit {
         });
         const entries = extractCdcEntries(response.data);
         if (entries.length >= CDC_RESPONSE_LIMIT && isCatalogEntity(entityName)) {
-          imported += await this.syncCatalogEntity(organizationId, connection.id, entityName);
+          const result = await this.syncCatalogEntity(organizationId, connection.id, entityName);
+          imported += result.imported;
+          tombstones += result.tombstones;
           continue;
         }
         if (entries.length >= CDC_RESPONSE_LIMIT) {
@@ -703,7 +710,7 @@ export class QboInboundService implements OnModuleInit {
     organizationId: string,
     connectionId: string,
     entityName: QboSyncEntity,
-  ): Promise<number> {
+  ): Promise<{ imported: number; tombstones: number }> {
     const definition = ENTITY_DEFINITIONS[entityName];
     const rows = await this.queryEntity(
       organizationId,
@@ -736,8 +743,13 @@ export class QboInboundService implements OnModuleInit {
       });
       imported += 1;
     }
-    await this.reconcileCatalogEntity(organizationId, connectionId, entityName, snapshotIds);
-    return imported;
+    const tombstones = await this.reconcileCatalogEntity(
+      organizationId,
+      connectionId,
+      entityName,
+      snapshotIds,
+    );
+    return { imported, tombstones };
   }
 
   /**
@@ -863,8 +875,9 @@ export class QboInboundService implements OnModuleInit {
     connectionId: string,
     entityName: QboSyncEntity,
     snapshotIds: ReadonlySet<string>,
-  ): Promise<void> {
-    await this.db.transaction(async (transaction) => {
+  ): Promise<number> {
+    return this.db.transaction(async (transaction) => {
+      let tombstones = 0;
       const existing = await transaction.query.externalEntityMappings.findMany({
         where: (mapping, { and, eq }) =>
           and(
@@ -893,6 +906,7 @@ export class QboInboundService implements OnModuleInit {
           )
           .returning({ id: externalEntityMappings.id });
         if (!updated) continue;
+        tombstones += 1;
 
         await this.auditMappingMutation(transaction, {
           organizationId,
@@ -904,6 +918,7 @@ export class QboInboundService implements OnModuleInit {
           reason: 'missing_from_snapshot',
         });
       }
+      return tombstones;
     });
   }
 

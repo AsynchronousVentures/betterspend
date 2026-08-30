@@ -257,7 +257,7 @@ describe('OAuthService', () => {
     );
   });
 
-  it('keeps the QBO connection durable but exposes an initial-sync enqueue failure', async () => {
+  it('keeps the QBO connection durable when initial-sync enqueue fails', async () => {
     const captured: Array<Record<string, unknown>> = [];
     const stateStore = new FakeOAuthRedis();
     const queue = qboSyncQueue(new Error('Redis unavailable'));
@@ -266,6 +266,10 @@ describe('OAuthService', () => {
       crypto,
       stateStore as never,
       queue as never,
+    );
+    const loggerError = jest.spyOn(
+      (service as unknown as { logger: { error: (message: string) => void } }).logger,
+      'error',
     );
     mockedAxios.post.mockResolvedValue({
       data: {
@@ -284,7 +288,7 @@ describe('OAuthService', () => {
         userId,
         sessionId,
       ),
-    ).rejects.toThrow('QBO connection was stored, but its initial import could not be queued');
+    ).resolves.toBeUndefined();
 
     expect(captured).toEqual(
       expect.arrayContaining([
@@ -295,6 +299,9 @@ describe('OAuthService', () => {
           lastSyncAt: null,
         }),
       ]),
+    );
+    expect(loggerError).toHaveBeenCalledWith(
+      expect.stringContaining('Unable to queue initial QBO sync'),
     );
   });
 

@@ -5,7 +5,6 @@ import {
   InternalServerErrorException,
   Logger,
   Optional,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
@@ -432,9 +431,10 @@ export class OAuthService {
 
   private async enqueueQboInitialSync(organizationId: string): Promise<void> {
     if (!this.qboSyncQueue) {
-      throw new ServiceUnavailableException(
-        'QBO connection was stored, but the initial sync queue is unavailable',
+      this.logger.error(
+        `Unable to queue initial QBO sync for ${organizationId}: QBO sync queue is unavailable`,
       );
+      return;
     }
     const options = qboInitialSyncJobOptions(organizationId);
     try {
@@ -450,9 +450,6 @@ export class OAuthService {
       );
     } catch (error: unknown) {
       this.logger.error(`Unable to queue initial QBO sync for ${organizationId}: ${String(error)}`);
-      throw new ServiceUnavailableException(
-        'QBO connection was stored, but its initial import could not be queued',
-      );
     }
   }
 
