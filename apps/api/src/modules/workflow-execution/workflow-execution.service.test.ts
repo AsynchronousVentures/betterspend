@@ -5,6 +5,7 @@ import type { Db, DbTransaction } from '@betterspend/db';
 import {
   approvalActions,
   approvalRequests,
+  invoices,
   requisitions,
   workflowApprovalAssignments,
   workflowRuntimePublications,
@@ -168,9 +169,11 @@ function createRestartFixture(
   const queueJobs: Array<{ name: string; data: Record<string, unknown> }> = [];
   const glExports: Array<{ organizationId: string; invoiceId: string; jobId?: string }> = [];
   const webhookJobs: Array<{ eventType: string; payload: Record<string, unknown> }> = [];
+  const lockOrder: string[] = [];
 
   const transaction = {
     query: {
+      approvalRequests: { findFirst: async () => replacement ?? oldRequest },
       approvalActions: {
         findFirst: async () => {
           const activeRequest = replacement ?? oldRequest;
@@ -238,10 +241,19 @@ function createRestartFixture(
           if (!fields) {
             return {
               where: () => ({
-                for: async () =>
-                  table === workflowRuntimePublications
-                    ? publications.filter((publication) => publication.status === 'pending')
-                    : [replacement ?? oldRequest],
+                for: async () => {
+                  if (table === workflowRuntimePublications) {
+                    return publications.filter((publication) => publication.status === 'pending');
+                  }
+                  if (table === invoices) {
+                    lockOrder.push('invoice');
+                    return [currentEntity];
+                  }
+                  if (table === approvalRequests) {
+                    lockOrder.push('approval-request');
+                  }
+                  return [replacement ?? oldRequest];
+                },
               }),
             };
           }
@@ -481,6 +493,7 @@ function createRestartFixture(
     publications,
     queueJobs,
     requestUpdates,
+    lockOrder,
     service: new WorkflowExecutionService(
       db,
       queue,
@@ -542,6 +555,7 @@ describe('WorkflowExecutionService restart', () => {
   it('does not mutate a request that is outside the supplied organization', async () => {
     const writes: string[] = [];
     const transaction = {
+      query: { approvalRequests: { findFirst: async () => undefined } },
       select: () => ({
         from: () => ({ where: () => ({ for: async () => [] }) }),
       }),
@@ -951,6 +965,40 @@ describe('WorkflowExecutionService restart', () => {
       ),
       /maker-checker policy blocks this approval/,
     );
+  });
+
+  it('locks an invoice before its workflow request during approval actions', async () => {
+    const fixture = createRestartFixture();
+    Object.assign(fixture.oldRequest, { approvableType: 'invoice' });
+    Object.assign(fixture.currentEntity, {
+      createdBy: DELEGATE_ID,
+      submissionSource: 'manual',
+      purchaseOrderId: '00000000-0000-0000-0000-000000000901',
+      matchStatus: 'full_match',
+      lines: [],
+    });
+
+    await fixture.service.restartOnLatest(
+      fixture.oldRequest.id,
+      ORGANIZATION_ID,
+      fixture.oldRequest.initiatedBy,
+    );
+    const replacement = fixture.getReplacement();
+    assert.ok(replacement);
+    fixture.lockOrder.splice(0);
+
+    await assert.rejects(
+      fixture.service.processAction(
+        String(replacement.id),
+        DELEGATE_ID,
+        'approve',
+        undefined,
+        ORGANIZATION_ID,
+      ),
+      /maker-checker policy blocks this approval/,
+    );
+
+    assert.deepEqual(fixture.lockOrder.slice(0, 2), ['invoice', 'approval-request']);
   });
 
   it('does not replace a request blocked by the current budget policy', async () => {
@@ -1506,6 +1554,7 @@ describe('WorkflowExecutionService escalation scheduling', () => {
       const locked = { ...current, status: 'cancelled' };
       const writes: string[] = [];
       const transaction = {
+        query: { approvalRequests: { findFirst: async () => current } },
         select: () => ({
           from: () => ({ where: () => ({ for: async () => [locked] }) }),
         }),

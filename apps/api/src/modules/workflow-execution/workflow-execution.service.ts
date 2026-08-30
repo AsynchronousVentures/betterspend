@@ -1166,6 +1166,9 @@ export class WorkflowExecutionService implements OnModuleInit {
     requestId: string,
     organizationId: string,
   ): Promise<RuntimeRequest> {
+    // Invoice mutation paths lock the invoice before its workflow request.
+    // Keep every versioned workflow entry point in that order to avoid deadlocks.
+    await this.lockInvoiceBeforeRequest(tx, requestId, organizationId);
     const [request] = await tx
       .select()
       .from(approvalRequests)
@@ -1180,6 +1183,25 @@ export class WorkflowExecutionService implements OnModuleInit {
       throw new NotFoundException(`Versioned approval request ${requestId} not found`);
     }
     return request;
+  }
+
+  private async lockInvoiceBeforeRequest(
+    tx: DbTransaction,
+    requestId: string,
+    organizationId: string,
+  ): Promise<void> {
+    const target = await tx.query.approvalRequests.findFirst({
+      where: (record, { and, eq }) =>
+        and(eq(record.id, requestId), eq(record.organizationId, organizationId)),
+      columns: { approvableType: true, approvableId: true },
+    });
+    if (target?.approvableType !== 'invoice') return;
+
+    await tx
+      .select()
+      .from(invoices)
+      .where(and(eq(invoices.id, target.approvableId), eq(invoices.organizationId, organizationId)))
+      .for('update');
   }
 
   private async loadExecutable(
