@@ -1,5 +1,6 @@
 import {
   contractObligationReminderIdempotencyKey,
+  contractObligationReminderTitle,
   isContractObligationReminderDue,
   resolveContractObligationOwner,
 } from './contract-obligation-reminder.policy';
@@ -61,5 +62,23 @@ describe('contract obligation reminder policy', () => {
         'user-1',
       ),
     ).not.toBe(key);
+  });
+
+  it('keeps the composed title within the notification limit for a maximum-length title', () => {
+    const obligationTitle = 'x'.repeat(255);
+
+    const title = contractObligationReminderTitle(obligationTitle);
+
+    expect(title).toBe(`Contract obligation due: ${'x'.repeat(230)}`);
+    expect(title).toHaveLength(255);
+  });
+
+  it('does not split multi-codepoint Unicode graphemes at the title boundary', () => {
+    const obligationTitle = '👩‍💻'.repeat(77);
+
+    const title = contractObligationReminderTitle(obligationTitle);
+
+    expect(title).toBe(`Contract obligation due: ${'👩‍💻'.repeat(76)}`);
+    expect(Array.from(title).length).toBe(253);
   });
 });

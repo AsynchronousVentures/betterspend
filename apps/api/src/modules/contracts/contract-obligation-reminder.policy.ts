@@ -5,6 +5,26 @@ export const CONTRACT_OBLIGATION_REMINDER_ATTEMPTS = 5;
 export const CONTRACT_OBLIGATION_REMINDER_TYPE = 'contract_obligation';
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+const NOTIFICATION_TITLE_MAX_LENGTH = 255;
+const CONTRACT_OBLIGATION_REMINDER_TITLE_PREFIX = 'Contract obligation due: ';
+
+/** Compose a readable notification title without splitting Unicode graphemes. */
+export function contractObligationReminderTitle(obligationTitle: string) {
+  const availableLength =
+    NOTIFICATION_TITLE_MAX_LENGTH - Array.from(CONTRACT_OBLIGATION_REMINDER_TITLE_PREFIX).length;
+  const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+  let title = '';
+  let length = 0;
+
+  for (const { segment } of segmenter.segment(obligationTitle)) {
+    const segmentLength = Array.from(segment).length;
+    if (length + segmentLength > availableLength) break;
+    title += segment;
+    length += segmentLength;
+  }
+
+  return `${CONTRACT_OBLIGATION_REMINDER_TITLE_PREFIX}${title}`;
+}
 
 /** A reminder becomes eligible at the due date minus its configured lead window. */
 export function isContractObligationReminderDue(

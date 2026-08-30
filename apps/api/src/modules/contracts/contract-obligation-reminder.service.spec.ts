@@ -216,6 +216,30 @@ describe('ContractObligationReminderService scanning', () => {
     );
   });
 
+  it('continues after an oversized obligation title and keeps every notification title valid', async () => {
+    const harness = serviceWith([
+      row({ obligationTitle: 'x'.repeat(255) }),
+      row({ obligationId: 'later-obligation', obligationTitle: 'Later obligation' }),
+    ]);
+    harness.notifications.createIdempotent.mockImplementation(async (...args: unknown[]) => {
+      const title = String(args[4]);
+      if (Array.from(title).length > 255) throw new Error('notification title is too long');
+      return { id: 'notice-1' };
+    });
+
+    await expect(harness.service.scanAndNotifyDueObligations(now)).resolves.toEqual({
+      scanned: 2,
+      notified: 2,
+    });
+    expect(harness.notifications.createIdempotent).toHaveBeenCalledTimes(2);
+    expect(harness.notifications.createIdempotent.mock.calls[0]?.[4]).toBe(
+      `Contract obligation due: ${'x'.repeat(230)}`,
+    );
+    expect(harness.notifications.createIdempotent.mock.calls[1]?.[4]).toBe(
+      'Contract obligation due: Later obligation',
+    );
+  });
+
   it('falls back from inactive or deleted owners without crossing the tenant boundary', async () => {
     const harness = serviceWith([
       row({

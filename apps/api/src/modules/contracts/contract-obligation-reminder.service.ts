@@ -14,6 +14,7 @@ import {
   CONTRACT_OBLIGATION_REMINDER_JOB_NAME,
   CONTRACT_OBLIGATION_REMINDER_TYPE,
   contractObligationReminderIdempotencyKey,
+  contractObligationReminderTitle,
   isContractObligationReminderDue,
   resolveContractObligationOwner,
 } from './contract-obligation-reminder.policy';
@@ -99,7 +100,7 @@ export class ContractObligationReminderService implements OnModuleInit, OnModule
         candidate.organizationId,
         ownerId,
         CONTRACT_OBLIGATION_REMINDER_TYPE,
-        `Contract obligation due: ${candidate.obligationTitle}`,
+        contractObligationReminderTitle(candidate.obligationTitle),
         `${candidate.contractTitle}: ${candidate.obligationDescription ?? candidate.obligationTitle}`,
         'contract',
         candidate.contractId,
