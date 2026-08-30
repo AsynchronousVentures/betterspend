@@ -3,6 +3,7 @@ import type { OAuthService, QboToken } from './oauth.service';
 import {
   QboClientService,
   QboConnectionRequiredError,
+  QboResourceNotFoundError,
   ValidationFault,
 } from './qbo-client.service';
 
@@ -265,6 +266,15 @@ describe('QboClientService', () => {
     await expect(
       client.request({ organizationId: 'organization-1', method: 'GET', path: 'vendor/404' }),
     ).rejects.toMatchObject({ name: 'ValidationFault', primaryCode: '610', status: 200 });
+  });
+
+  it('translates an HTTP 404 into a typed resource-not-found error', async () => {
+    jest.spyOn(axios, 'request').mockRejectedValue(axiosError(404));
+    const client = new QboClientService(oauth());
+
+    await expect(
+      client.request({ organizationId: 'organization-1', method: 'GET', path: 'vendor/404' }),
+    ).rejects.toBeInstanceOf(QboResourceNotFoundError);
   });
 
   it('fails before making an HTTP request when no active connection exists', async () => {

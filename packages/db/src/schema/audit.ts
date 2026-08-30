@@ -1,4 +1,4 @@
-import { index, pgTable, uuid, varchar, jsonb, timestamp } from 'drizzle-orm/pg-core';
+import { index, pgTable, uniqueIndex, uuid, varchar, jsonb, timestamp } from 'drizzle-orm/pg-core';
 
 export const auditLog = pgTable(
   'audit_log',
@@ -21,5 +21,22 @@ export const auditLog = pgTable(
       table.createdAt,
       table.id,
     ),
+  }),
+);
+
+export const auditIdempotencyKeys = pgTable(
+  'audit_idempotency_keys',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id').notNull(),
+    action: varchar('action', { length: 50 }).notNull(),
+    idempotencyKey: varchar('idempotency_key', { length: 255 }).notNull(),
+    auditLogId: uuid('audit_log_id').references(() => auditLog.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    organizationActionIdempotencyKey: uniqueIndex(
+      'audit_idempotency_keys_org_action_key_unique',
+    ).on(table.organizationId, table.action, table.idempotencyKey),
   }),
 );

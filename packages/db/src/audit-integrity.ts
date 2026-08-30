@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { DbTransaction } from './client';
-import { auditLog } from './schema';
+import { auditIdempotencyKeys, auditLog } from './schema';
 
 /** @internal The hash payload version stays private to this module's public API. */
 export const AUDIT_HASH_VERSION = 1 as const;
@@ -207,27 +207,72 @@ export async function appendAuditLog(
   return entry;
 }
 
-/** Append a stable, retry-safe audit entry without creating a second row. */
+/** Append a retry-safe audit entry without reusing its immutable row identity. */
 export async function appendAuditLogIfAbsent(
   transaction: DbTransaction,
-  input: AuditEntryInput & { id: string },
+  input: AuditEntryInput & ({ idempotencyKey: string } | { id: string }),
 ): Promise<typeof auditLog.$inferSelect | undefined> {
   const organizationId = requireUuid(input.organizationId);
-  const id = normalizeUuid(input.id);
 
   await lockAuditChain(transaction, organizationId);
-  const [existing] = await transaction
-    .select()
-    .from(auditLog)
-    .where(and(eq(auditLog.id, id), eq(auditLog.organizationId, organizationId)))
-    .limit(1);
+  const idempotencyKey = 'idempotencyKey' in input ? input.idempotencyKey : undefined;
+  if (typeof idempotencyKey === 'string') {
+    const [claim] = await transaction
+      .select({ auditLogId: auditIdempotencyKeys.auditLogId })
+      .from(auditIdempotencyKeys)
+      .where(
+        and(
+          eq(auditIdempotencyKeys.organizationId, organizationId),
+          eq(auditIdempotencyKeys.action, input.action),
+          eq(auditIdempotencyKeys.idempotencyKey, idempotencyKey),
+        ),
+      )
+      .limit(1);
+    if (claim) {
+      if (!claim.auditLogId) throw new Error('Audit idempotency claim is incomplete');
+      const [existing] = await transaction
+        .select()
+        .from(auditLog)
+        .where(and(eq(auditLog.id, claim.auditLogId), eq(auditLog.organizationId, organizationId)))
+        .limit(1);
+      if (!existing?.entryHash)
+        throw new Error('Audit idempotency claim references an invalid row');
+      return existing;
+    }
+
+    await transaction
+      .insert(auditIdempotencyKeys)
+      .values({ organizationId, action: input.action, idempotencyKey });
+    const entry = await appendAuditLog(transaction, { ...input, id: undefined, organizationId });
+    await transaction
+      .update(auditIdempotencyKeys)
+      .set({ auditLogId: entry.id })
+      .where(
+        and(
+          eq(auditIdempotencyKeys.organizationId, organizationId),
+          eq(auditIdempotencyKeys.action, input.action),
+          eq(auditIdempotencyKeys.idempotencyKey, idempotencyKey),
+        ),
+      );
+    return entry;
+  }
+
+  const predicate = and(
+    eq(auditLog.id, normalizeUuid(input.id!)),
+    eq(auditLog.organizationId, organizationId),
+  );
+  const [existing] = await transaction.select().from(auditLog).where(predicate).limit(1);
   if (existing) {
     if (!existing.entryHash) {
       throw new Error('Audit hash backfill is incomplete for this organization');
     }
     return existing;
   }
-  return appendAuditLog(transaction, { ...input, id, organizationId });
+  return appendAuditLog(transaction, {
+    ...input,
+    id: normalizeUuid(input.id!),
+    organizationId,
+  });
 }
 
 async function lockAuditChain(transaction: DbTransaction, organizationId: string): Promise<void> {

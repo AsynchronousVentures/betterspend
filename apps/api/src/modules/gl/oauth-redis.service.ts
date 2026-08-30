@@ -57,6 +57,8 @@ export type XeroDailyBudgetStore = {
   reconcileXeroDailyBudget(input: XeroDailyBudgetReconcileInput): Promise<number>;
 };
 
+export type OAuthLockGuard = () => Promise<void>;
+
 @Injectable()
 export class OAuthRedisService implements OnModuleDestroy {
   private readonly redis: Redis;
@@ -211,8 +213,8 @@ export class OAuthRedisService implements OnModuleDestroy {
     return parseBudgetUsed(result);
   }
 
-  /** Serializes token rotation. Waiters re-read the connection inside the callback. */
-  async withLock<T>(key: string, callback: () => Promise<T>): Promise<T> {
+  /** Serializes token rotation. Callers can check the lease before each side effect. */
+  async withLock<T>(key: string, callback: (assertHeld: OAuthLockGuard) => Promise<T>): Promise<T> {
     const lockKey = `oauth:lock:${key}`;
     const lockValue = randomBytes(16).toString('hex');
     const deadline = Date.now() + 10_000;
@@ -242,8 +244,25 @@ export class OAuthRedisService implements OnModuleDestroy {
         }, 5_000);
         renewTimer.unref();
 
+        const assertHeld: OAuthLockGuard = async () => {
+          if (renewalError) throw renewalError;
+          let owner: string | null;
+          try {
+            owner = await this.redis.get(lockKey);
+          } catch (error: unknown) {
+            renewalError = error;
+            throw error;
+          }
+          if (owner !== lockValue) {
+            const error = new ServiceUnavailableException('OAuth refresh lock was lost');
+            renewalError ??= error;
+            throw error;
+          }
+        };
+
         try {
-          const result = await callback();
+          const result = await callback(assertHeld);
+          await assertHeld();
           await renewal;
           if (renewalError) throw renewalError;
           return result;

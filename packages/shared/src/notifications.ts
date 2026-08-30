@@ -6,6 +6,7 @@ export const NOTIFICATION_TYPE_DEFINITIONS = [
   { value: 'spend_guard', label: 'Spend guard alerts' },
   { value: 'software_license', label: 'Software license renewals' },
   { value: 'punchout_auth_failed', label: 'PunchOut connection failures' },
+  { value: 'qbo_vendor_merge_recovery_failed', label: 'QBO vendor merge failures' },
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPE_DEFINITIONS)[number]['value'];

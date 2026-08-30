@@ -11,3 +11,4 @@ export * from './recurring-po';
 export * from './bootstrap';
 export * from './intake-concierge';
 export * from './xero';
+export * from './qbo';

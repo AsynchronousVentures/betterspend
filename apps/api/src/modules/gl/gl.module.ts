@@ -29,6 +29,6 @@ import { XeroClientService, XeroDailyBudgetLedger } from './xero-client.service'
     },
     XeroClientService,
   ],
-  exports: [GlExportService, OAuthService, QboClientService, XeroClientService],
+  exports: [GlExportService, OAuthService, OAuthRedisService, QboClientService, XeroClientService],
 })
 export class GlModule {}

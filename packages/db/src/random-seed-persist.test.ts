@@ -25,6 +25,15 @@ async function createDatabase() {
       prev_hash varchar(64),
       entry_hash varchar(64),
       created_at timestamptz NOT NULL
+    );
+    CREATE TABLE audit_idempotency_keys (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id uuid NOT NULL,
+      action varchar(50) NOT NULL,
+      idempotency_key varchar(255) NOT NULL,
+      audit_log_id uuid REFERENCES audit_log(id),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (organization_id, action, idempotency_key)
     )
   `);
   return { database, db: drizzle(database, { schema }) };
