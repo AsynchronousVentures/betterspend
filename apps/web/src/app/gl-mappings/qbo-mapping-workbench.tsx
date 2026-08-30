@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { QboExternalEntityMapping } from '@betterspend/shared';
 import {
@@ -107,7 +107,7 @@ function syncedLabel(mappings: QboExternalEntityMapping[]): string {
 }
 
 export function QboMappingWorkbench() {
-  const { access } = useAccess();
+  const { access, resolved: accessResolved } = useAccess();
   const canManage = access?.permissions.includes('reports:export') ?? false;
   const canViewVendors = access?.permissions.includes('vendors:view') ?? false;
   const [section, setSection] = useState<MappingSection>('departments');
@@ -119,8 +119,10 @@ export function QboMappingWorkbench() {
   const [catalogQuery, setCatalogQuery] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const loadRequestId = useRef(0);
 
   const load = useCallback(async () => {
+    const requestId = ++loadRequestId.current;
     setLoading(true);
     setError(null);
     try {
@@ -131,6 +133,7 @@ export function QboMappingWorkbench() {
         api.projects.list(),
         canViewVendors ? api.vendors.list() : Promise.resolve([]),
       ]);
+      if (requestId !== loadRequestId.current) return;
       setData({
         mappings,
         qboConnected: oauth.qbo,
@@ -143,16 +146,21 @@ export function QboMappingWorkbench() {
         },
       });
     } catch (nextError) {
+      if (requestId !== loadRequestId.current) return;
       setError(nextError);
       setData(null);
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestId.current) setLoading(false);
     }
   }, [canViewVendors]);
 
   useEffect(() => {
+    if (!accessResolved) return;
     void Promise.resolve().then(load);
-  }, [load]);
+    return () => {
+      loadRequestId.current += 1;
+    };
+  }, [accessResolved, load]);
 
   const mappingsBySection = useMemo(() => {
     const result = {} as Record<MappingSection, QboExternalEntityMapping[]>;
@@ -210,7 +218,10 @@ export function QboMappingWorkbench() {
     setBusyId(local.id);
     setNotice('');
     try {
-      updateMapping(await api.qboMappings.link(mapping.id, { localId: local.id }));
+      const updated = await api.qboMappings.link(mapping.id, { localId: local.id });
+      loadRequestId.current += 1;
+      setLoading(false);
+      updateMapping(updated);
       setNotice(`${local.name} linked to ${externalName(mapping)}.`);
     } catch (nextError) {
       setNotice(nextError instanceof Error ? nextError.message : 'Unable to save this mapping.');
@@ -225,7 +236,10 @@ export function QboMappingWorkbench() {
     setBusyId(row.id);
     setNotice('');
     try {
-      updateMapping(await api.qboMappings.link(row.mapping.id, { localId: null }));
+      const updated = await api.qboMappings.link(row.mapping.id, { localId: null });
+      loadRequestId.current += 1;
+      setLoading(false);
+      updateMapping(updated);
       setNotice(`${row.name} is no longer linked.`);
     } catch (nextError) {
       setNotice(nextError instanceof Error ? nextError.message : 'Unable to unlink this mapping.');
