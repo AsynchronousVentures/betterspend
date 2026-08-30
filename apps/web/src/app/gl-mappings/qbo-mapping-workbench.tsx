@@ -81,6 +81,13 @@ function localRecord(value: unknown): LocalMappingRecord | null {
   };
 }
 
+function localRecords(values: unknown[]): LocalMappingRecord[] {
+  return values.flatMap((value) => {
+    const record = localRecord(value);
+    return record ? [record] : [];
+  });
+}
+
 function externalName(mapping: QboExternalEntityMapping) {
   return mapping.displayName ?? mapping.externalId;
 }
@@ -125,18 +132,9 @@ export function QboMappingWorkbench() {
         qboRealmId: oauth.qboRealmId ?? null,
         vendorsDenied: !canViewVendors,
         local: {
-          departments: departments.flatMap((record) => {
-            const parsed = localRecord(record);
-            return parsed ? [parsed] : [];
-          }),
-          projects: projects.flatMap((record) => {
-            const parsed = localRecord(record);
-            return parsed ? [parsed] : [];
-          }),
-          vendors: vendors.flatMap((record) => {
-            const parsed = localRecord(record);
-            return parsed ? [parsed] : [];
-          }),
+          departments: localRecords(departments),
+          projects: localRecords(projects),
+          vendors: localRecords(vendors),
         },
       });
     } catch (nextError) {
@@ -203,13 +201,10 @@ export function QboMappingWorkbench() {
   }
 
   async function link(mapping: QboExternalEntityMapping, local: LocalMappingRow) {
-    if (!canManage || busyId) return;
+    if (!canManage || busyId || local.mapping) return;
     setBusyId(local.id);
     setNotice('');
     try {
-      if (local.mapping && local.mapping.id !== mapping.id) {
-        updateMapping(await api.qboMappings.link(local.mapping.id, { localId: null }));
-      }
       updateMapping(await api.qboMappings.link(mapping.id, { localId: local.id }));
       setNotice(`${local.name} linked to ${externalName(mapping)}.`);
     } catch (nextError) {
@@ -335,9 +330,6 @@ export function QboMappingWorkbench() {
           aria-label="Mapping type"
           className="border-b border-white/10 p-3 xl:border-r xl:border-b-0"
         >
-          <p className="px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">
-            Mapping type
-          </p>
           <div className="grid grid-cols-2 gap-1 sm:grid-cols-4 xl:grid-cols-1">
             {SECTIONS.map((key) => {
               const count =
@@ -599,11 +591,26 @@ function CatalogPicker({
   onQuery: (value: string) => void;
   onLink: (mapping: QboExternalEntityMapping) => void;
 }) {
+  if (row.mapping) {
+    return (
+      <div>
+        <h3 className="text-sm font-semibold">Current QBO link</h3>
+        <div className="mt-4 border-y border-white/10 py-4">
+          <p className="text-sm font-medium">{externalName(row.mapping)}</p>
+          <p className="mt-1 font-mono text-xs text-zinc-600">
+            {mappingCode(row.mapping) ?? `QBO ID ${row.mapping.externalId}`}
+          </p>
+        </div>
+        <p className="mt-4 text-xs leading-5 text-zinc-500">
+          Unlink this record before choosing a different QuickBooks match.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div>
-      <h3 className="text-sm font-semibold">
-        {row.mapping ? 'Change QBO link' : 'Choose a QBO record'}
-      </h3>
+      <h3 className="text-sm font-semibold">Choose a QBO record</h3>
       <div className="mt-4 border-y border-white/10 py-4">
         <p className="text-xs text-zinc-500">BetterSpend</p>
         <p className="mt-1 text-sm font-medium">{row.name}</p>

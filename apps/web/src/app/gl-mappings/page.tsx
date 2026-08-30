@@ -61,7 +61,7 @@ function GlMappingsContent() {
   const activeTab =
     searchParams.get('view') === 'export-history'
       ? 'jobs'
-      : searchParams.get('view') === 'xero'
+      : searchParams.get('view') === 'xero' || searchParams.get('targetSystem') === 'xero'
         ? 'xero'
         : 'qbo';
   const [mappings, setMappings] = useState<GlMapping[]>([]);
