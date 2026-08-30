@@ -9,7 +9,7 @@ import {
   normalizeRequestedVersion,
 } from '../../scripts/release-tag.mjs';
 
-const workflow = readFileSync(new URL('../workflows/docker-deploy.yml', import.meta.url), 'utf8');
+const workflow = readFileSync(new URL('../workflows/docker-ci.yml', import.meta.url), 'utf8');
 const releasePolicy = readFileSync(new URL('./release-policy.mjs', import.meta.url), 'utf8');
 const releaseTagScript = readFileSync(
   new URL('../../scripts/release-tag.mjs', import.meta.url),
@@ -145,7 +145,7 @@ test('promotes all release images to the version and latest aliases', () => {
   const sourceWait = workflow.slice(sourceWaitIndex, stageIndex);
   const staging = workflow.slice(stageIndex, verifyIndex);
   const verification = workflow.slice(verifyIndex, latestIndex);
-  const latest = workflow.slice(latestIndex, workflow.indexOf('  deploy-preflight:'));
+  const latest = workflow.slice(latestIndex);
   assert.match(sourceWait, /max_attempts=1[\s\S]*?max_attempts=3/);
   assert.match(sourceWait, /Retrying immutable image lookup/);
   assert.match(staging, /inspect --raw "\$source_tag"/);
@@ -162,15 +162,7 @@ test('promotes all release images to the version and latest aliases', () => {
   assert.match(latest, /if: steps\.release_ref\.outputs\.release_tag != ''/);
 });
 
-test('deploys the validated release tag and runs the shared preflight in fast CI', () => {
-  assert.match(workflow, /release_tag: \$\{\{ steps\.release_ref\.outputs\.release_tag \}\}/);
-  assert.match(workflow, /RELEASE_TAG: \$\{\{ needs\.publish\.outputs\.release_tag \}\}/);
-  assert.match(workflow, /printf '%s\\n' "\$RELEASE_TAG" \|/);
-  assert.match(workflow, /IFS= read -r image_tag && \.\/deploy\/deploy\.sh "\$image_tag"/);
-  assert.doesNotMatch(
-    workflow,
-    /\.\/deploy\/deploy\.sh[^\n]*\$\{\{ needs\.publish\.outputs\.release_tag \}\}/,
-  );
+test('runs the shared preflight in fast CI', () => {
   assert.equal(
     (workflow.match(/node --test \.github\/scripts\/release-workflow-policy\.test\.mjs/g) ?? [])
       .length,
@@ -274,13 +266,9 @@ test('uses standard GitHub-hosted runners without duplicate validation', () => {
   );
   assert.match(
     workflow,
-    /validate:[\s\S]*?runs-on: ubuntu-slim[\s\S]*?deploy-preflight:[\s\S]*?runs-on: ubuntu-slim/,
-  );
-  assert.match(
-    workflow,
     /validate:\n    name: Validate\n    if: always\(\)\n    needs: \[change-scope, fast-ci, full-ci-proof, full-ci\]/,
   );
-  assert.match(workflow, /deploy:[\s\S]*?runs-on: ubuntu-24\.04[\s\S]*?timeout-minutes: 15/);
+  assert.doesNotMatch(workflow, /deploy/i);
 });
 
 test('keeps the required Validate check while skipping expensive non-runtime validation', () => {

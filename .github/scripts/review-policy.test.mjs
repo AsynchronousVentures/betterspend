@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const workflow = readFileSync(new URL('../workflows/docker-deploy.yml', import.meta.url), 'utf8');
+const workflow = readFileSync(new URL('../workflows/docker-ci.yml', import.meta.url), 'utf8');
 const codeRabbitConfig = readFileSync(new URL('../../.coderabbit.yaml', import.meta.url), 'utf8');
 const approvabilityConfig = readFileSync(
   new URL('../../.macroscope/approvability.md', import.meta.url),
