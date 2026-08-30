@@ -1521,6 +1521,35 @@ describe('QboInboundService', () => {
     );
   });
 
+  it.each([
+    ['missing QueryResponse', { unexpected: true }],
+    ['non-record QueryResponse', { QueryResponse: 'invalid' }],
+    ['non-array entity rows', { QueryResponse: { Vendor: { Id: 'vendor-1' } } }],
+  ])('does not reconcile mappings from a malformed snapshot with %s', async (_case, data) => {
+    const harness = service({
+      mappings: [
+        {
+          id: 'existing-mapping',
+          organizationId: '00000000-0000-4000-8000-000000000001',
+          connectionId: '00000000-0000-4000-8000-000000000002',
+          provider: 'qbo',
+          externalEntity: 'Vendor',
+          externalId: 'vendor-existing',
+          direction: 'inbound',
+          isActive: true,
+          isDeleted: false,
+        },
+      ],
+      request: jest.fn(async () => ({ data })),
+    });
+
+    await expect(
+      harness.instance.syncNow('00000000-0000-4000-8000-000000000001', ['Vendor']),
+    ).rejects.toThrow('Malformed QBO query');
+    expect(harness.updates).toHaveLength(0);
+    expect(harness.inserted).toHaveLength(0);
+  });
+
   it('deactivates an account that leaves the supported subset without tombstoning it', async () => {
     const previousAccount = {
       Id: 'account-1',
@@ -2562,6 +2591,66 @@ describe('QboInboundService', () => {
       operation: 'merge',
       lastUpdated: '2026-08-30T00:00:00.000Z',
       payload: { mergeTo: 'vendor-target' },
+    });
+
+    expect(harness.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          isDeleted: true,
+          mergedIntoExternalId: 'vendor-target',
+        }),
+        expect.objectContaining({ localId: localVendorId }),
+      ]),
+    );
+  });
+
+  it.each([
+    [{ deletedId: 'vendor-source', intuitEntityId: 'vendor-target' }],
+    [{ deletedid: 'vendor-source', intuitentityid: 'vendor-target' }],
+    [
+      {
+        sourceId: 'vendor-source',
+        deletedid: 'wrong-source',
+        targetId: 'vendor-target',
+        intuitentityid: 'wrong-target',
+      },
+    ],
+  ])('normalizes Intuit vendor merge source and target aliases', async (payload) => {
+    const localVendorId = '00000000-0000-4000-8000-000000000010';
+    const harness = service({
+      mappings: [
+        {
+          id: 'source-mapping',
+          organizationId: '00000000-0000-4000-8000-000000000001',
+          connectionId: '00000000-0000-4000-8000-000000000002',
+          provider: 'qbo',
+          externalEntity: 'Vendor',
+          externalId: 'vendor-source',
+          direction: 'inbound',
+          localId: localVendorId,
+          autoCreated: false,
+        },
+        {
+          id: 'target-mapping',
+          organizationId: '00000000-0000-4000-8000-000000000001',
+          connectionId: '00000000-0000-4000-8000-000000000002',
+          provider: 'qbo',
+          externalEntity: 'Vendor',
+          externalId: 'vendor-target',
+          direction: 'inbound',
+          localId: null,
+          autoCreated: false,
+        },
+      ],
+    });
+
+    await harness.instance.processWebhookEvent({
+      realmId: 'realm-1',
+      entityName: 'Vendor',
+      entityId: 'vendor-target',
+      operation: 'merge',
+      lastUpdated: '2026-08-30T00:00:00.000Z',
+      payload,
     });
 
     expect(harness.updates).toEqual(

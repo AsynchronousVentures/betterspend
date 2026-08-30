@@ -1227,6 +1227,120 @@ describe('OAuthService', () => {
     ]);
   });
 
+  it('persists a rotated Xero token with CAS before reporting lease loss', async () => {
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
+      provider: 'xero',
+      realmId: 'tenant-1',
+      realmName: 'Tenant 1',
+      accessTokenEncrypted: crypto.encrypt('expired-access'),
+      refreshTokenEncrypted: crypto.encrypt('old-refresh'),
+      accessExpiresAt: new Date(0),
+      status: 'active',
+      scopes: XERO_SCOPES.join(' '),
+      connectedByUserId: userId,
+      lastSyncAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const transaction = {
+      ...auditTransaction([]),
+      update: jest.fn(() => ({
+        set: jest.fn((values: Record<string, unknown>) => ({
+          where: jest.fn(() => ({
+            returning: jest.fn(async () => {
+              Object.assign(connection, values);
+              return [{ id: connection.id }];
+            }),
+          })),
+        })),
+      })),
+    };
+    const db = {
+      query: {
+        integrationConnections: { findFirst: jest.fn(async () => ({ ...connection })) },
+      },
+      transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback(transaction),
+      ),
+    } as unknown as Db;
+    const redis = new FakeXeroOAuthRedis();
+    let assertions = 0;
+    redis.setLockGuard(async () => {
+      assertions += 1;
+      if (assertions >= 5) throw new Error('OAuth lock lease lost');
+    });
+    mockedAxios.post.mockResolvedValue({
+      data: { access_token: 'rotated-access', refresh_token: 'rotated-refresh', expires_in: 1800 },
+    });
+    const service = new OAuthService(db, crypto, redis as never);
+
+    await expect(service.getXeroToken(organizationId)).rejects.toThrow('OAuth lock lease lost');
+
+    expect(crypto.decrypt(String(connection.accessTokenEncrypted))).toBe('rotated-access');
+    expect(crypto.decrypt(String(connection.refreshTokenEncrypted))).toBe('rotated-refresh');
+    expect(transaction.update).toHaveBeenCalledTimes(1);
+    expect(mockedAxios.get).not.toHaveBeenCalled();
+  });
+
+  it('does not overwrite a newer Xero rotation when the expected-token CAS loses', async () => {
+    const audits: Array<Record<string, unknown>> = [];
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
+      provider: 'xero',
+      realmId: 'tenant-1',
+      realmName: 'Tenant 1',
+      accessTokenEncrypted: crypto.encrypt('newer-access'),
+      refreshTokenEncrypted: crypto.encrypt('newer-refresh'),
+      accessExpiresAt: new Date(0),
+      status: 'active',
+      scopes: XERO_SCOPES.join(' '),
+      connectedByUserId: userId,
+      lastSyncAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const transaction = {
+      ...auditTransaction(audits),
+      update: jest.fn(() => ({
+        set: jest.fn(() => ({
+          where: jest.fn(() => ({ returning: jest.fn(async () => []) })),
+        })),
+      })),
+    };
+    const db = {
+      query: {
+        integrationConnections: {
+          findFirst: jest.fn(async () => ({
+            ...connection,
+            accessTokenEncrypted: crypto.encrypt('expired-access'),
+            refreshTokenEncrypted: crypto.encrypt('old-refresh'),
+          })),
+        },
+      },
+      transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback(transaction),
+      ),
+    } as unknown as Db;
+    mockedAxios.post.mockResolvedValue({
+      data: { access_token: 'losing-access', refresh_token: 'losing-refresh', expires_in: 1800 },
+    });
+    const service = new OAuthService(db, crypto, new FakeXeroOAuthRedis() as never);
+
+    await expect(service.getXeroToken(organizationId)).resolves.toEqual({
+      accessToken: 'expired-access',
+      tenantId: 'tenant-1',
+      connectionId: connection.id,
+    });
+
+    expect(crypto.decrypt(String(connection.accessTokenEncrypted))).toBe('newer-access');
+    expect(crypto.decrypt(String(connection.refreshTokenEncrypted))).toBe('newer-refresh');
+    expect(audits).toHaveLength(0);
+    expect(mockedAxios.get).not.toHaveBeenCalled();
+  });
+
   it('keeps a concurrent Xero refresh usable during the grace window', async () => {
     const connection = {
       id: '00000000-0000-0000-0000-000000000010',

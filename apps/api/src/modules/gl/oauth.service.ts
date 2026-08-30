@@ -617,7 +617,6 @@ export class OAuthService {
           new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }),
           { headers: this.tokenHeaders(provider) },
         );
-        await assertHeld();
         if (provider === 'xero') {
           if (!response.data.refresh_token) {
             throw new Error('Xero token refresh did not return a rotated refresh token');
@@ -627,7 +626,6 @@ export class OAuthService {
             encryptedAccessToken,
             encryptedRefreshToken,
             response.data,
-            assertHeld,
           );
           if (!persisted) return;
 

@@ -2175,10 +2175,16 @@ function assertNever(value: never): never {
 }
 
 function extractQueryRows(data: unknown, entityName: string): QboObject[] {
-  if (!isRecord(data)) return [];
-  const queryResponse = isRecord(data.QueryResponse) ? data.QueryResponse : data;
+  if (!isRecord(data) || !isRecord(data.QueryResponse)) {
+    throw new Error(`Malformed QBO query response for ${entityName}`);
+  }
+  const queryResponse = data.QueryResponse;
   const rows = queryResponse[entityName];
-  return Array.isArray(rows) ? rows.filter(isRecord) : [];
+  if (rows === undefined) return [];
+  if (!Array.isArray(rows) || !rows.every(isRecord)) {
+    throw new Error(`Malformed QBO query rows for ${entityName}`);
+  }
+  return rows;
 }
 
 function extractResourceEntity(data: unknown, entityName: string): QboObject | null {
@@ -2404,23 +2410,35 @@ function firstString(payload: QboObject, keys: readonly string[]): string | null
   return null;
 }
 
+function firstStringAlias(payload: QboObject, aliases: readonly string[]): string | null {
+  const entries = Object.entries(payload);
+  for (const alias of aliases) {
+    const normalizedAlias = alias.toLowerCase();
+    const entry = entries.find(([key]) => key.toLowerCase() === normalizedAlias);
+    const value = entry ? stringValue(entry[1]) : null;
+    if (value) return value;
+  }
+  return null;
+}
+
 function vendorMergeIds(event: QboWebhookEvent): {
   sourceId: string | null;
   targetId: string | null;
 } {
-  const payloadSourceId = firstString(event.payload, [
+  const payloadSourceId = firstStringAlias(event.payload, [
     'sourceId',
     'oldId',
     'deletedId',
     'mergedFromId',
     'fromId',
   ]);
-  const payloadTargetId = firstString(event.payload, [
+  const payloadTargetId = firstStringAlias(event.payload, [
     'targetId',
     'newId',
     'mergeTo',
     'mergedIntoId',
     'toId',
+    'intuitEntityId',
   ]);
   return {
     sourceId: payloadSourceId ?? event.entityId,
