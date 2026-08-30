@@ -140,6 +140,7 @@ function service(
     localRecordExists?: boolean;
     syncJob?: QueueJob;
     cdcJob?: QueueJob;
+    lockGuard?: jest.Mock<Promise<void>, []>;
   } = {},
 ) {
   const harness = database(options);
@@ -147,8 +148,12 @@ function service(
   const cdcQueue = queue(options.cdcJob);
   const request = options.request ?? jest.fn();
   const notifications = { createIdempotent: jest.fn(async () => undefined) };
+  const assertLock = options.lockGuard ?? jest.fn(async () => undefined);
   const oauthRedis = {
-    withLock: jest.fn(async (_key: string, callback: () => Promise<unknown>) => callback()),
+    withLock: jest.fn(
+      async (_key: string, callback: (assertLock: () => Promise<void>) => Promise<unknown>) =>
+        callback(assertLock),
+    ),
   };
   const instance = new QboInboundService(
     harness.db as never,
@@ -158,7 +163,16 @@ function service(
     cdcQueue as never,
     oauthRedis as never,
   );
-  return { ...harness, instance, request, syncQueue, cdcQueue, notifications, oauthRedis };
+  return {
+    ...harness,
+    instance,
+    request,
+    syncQueue,
+    cdcQueue,
+    notifications,
+    oauthRedis,
+    assertLock,
+  };
 }
 
 describe('QboInboundService', () => {
@@ -336,6 +350,34 @@ describe('QboInboundService', () => {
     expect(harness.syncQueue.add).toHaveBeenCalledTimes(1);
   });
 
+  it('retries pending initial syncs after the queue recovers without a restart', async () => {
+    jest.useFakeTimers();
+    const harness = service();
+    try {
+      harness.syncQueue.add.mockRejectedValueOnce(new Error('Redis unavailable'));
+
+      await harness.instance.onModuleInit();
+
+      expect(harness.syncQueue.add).toHaveBeenCalledTimes(1);
+      harness.syncQueue.add.mockResolvedValue({
+        id: 'qbo-retry-job',
+        data: { kind: 'initial', organizationId: 'organization-1' },
+      });
+
+      await jest.advanceTimersByTimeAsync(30_000);
+
+      expect(harness.syncQueue.add).toHaveBeenCalledTimes(2);
+      expect(harness.syncQueue.add).toHaveBeenLastCalledWith(
+        'initial-sync',
+        expect.objectContaining({ kind: 'initial', organizationId: 'organization-1' }),
+        expect.objectContaining({ jobId: 'qbo-initial-sync-organization-1' }),
+      );
+    } finally {
+      harness.instance.onModuleDestroy();
+      jest.useRealTimers();
+    }
+  });
+
   it('fans one realm webhook out to every active organization connection', async () => {
     const connections = [
       {
@@ -492,6 +534,23 @@ describe('QboInboundService', () => {
       'qbo-sync:organization-1',
       expect.any(Function),
     );
+  });
+
+  it('aborts before writing when the organization lock lease is lost', async () => {
+    const lockLost = new Error('QBO sync lock was lost');
+    const lockGuard = jest.fn(async () => {
+      if (lockGuard.mock.calls.length >= 3) throw lockLost;
+    });
+    const harness = service({
+      lockGuard,
+      request: jest.fn(async () => ({
+        data: { QueryResponse: { Vendor: [{ Id: 'vendor-1', DisplayName: 'Acme' }] } },
+      })),
+    });
+
+    await expect(harness.instance.syncNow('organization-1', ['Vendor'])).rejects.toBe(lockLost);
+    expect(harness.inserted).toHaveLength(0);
+    expect(harness.updates).toHaveLength(0);
   });
 
   it('audits a completed sync with the connection update in one transaction', async () => {

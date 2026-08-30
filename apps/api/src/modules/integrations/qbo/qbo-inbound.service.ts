@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleDestroy,
   OnModuleInit,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -41,7 +42,7 @@ import {
 import { NotificationsService } from '../../notifications/notifications.service';
 import { resolveOrganizationAdminId } from '../../../common/demo-identity';
 import { QboClientService } from '../../gl/qbo-client.service';
-import { OAuthRedisService } from '../../gl/oauth-redis.service';
+import { OAuthRedisService, type OAuthLockGuard } from '../../gl/oauth-redis.service';
 
 export type QboCatalogEntity = (typeof QBO_CATALOG_ENTITY_TYPES)[number];
 export type QboTaxEntity = (typeof QBO_TAX_ENTITY_TYPES)[number];
@@ -68,6 +69,7 @@ const QUERY_PAGE_SIZE = 1000;
 const DEFAULT_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const MAX_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const MAX_LOOKBACK_DAYS = 30;
+const PENDING_INITIAL_SYNC_RECOVERY_INTERVAL_MS = 30_000;
 const QBO_ACTIVE_ENTITY_TYPES = new Set<QboSyncEntity>(QBO_CATALOG_ENTITY_TYPES);
 
 type QboObject = Record<string, unknown>;
@@ -147,8 +149,10 @@ type MappingUpsert = {
  * and provider-specific entity names stay behind this interface.
  */
 @Injectable()
-export class QboInboundService implements OnModuleInit {
+export class QboInboundService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(QboInboundService.name);
+  private pendingInitialSyncRecoveryTimer?: ReturnType<typeof setInterval>;
+  private pendingInitialSyncRecoveryRunning = false;
 
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
@@ -168,12 +172,12 @@ export class QboInboundService implements OnModuleInit {
 
     await Promise.all(
       connections.map(async ({ organizationId, lastSyncAt }) => {
-        if (lastSyncAt) {
-          await this.scheduleOrganization(organizationId);
-          return;
-        }
-
         try {
+          if (lastSyncAt) {
+            await this.scheduleOrganization(organizationId);
+            return;
+          }
+
           await this.enqueueInitialSync(organizationId);
         } catch (error: unknown) {
           this.logger.error(
@@ -182,6 +186,50 @@ export class QboInboundService implements OnModuleInit {
         }
       }),
     );
+
+    this.pendingInitialSyncRecoveryTimer = setInterval(() => {
+      void this.recoverPendingInitialSyncs();
+    }, PENDING_INITIAL_SYNC_RECOVERY_INTERVAL_MS);
+    this.pendingInitialSyncRecoveryTimer.unref();
+  }
+
+  onModuleDestroy(): void {
+    if (!this.pendingInitialSyncRecoveryTimer) return;
+    clearInterval(this.pendingInitialSyncRecoveryTimer);
+    this.pendingInitialSyncRecoveryTimer = undefined;
+  }
+
+  private async recoverPendingInitialSyncs(): Promise<void> {
+    if (this.pendingInitialSyncRecoveryRunning) return;
+    this.pendingInitialSyncRecoveryRunning = true;
+
+    try {
+      const connections = await this.db.query.integrationConnections.findMany({
+        where: (connection, { and, eq }) =>
+          and(
+            eq(connection.provider, 'qbo'),
+            eq(connection.status, 'active'),
+            isNull(connection.lastSyncAt),
+          ),
+        columns: { organizationId: true },
+      });
+
+      await Promise.all(
+        connections.map(async ({ organizationId }) => {
+          try {
+            await this.enqueueInitialSync(organizationId);
+          } catch (error: unknown) {
+            this.logger.error(
+              `Unable to recover pending initial QBO sync for ${organizationId}: ${String(error)}`,
+            );
+          }
+        }),
+      );
+    } catch (error: unknown) {
+      this.logger.error(`Unable to inspect pending initial QBO syncs: ${String(error)}`);
+    } finally {
+      this.pendingInitialSyncRecoveryRunning = false;
+    }
   }
 
   async enqueueInitialSync(
@@ -318,7 +366,8 @@ export class QboInboundService implements OnModuleInit {
     organizationId: string,
     entityTypes: readonly QboSyncEntity[] = [...QBO_CATALOG_ENTITY_TYPES, ...QBO_TAX_ENTITY_TYPES],
   ): Promise<QboSyncResult> {
-    return this.withOrganizationLock(organizationId, async () => {
+    return this.withOrganizationLock(organizationId, async (assertLock) => {
+      await assertLock();
       const connection = await this.activeConnection(organizationId);
       if (!connection) throw new ServiceUnavailableException('QBO is not connected');
 
@@ -327,7 +376,12 @@ export class QboInboundService implements OnModuleInit {
       let tombstones = 0;
       for (const entityName of QBO_CATALOG_ENTITY_TYPES) {
         if (!requested.has(entityName)) continue;
-        const result = await this.syncCatalogEntity(organizationId, connection.id, entityName);
+        const result = await this.syncCatalogEntity(
+          organizationId,
+          connection.id,
+          entityName,
+          assertLock,
+        );
         imported += result.imported;
         tombstones += result.tombstones;
       }
@@ -336,12 +390,22 @@ export class QboInboundService implements OnModuleInit {
       // endpoint. Intuit excludes them from CDC notifications.
       for (const entityName of QBO_TAX_ENTITY_TYPES) {
         if (!requested.has(entityName)) continue;
-        const result = await this.syncCatalogEntity(organizationId, connection.id, entityName);
+        const result = await this.syncCatalogEntity(
+          organizationId,
+          connection.id,
+          entityName,
+          assertLock,
+        );
         imported += result.imported;
         tombstones += result.tombstones;
       }
 
-      const completedAt = await this.completeConnectionSync(connection.id, organizationId);
+      await assertLock();
+      const completedAt = await this.completeConnectionSync(
+        connection.id,
+        organizationId,
+        assertLock,
+      );
 
       return {
         organizationId,
@@ -356,7 +420,8 @@ export class QboInboundService implements OnModuleInit {
     organizationId: string,
     lookbackDays = MAX_LOOKBACK_DAYS,
   ): Promise<QboSyncResult> {
-    return this.withOrganizationLock(organizationId, async () => {
+    return this.withOrganizationLock(organizationId, async (assertLock) => {
+      await assertLock();
       const connection = await this.activeConnection(organizationId);
       if (!connection) throw new ServiceUnavailableException('QBO is not connected');
 
@@ -367,6 +432,7 @@ export class QboInboundService implements OnModuleInit {
       const incompleteTransactionEntities: string[] = [];
 
       for (const entityName of CDC_ENTITY_TYPES) {
+        await assertLock();
         const response = await this.qboClient.request<QboObject>({
           organizationId,
           method: 'GET',
@@ -378,7 +444,12 @@ export class QboInboundService implements OnModuleInit {
         });
         const entries = extractCdcEntries(response.data);
         if (entries.length >= CDC_RESPONSE_LIMIT && isCatalogEntity(entityName)) {
-          const result = await this.syncCatalogEntity(organizationId, connection.id, entityName);
+          const result = await this.syncCatalogEntity(
+            organizationId,
+            connection.id,
+            entityName,
+            assertLock,
+          );
           imported += result.imported;
           tombstones += result.tombstones;
           continue;
@@ -392,14 +463,17 @@ export class QboInboundService implements OnModuleInit {
 
           if (entry.deleted) {
             if (isSupportedCdcEntity(entry.entityName) && entry.entity.Id) {
-              await this.upsertMapping({
-                organizationId,
-                connectionId: connection.id,
-                entityName: entry.entityName,
-                entity: entry.entity,
-                deleted: true,
-                auditSource: 'cdc',
-              });
+              await this.upsertMapping(
+                {
+                  organizationId,
+                  connectionId: connection.id,
+                  entityName: entry.entityName,
+                  entity: entry.entity,
+                  deleted: true,
+                  auditSource: 'cdc',
+                },
+                assertLock,
+              );
               tombstones += 1;
             }
             continue;
@@ -414,18 +488,22 @@ export class QboInboundService implements OnModuleInit {
                 entry.entityName,
                 entry.entity,
                 'cdc',
+                assertLock,
               );
               continue;
             }
             if (entry.entity.Id) {
-              await this.upsertMapping({
-                organizationId,
-                connectionId: connection.id,
-                entityName: entry.entityName,
-                entity: entry.entity,
-                deleted: false,
-                auditSource: 'cdc',
-              });
+              await this.upsertMapping(
+                {
+                  organizationId,
+                  connectionId: connection.id,
+                  entityName: entry.entityName,
+                  entity: entry.entity,
+                  deleted: false,
+                  auditSource: 'cdc',
+                },
+                assertLock,
+              );
               imported += 1;
             }
           }
@@ -438,7 +516,12 @@ export class QboInboundService implements OnModuleInit {
         );
       }
 
-      const completedAt = await this.completeConnectionSync(connection.id, organizationId);
+      await assertLock();
+      const completedAt = await this.completeConnectionSync(
+        connection.id,
+        organizationId,
+        assertLock,
+      );
 
       return {
         organizationId,
@@ -490,8 +573,8 @@ export class QboInboundService implements OnModuleInit {
     const connections = await this.connectionsForRealm(event.realmId);
     await Promise.all(
       connections.map((connection) =>
-        this.withOrganizationLock(connection.organizationId, async () => {
-          await this.processWebhookEventForConnection(connection, event);
+        this.withOrganizationLock(connection.organizationId, async (assertLock) => {
+          await this.processWebhookEventForConnection(connection, event, assertLock);
         }),
       ),
     );
@@ -500,25 +583,31 @@ export class QboInboundService implements OnModuleInit {
   private async processWebhookEventForConnection(
     connection: { id: string; organizationId: string },
     event: QboWebhookEvent,
+    assertLock: OAuthLockGuard,
   ): Promise<void> {
+    await assertLock();
     if (event.operation === 'merge' && event.entityName === 'Vendor') {
-      await this.handleVendorMerge(connection.organizationId, connection.id, event);
+      await this.handleVendorMerge(connection.organizationId, connection.id, event, assertLock);
       return;
     }
 
     if (event.operation === 'delete') {
-      await this.upsertMapping({
-        organizationId: connection.organizationId,
-        connectionId: connection.id,
-        entityName: event.entityName,
-        entity: { ...event.payload, Id: event.entityId },
-        deleted: true,
-        auditSource: 'webhook',
-      });
+      await this.upsertMapping(
+        {
+          organizationId: connection.organizationId,
+          connectionId: connection.id,
+          entityName: event.entityName,
+          entity: { ...event.payload, Id: event.entityId },
+          deleted: true,
+          auditSource: 'webhook',
+        },
+        assertLock,
+      );
       return;
     }
 
     if (!isCatalogEntity(event.entityName) || isTaxEntity(event.entityName)) return;
+    await assertLock();
     const response = await this.qboClient.request<QboObject>({
       organizationId: connection.organizationId,
       method: 'GET',
@@ -526,14 +615,17 @@ export class QboInboundService implements OnModuleInit {
     });
     const entity = extractResourceEntity(response.data, event.entityName);
     if (!entity) {
-      await this.upsertMapping({
-        organizationId: connection.organizationId,
-        connectionId: connection.id,
-        entityName: event.entityName,
-        entity: { Id: event.entityId },
-        deleted: true,
-        auditSource: 'webhook',
-      });
+      await this.upsertMapping(
+        {
+          organizationId: connection.organizationId,
+          connectionId: connection.id,
+          entityName: event.entityName,
+          entity: { Id: event.entityId },
+          deleted: true,
+          auditSource: 'webhook',
+        },
+        assertLock,
+      );
       return;
     }
     const definition = ENTITY_DEFINITIONS[event.entityName];
@@ -544,17 +636,21 @@ export class QboInboundService implements OnModuleInit {
         event.entityName,
         entity,
         'webhook',
+        assertLock,
       );
       return;
     }
-    await this.upsertMapping({
-      organizationId: connection.organizationId,
-      connectionId: connection.id,
-      entityName: event.entityName,
-      entity,
-      deleted: false,
-      auditSource: 'webhook',
-    });
+    await this.upsertMapping(
+      {
+        organizationId: connection.organizationId,
+        connectionId: connection.id,
+        entityName: event.entityName,
+        entity,
+        deleted: false,
+        auditSource: 'webhook',
+      },
+      assertLock,
+    );
   }
 
   private async scheduleOrganization(organizationId: string): Promise<void> {
@@ -659,7 +755,7 @@ export class QboInboundService implements OnModuleInit {
 
   private async withOrganizationLock<T>(
     organizationId: string,
-    callback: () => Promise<T>,
+    callback: (assertLock: OAuthLockGuard) => Promise<T>,
   ): Promise<T> {
     return this.oauthRedis.withLock(`qbo-sync:${organizationId}`, callback);
   }
@@ -678,9 +774,12 @@ export class QboInboundService implements OnModuleInit {
   private async completeConnectionSync(
     connectionId: string,
     organizationId: string,
+    assertLock: OAuthLockGuard,
   ): Promise<Date> {
     const completedAt = new Date();
+    await assertLock();
     await this.db.transaction(async (transaction) => {
+      await assertLock();
       const [updated] = await transaction
         .update(integrationConnections)
         .set({ lastSyncAt: completedAt, updatedAt: completedAt })
@@ -693,6 +792,7 @@ export class QboInboundService implements OnModuleInit {
         .returning({ id: integrationConnections.id });
       if (!updated) return;
 
+      await assertLock();
       await transaction.insert(auditLog).values({
         organizationId,
         userId: null,
@@ -710,12 +810,14 @@ export class QboInboundService implements OnModuleInit {
     organizationId: string,
     connectionId: string,
     entityName: QboSyncEntity,
+    assertLock: OAuthLockGuard,
   ): Promise<{ imported: number; tombstones: number }> {
     const definition = ENTITY_DEFINITIONS[entityName];
     const rows = await this.queryEntity(
       organizationId,
       entityName,
       QBO_ACTIVE_ENTITY_TYPES.has(entityName) ? 'Active IN (true, false)' : undefined,
+      assertLock,
     );
     let imported = 0;
     const snapshotIds = new Set<string>();
@@ -724,23 +826,28 @@ export class QboInboundService implements OnModuleInit {
       if (!externalId) continue;
       snapshotIds.add(externalId);
       if (definition.shouldStore?.(entity) === false) {
+        await assertLock();
         await this.deactivateFilteredCatalogMapping(
           organizationId,
           connectionId,
           entityName,
           entity,
           'snapshot',
+          assertLock,
         );
         continue;
       }
-      await this.upsertMapping({
-        organizationId,
-        connectionId,
-        entityName,
-        entity,
-        deleted: false,
-        auditSource: 'snapshot',
-      });
+      await this.upsertMapping(
+        {
+          organizationId,
+          connectionId,
+          entityName,
+          entity,
+          deleted: false,
+          auditSource: 'snapshot',
+        },
+        assertLock,
+      );
       imported += 1;
     }
     const tombstones = await this.reconcileCatalogEntity(
@@ -748,6 +855,7 @@ export class QboInboundService implements OnModuleInit {
       connectionId,
       entityName,
       snapshotIds,
+      assertLock,
     );
     return { imported, tombstones };
   }
@@ -762,11 +870,14 @@ export class QboInboundService implements OnModuleInit {
     entityName: QboSyncEntity,
     entity: QboObject,
     auditSource: 'snapshot' | 'cdc' | 'webhook',
+    assertLock: OAuthLockGuard,
   ): Promise<void> {
     const externalId = stringValue(entity.Id);
     if (!externalId) return;
 
+    await assertLock();
     await this.db.transaction(async (transaction) => {
+      await assertLock();
       const existing = await transaction.query.externalEntityMappings.findFirst({
         where: (mapping, { and, eq }) =>
           and(
@@ -791,6 +902,7 @@ export class QboInboundService implements OnModuleInit {
       const now = new Date();
       const displayName = ENTITY_DEFINITIONS[entityName].displayName(entity);
       const syncToken = stringValue(entity.SyncToken);
+      await assertLock();
       const [updated] = await transaction
         .update(externalEntityMappings)
         .set({
@@ -822,6 +934,7 @@ export class QboInboundService implements OnModuleInit {
         existing.isActive ||
         !isDeepStrictEqual(existing.payload, entity)
       ) {
+        await assertLock();
         await this.auditMappingMutation(transaction, {
           organizationId,
           userId: null,
@@ -843,11 +956,13 @@ export class QboInboundService implements OnModuleInit {
     organizationId: string,
     entityName: QboSyncEntity | string,
     where?: string,
+    assertLock?: OAuthLockGuard,
   ): Promise<QboObject[]> {
     const rows: QboObject[] = [];
     let startPosition = 1;
 
     while (true) {
+      if (assertLock) await assertLock();
       const query = [
         `SELECT * FROM ${entityName}`,
         where ? `WHERE ${where}` : null,
@@ -875,8 +990,11 @@ export class QboInboundService implements OnModuleInit {
     connectionId: string,
     entityName: QboSyncEntity,
     snapshotIds: ReadonlySet<string>,
+    assertLock: OAuthLockGuard,
   ): Promise<number> {
+    await assertLock();
     return this.db.transaction(async (transaction) => {
+      await assertLock();
       let tombstones = 0;
       const existing = await transaction.query.externalEntityMappings.findMany({
         where: (mapping, { and, eq }) =>
@@ -893,6 +1011,7 @@ export class QboInboundService implements OnModuleInit {
 
       for (const mapping of existing) {
         if (snapshotIds.has(mapping.externalId)) continue;
+        await assertLock();
         const [updated] = await transaction
           .update(externalEntityMappings)
           .set({ isActive: false, isDeleted: true, updatedAt: new Date() })
@@ -908,6 +1027,7 @@ export class QboInboundService implements OnModuleInit {
         if (!updated) continue;
         tombstones += 1;
 
+        await assertLock();
         await this.auditMappingMutation(transaction, {
           organizationId,
           userId: null,
@@ -922,20 +1042,23 @@ export class QboInboundService implements OnModuleInit {
     });
   }
 
-  private async upsertMapping(input: MappingUpsert): Promise<void> {
+  private async upsertMapping(input: MappingUpsert, assertLock: OAuthLockGuard): Promise<void> {
+    await assertLock();
     await this.db.transaction(async (transaction) => {
-      await this.upsertMappingInTransaction(transaction, input);
+      await this.upsertMappingInTransaction(transaction, input, assertLock);
     });
   }
 
   private async upsertMappingInTransaction(
     transaction: DbTransaction,
     input: MappingUpsert,
+    assertLock?: OAuthLockGuard,
   ): Promise<string | undefined> {
     const { organizationId, connectionId, entityName, entity, deleted, mergedIntoExternalId } =
       input;
     const externalId = stringValue(entity.Id);
     if (!externalId) return undefined;
+    if (assertLock) await assertLock();
     const definition = isSyncEntity(entityName) ? ENTITY_DEFINITIONS[entityName] : undefined;
     const existing = await transaction.query.externalEntityMappings.findFirst({
       where: (mapping, { and, eq }) =>
@@ -983,6 +1106,7 @@ export class QboInboundService implements OnModuleInit {
       updatedAt: now,
     };
 
+    if (assertLock) await assertLock();
     const [mapping] = await transaction
       .insert(externalEntityMappings)
       .values(values)
@@ -1019,6 +1143,7 @@ export class QboInboundService implements OnModuleInit {
       existing.mergedIntoExternalId !== values.mergedIntoExternalId ||
       !isDeepStrictEqual(existing.payload, values.payload)
     ) {
+      if (assertLock) await assertLock();
       await this.auditMappingMutation(transaction, {
         organizationId,
         userId: null,
@@ -1072,6 +1197,7 @@ export class QboInboundService implements OnModuleInit {
     organizationId: string,
     connectionId: string,
     event: QboWebhookEvent,
+    assertLock: OAuthLockGuard,
   ): Promise<void> {
     const payloadSourceId = firstString(event.payload, [
       'sourceId',
@@ -1095,7 +1221,9 @@ export class QboInboundService implements OnModuleInit {
     }
 
     let sourceIdForNotification: string | undefined;
+    await assertLock();
     await this.db.transaction(async (transaction) => {
+      await assertLock();
       const source = await transaction.query.externalEntityMappings.findFirst({
         where: (mapping, { and, eq }) =>
           and(
@@ -1123,6 +1251,7 @@ export class QboInboundService implements OnModuleInit {
       }
 
       if (source) {
+        await assertLock();
         const [updated] = await transaction
           .update(externalEntityMappings)
           .set({
@@ -1142,6 +1271,7 @@ export class QboInboundService implements OnModuleInit {
           .returning({ id: externalEntityMappings.id });
         if (updated) {
           sourceIdForNotification = source.id;
+          await assertLock();
           await this.auditMappingMutation(transaction, {
             organizationId,
             userId: null,
@@ -1157,19 +1287,25 @@ export class QboInboundService implements OnModuleInit {
           });
         }
       } else {
-        sourceIdForNotification = await this.upsertMappingInTransaction(transaction, {
-          organizationId,
-          connectionId,
-          entityName: 'Vendor',
-          entity: { Id: sourceId, Name: firstString(event.payload, ['Name', 'DisplayName']) },
-          deleted: true,
-          mergedIntoExternalId: targetId,
-          auditSource: 'merge',
-        });
+        await assertLock();
+        sourceIdForNotification = await this.upsertMappingInTransaction(
+          transaction,
+          {
+            organizationId,
+            connectionId,
+            entityName: 'Vendor',
+            entity: { Id: sourceId, Name: firstString(event.payload, ['Name', 'DisplayName']) },
+            deleted: true,
+            mergedIntoExternalId: targetId,
+            auditSource: 'merge',
+          },
+          assertLock,
+        );
       }
 
       if (source?.localId) {
         if (target && !target.localId) {
+          await assertLock();
           const [updated] = await transaction
             .update(externalEntityMappings)
             .set({
@@ -1188,6 +1324,7 @@ export class QboInboundService implements OnModuleInit {
             )
             .returning({ id: externalEntityMappings.id });
           if (updated) {
+            await assertLock();
             await this.auditMappingMutation(transaction, {
               organizationId,
               userId: null,
@@ -1199,23 +1336,30 @@ export class QboInboundService implements OnModuleInit {
             });
           }
         } else if (!target) {
-          await this.upsertMappingInTransaction(transaction, {
-            organizationId,
-            connectionId,
-            entityName: 'Vendor',
-            entity: { Id: targetId },
-            deleted: false,
-            localId: source.localId,
-            autoCreated: source.autoCreated,
-            auditSource: 'merge',
-            auditReason: 'vendor_merge',
-          });
+          await assertLock();
+          await this.upsertMappingInTransaction(
+            transaction,
+            {
+              organizationId,
+              connectionId,
+              entityName: 'Vendor',
+              entity: { Id: targetId },
+              deleted: false,
+              localId: source.localId,
+              autoCreated: source.autoCreated,
+              auditSource: 'merge',
+              auditReason: 'vendor_merge',
+            },
+            assertLock,
+          );
         }
       }
     });
 
+    await assertLock();
     const adminId = await resolveOrganizationAdminId(this.db, organizationId);
     if (adminId) {
+      await assertLock();
       await this.notifications.createIdempotent(
         `qbo-vendor-merge:${organizationId}:${sourceId}:${targetId}`,
         organizationId,
