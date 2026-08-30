@@ -151,8 +151,8 @@ type MappingUpsert = {
 @Injectable()
 export class QboInboundService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(QboInboundService.name);
-  private pendingInitialSyncRecoveryTimer?: ReturnType<typeof setInterval>;
-  private pendingInitialSyncRecoveryRunning = false;
+  private qboScheduleRecoveryTimer?: ReturnType<typeof setInterval>;
+  private qboScheduleRecoveryRunning = false;
 
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
@@ -187,48 +187,48 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
       }),
     );
 
-    this.pendingInitialSyncRecoveryTimer = setInterval(() => {
-      void this.recoverPendingInitialSyncs();
+    this.qboScheduleRecoveryTimer = setInterval(() => {
+      void this.recoverQboSchedules();
     }, PENDING_INITIAL_SYNC_RECOVERY_INTERVAL_MS);
-    this.pendingInitialSyncRecoveryTimer.unref();
+    this.qboScheduleRecoveryTimer.unref();
   }
 
   onModuleDestroy(): void {
-    if (!this.pendingInitialSyncRecoveryTimer) return;
-    clearInterval(this.pendingInitialSyncRecoveryTimer);
-    this.pendingInitialSyncRecoveryTimer = undefined;
+    if (!this.qboScheduleRecoveryTimer) return;
+    clearInterval(this.qboScheduleRecoveryTimer);
+    this.qboScheduleRecoveryTimer = undefined;
   }
 
-  private async recoverPendingInitialSyncs(): Promise<void> {
-    if (this.pendingInitialSyncRecoveryRunning) return;
-    this.pendingInitialSyncRecoveryRunning = true;
+  private async recoverQboSchedules(): Promise<void> {
+    if (this.qboScheduleRecoveryRunning) return;
+    this.qboScheduleRecoveryRunning = true;
 
     try {
       const connections = await this.db.query.integrationConnections.findMany({
         where: (connection, { and, eq }) =>
-          and(
-            eq(connection.provider, 'qbo'),
-            eq(connection.status, 'active'),
-            isNull(connection.lastSyncAt),
-          ),
-        columns: { organizationId: true },
+          and(eq(connection.provider, 'qbo'), eq(connection.status, 'active')),
+        columns: { organizationId: true, lastSyncAt: true },
       });
 
       await Promise.all(
-        connections.map(async ({ organizationId }) => {
+        connections.map(async ({ organizationId, lastSyncAt }) => {
           try {
-            await this.enqueueInitialSync(organizationId);
+            if (lastSyncAt) {
+              await this.scheduleOrganization(organizationId);
+            } else {
+              await this.enqueueInitialSync(organizationId);
+            }
           } catch (error: unknown) {
             this.logger.error(
-              `Unable to recover pending initial QBO sync for ${organizationId}: ${String(error)}`,
+              `Unable to recover QBO schedules for ${organizationId}: ${String(error)}`,
             );
           }
         }),
       );
     } catch (error: unknown) {
-      this.logger.error(`Unable to inspect pending initial QBO syncs: ${String(error)}`);
+      this.logger.error(`Unable to inspect QBO schedules: ${String(error)}`);
     } finally {
-      this.pendingInitialSyncRecoveryRunning = false;
+      this.qboScheduleRecoveryRunning = false;
     }
   }
 

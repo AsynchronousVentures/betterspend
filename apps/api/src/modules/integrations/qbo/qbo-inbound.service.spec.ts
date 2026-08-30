@@ -378,6 +378,46 @@ describe('QboInboundService', () => {
     }
   });
 
+  it('repairs a missing daily CDC schedule after the queue recovers without a restart', async () => {
+    jest.useFakeTimers();
+    const harness = service({
+      connection: {
+        id: 'connection-1',
+        organizationId: 'organization-1',
+        provider: 'qbo',
+        realmId: 'realm-1',
+        status: 'active',
+        lastSyncAt: new Date('2026-08-29T20:00:00.000Z'),
+      },
+    });
+    try {
+      harness.cdcQueue.add.mockRejectedValueOnce(new Error('Redis unavailable'));
+
+      await harness.instance.onModuleInit();
+
+      expect(harness.syncQueue.add).toHaveBeenCalledTimes(1);
+      expect(harness.cdcQueue.add).toHaveBeenCalledTimes(1);
+
+      harness.cdcQueue.add.mockResolvedValue({
+        id: 'qbo-cdc-retry-job',
+        data: { kind: 'cdc-sweep', organizationId: 'organization-1' },
+      });
+
+      await jest.advanceTimersByTimeAsync(30_000);
+
+      expect(harness.syncQueue.add).toHaveBeenCalledTimes(2);
+      expect(harness.cdcQueue.add).toHaveBeenCalledTimes(2);
+      expect(harness.cdcQueue.add).toHaveBeenLastCalledWith(
+        'daily-cdc-sweep',
+        { kind: 'cdc-sweep', organizationId: 'organization-1', lookbackDays: 30 },
+        expect.objectContaining({ jobId: 'qbo-daily-cdc-organization-1' }),
+      );
+    } finally {
+      harness.instance.onModuleDestroy();
+      jest.useRealTimers();
+    }
+  });
+
   it('fans one realm webhook out to every active organization connection', async () => {
     const connections = [
       {
