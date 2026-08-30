@@ -54,5 +54,8 @@ the existing purchase-order compliance gate. Sanctions screening blocks
 be a hard stop. Those policy choices should be made before production use.
 
 This migration is additive and leaves existing invoices without release
-metadata unchanged. A production rollout must apply the generated database
-migration before serving the release endpoint.
+metadata unchanged. The new release-owner foreign key is enforced for new
+writes but starts `NOT VALID`, so applying it does not scan and lock a
+populated invoices table during deployment. Validate that constraint in a
+controlled follow-up window after rollout. A production rollout must apply
+the generated database migration before serving the release endpoint.
