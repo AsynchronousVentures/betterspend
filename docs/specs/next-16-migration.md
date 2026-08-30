@@ -24,16 +24,16 @@ Next.js 16.3.3 is the current Active LTS patch as of August 28, 2026. It is also
 
 ## Target matrix
 
-| Item                 | Current          | Target           | Repository evidence                                                       |
-| -------------------- | ---------------- | ---------------- | ------------------------------------------------------------------------- |
-| Next.js              | 15.5.21          | 16.3.3           | `apps/web/package.json`, `pnpm-lock.yaml`                                 |
-| `eslint-config-next` | 15.5.21          | 16.3.3           | `package.json`, `pnpm-lock.yaml`                                          |
-| React                | 19.2.8           | 19.2.8           | `apps/web/package.json`, `pnpm-lock.yaml`                                 |
-| React DOM            | 19.2.8           | 19.2.8           | `apps/web/package.json`, `pnpm-lock.yaml`                                 |
-| React types          | 19.2.18 / 19.2.4 | 19.2.18 / 19.2.5 | `apps/web/package.json`, `pnpm-lock.yaml`                                 |
-| Node.js              | 22               | 22               | `README.md`, `docker/*.Dockerfile`, `.github/workflows/docker-deploy.yml` |
-| TypeScript           | `^5.7.0`         | unchanged        | `package.json`, `apps/web/package.json`                                   |
-| pnpm                 | 10.15.1          | unchanged        | `package.json`, `.github/workflows/docker-deploy.yml`                     |
+| Item                 | Current          | Target           | Repository evidence                                                   |
+| -------------------- | ---------------- | ---------------- | --------------------------------------------------------------------- |
+| Next.js              | 15.5.21          | 16.3.3           | `apps/web/package.json`, `pnpm-lock.yaml`                             |
+| `eslint-config-next` | 15.5.21          | 16.3.3           | `package.json`, `pnpm-lock.yaml`                                      |
+| React                | 19.2.8           | 19.2.8           | `apps/web/package.json`, `pnpm-lock.yaml`                             |
+| React DOM            | 19.2.8           | 19.2.8           | `apps/web/package.json`, `pnpm-lock.yaml`                             |
+| React types          | 19.2.18 / 19.2.4 | 19.2.18 / 19.2.5 | `apps/web/package.json`, `pnpm-lock.yaml`                             |
+| Node.js              | 22               | 22               | `README.md`, `docker/*.Dockerfile`, `.github/workflows/docker-ci.yml` |
+| TypeScript           | `^5.7.0`         | unchanged        | `package.json`, `apps/web/package.json`                               |
+| pnpm                 | 10.15.1          | unchanged        | `package.json`, `.github/workflows/docker-ci.yml`                     |
 
 Next.js 16 also raises its browser floor to Chrome 111, Edge 111, Firefox 111, and Safari 16.4. BetterSpend does not declare a separate browser support matrix, so this migration adopts that floor. See the [official runtime and browser table](https://nextjs.org/docs/app/guides/upgrading/version-16#nodejs-runtime-and-browser-support).
 

@@ -30,7 +30,7 @@ test('recognizes documentation and agent metadata as non-runtime changes', () =>
 
 test('fails closed for runtime, packaging, validation, and unknown changes', () => {
   for (const filePath of [
-    '.github/workflows/docker-deploy.yml',
+    '.github/workflows/docker-ci.yml',
     '.github/scripts/review-policy.test.mjs',
     'docker/api.Dockerfile',
     '.dockerignore',

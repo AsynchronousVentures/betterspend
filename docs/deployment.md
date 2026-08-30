@@ -64,20 +64,13 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
 ## Required GitHub configuration
 
-The validation job runs for pull requests, pushes to `main`, and `v*` tags. Runtime and packaging changes pushed to `main` publish immutable SHA images to GHCR after validation succeeds. Documentation and agent-metadata-only pushes stop after validation without publishing images. A strict `vX.Y.Z` tag ensures the exact commit's SHA manifests exist, promotes them to that version and `latest`, then deploys the version tag when the deployment secrets below are configured.
+The validation job runs for pull requests, pushes to `main`, and `v*` tags. Runtime and packaging changes pushed to `main` publish immutable SHA images to GHCR after validation succeeds. Documentation and agent-metadata-only pushes stop after validation without publishing images. A strict `vX.Y.Z` tag ensures the exact commit's SHA manifests exist, then promotes them to that version and `latest`. GitHub Actions does not connect to or update an application host.
 
 Repository variables:
 
 - `GHCR_IMAGE_NAMESPACE`: optional image namespace for pushed images. Defaults to the lowercased repository owner.
 
-Repository secrets for automated tag deployments:
-
-- `DEPLOY_SSH_HOST`: production SSH host.
-- `DEPLOY_SSH_USER`: production SSH user.
-- `DEPLOY_SSH_KEY`: private key for the production host.
-- `DEPLOY_SSH_KNOWN_HOSTS`: pinned `known_hosts` entry for the production host.
-
-Configure the `production` GitHub environment for any required approval rules. If the deployment secrets are absent, validation and publishing still run, but the deploy job is skipped. If GHCR packages are private, configure pull credentials on the server or local machine that pulls the images.
+If GHCR packages are private, configure pull credentials on the server or local machine that pulls the images.
 
 ## Optional production configuration
 
@@ -94,7 +87,7 @@ SMTP and AI provider credentials are configured in the authenticated settings an
 
 ## Publish and release flow
 
-Runtime-changing pull requests run lint, tests, package builds, type checks, and Compose validation. Pull requests never publish images or deploy. Runtime-changing merge queue groups and pushes to `main`, plus all tags and manual workflow runs, use the full validation path, including migration verification and Docker image builds. Non-runtime changes retain the required `Validate` result without running that expensive path.
+Runtime-changing pull requests run lint, tests, package builds, type checks, and Compose validation. Pull requests never publish images. Runtime-changing merge queue groups and pushes to `main`, plus all tags and manual workflow runs, use the full validation path, including migration verification and Docker image builds. Non-runtime changes retain the required `Validate` result without running that expensive path.
 
 Runtime and packaging changes pushed to `main` run full validation, then publish these images to GHCR:
 
@@ -104,17 +97,17 @@ ghcr.io/<namespace>/betterspend-web:sha-<commit>
 ghcr.io/<namespace>/betterspend-migrator:sha-<commit>
 ```
 
-Main pushes do not move `latest`, and documentation or agent-metadata-only pushes do not publish SHA images. Publish jobs for the same commit are serialized. Pushing a valid `vX.Y.Z` tag checks for all three SHA manifests, briefly retries for registry consistency, then builds any missing exact-commit immutable images after full validation. It promotes each source to both `vX.Y.Z` and `latest` with `docker buildx imagetools create`. Existing version aliases must already match the source manifests, otherwise the release fails instead of moving a published version. The workflow synchronizes the explicit deployment file list to `/opt/betterspend` and invokes `./deploy/deploy.sh vX.Y.Z` over SSH. Registry administrators must preserve `sha-*` immutability.
+Main pushes do not move `latest`, and documentation or agent-metadata-only pushes do not publish SHA images. Publish jobs for the same commit are serialized. Pushing a valid `vX.Y.Z` tag checks for all three SHA manifests, briefly retries for registry consistency, then builds any missing exact-commit immutable images after full validation. It promotes each source to both `vX.Y.Z` and `latest` with `docker buildx imagetools create`. Existing version aliases must already match the source manifests, otherwise the release fails instead of moving a published version. The workflow stops after publishing the aliases. Registry administrators must preserve `sha-*` immutability.
 
 The deploy script derives `APP_VERSION` from the selected tag unless an explicit value is supplied. It displays `0.2.4` for `v0.2.4` and `sha-<commit>` for an exact SHA deployment. The API and web containers receive the same value. With no runtime override they fall back to the synchronized workspace package version. Rollback always derives the value from the restored image tag, so an inherited shell override cannot make the displayed release stale.
 
-Tag-driven deployment never synchronizes `.env.production` and does not use `rsync --delete`; production secrets remain server-side.
+Updates are started manually on the target host. Production secrets remain server-side in `.env.production`.
 
 The deploy script does not seed data or create the first organization and administrator. Provision those separately for a new production database. Do not use the Acme development seed as an implicit production bootstrap.
 
 ## Manual operations
 
-Deploy a known image tag manually (for example, when automated deployment is not configured):
+Deploy a known image tag manually:
 
 ```bash
 cd /opt/betterspend
