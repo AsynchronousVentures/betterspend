@@ -4,15 +4,25 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
 import axios from 'axios';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { appendAuditLog, integrationConnections, type Db } from '@betterspend/db';
 import { INTEGRATION_CONNECTION_STATUS } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
+import {
+  findReusableQboInitialSyncJob,
+  QBO_INITIAL_SYNC_JOB_NAME,
+  qboInitialSyncJobOptions,
+  QBO_SYNC_QUEUE_NAME,
+} from '../../common/qbo-sync-queue';
 import { CredentialCryptoService } from '../ai-providers/credential-crypto.service';
 import {
   OAuthRedisService,
+  type OAuthLockGuard,
   type OAuthProvider,
   type OAuthStateBinding,
   type XeroPendingGrant,
@@ -76,6 +86,7 @@ export class OAuthService {
     @Inject(DB_TOKEN) private readonly db: Db,
     private readonly crypto: CredentialCryptoService,
     private readonly oauthRedis: OAuthRedisService,
+    @Optional() @InjectQueue(QBO_SYNC_QUEUE_NAME) private readonly qboSyncQueue?: Queue,
   ) {}
 
   async getQboAuthUrl(organizationId: string, userId: string, sessionId: string): Promise<string> {
@@ -107,7 +118,11 @@ export class OAuthService {
     if (!code || !realmId) throw new BadRequestException('QBO callback is missing code or realmId');
 
     const token = await this.exchangeToken('qbo', code);
-    await this.saveConnection('qbo', binding, realmId, token);
+    await this.oauthRedis.withLock(`qbo-sync:${binding.organizationId}`, async (assertHeld) => {
+      await assertHeld();
+      await this.saveConnection('qbo', binding, realmId, token, undefined, assertHeld);
+    });
+    await this.enqueueQboInitialSync(binding.organizationId);
     this.logger.log(`QBO connection stored for org ${binding.organizationId}, realmId=${realmId}`);
   }
 
@@ -154,17 +169,21 @@ export class OAuthService {
     userId: string,
     sessionId?: string,
   ): Promise<void> {
-    await this.oauthRedis.withLock(`xero-grant:${grantId}`, async () => {
+    await this.oauthRedis.withLock(`xero-grant:${grantId}`, async (assertHeld) => {
+      await assertHeld();
       const grant = await this.getAuthorizedXeroGrant(grantId, organizationId, userId, sessionId);
+      await assertHeld();
       const tenant = grant.tenants.find((candidate) => candidate.tenantId === tenantId);
       if (!tenant) throw new BadRequestException('Xero tenant is not part of this grant');
 
+      await assertHeld();
       const claim = await this.oauthRedis.claimXeroPendingTenant(grantId, tenant.tenantId);
       if (claim === 'missing') throw new BadRequestException('Invalid or expired Xero grant');
       if (claim === 'conflict') {
         throw new BadRequestException('Xero tenant selection is already bound to another tenant');
       }
 
+      await assertHeld();
       await this.saveConnection(
         'xero',
         grant.binding,
@@ -179,7 +198,9 @@ export class OAuthService {
           scope: grant.scopes,
         },
         tenant.tenantName ?? undefined,
+        assertHeld,
       );
+      await assertHeld();
       const consumed = await this.oauthRedis.completeXeroPendingGrant(grantId, tenant.tenantId);
       if (!consumed) {
         this.logger.log(
@@ -383,6 +404,7 @@ export class OAuthService {
     realmId: string,
     token: TokenResponse,
     realmName?: string,
+    assertHeld?: OAuthLockGuard,
   ): Promise<void> {
     const values = {
       organizationId: binding.organizationId,
@@ -395,9 +417,12 @@ export class OAuthService {
       status: INTEGRATION_CONNECTION_STATUS.ACTIVE,
       scopes: this.scopesFor(provider, token.scope),
       connectedByUserId: binding.userId,
+      ...(provider === 'qbo' ? { lastSyncAt: null } : {}),
       updatedAt: new Date(),
     };
+    await assertHeld?.();
     await this.db.transaction(async (transaction) => {
+      await assertHeld?.();
       const [connection] = await transaction
         .insert(integrationConnections)
         .values(values)
@@ -406,6 +431,7 @@ export class OAuthService {
           set: values,
         })
         .returning({ id: integrationConnections.id });
+      await assertHeld?.();
       await appendAuditLog(transaction, {
         organizationId: binding.organizationId,
         userId: binding.userId,
@@ -415,6 +441,30 @@ export class OAuthService {
         changes: { provider, realmId, realmName: realmName ?? null },
       });
     });
+  }
+
+  private async enqueueQboInitialSync(organizationId: string): Promise<void> {
+    if (!this.qboSyncQueue) {
+      this.logger.error(
+        `Unable to queue initial QBO sync for ${organizationId}: QBO sync queue is unavailable`,
+      );
+      return;
+    }
+    const options = qboInitialSyncJobOptions(organizationId);
+    try {
+      const existing = await findReusableQboInitialSyncJob(this.qboSyncQueue, organizationId);
+      if (existing) {
+        return;
+      }
+
+      await this.qboSyncQueue.add(
+        QBO_INITIAL_SYNC_JOB_NAME,
+        { kind: 'initial', organizationId },
+        options,
+      );
+    } catch (error: unknown) {
+      this.logger.error(`Unable to queue initial QBO sync for ${organizationId}: ${String(error)}`);
+    }
   }
 
   private async getValidConnection(
@@ -439,8 +489,10 @@ export class OAuthService {
     provider: OAuthProvider,
     rejectedAccessToken?: string,
   ): Promise<void> {
-    await this.oauthRedis.withLock(`refresh:${connectionId}`, async () => {
+    await this.oauthRedis.withLock(`refresh:${connectionId}`, async (assertHeld) => {
+      await assertHeld();
       const connection = await this.findConnectionById(connectionId);
+      await assertHeld();
       if (!connection || connection.status !== 'active') return;
       const encryptedAccessToken = connection.accessTokenEncrypted;
       const accessToken = encryptedAccessToken ? this.crypto.decrypt(encryptedAccessToken) : null;
@@ -457,12 +509,15 @@ export class OAuthService {
 
       const encryptedRefreshToken = connection.refreshTokenEncrypted;
       try {
+        await assertHeld();
         const refreshToken = this.crypto.decrypt(encryptedRefreshToken);
+        await assertHeld();
         const response = await axios.post<TokenResponse>(
           provider === 'qbo' ? QBO_TOKEN_URL : XERO_TOKEN_URL,
           new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }),
           { headers: this.tokenHeaders(provider) },
         );
+        await assertHeld();
         if (provider === 'xero') {
           if (!response.data.refresh_token) {
             throw new Error('Xero token refresh did not return a rotated refresh token');
@@ -472,19 +527,25 @@ export class OAuthService {
             encryptedAccessToken,
             encryptedRefreshToken,
             response.data,
+            assertHeld,
           );
           if (!persisted) return;
 
+          await assertHeld();
           const tenants = await this.fetchXeroTenants(response.data.access_token);
+          await assertHeld();
           const configuredTenantStillAvailable = tenants.some(
             (tenant) => tenant.tenantId === connection.realmId,
           );
           if (!configuredTenantStillAvailable) {
+            await assertHeld();
             const latest = await this.findConnectionById(connection.id);
+            await assertHeld();
             if (latest) {
               await this.transitionToRevoked(
                 latest,
                 tenants.length === 0 ? 'empty_connections' : 'configured_tenant_missing',
+                assertHeld,
               );
             }
             return;
@@ -492,6 +553,7 @@ export class OAuthService {
           return;
         }
 
+        await assertHeld();
         await this.db
           .update(integrationConnections)
           .set({
@@ -513,10 +575,16 @@ export class OAuthService {
               eq(integrationConnections.refreshTokenEncrypted, encryptedRefreshToken),
             ),
           );
+        await assertHeld();
       } catch (error: unknown) {
         if (this.isInvalidRefreshToken(error)) {
-          if (await this.wasXeroRefreshRotatedRecently(connection, encryptedRefreshToken)) return;
-          await this.transitionToReconnectRequired(connection, 'invalid_refresh_token');
+          if (
+            await this.wasXeroRefreshRotatedRecently(connection, encryptedRefreshToken, assertHeld)
+          ) {
+            return;
+          }
+          await assertHeld();
+          await this.transitionToReconnectRequired(connection, 'invalid_refresh_token', assertHeld);
           return;
         }
         throw error;
@@ -529,8 +597,11 @@ export class OAuthService {
     encryptedAccessToken: string | null,
     encryptedRefreshToken: string,
     token: TokenResponse,
+    assertHeld?: OAuthLockGuard,
   ): Promise<boolean> {
+    await assertHeld?.();
     return this.db.transaction(async (transaction) => {
+      await assertHeld?.();
       const [updated] = await transaction
         .update(integrationConnections)
         .set({
@@ -555,6 +626,7 @@ export class OAuthService {
         .returning({ id: integrationConnections.id });
       if (!updated) return false;
 
+      await assertHeld?.();
       await appendAuditLog(transaction, {
         organizationId: connection.organizationId,
         userId: null,
@@ -571,9 +643,12 @@ export class OAuthService {
   private async wasXeroRefreshRotatedRecently(
     connection: ConnectionRow,
     encryptedRefreshToken: string,
+    assertHeld?: OAuthLockGuard,
   ): Promise<boolean> {
     if (connection.provider !== 'xero') return false;
+    await assertHeld?.();
     const latest = await this.findConnectionById(connection.id);
+    await assertHeld?.();
     if (!latest || latest.status !== INTEGRATION_CONNECTION_STATUS.ACTIVE) return false;
     if (latest.refreshTokenEncrypted === encryptedRefreshToken) return false;
     return !latest.updatedAt || Date.now() - latest.updatedAt.getTime() <= XERO_REFRESH_GRACE_MS;
@@ -584,56 +659,75 @@ export class OAuthService {
     provider: OAuthProvider,
     userId: string,
   ): Promise<void> {
-    const connections = await this.db.query.integrationConnections.findMany({
-      where: (connection, { and: andFn, eq: eqFn }) =>
-        andFn(eqFn(connection.organizationId, organizationId), eqFn(connection.provider, provider)),
-    });
-    if (connections.length === 0) return;
-
-    let revocationError: unknown;
-    try {
-      for (const connection of connections) {
-        const encryptedToken = connection.refreshTokenEncrypted ?? connection.accessTokenEncrypted;
-        if (!encryptedToken) continue;
-        try {
-          await this.revoke(provider, this.crypto.decrypt(encryptedToken));
-        } catch (error: unknown) {
-          revocationError ??= error;
-        }
-      }
-    } finally {
-      await this.db.transaction(async (transaction) => {
-        const purged = await transaction
-          .update(integrationConnections)
-          .set({
-            accessTokenEncrypted: null,
-            refreshTokenEncrypted: null,
-            accessExpiresAt: null,
-            status: 'revoked',
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(integrationConnections.organizationId, organizationId),
-              eq(integrationConnections.provider, provider),
-            ),
-          )
-          .returning({ id: integrationConnections.id, realmId: integrationConnections.realmId });
-        for (const connection of purged) {
-          await appendAuditLog(transaction, {
-            organizationId,
-            userId,
-            entityType: 'integration_connection',
-            entityId: connection.id,
-            action: 'disconnected',
-            changes: { provider, realmId: connection.realmId },
-            metadata: { providerRevoked: !revocationError },
-          });
-        }
+    const run = async (assertHeld?: OAuthLockGuard): Promise<void> => {
+      await assertHeld?.();
+      const connections = await this.db.query.integrationConnections.findMany({
+        where: (connection, { and: andFn, eq: eqFn }) =>
+          andFn(
+            eqFn(connection.organizationId, organizationId),
+            eqFn(connection.provider, provider),
+          ),
       });
+      await assertHeld?.();
+      if (connections.length === 0) return;
+
+      let revocationError: unknown;
+      try {
+        for (const connection of connections) {
+          const encryptedToken =
+            connection.refreshTokenEncrypted ?? connection.accessTokenEncrypted;
+          if (!encryptedToken) continue;
+          try {
+            await assertHeld?.();
+            await this.revoke(provider, this.crypto.decrypt(encryptedToken));
+            await assertHeld?.();
+          } catch (error: unknown) {
+            revocationError ??= error;
+          }
+        }
+      } finally {
+        await assertHeld?.();
+        await this.db.transaction(async (transaction) => {
+          await assertHeld?.();
+          const purged = await transaction
+            .update(integrationConnections)
+            .set({
+              accessTokenEncrypted: null,
+              refreshTokenEncrypted: null,
+              accessExpiresAt: null,
+              status: 'revoked',
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(integrationConnections.organizationId, organizationId),
+                eq(integrationConnections.provider, provider),
+              ),
+            )
+            .returning({ id: integrationConnections.id, realmId: integrationConnections.realmId });
+          for (const connection of purged) {
+            await assertHeld?.();
+            await appendAuditLog(transaction, {
+              organizationId,
+              userId,
+              entityType: 'integration_connection',
+              entityId: connection.id,
+              action: 'disconnected',
+              changes: { provider, realmId: connection.realmId },
+              metadata: { providerRevoked: !revocationError },
+            });
+          }
+        });
+      }
+      if (revocationError) throw revocationError;
+      this.logger.log(`${provider.toUpperCase()} disconnected for org ${organizationId}`);
+    };
+
+    if (provider === 'qbo') {
+      await this.oauthRedis.withLock(`qbo-sync:${organizationId}`, run);
+      return;
     }
-    if (revocationError) throw revocationError;
-    this.logger.log(`${provider.toUpperCase()} disconnected for org ${organizationId}`);
+    await run();
   }
 
   private isInvalidRefreshToken(error: unknown): boolean {
@@ -711,11 +805,14 @@ export class OAuthService {
       'id' | 'organizationId' | 'provider' | 'accessTokenEncrypted' | 'status'
     >,
     reason: 'invalid_refresh_token' | 'second_401',
+    assertHeld?: OAuthLockGuard,
   ): Promise<void> {
     const encryptedAccessToken = connection.accessTokenEncrypted;
     if (!encryptedAccessToken || connection.status !== 'active') return;
 
+    await assertHeld?.();
     await this.db.transaction(async (transaction) => {
+      await assertHeld?.();
       const [updated] = await transaction
         .update(integrationConnections)
         .set({ status: INTEGRATION_CONNECTION_STATUS.RECONNECT_REQUIRED, updatedAt: new Date() })
@@ -730,6 +827,7 @@ export class OAuthService {
         .returning({ id: integrationConnections.id });
       if (!updated) return;
 
+      await assertHeld?.();
       await appendAuditLog(transaction, {
         organizationId: connection.organizationId,
         userId: null,
@@ -753,11 +851,14 @@ export class OAuthService {
       'id' | 'organizationId' | 'provider' | 'accessTokenEncrypted' | 'status' | 'realmId'
     >,
     reason: 'empty_connections' | 'configured_tenant_missing',
+    assertHeld?: OAuthLockGuard,
   ): Promise<void> {
     const encryptedAccessToken = connection.accessTokenEncrypted;
     if (!encryptedAccessToken || connection.status !== INTEGRATION_CONNECTION_STATUS.ACTIVE) return;
 
+    await assertHeld?.();
     await this.db.transaction(async (transaction) => {
+      await assertHeld?.();
       const [updated] = await transaction
         .update(integrationConnections)
         .set({
@@ -778,6 +879,7 @@ export class OAuthService {
         .returning({ id: integrationConnections.id });
       if (!updated) return;
 
+      await assertHeld?.();
       await appendAuditLog(transaction, {
         organizationId: connection.organizationId,
         userId: null,
