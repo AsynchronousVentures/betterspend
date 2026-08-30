@@ -419,7 +419,7 @@ describe('supplier operational authorization regressions', () => {
       globalAccess(),
     );
 
-    assert.deepEqual(lockModes, ['update', 'share']);
+    assert.deepEqual(lockModes, ['update', 'share', 'share']);
     assert.deepEqual(insertedTables, [contractExtractions, contractClauses, contractObligations]);
   });
 

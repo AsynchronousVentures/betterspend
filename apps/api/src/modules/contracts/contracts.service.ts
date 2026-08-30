@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
@@ -15,12 +16,19 @@ import {
   contractLines,
   contractObligations,
   contracts,
+  users,
   vendors,
 } from '@betterspend/db';
-import type { PermissionKey } from '@betterspend/shared';
+import {
+  createContractObligationSchema,
+  updateContractObligationSchema,
+  type PermissionKey,
+  type UpdateContractObligationInput,
+} from '@betterspend/shared';
 import { AuditService } from '../audit/audit.service';
 import { DocumentsService } from '../documents/documents.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ContractObligationReminderService } from './contract-obligation-reminder.service';
 import type { AccessPolicy } from '../auth/access-policy';
 import {
   operationalScope,
@@ -61,6 +69,8 @@ export class ContractsService {
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
     private readonly documentsService: DocumentsService,
+    @Optional()
+    private readonly contractObligationReminderService?: ContractObligationReminderService,
   ) {}
 
   async findAll(
@@ -437,6 +447,8 @@ export class ContractsService {
     const extracted = this.extractContractIntelligence(extractedText, contract);
     const persisted = await this.db.transaction(async (tx) => {
       const lockedContract = await this.lockManagedContract(tx, contractId, organizationId, access);
+      const obligationOwnerId = lockedContract.ownerId ?? lockedContract.createdBy;
+      await this.assertObligationOwnerInOrganization(tx, organizationId, obligationOwnerId);
       const [extraction] = await tx
         .insert(contractExtractions)
         .values({
@@ -480,22 +492,25 @@ export class ContractsService {
         ? await tx
             .insert(contractObligations)
             .values(
-              extracted.obligations.map((obligation) => ({
-                organizationId,
-                contractId,
-                clauseId: obligation.sourceClauseType
-                  ? clauseByType.get(obligation.sourceClauseType)
-                  : undefined,
-                ownerId: lockedContract.ownerId ?? lockedContract.createdBy,
-                obligationType: obligation.obligationType,
-                title: obligation.title,
-                description: obligation.description,
-                dueDate: obligation.dueDate,
-                recurrence: obligation.recurrence,
-                notificationLeadDays: obligation.notificationLeadDays,
-                sourceReference: obligation.sourceReference,
-                status: 'open',
-              })),
+              extracted.obligations.map((rawObligation) => {
+                const obligation = createContractObligationSchema.parse(rawObligation);
+                return {
+                  organizationId,
+                  contractId,
+                  clauseId: obligation.sourceClauseType
+                    ? clauseByType.get(obligation.sourceClauseType)
+                    : undefined,
+                  ownerId: obligationOwnerId,
+                  obligationType: obligation.obligationType,
+                  title: obligation.title,
+                  description: obligation.description,
+                  dueDate: obligation.dueDate,
+                  recurrence: obligation.recurrence,
+                  notificationLeadDays: obligation.notificationLeadDays,
+                  sourceReference: obligation.sourceReference,
+                  status: 'open',
+                };
+              }),
             )
             .returning()
         : [];
@@ -503,11 +518,7 @@ export class ContractsService {
       return { contract: lockedContract, extraction, clauses, obligations };
     });
 
-    await this.createObligationNotifications(
-      organizationId,
-      persisted.contract,
-      persisted.obligations,
-    );
+    await this.createObligationNotifications(organizationId, persisted.contract.id);
     await this.auditService
       .log(organizationId, userId, 'contract', contractId, 'intelligence_extracted', {
         extractionId: persisted.extraction.id,
@@ -647,31 +658,26 @@ export class ContractsService {
     organizationId: string,
     userId: string,
     obligationId: string,
-    input: {
-      status?: string;
-      ownerId?: string | null;
-      dueDate?: string | null;
-      title?: string;
-      description?: string;
-      notificationLeadDays?: number;
-    },
+    input: UpdateContractObligationInput,
     access?: AccessPolicy,
   ) {
+    const validatedInput = updateContractObligationSchema.parse(input);
     const updated = await this.db.transaction(async (tx) => {
       await this.lockManagedContract(tx, contractId, organizationId, access);
+      await this.assertObligationOwnerInOrganization(tx, organizationId, validatedInput.ownerId);
       const [changed] = await tx
         .update(contractObligations)
         .set({
-          status: input.status,
-          ownerId: input.ownerId === null ? null : input.ownerId,
-          dueDate: input.dueDate
-            ? new Date(input.dueDate)
-            : input.dueDate === null
+          status: validatedInput.status,
+          ownerId: validatedInput.ownerId === null ? null : validatedInput.ownerId,
+          dueDate: validatedInput.dueDate
+            ? new Date(validatedInput.dueDate)
+            : validatedInput.dueDate === null
               ? null
               : undefined,
-          title: input.title,
-          description: input.description,
-          notificationLeadDays: input.notificationLeadDays,
+          title: validatedInput.title,
+          description: validatedInput.description,
+          notificationLeadDays: validatedInput.notificationLeadDays,
           updatedAt: new Date(),
         })
         .where(
@@ -1035,28 +1041,27 @@ export class ContractsService {
     return updates;
   }
 
-  private async createObligationNotifications(
+  private async createObligationNotifications(organizationId: string, contractId: string) {
+    if (!this.contractObligationReminderService) return;
+    await this.contractObligationReminderService
+      .scanAndNotifyDueObligations(new Date(), { organizationId, contractId })
+      .catch(() => {});
+  }
+
+  private async assertObligationOwnerInOrganization(
+    tx: ContractTransaction,
     organizationId: string,
-    contract: any,
-    obligations: Array<typeof contractObligations.$inferSelect>,
+    ownerId: string | null | undefined,
   ) {
-    for (const obligation of obligations) {
-      const ownerId = obligation.ownerId ?? contract.ownerId ?? contract.createdBy;
-      if (!ownerId || !obligation.dueDate) continue;
-      const leadDate = new Date(obligation.dueDate);
-      leadDate.setDate(leadDate.getDate() - obligation.notificationLeadDays);
-      if (leadDate > new Date()) continue;
-      await this.notificationsService
-        .create(
-          organizationId,
-          ownerId,
-          'contract_obligation',
-          `Contract obligation due: ${obligation.title}`,
-          `${contract.title}: ${obligation.description ?? obligation.title}`,
-          'contract',
-          contract.id,
-        )
-        .catch(() => {});
+    if (!ownerId) return;
+
+    const [owner] = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.id, ownerId), eq(users.organizationId, organizationId)))
+      .for('share');
+    if (!owner) {
+      throw new BadRequestException('The obligation owner must belong to the current organization');
     }
   }
 

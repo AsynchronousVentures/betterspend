@@ -1,6 +1,7 @@
 import { Module, Global } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { QBO_SYNC_QUEUE_NAME } from '../qbo-sync-queue';
+import { CONTRACT_OBLIGATION_REMINDER_QUEUE_NAME } from '../contract-obligation-reminder-queue';
 
 export function getRedisConnection() {
   if (!process.env.REDIS_HOST && process.env.REDIS_URL) {
@@ -36,6 +37,7 @@ export function getRedisConnection() {
       { name: 'email-intake' },
       { name: QBO_SYNC_QUEUE_NAME },
       { name: 'qbo-cdc' },
+      { name: CONTRACT_OBLIGATION_REMINDER_QUEUE_NAME },
     ),
   ],
   exports: [BullModule],
