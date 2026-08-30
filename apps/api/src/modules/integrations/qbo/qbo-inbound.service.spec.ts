@@ -1685,6 +1685,183 @@ describe('QboInboundService', () => {
     );
   });
 
+  it.each([
+    ['Bill', 'bill-active', '3'],
+    ['Invoice', 'invoice-active', '4'],
+    ['Payment', 'payment-active', '5'],
+    ['BillPayment', 'bill-payment-active', '6'],
+    ['PurchaseOrder', 'purchase-order-active', '7'],
+  ] as const)('imports an active %s CDC row with its cached payload and SyncToken', async (
+    entityName,
+    entityId,
+    syncToken,
+  ) => {
+    const providerTimestamp = '2026-08-30T01:02:03.000Z';
+    const entity = {
+      Id: entityId,
+      SyncToken: syncToken,
+      MetaData: { LastUpdatedTime: providerTimestamp },
+      Name: `${entityName} name`,
+    };
+    const request = jest.fn(async ({ query }: { query?: Record<string, unknown> }) => ({
+      data: {
+        CDCResponse: [
+          {
+            QueryResponse:
+              query?.entities === entityName ? { [entityName]: [entity] } : {},
+          },
+        ],
+      },
+    }));
+    const harness = service({ request });
+
+    const result = await harness.instance.runCdcSweep('organization-1');
+
+    expect(result).toMatchObject({ imported: 1, tombstones: 0 });
+    expect(harness.inserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          organizationId: 'organization-1',
+          connectionId: 'connection-1',
+          realmId: 'realm-1',
+          externalEntity: entityName,
+          externalId: entityId,
+          localEntity: 'qbo_transaction',
+          syncToken,
+          isActive: true,
+          isDeleted: false,
+          payload: entity,
+          syncedAt: new Date(providerTimestamp),
+        }),
+      ]),
+    );
+  });
+
+  it('logs and ignores an unknown CDC entity without persisting it', async () => {
+    const request = jest.fn(async ({ query }: { query?: Record<string, unknown> }) => ({
+      data:
+        query?.entities === 'Account'
+          ? { CDCResponse: [{ QueryResponse: { MysteryEntity: [{ Id: 'mystery-1' }] } }] }
+          : { CDCResponse: [] },
+    }));
+    const harness = service({ request });
+    const warn = jest.spyOn(
+      (harness.instance as unknown as { logger: { warn: (message: string) => void } }).logger,
+      'warn',
+    );
+
+    await harness.instance.runCdcSweep('organization-1');
+
+    expect(warn).toHaveBeenCalledWith('Ignoring unsupported QBO CDC entity MysteryEntity');
+    expect(
+      harness.inserted.filter((values) => values.entityType === 'external_entity_mapping'),
+    ).toHaveLength(0);
+  });
+
+  it('ignores an older CDC transaction update after a newer tombstone', async () => {
+    const currentTimestamp = new Date('2026-08-30T02:00:00.000Z');
+    const request = jest.fn(async ({ query }: { query?: Record<string, unknown> }) => ({
+      data: {
+        CDCResponse: [
+          {
+            QueryResponse:
+              query?.entities === 'Bill'
+                ? {
+                    Bill: [
+                      {
+                        Id: 'bill-deleted',
+                        SyncToken: 'old-active-token',
+                        MetaData: { LastUpdatedTime: '2026-08-29T02:00:00.000Z' },
+                      },
+                    ],
+                  }
+                : {},
+          },
+        ],
+      },
+    }));
+    const harness = service({
+      request,
+      mappings: [
+        {
+          id: 'mapping-1',
+          organizationId: 'organization-1',
+          connectionId: 'connection-1',
+          realmId: 'realm-1',
+          provider: 'qbo',
+          externalEntity: 'Bill',
+          externalId: 'bill-deleted',
+          localEntity: 'qbo_transaction',
+          direction: 'inbound',
+          syncToken: 'new-delete-token',
+          isActive: false,
+          isDeleted: true,
+          payload: { Id: 'bill-deleted' },
+          syncedAt: currentTimestamp,
+        },
+      ],
+    });
+
+    await harness.instance.runCdcSweep('organization-1');
+
+    expect(harness.inserted).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ externalId: 'bill-deleted' })]),
+    );
+    expect(harness.conflictUpdates).toHaveLength(0);
+  });
+
+  it('ignores an older CDC delete after a newer transaction snapshot', async () => {
+    const currentTimestamp = new Date('2026-08-30T02:00:00.000Z');
+    const request = jest.fn(async ({ query }: { query?: Record<string, unknown> }) => ({
+      data: {
+        CDCResponse: [
+          {
+            QueryResponse:
+              query?.entities === 'Invoice'
+                ? {
+                    DeletedObject: [
+                      {
+                        EntityName: 'Invoice',
+                        Id: 'invoice-active',
+                        DeletedTime: '2026-08-29T02:00:00.000Z',
+                      },
+                    ],
+                  }
+                : {},
+          },
+        ],
+      },
+    }));
+    const harness = service({
+      request,
+      mappings: [
+        {
+          id: 'mapping-1',
+          organizationId: 'organization-1',
+          connectionId: 'connection-1',
+          realmId: 'realm-1',
+          provider: 'qbo',
+          externalEntity: 'Invoice',
+          externalId: 'invoice-active',
+          localEntity: 'qbo_transaction',
+          direction: 'inbound',
+          syncToken: 'new-active-token',
+          isActive: true,
+          isDeleted: false,
+          payload: { Id: 'invoice-active' },
+          syncedAt: currentTimestamp,
+        },
+      ],
+    });
+
+    await harness.instance.runCdcSweep('organization-1');
+
+    expect(harness.inserted).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ externalId: 'invoice-active' })]),
+    );
+    expect(harness.conflictUpdates).toHaveLength(0);
+  });
+
   it('preserves an existing provider cursor for an unversioned CDC tombstone', async () => {
     const syncedAt = new Date('2026-08-29T00:00:00.000Z');
     const request = jest.fn(async ({ query }: { query?: Record<string, unknown> }) => ({

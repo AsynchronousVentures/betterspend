@@ -49,6 +49,13 @@ import { OAuthRedisService, type OAuthLockGuard } from '../../gl/oauth-redis.ser
 
 export type QboCatalogEntity = (typeof QBO_CATALOG_ENTITY_TYPES)[number];
 export type QboTaxEntity = (typeof QBO_TAX_ENTITY_TYPES)[number];
+type QboTransactionEntity = (typeof QBO_TRANSACTION_ENTITY_TYPES)[number];
+
+type CdcEntityClassification =
+  | { kind: 'catalog'; entityName: QboCatalogEntity }
+  | { kind: 'tax'; entityName: QboTaxEntity }
+  | { kind: 'transaction'; entityName: QboTransactionEntity }
+  | { kind: 'unsupported'; entityName: string };
 
 const CDC_ENTITY_TYPES = [...QBO_CATALOG_ENTITY_TYPES, ...QBO_TRANSACTION_ENTITY_TYPES] as const;
 
@@ -814,50 +821,55 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
         }
 
         for (const entry of entries) {
-          if (isTaxEntity(entry.entityName)) continue;
-
-          if (entry.deleted) {
-            if (isSupportedCdcEntity(entry.entityName) && entry.entity.Id) {
-              await this.upsertMapping(
-                {
-                  organizationId,
-                  connectionId: connection.id,
-                  realmId: connection.realmId,
-                  entityName: entry.entityName,
-                  entity: entry.entity,
-                  providerUpdatedAt: qboEntityUpdatedAt(entry.entity),
-                  deleted: true,
-                  auditSource: 'cdc',
-                },
-                assertLock,
-              );
-              tombstones += 1;
-            }
-            continue;
-          }
-
-          if (isCatalogEntity(entry.entityName)) {
-            const definition = ENTITY_DEFINITIONS[entry.entityName];
-            if (definition.shouldStore?.(entry.entity) === false) {
-              await this.deactivateFilteredCatalogMapping(
-                organizationId,
-                connection.id,
-                connection.realmId,
-                entry.entityName,
-                entry.entity,
-                qboEntityUpdatedAt(entry.entity),
-                'cdc',
-                assertLock,
-              );
+          const classification = classifyCdcEntity(entry.entityName);
+          switch (classification.kind) {
+            case 'tax':
+              // QBO does not include tax entities in the CDC request allow-list.
               continue;
-            }
-            if (entry.entity.Id) {
+            case 'unsupported':
+              this.logger.warn(`Ignoring unsupported QBO CDC entity ${entry.entityName}`);
+              continue;
+            case 'catalog': {
+              if (entry.deleted) {
+                if (!stringValue(entry.entity.Id)) continue;
+                await this.upsertMapping(
+                  {
+                    organizationId,
+                    connectionId: connection.id,
+                    realmId: connection.realmId,
+                    entityName: classification.entityName,
+                    entity: entry.entity,
+                    providerUpdatedAt: qboEntityUpdatedAt(entry.entity),
+                    deleted: true,
+                    auditSource: 'cdc',
+                  },
+                  assertLock,
+                );
+                tombstones += 1;
+                continue;
+              }
+
+              const definition = ENTITY_DEFINITIONS[classification.entityName];
+              if (definition.shouldStore?.(entry.entity) === false) {
+                await this.deactivateFilteredCatalogMapping(
+                  organizationId,
+                  connection.id,
+                  connection.realmId,
+                  classification.entityName,
+                  entry.entity,
+                  qboEntityUpdatedAt(entry.entity),
+                  'cdc',
+                  assertLock,
+                );
+                continue;
+              }
+              if (!stringValue(entry.entity.Id)) continue;
               await this.upsertMapping(
                 {
                   organizationId,
                   connectionId: connection.id,
                   realmId: connection.realmId,
-                  entityName: entry.entityName,
+                  entityName: classification.entityName,
                   entity: entry.entity,
                   providerUpdatedAt: qboEntityUpdatedAt(entry.entity),
                   deleted: false,
@@ -866,7 +878,29 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
                 assertLock,
               );
               imported += 1;
+              continue;
             }
+            case 'transaction': {
+              if (!stringValue(entry.entity.Id)) continue;
+              await this.upsertMapping(
+                {
+                  organizationId,
+                  connectionId: connection.id,
+                  realmId: connection.realmId,
+                  entityName: classification.entityName,
+                  entity: entry.entity,
+                  providerUpdatedAt: qboEntityUpdatedAt(entry.entity),
+                  deleted: entry.deleted,
+                  auditSource: 'cdc',
+                },
+                assertLock,
+              );
+              if (entry.deleted) tombstones += 1;
+              else imported += 1;
+              continue;
+            }
+            default:
+              assertNever(classification);
           }
         }
       }
@@ -2168,12 +2202,23 @@ function isTaxEntity(value: string): value is QboTaxEntity {
   return (QBO_TAX_ENTITY_TYPES as readonly string[]).includes(value);
 }
 
-function isSupportedCdcEntity(value: string): boolean {
-  return (CDC_ENTITY_TYPES as readonly string[]).includes(value);
-}
-
 function isSupportedWebhookEntity(value: string): value is QboWebhookEntity {
   return (QBO_WEBHOOK_ENTITY_TYPES as readonly string[]).includes(value);
+}
+
+function classifyCdcEntity(value: string): CdcEntityClassification {
+  if (isCatalogEntity(value)) return { kind: 'catalog', entityName: value };
+  if (isTaxEntity(value)) return { kind: 'tax', entityName: value };
+  if (isTransactionEntity(value)) return { kind: 'transaction', entityName: value };
+  return { kind: 'unsupported', entityName: value };
+}
+
+function isTransactionEntity(value: string): value is QboTransactionEntity {
+  return (QBO_TRANSACTION_ENTITY_TYPES as readonly string[]).includes(value);
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled QBO CDC entity classification: ${String(value)}`);
 }
 
 function extractQueryRows(data: unknown, entityName: string): QboObject[] {
