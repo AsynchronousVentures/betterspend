@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger'
 import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import {
   CreatePaymentRunInput,
   CreateVendorPaymentAccountInput,
@@ -43,6 +44,7 @@ export class PaymentRunsController {
   }
 
   @Post('vendor-accounts')
+  @Permissions('vendors:edit_payment_details')
   @ApiOperation({ summary: 'Create a tokenized/masked vendor payment account' })
   createVendorAccount(
     @CurrentOrgId() orgId: string,
@@ -54,6 +56,7 @@ export class PaymentRunsController {
   }
 
   @Patch('vendor-accounts/:id/verify')
+  @Permissions('vendors:edit_payment_details')
   @ApiOperation({ summary: 'Mark a vendor payment account as verified' })
   verifyVendorAccount(
     @Param('id') id: string,
@@ -62,6 +65,18 @@ export class PaymentRunsController {
     @CurrentAccess() access?: AccessPolicy,
   ) {
     return this.paymentRunsService.verifyVendorAccount(id, orgId, userId, access);
+  }
+
+  @Patch('invoices/:invoiceId/release')
+  @Permissions('payments:release')
+  @ApiOperation({ summary: 'Release an approved invoice for payment' })
+  releaseInvoice(
+    @Param('invoiceId') invoiceId: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentUserId() userId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.paymentRunsService.releaseInvoice(invoiceId, orgId, userId, access);
   }
 
   @Get()

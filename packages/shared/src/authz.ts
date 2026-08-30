@@ -36,8 +36,14 @@ export const PERMISSION_CATALOG = [
   { key: 'invoices:manage', group: 'Invoices', label: 'Manage invoices' },
   { key: 'payments:view', group: 'Payments', label: 'View payments' },
   { key: 'payments:manage', group: 'Payments', label: 'Manage payments' },
+  { key: 'payments:release', group: 'Payments', label: 'Release payments' },
   { key: 'vendors:create', group: 'Vendors', label: 'Create vendors' },
   { key: 'vendors:edit', group: 'Vendors', label: 'Edit vendors' },
+  {
+    key: 'vendors:edit_payment_details',
+    group: 'Vendors',
+    label: 'Edit vendor payment details',
+  },
   { key: 'vendors:view', group: 'Vendors', label: 'View vendors' },
   { key: 'rfqs:view', group: 'Sourcing', label: 'View RFQs' },
   { key: 'rfqs:manage', group: 'Sourcing', label: 'Manage RFQs' },
@@ -72,7 +78,10 @@ export type PermissionKey = (typeof PERMISSION_CATALOG)[number]['key'];
 const KNOWN_PERMISSIONS = new Set<string>(PERMISSION_CATALOG.map((permission) => permission.key));
 
 export const BUILT_IN_ROLE_PERMISSIONS: Record<BuiltInRole, readonly PermissionKey[]> = {
-  admin: PERMISSION_CATALOG.map((permission) => permission.key),
+  // Payment release stays separate from vendor payment-detail administration.
+  admin: PERMISSION_CATALOG.map((permission) => permission.key).filter(
+    (permission) => permission !== 'payments:release',
+  ),
   approver: [
     'requisitions:view_all',
     'requisitions:approve',
@@ -99,6 +108,7 @@ export const BUILT_IN_ROLE_PERMISSIONS: Record<BuiltInRole, readonly PermissionK
     'invoices:view_all',
     'payments:view',
     'payments:manage',
+    'payments:release',
     'approvals:view',
     'approvals:act',
     'vendors:view',
@@ -136,6 +146,16 @@ export const BUILT_IN_ROLE_PERMISSIONS: Record<BuiltInRole, readonly PermissionK
     'catalog:view',
   ],
 };
+
+export const PAYMENT_RELEASE_INCOMPATIBLE_PERMISSIONS = [
+  'payments:release',
+  'vendors:edit_payment_details',
+] as const satisfies readonly PermissionKey[];
+
+export function hasPaymentReleasePermissionConflict(permissions: Iterable<PermissionKey>): boolean {
+  const granted = new Set(permissions);
+  return PAYMENT_RELEASE_INCOMPATIBLE_PERMISSIONS.every((permission) => granted.has(permission));
+}
 
 /**
  * A scoped grant is useful only on resources that carry the corresponding

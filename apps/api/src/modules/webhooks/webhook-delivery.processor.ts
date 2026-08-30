@@ -10,12 +10,18 @@ export interface WebhookDispatchJobData {
   payload: Record<string, unknown>;
 }
 
+export interface WebhookPersistedDeliveryJobData {
+  kind: 'delivery';
+  deliveryId: string;
+}
+
 export interface WebhookRetryJobData {
   kind: 'retry';
   deliveryId: string;
 }
 
-export type WebhookDeliveryJobData = WebhookDispatchJobData | WebhookRetryJobData;
+export type WebhookDeliveryJobData =
+  WebhookDispatchJobData | WebhookPersistedDeliveryJobData | WebhookRetryJobData;
 
 @Processor('webhook-delivery')
 export class WebhookDeliveryProcessor extends WorkerHost {
@@ -28,6 +34,11 @@ export class WebhookDeliveryProcessor extends WorkerHost {
   async process(job: Job<WebhookDeliveryJobData>): Promise<void> {
     if (job.data.kind === 'retry') {
       await this.webhooksService.retryDelivery(job.data.deliveryId);
+      return;
+    }
+
+    if (job.data.kind === 'delivery') {
+      await this.webhooksService.processDelivery(job.data.deliveryId);
       return;
     }
 

@@ -622,7 +622,8 @@ export class WorkflowExecutionService implements OnModuleInit {
     tx: DbTransaction,
     options: {
       allowApproved?: boolean;
-      reason?: 'material_edit_requires_rematch' | 'invoice_match_invalidated';
+      reason?:
+        'material_edit_requires_rematch' | 'invoice_match_invalidated' | 'payment_details_changed';
     } = {},
   ): Promise<void> {
     const request = await this.lockVersionedRequest(tx, requestId, organizationId);
@@ -653,7 +654,9 @@ export class WorkflowExecutionService implements OnModuleInit {
       comment:
         reason === 'invoice_match_invalidated'
           ? 'Cancelled because the invoice no longer fully matches'
-          : 'Cancelled because a material edit requires a new successful match',
+          : reason === 'payment_details_changed'
+            ? 'Cancelled because vendor payment details changed after invoice approval'
+            : 'Cancelled because a material edit requires a new successful match',
       metadata: { reason },
     });
     await this.audit.log(
@@ -1163,6 +1166,9 @@ export class WorkflowExecutionService implements OnModuleInit {
     requestId: string,
     organizationId: string,
   ): Promise<RuntimeRequest> {
+    // Invoice mutation paths lock the invoice before its workflow request.
+    // Keep every versioned workflow entry point in that order to avoid deadlocks.
+    await this.lockInvoiceBeforeRequest(tx, requestId, organizationId);
     const [request] = await tx
       .select()
       .from(approvalRequests)
@@ -1177,6 +1183,25 @@ export class WorkflowExecutionService implements OnModuleInit {
       throw new NotFoundException(`Versioned approval request ${requestId} not found`);
     }
     return request;
+  }
+
+  private async lockInvoiceBeforeRequest(
+    tx: DbTransaction,
+    requestId: string,
+    organizationId: string,
+  ): Promise<void> {
+    const target = await tx.query.approvalRequests.findFirst({
+      where: (record, { and, eq }) =>
+        and(eq(record.id, requestId), eq(record.organizationId, organizationId)),
+      columns: { approvableType: true, approvableId: true },
+    });
+    if (target?.approvableType !== 'invoice') return;
+
+    await tx
+      .select()
+      .from(invoices)
+      .where(and(eq(invoices.id, target.approvableId), eq(invoices.organizationId, organizationId)))
+      .for('update');
   }
 
   private async loadExecutable(

@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { auditLog, invoiceLines, invoices, type Db, type DbTransaction } from '@betterspend/db';
+import {
+  auditLog,
+  invoiceLines,
+  invoices,
+  vendorPaymentAccounts,
+  type Db,
+  type DbTransaction,
+} from '@betterspend/db';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SequenceService } from '../../common/services/sequence.service';
 import type { AuditService } from '../audit/audit.service';
 import type { BudgetsService } from '../budgets/budgets.service';
@@ -203,7 +211,11 @@ describe('InvoicesService approval budget accounting', () => {
   it('authorizes scoped approval without exposing the linked purchase order', async () => {
     const { service } = createService();
     const access = scopedInvoiceAccess('invoices:approve');
-    const visibleInvoice = await service.findOne('invoice-1', '00000000-0000-4000-8000-000000000001', access);
+    const visibleInvoice = await service.findOne(
+      'invoice-1',
+      '00000000-0000-4000-8000-000000000001',
+      access,
+    );
 
     assert.equal(visibleInvoice.purchaseOrder, null);
     assert.equal('authorizationScope' in visibleInvoice, false);
@@ -213,10 +225,20 @@ describe('InvoicesService approval budget accounting', () => {
   it('authorizes scoped exception resolution without exposing the linked purchase order', async () => {
     const { service } = createService(async () => {}, 'exception');
     const access = scopedInvoiceAccess('invoices:manage');
-    const visibleInvoice = await service.findOne('invoice-1', '00000000-0000-4000-8000-000000000001', access);
+    const visibleInvoice = await service.findOne(
+      'invoice-1',
+      '00000000-0000-4000-8000-000000000001',
+      access,
+    );
 
     assert.equal(visibleInvoice.purchaseOrder, null);
-    await service.resolveException('invoice-1', '00000000-0000-4000-8000-000000000001', 'actor-1', {}, access);
+    await service.resolveException(
+      'invoice-1',
+      '00000000-0000-4000-8000-000000000001',
+      'actor-1',
+      {},
+      access,
+    );
   });
 
   it('does not bypass an active approval request through direct invoice approval', async () => {
@@ -510,6 +532,7 @@ describe('InvoicesService material edits', () => {
   const createEditService = (
     status:
       | 'approved'
+      | 'ready_for_release'
       | 'matched'
       | 'rejected'
       | 'cancelled'
@@ -550,8 +573,10 @@ describe('InvoicesService material edits', () => {
       matchDetails: {},
       submissionSource: 'internal',
       createdBy: 'maker-1',
-      approvedBy: status === 'approved' ? 'approver-1' : null,
-      approvedAt: status === 'approved' ? new Date('2026-08-10T00:00:00Z') : null,
+      approvedBy: ['approved', 'ready_for_release'].includes(status) ? 'approver-1' : null,
+      approvedAt: ['approved', 'ready_for_release'].includes(status)
+        ? new Date('2026-08-10T00:00:00Z')
+        : null,
       createdAt: new Date('2026-08-01T00:00:00Z'),
       updatedAt: new Date('2026-08-10T00:00:00Z'),
     };
@@ -827,6 +852,30 @@ describe('InvoicesService material edits', () => {
     assert.equal(fixture.state().published, true);
   });
 
+  it('reopens approval after a successful rematch of an approved or released invoice', async () => {
+    for (const status of ['approved', 'ready_for_release'] as const) {
+      const fixture = createEditService(status, 'full_match');
+
+      await fixture.service.runMatch(
+        'invoice-1',
+        '00000000-0000-4000-8000-000000000001',
+        'editor-1',
+      );
+
+      assert.deepEqual(fixture.state(), {
+        reopened: true,
+        restarted: false,
+        cancelled: true,
+        initiated: true,
+        published: true,
+      });
+      assert.ok(fixture.invoiceUpdates.some((update) => update.status === 'pending_approval'));
+      assert.ok(fixture.invoiceUpdates.some((update) => update.approvedBy === null));
+      assert.ok(fixture.invoiceUpdates.some((update) => update.releasedBy === null));
+      assert.equal(fixture.workflowStartedFromStatus(), 'pending_approval');
+    }
+  });
+
   it('does not revive a cancelled invoice through editing', async () => {
     const fixture = createEditService('cancelled');
 
@@ -868,7 +917,9 @@ describe('InvoicesService material edits', () => {
     const fixture = createEditService('approved', 'full_match', true, vendorId);
 
     await assert.rejects(
-      fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', { vendorId }),
+      fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', {
+        vendorId,
+      }),
       /Duplicate invoice: VENDOR-100 already exists for this vendor/,
     );
   });
@@ -891,22 +942,123 @@ describe('InvoicesService material edits', () => {
 });
 
 describe('InvoicesService external payments', () => {
-  function createPaymentService() {
+  function createPaymentService(
+    status: 'approved' | 'ready_for_release' = 'ready_for_release',
+    gate: {
+      vendorStatus?: string;
+      onboardingStatus?: string;
+      sanctionsStatus?: string;
+      accountUpdatedAt?: Date;
+      durableWebhookError?: Error;
+    } = {},
+  ) {
     const updates: Array<Record<string, unknown>> = [];
     const auditEntries: Array<Record<string, unknown>> = [];
-    const emittedEvents: Array<{ event: string; payload: unknown }> = [];
-    const invoice = {
+    const durableEvents: Array<{ event: string; payload: unknown }> = [];
+    const queuedDeliveryIds: string[][] = [];
+    const lockQueries: unknown[] = [];
+    let committed = false;
+    const approvedAt = new Date('2026-08-01T00:00:00.000Z');
+    const invoice: {
+      id: string;
+      status: string;
+      totalAmount: string;
+      vendorId: string;
+      approvedAt: Date;
+      paidAt: Date | null;
+      paymentReference: string | null;
+    } = {
       id: 'invoice-1',
-      status: 'approved',
+      status,
       totalAmount: '125.00',
+      vendorId: 'vendor-1',
+      approvedAt,
+      paidAt: null,
+      paymentReference: null,
     };
-    const db = {
+    const transaction = {
+      query: {
+        invoices: {
+          findFirst: async () => ({
+            ...invoice,
+            status: 'paid',
+            paidAt: new Date('2026-08-24T12:00:00.000Z'),
+            paymentReference: 'WIRE-123',
+          }),
+        },
+      },
+      execute: async (query: unknown) => {
+        lockQueries.push(query);
+        return [];
+      },
+      select() {
+        let table: unknown;
+        const query = {
+          from(nextTable: unknown) {
+            table = nextTable;
+            return query;
+          },
+          innerJoin() {
+            return query;
+          },
+          where() {
+            return query;
+          },
+          for: async () => {
+            if (table === invoices) {
+              return [
+                {
+                  ...invoice,
+                  vendorName: 'Acme Supplies',
+                  vendorStatus: gate.vendorStatus ?? 'active',
+                  onboardingStatus: gate.onboardingStatus ?? 'approved',
+                  sanctionsStatus: gate.sanctionsStatus ?? 'clear',
+                  paidAt: invoice.paidAt,
+                },
+              ];
+            }
+            if (table === vendorPaymentAccounts) {
+              return [
+                {
+                  verificationStatus: 'verified',
+                  createdAt: new Date('2026-07-01T00:00:00.000Z'),
+                  updatedAt: gate.accountUpdatedAt ?? new Date('2026-07-15T00:00:00.000Z'),
+                },
+              ];
+            }
+            return [];
+          },
+        };
+        return query;
+      },
       update: () => ({
         set: (values: Record<string, unknown>) => {
           updates.push(values);
-          return { where: async () => [{}] };
+          if (typeof values.status === 'string') invoice.status = values.status;
+          if (values.paidAt instanceof Date) invoice.paidAt = values.paidAt;
+          if (typeof values.paymentReference === 'string') {
+            invoice.paymentReference = values.paymentReference;
+          }
+          return {
+            where: () => ({
+              returning: async () => [{ id: 'invoice-1' }],
+            }),
+          };
         },
       }),
+    };
+    const db = {
+      transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) => {
+        const previousInvoice = { ...invoice };
+        try {
+          const result = await callback(transaction);
+          committed = true;
+          return result;
+        } catch (error: unknown) {
+          Object.assign(invoice, previousInvoice);
+          throw error;
+        }
+      },
     } as unknown as Db;
     const audit = {
       log: async (
@@ -921,8 +1073,17 @@ describe('InvoicesService external payments', () => {
       },
     } as unknown as AuditService;
     const webhookEvents = {
-      emit: (_organizationId: string, event: string, payload: unknown) => {
-        emittedEvents.push({ event, payload });
+      recordInvoicePaidInTransaction: async (
+        _tx: unknown,
+        _organizationId: string,
+        invoicePayload: unknown,
+      ) => {
+        if (gate.durableWebhookError) throw gate.durableWebhookError;
+        durableEvents.push({ event: 'invoice.paid', payload: { invoice: invoicePayload } });
+        return ['delivery-1'];
+      },
+      enqueueDurableDeliveries: async (deliveryIds: readonly string[]) => {
+        queuedDeliveryIds.push([...deliveryIds]);
       },
     } as unknown as WebhookEventService;
     const service = new InvoicesService(
@@ -942,7 +1103,15 @@ describe('InvoicesService external payments', () => {
     );
     (service as unknown as { findOne: () => Promise<typeof invoice> }).findOne = async () =>
       invoice;
-    return { service, updates, auditEntries, emittedEvents };
+    return {
+      service,
+      updates,
+      auditEntries,
+      durableEvents,
+      queuedDeliveryIds,
+      lockQueries,
+      wasCommitted: () => committed,
+    };
   }
 
   it('requires an auditable external payment date, method, and reference', async () => {
@@ -977,7 +1146,8 @@ describe('InvoicesService external payments', () => {
   });
 
   it('records external payment details in the invoice and audit trail', async () => {
-    const { service, updates, auditEntries, emittedEvents } = createPaymentService();
+    const { service, updates, auditEntries, durableEvents, queuedDeliveryIds, lockQueries } =
+      createPaymentService();
 
     await service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
       paymentDate: '2026-08-24',
@@ -994,6 +1164,88 @@ describe('InvoicesService external payments', () => {
       paymentMethod: 'wire',
       paymentReference: 'WIRE-123',
     });
-    assert.equal(emittedEvents[0].event, 'invoice.paid');
+    assert.equal(durableEvents[0].event, 'invoice.paid');
+    assert.equal(
+      (durableEvents[0].payload as { invoice: { status: string } }).invoice.status,
+      'paid',
+    );
+    assert.deepEqual(queuedDeliveryIds, [['delivery-1']]);
+    assert.equal(lockQueries.length, 1);
+    assert.match(new PgDialect().sqlToQuery(lockQueries[0] as never).sql, /pg_advisory_xact_lock/);
+  });
+
+  it('does not let manual payment bypass the release transition', async () => {
+    const { service } = createPaymentService('approved');
+
+    await assert.rejects(
+      service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
+        paymentDate: '2026-08-24',
+        paymentMethod: 'wire',
+        paymentReference: 'WIRE-123',
+      }),
+      /Only released invoices can be marked as paid/,
+    );
+  });
+
+  it('rechecks vendor compliance and account timestamps before manual payment', async () => {
+    const flagged = createPaymentService('ready_for_release', { sanctionsStatus: 'flagged' });
+    await assert.rejects(
+      flagged.service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
+        paymentDate: '2026-08-24',
+        paymentMethod: 'wire',
+        paymentReference: 'WIRE-123',
+      }),
+      /flagged by sanctions/,
+    );
+
+    const changed = createPaymentService('ready_for_release', {
+      accountUpdatedAt: new Date('2026-08-02T00:00:00.000Z'),
+    });
+    await assert.rejects(
+      changed.service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
+        paymentDate: '2026-08-24',
+        paymentMethod: 'wire',
+        paymentReference: 'WIRE-123',
+      }),
+      /changed after invoice approval/,
+    );
+  });
+
+  it('rolls back the manual payment when durable webhook recording fails', async () => {
+    const { service, queuedDeliveryIds, wasCommitted } = createPaymentService('ready_for_release', {
+      durableWebhookError: new Error('webhook persistence failed'),
+    });
+
+    await assert.rejects(
+      service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
+        paymentDate: '2026-08-24',
+        paymentMethod: 'wire',
+        paymentReference: 'WIRE-123',
+      }),
+      /webhook persistence failed/,
+    );
+    assert.equal(wasCommitted(), false);
+    assert.deepEqual(queuedDeliveryIds, []);
+  });
+
+  it('does not create a duplicate durable event when manual payment is retried', async () => {
+    const harness = createPaymentService();
+
+    await harness.service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
+      paymentDate: '2026-08-24',
+      paymentMethod: 'wire',
+      paymentReference: 'WIRE-123',
+    });
+    await assert.rejects(
+      harness.service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
+        paymentDate: '2026-08-24',
+        paymentMethod: 'wire',
+        paymentReference: 'WIRE-123',
+      }),
+      /Only released invoices can be marked as paid/,
+    );
+
+    assert.equal(harness.durableEvents.length, 1);
+    assert.deepEqual(harness.queuedDeliveryIds, [['delivery-1']]);
   });
 });

@@ -1,9 +1,6 @@
 import type { Db } from '@betterspend/db';
 import type { Queue } from 'bullmq';
-import {
-  WebhookDeliveryProcessor,
-  type WebhookRetryJobData,
-} from './webhook-delivery.processor';
+import { WebhookDeliveryProcessor, type WebhookRetryJobData } from './webhook-delivery.processor';
 import * as webhookUrlPolicy from './webhook-url-policy';
 import { WebhooksService } from './webhooks.service';
 
@@ -42,7 +39,9 @@ function createDurableHarness() {
       },
       webhookDeliveries: {
         findFirst: jest.fn(async () => deliveries[0]),
-        findMany: jest.fn(async () => deliveries.filter((delivery) => delivery.status === 'retrying')),
+        findMany: jest.fn(async () =>
+          deliveries.filter((delivery) => ['pending', 'retrying'].includes(delivery.status)),
+        ),
       },
     },
     insert: jest.fn(() => ({
@@ -118,11 +117,9 @@ describe('durable webhook retries', () => {
       .mockResolvedValueOnce({ status: 204, body: '', ok: true });
     const firstProcess = new WebhooksService(harness.db, harness.queue);
 
-    await firstProcess.dispatchEvent(
-      '00000000-0000-0000-0000-000000000001',
-      'invoice.approved',
-      { invoiceId: 'INV-1' },
-    );
+    await firstProcess.dispatchEvent('00000000-0000-0000-0000-000000000001', 'invoice.approved', {
+      invoiceId: 'INV-1',
+    });
 
     expect(harness.deliveries).toHaveLength(1);
     expect(harness.deliveries[0]).toMatchObject({ status: 'retrying', attempts: 1 });
@@ -156,11 +153,9 @@ describe('durable webhook retries', () => {
     const service = new WebhooksService(harness.db, harness.queue);
     const processor = new WebhookDeliveryProcessor(service);
 
-    await service.dispatchEvent(
-      '00000000-0000-0000-0000-000000000001',
-      'invoice.approved',
-      { invoiceId: 'INV-1' },
-    );
+    await service.dispatchEvent('00000000-0000-0000-0000-000000000001', 'invoice.approved', {
+      invoiceId: 'INV-1',
+    });
 
     for (const [attempt, delay] of [
       [2, 30_000],
@@ -197,11 +192,9 @@ describe('durable webhook retries', () => {
       .mockResolvedValueOnce({ status: 204, body: '', ok: true });
     const firstProcess = new WebhooksService(harness.db, harness.queue);
 
-    await firstProcess.dispatchEvent(
-      '00000000-0000-0000-0000-000000000001',
-      'invoice.approved',
-      { invoiceId: 'INV-1' },
-    );
+    await firstProcess.dispatchEvent('00000000-0000-0000-0000-000000000001', 'invoice.approved', {
+      invoiceId: 'INV-1',
+    });
 
     harness.jobs.clear();
     jest.setSystemTime(new Date('2026-08-24T20:00:31Z'));
@@ -222,11 +215,9 @@ describe('durable webhook retries', () => {
       .mockResolvedValue({ status: 503, body: 'unavailable', ok: false });
     const firstProcess = new WebhooksService(harness.db, harness.queue);
 
-    await firstProcess.dispatchEvent(
-      '00000000-0000-0000-0000-000000000001',
-      'invoice.approved',
-      { invoiceId: 'INV-1' },
-    );
+    await firstProcess.dispatchEvent('00000000-0000-0000-0000-000000000001', 'invoice.approved', {
+      invoiceId: 'INV-1',
+    });
 
     const [jobId, failedJob] = [...harness.jobs.entries()][0];
     if (failedJob.opts.removeOnFail === true) harness.jobs.delete(jobId);
@@ -235,5 +226,71 @@ describe('durable webhook retries', () => {
     await restartedProcess.onModuleInit();
 
     expect(harness.jobs.get(jobId)).not.toBe(failedJob);
+  });
+
+  it('recovers a persisted pending delivery with a stable job identity', async () => {
+    const harness = createDurableHarness();
+    harness.deliveries.push({
+      id: '00000000-0000-0000-0000-000000000202',
+      webhookEndpointId: '00000000-0000-0000-0000-000000000101',
+      eventType: 'invoice.paid',
+      payload: { invoiceId: 'INV-2' },
+      status: 'pending',
+      attempts: 0,
+      responseStatus: null,
+      responseBody: null,
+      nextRetryAt: null,
+      deliveredAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const service = new WebhooksService(harness.db, harness.queue);
+
+    await service.onModuleInit();
+
+    expect(harness.jobs.get('webhook-delivery-00000000-0000-0000-0000-000000000202')).toMatchObject(
+      {
+        name: 'deliver',
+        data: {
+          kind: 'delivery',
+          deliveryId: '00000000-0000-0000-0000-000000000202',
+        },
+      },
+    );
+  });
+
+  it('does not redeliver a completed persisted delivery when a duplicate job runs', async () => {
+    const harness = createDurableHarness();
+    harness.deliveries.push({
+      id: '00000000-0000-0000-0000-000000000202',
+      webhookEndpointId: '00000000-0000-0000-0000-000000000101',
+      eventType: 'invoice.paid',
+      payload: { invoiceId: 'INV-2' },
+      status: 'pending',
+      attempts: 0,
+      responseStatus: null,
+      responseBody: null,
+      nextRetryAt: null,
+      deliveredAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const requestMock = jest
+      .spyOn(webhookUrlPolicy, 'requestPinnedWebhook')
+      .mockResolvedValue({ status: 204, body: '', ok: true });
+    const service = new WebhooksService(harness.db, harness.queue);
+    const processor = new WebhookDeliveryProcessor(service);
+
+    await processor.process({
+      name: 'deliver',
+      data: { kind: 'delivery', deliveryId: '00000000-0000-0000-0000-000000000202' },
+    } as never);
+    await processor.process({
+      name: 'deliver',
+      data: { kind: 'delivery', deliveryId: '00000000-0000-0000-0000-000000000202' },
+    } as never);
+
+    expect(requestMock).toHaveBeenCalledTimes(1);
+    expect(harness.deliveries[0]).toMatchObject({ status: 'delivered', attempts: 1 });
   });
 });
