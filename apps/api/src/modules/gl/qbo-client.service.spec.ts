@@ -141,6 +141,22 @@ describe('QboClientService', () => {
     expect(maximum).toBe(10);
   });
 
+  it('rejects stale mapping realms before sending a provider request', async () => {
+    const request = jest.spyOn(axios, 'request');
+    const client = new QboClientService(oauth());
+
+    await expect(
+      client.request({
+        organizationId: 'organization-1',
+        method: 'POST',
+        path: 'bill',
+        expectedConnectionId: token.connectionId,
+        expectedRealmId: 'old-realm',
+      }),
+    ).rejects.toThrow('QBO is not connected or requires reconnection');
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it('allows no more than 500 requests in a rolling minute for one realm', async () => {
     jest.useFakeTimers({ now: 0 });
     const request = jest.spyOn(axios, 'request').mockResolvedValue({ data: { ok: true } });
