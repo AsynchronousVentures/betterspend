@@ -2,7 +2,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { and, aliasedTable, eq, isNotNull, sql } from 'drizzle-orm';
 import type { Queue } from 'bullmq';
-import type { Db } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
 import { contractObligations, contracts, users } from '@betterspend/db';
 import { DB_TOKEN } from '../../database/database.module';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -59,17 +59,24 @@ export class ContractObligationReminderService implements OnModuleInit, OnModule
     now = new Date(),
     scope: ReminderScanScope = {},
   ): Promise<ContractObligationReminderScanResult> {
-    const candidates = await this.findReminderCandidates(now, scope);
+    const candidates = await this.findReminderCandidateIds(now, scope);
     let notified = 0;
 
     for (const candidate of candidates) {
-      if (
-        candidate.organizationId !== candidate.contractOrganizationId ||
-        candidate.status !== 'open' ||
-        !isContractObligationReminderDue(candidate.dueDate, candidate.notificationLeadDays, now)
-      ) {
-        continue;
-      }
+      if (await this.notifyCandidate(candidate.obligationId, now, scope)) notified += 1;
+    }
+
+    return { scanned: candidates.length, notified };
+  }
+
+  private async notifyCandidate(
+    obligationId: string,
+    now: Date,
+    scope: ReminderScanScope,
+  ): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const [candidate] = await this.findReminderCandidate(tx, obligationId, scope);
+      if (!candidate || !this.isEligibleCandidate(candidate, now, scope)) return false;
 
       const ownerId = resolveContractObligationOwner(
         this.organizationScopedOwnerId(
@@ -88,7 +95,7 @@ export class ContractObligationReminderService implements OnModuleInit, OnModule
           candidate.organizationId,
         ),
       );
-      if (!ownerId || !candidate.dueDate) continue;
+      if (!ownerId || !candidate.dueDate) return false;
 
       await this.notificationsService.createIdempotent(
         contractObligationReminderIdempotencyKey(
@@ -104,11 +111,10 @@ export class ContractObligationReminderService implements OnModuleInit, OnModule
         `${candidate.contractTitle}: ${candidate.obligationDescription ?? candidate.obligationTitle}`,
         'contract',
         candidate.contractId,
+        tx,
       );
-      notified += 1;
-    }
-
-    return { scanned: candidates.length, notified };
+      return true;
+    });
   }
 
   private async recoverSchedule(): Promise<void> {
@@ -155,7 +161,7 @@ export class ContractObligationReminderService implements OnModuleInit, OnModule
     this.scheduleRecoveryTimer = undefined;
   }
 
-  private async findReminderCandidates(now: Date, scope: ReminderScanScope) {
+  private async findReminderCandidateIds(now: Date, scope: ReminderScanScope) {
     const conditions = [
       eq(contractObligations.status, 'open'),
       isNotNull(contractObligations.dueDate),
@@ -169,6 +175,32 @@ export class ContractObligationReminderService implements OnModuleInit, OnModule
     }
 
     return this.db
+      .select({ obligationId: contractObligations.id })
+      .from(contractObligations)
+      .innerJoin(
+        contracts,
+        and(
+          eq(contractObligations.contractId, contracts.id),
+          eq(contractObligations.organizationId, contracts.organizationId),
+        ),
+      )
+      .where(and(...conditions));
+  }
+
+  private async findReminderCandidate(
+    tx: DbTransaction,
+    obligationId: string,
+    scope: ReminderScanScope,
+  ) {
+    const conditions = [eq(contractObligations.id, obligationId)];
+    if (scope.organizationId) {
+      conditions.push(eq(contractObligations.organizationId, scope.organizationId));
+    }
+    if (scope.contractId) {
+      conditions.push(eq(contractObligations.contractId, scope.contractId));
+    }
+
+    return tx
       .select({
         organizationId: contractObligations.organizationId,
         contractOrganizationId: contracts.organizationId,
@@ -219,7 +251,29 @@ export class ContractObligationReminderService implements OnModuleInit, OnModule
           eq(contractCreator.isActive, true),
         ),
       )
+      .for('update', { of: contractObligations })
       .where(and(...conditions));
+  }
+
+  private isEligibleCandidate(
+    candidate: {
+      organizationId: string;
+      contractOrganizationId: string;
+      contractId: string;
+      status: string;
+      dueDate: Date | null;
+      notificationLeadDays: number;
+    },
+    now: Date,
+    scope: ReminderScanScope,
+  ) {
+    return (
+      candidate.organizationId === candidate.contractOrganizationId &&
+      candidate.status === 'open' &&
+      isContractObligationReminderDue(candidate.dueDate, candidate.notificationLeadDays, now) &&
+      (!scope.organizationId || candidate.organizationId === scope.organizationId) &&
+      (!scope.contractId || candidate.contractId === scope.contractId)
+    );
   }
 
   private organizationScopedOwnerId(
