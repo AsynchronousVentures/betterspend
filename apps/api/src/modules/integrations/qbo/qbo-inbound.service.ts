@@ -597,6 +597,8 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
           eq(mapping.realmId, connection.realmId),
           eq(mapping.provider, 'qbo'),
           eq(mapping.direction, 'inbound'),
+          eq(mapping.isActive, true),
+          eq(mapping.isDeleted, false),
           externalEntity ? eq(mapping.externalEntity, externalEntity) : undefined,
         ),
       orderBy: (mapping, { asc }) => asc(mapping.displayName),
@@ -635,6 +637,8 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
             eq(externalEntityMappings.realmId, connection.realmId),
             eq(externalEntityMappings.provider, 'qbo'),
             eq(externalEntityMappings.direction, 'inbound'),
+            eq(externalEntityMappings.isActive, true),
+            eq(externalEntityMappings.isDeleted, false),
           ),
         )
         .for('update')
@@ -670,6 +674,8 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
             eq(externalEntityMappings.realmId, connection.realmId),
             eq(externalEntityMappings.provider, 'qbo'),
             eq(externalEntityMappings.direction, 'inbound'),
+            eq(externalEntityMappings.isActive, true),
+            eq(externalEntityMappings.isDeleted, false),
           ),
         )
         .returning();
@@ -1537,6 +1543,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
       });
       if (!existing) return;
 
+      const nextSyncedAt = providerUpdatedAt ?? existing.syncedAt ?? null;
       const now = new Date();
       if (
         providerUpdatedAt &&
@@ -1558,7 +1565,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
           isActive: false,
           isDeleted: false,
           payload: entity,
-          syncedAt: providerUpdatedAt ?? now,
+          syncedAt: nextSyncedAt,
           updatedAt: now,
         })
         .where(
@@ -1575,12 +1582,14 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
         .returning({ id: externalEntityMappings.id });
       if (!updated) return;
 
+      const syncedAtChanged = !sameQboTimestamp(existing.syncedAt, nextSyncedAt);
       if (
         existing.connectionId !== connectionId ||
         existing.displayName !== displayName ||
         existing.syncToken !== syncToken ||
         existing.isActive ||
-        !isDeepStrictEqual(existing.payload, entity)
+        !isDeepStrictEqual(existing.payload, entity) ||
+        syncedAtChanged
       ) {
         await assertLock();
         await this.auditMappingMutation(transaction, {
@@ -1592,6 +1601,14 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
             externalEntity: entityName,
             externalId,
             isActive: { from: existing.isActive, to: false },
+            ...(syncedAtChanged
+              ? {
+                  syncedAt: {
+                    from: existing.syncedAt?.toISOString() ?? null,
+                    to: nextSyncedAt?.toISOString() ?? null,
+                  },
+                }
+              : {}),
           },
           source: auditSource,
           reason: 'outside_supported_catalog',
@@ -1795,7 +1812,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
         ? existingDelete.mergedIntoExternalId
         : (mergedIntoExternalId ?? null),
       payload: existingDelete ? existingDelete.payload : entity,
-      syncedAt: providerUpdatedAt ?? now,
+      syncedAt: providerUpdatedAt ?? existing?.syncedAt ?? null,
       updatedAt: now,
     };
 
@@ -1831,6 +1848,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
       .returning({ id: externalEntityMappings.id });
     if (!mapping) return undefined;
 
+    const syncedAtChanged = !sameQboTimestamp(existing?.syncedAt, values.syncedAt);
     if (
       !existing ||
       existing.connectionId !== values.connectionId ||
@@ -1841,7 +1859,8 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
       existing.mergedIntoExternalId !== values.mergedIntoExternalId ||
       existingLocalId !== values.localId ||
       existingAutoCreated !== values.autoCreated ||
-      !isDeepStrictEqual(existing.payload, values.payload)
+      !isDeepStrictEqual(existing.payload, values.payload) ||
+      syncedAtChanged
     ) {
       if (assertLock) await assertLock();
       await this.auditMappingMutation(transaction, {
@@ -1864,6 +1883,14 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
             : input.autoCreated !== undefined
               ? { autoCreated: input.autoCreated }
               : {}),
+          ...(syncedAtChanged
+            ? {
+                syncedAt: {
+                  from: existing?.syncedAt?.toISOString() ?? null,
+                  to: values.syncedAt?.toISOString() ?? null,
+                },
+              }
+            : {}),
         },
         source: input.auditSource ?? 'cdc',
         ...(input.auditReason || mergedIntoExternalId
@@ -1947,21 +1974,18 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
       }
       const source = lockedMappings.get(sourceId);
       const target = lockedMappings.get(targetId);
+      const sourceMergeCompleted =
+        source?.isDeleted === true &&
+        source.isActive === false &&
+        source.mergedIntoExternalId === targetId;
 
-      if (
-        [source, target].some(
-          (mapping) => mapping?.syncedAt && providerUpdatedAt <= mapping.syncedAt,
-        )
-      ) {
-        return;
-      }
-
-      if (source?.isDeleted && source.mergedIntoExternalId === targetId) {
-        sourceIdForNotification = source.id;
+      if (sourceMergeCompleted && source.syncedAt && providerUpdatedAt <= source.syncedAt) {
         return;
       }
 
       if (source) {
+        const sourceSyncedAt =
+          latestQboTimestamp(source.syncedAt ?? undefined, providerUpdatedAt)!;
         await assertLock();
         const [updated] = await transaction
           .update(externalEntityMappings)
@@ -1969,7 +1993,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
             isActive: false,
             isDeleted: true,
             mergedIntoExternalId: targetId,
-            syncedAt: providerUpdatedAt,
+            syncedAt: sourceSyncedAt,
             updatedAt: new Date(),
           })
           .where(
@@ -1995,6 +2019,10 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
               isActive: { from: source.isActive, to: false },
               isDeleted: { from: source.isDeleted, to: true },
               mergedIntoExternalId: { from: source.mergedIntoExternalId, to: targetId },
+              syncedAt: {
+                from: source.syncedAt?.toISOString() ?? null,
+                to: sourceSyncedAt.toISOString(),
+              },
             },
             source: 'webhook',
             reason: 'vendor_merge',
@@ -2022,13 +2050,15 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
 
       if (source?.localId) {
         if (target && !target.localId) {
+          const targetSyncedAt =
+            latestQboTimestamp(target.syncedAt ?? undefined, providerUpdatedAt)!;
           await assertLock();
           const [updated] = await transaction
             .update(externalEntityMappings)
             .set({
               localId: source.localId,
               autoCreated: source.autoCreated,
-              syncedAt: providerUpdatedAt,
+              syncedAt: targetSyncedAt,
               updatedAt: new Date(),
             })
             .where(
@@ -2050,7 +2080,17 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
               userId: null,
               mappingId: updated.id,
               action: 'linked',
-              changes: { localId: { from: null, to: source.localId } },
+              changes: {
+                localId: { from: null, to: source.localId },
+                ...(!sameQboTimestamp(target.syncedAt, targetSyncedAt)
+                  ? {
+                      syncedAt: {
+                        from: target.syncedAt?.toISOString() ?? null,
+                        to: targetSyncedAt.toISOString(),
+                      },
+                    }
+                  : {}),
+              },
               source: 'merge',
               reason: 'vendor_merge',
             });
@@ -2231,6 +2271,13 @@ function latestQboTimestamp(...timestamps: (Date | undefined)[]): Date | undefin
     if (!latest || timestamp.getTime() > latest.getTime()) return timestamp;
     return latest;
   }, undefined);
+}
+
+function sameQboTimestamp(
+  left: Date | null | undefined,
+  right: Date | null | undefined,
+): boolean {
+  return (left?.getTime() ?? null) === (right?.getTime() ?? null);
 }
 
 function qboRecoveryJobId(kind: string, identity: readonly string[]): string {
