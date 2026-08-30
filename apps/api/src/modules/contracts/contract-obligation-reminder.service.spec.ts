@@ -1,4 +1,5 @@
 import type { Queue } from 'bullmq';
+import * as dbModule from '@betterspend/db';
 import { ContractObligationReminderService } from './contract-obligation-reminder.service';
 import {
   CONTRACT_OBLIGATION_REMINDER_JOB_ID,
@@ -67,7 +68,7 @@ function serviceWith(rows: ReminderRow[], options: ReminderHarnessOptions = {}) 
     innerJoin: jest.fn().mockReturnThis(),
     where,
   };
-  const transactions: Array<{ obligationId: string; where: jest.Mock }> = [];
+  const transactions: Array<{ obligationId: string; where: jest.Mock; transaction: unknown }> = [];
   const transaction = jest.fn(async (callback: (tx: unknown) => Promise<unknown>) => {
     const obligationId = discoveredIds.shift();
     if (!obligationId) throw new Error('missing discovered obligation');
@@ -78,7 +79,6 @@ function serviceWith(rows: ReminderRow[], options: ReminderHarnessOptions = {}) 
       options.afterLock?.(obligationId, currentRows);
       return candidate ? [candidate] : [];
     });
-    transactions.push({ obligationId, where: lockedWhere });
     const txQuery = {
       from: jest.fn().mockReturnThis(),
       innerJoin: jest.fn().mockReturnThis(),
@@ -86,10 +86,15 @@ function serviceWith(rows: ReminderRow[], options: ReminderHarnessOptions = {}) 
       where: lockedWhere,
       for: jest.fn().mockReturnThis(),
     };
-    return callback({ select: jest.fn().mockReturnValue(txQuery) });
+    const tx = { select: jest.fn().mockReturnValue(txQuery) };
+    transactions.push({ obligationId, where: lockedWhere, transaction: tx });
+    return callback(tx);
   });
   const db = { select: jest.fn().mockReturnValue(discoveryQuery), transaction };
   const notifications = { createIdempotent: jest.fn().mockResolvedValue({ id: 'notice-1' }) };
+  const audit = jest
+    .spyOn(dbModule, 'appendAuditLogIfAbsent')
+    .mockResolvedValue(undefined as never);
   const queue = { add: jest.fn().mockResolvedValue(undefined) };
   const service = new ContractObligationReminderService(
     db as never,
@@ -97,10 +102,14 @@ function serviceWith(rows: ReminderRow[], options: ReminderHarnessOptions = {}) 
     queue as unknown as Queue,
   );
 
-  return { service, notifications, queue, where, currentRows, transaction, transactions };
+  return { service, notifications, audit, queue, where, currentRows, transaction, transactions };
 }
 
 describe('ContractObligationReminderService scheduling', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it('registers one stable repeat job with retry options on startup', async () => {
     const harness = serviceWith([]);
 
@@ -137,6 +146,10 @@ describe('ContractObligationReminderService scheduling', () => {
 });
 
 describe('ContractObligationReminderService scanning', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it('notifies eligible obligations once through the idempotent notification seam', async () => {
     const harness = serviceWith([
       row(),
@@ -205,6 +218,57 @@ describe('ContractObligationReminderService scanning', () => {
       'contract',
       'contract-1',
       expect.anything(),
+    );
+  });
+
+  it('audits reminder creation with the same transaction and stable idempotency key', async () => {
+    const harness = serviceWith([row()]);
+
+    await expect(harness.service.scanAndNotifyDueObligations(now)).resolves.toEqual({
+      scanned: 1,
+      notified: 1,
+    });
+
+    const reminderKey =
+      'contract-obligation-reminder:org-1:obligation-1:2026-09-30T12:00:00.000Z:obligation-owner';
+    expect(harness.audit).toHaveBeenCalledWith(
+      harness.transactions[0]?.transaction,
+      expect.objectContaining({
+        organizationId,
+        entityType: 'contract_obligation',
+        entityId: 'obligation-1',
+        action: 'reminder_created',
+        idempotencyKey: reminderKey,
+      }),
+    );
+    expect(harness.notifications.createIdempotent.mock.calls[0]?.[0]).toBe(reminderKey);
+    expect(harness.notifications.createIdempotent.mock.calls[0]?.[8]).toBe(
+      harness.transactions[0]?.transaction,
+    );
+    expect(harness.audit.mock.invocationCallOrder[0]).toBeGreaterThan(
+      harness.notifications.createIdempotent.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it('rolls back the notification attempt when audit creation fails and retries idempotently', async () => {
+    const harness = serviceWith([row()]);
+    harness.audit
+      .mockRejectedValueOnce(new Error('audit store unavailable'))
+      .mockResolvedValueOnce(undefined as never);
+
+    await expect(harness.service.scanAndNotifyDueObligations(now)).rejects.toThrow(
+      'audit store unavailable',
+    );
+    await expect(harness.service.scanAndNotifyDueObligations(now)).resolves.toEqual({
+      scanned: 1,
+      notified: 1,
+    });
+
+    expect(harness.notifications.createIdempotent).toHaveBeenCalledTimes(2);
+    expect(harness.audit).toHaveBeenCalledTimes(2);
+    expect(harness.audit.mock.calls[0]?.[1]).toEqual(harness.audit.mock.calls[1]?.[1]);
+    expect(harness.notifications.createIdempotent.mock.calls[0]?.[0]).toBe(
+      harness.notifications.createIdempotent.mock.calls[1]?.[0],
     );
   });
 

@@ -44,3 +44,48 @@ test('contract obligation schemas reject negative, fractional, and non-finite le
     );
   }
 });
+
+test('contract obligation schemas require supported statuses, UUID owners, and real calendar dates', () => {
+  for (const status of ['open', 'completed']) {
+    assert.equal(
+      updateContractObligationSchema.safeParse({ status }).success,
+      true,
+      `update schema rejected ${status}`,
+    );
+  }
+  for (const status of ['Open', 'foo', 'pending']) {
+    assert.equal(
+      updateContractObligationSchema.safeParse({ status }).success,
+      false,
+      `update schema accepted ${status}`,
+    );
+  }
+
+  assert.equal(
+    updateContractObligationSchema.safeParse({
+      ownerId: '00000000-0000-4000-8000-000000000001',
+    }).success,
+    true,
+  );
+  assert.equal(updateContractObligationSchema.safeParse({ ownerId: 'owner-1' }).success, false);
+
+  for (const dueDate of ['2024-02-29T12:00:00.000Z', '2026-09-30T12:00:00-06:00']) {
+    assert.equal(
+      updateContractObligationSchema.safeParse({ dueDate }).success,
+      true,
+      `update schema rejected ${dueDate}`,
+    );
+  }
+  for (const dueDate of [
+    '2023-02-29T12:00:00.000Z',
+    '2024-02-30T12:00:00.000Z',
+    '2026-04-31T12:00:00.000Z',
+    'not-a-date',
+  ]) {
+    assert.equal(
+      updateContractObligationSchema.safeParse({ dueDate }).success,
+      false,
+      `update schema accepted ${dueDate}`,
+    );
+  }
+});

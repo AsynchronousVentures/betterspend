@@ -58,11 +58,38 @@ export const contractAmendmentSchema = z.object({
 
 export const contractObligationNotificationLeadDaysSchema = z.number().int().min(0);
 
+const CONTRACT_OBLIGATION_STATUSES = ['open', 'completed'] as const;
+
+function isValidContractObligationDateTime(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T/.exec(value);
+  if (!match) return false;
+
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+
+  const isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth =
+    month === 2 ? (isLeapYear ? 29 : 28) : [4, 6, 9, 11].includes(month) ? 30 : 31;
+  return day <= daysInMonth;
+}
+
+const contractObligationDueDateSchema = z
+  .string()
+  .datetime({ offset: true })
+  .refine(isValidContractObligationDateTime, 'Expected a valid calendar date');
+
+const contractObligationDateSchema = z
+  .date()
+  .refine((value) => Number.isFinite(value.getTime()), 'Expected a valid calendar date');
+
 export const createContractObligationSchema = z.object({
   obligationType: z.string(),
   title: z.string(),
   description: z.string(),
-  dueDate: z.date().optional(),
+  dueDate: contractObligationDateSchema.optional(),
   recurrence: z.string().optional(),
   notificationLeadDays: contractObligationNotificationLeadDaysSchema.default(30),
   sourceReference: z.string(),
@@ -70,9 +97,9 @@ export const createContractObligationSchema = z.object({
 });
 
 export const updateContractObligationSchema = z.object({
-  status: z.string().optional(),
-  ownerId: z.string().nullable().optional(),
-  dueDate: z.string().nullable().optional(),
+  status: z.enum(CONTRACT_OBLIGATION_STATUSES).optional(),
+  ownerId: z.string().uuid().nullable().optional(),
+  dueDate: contractObligationDueDateSchema.nullable().optional(),
   title: z.string().optional(),
   description: z.string().optional(),
   notificationLeadDays: contractObligationNotificationLeadDaysSchema.optional(),

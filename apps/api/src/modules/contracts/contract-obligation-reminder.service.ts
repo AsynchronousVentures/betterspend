@@ -3,7 +3,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import { and, aliasedTable, eq, isNotNull, sql } from 'drizzle-orm';
 import type { Queue } from 'bullmq';
 import type { Db, DbTransaction } from '@betterspend/db';
-import { contractObligations, contracts, users } from '@betterspend/db';
+import { appendAuditLogIfAbsent, contractObligations, contracts, users } from '@betterspend/db';
 import { contractObligationNotificationLeadDaysSchema } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -98,13 +98,14 @@ export class ContractObligationReminderService implements OnModuleInit, OnModule
       );
       if (!ownerId || !candidate.dueDate) return false;
 
+      const idempotencyKey = contractObligationReminderIdempotencyKey(
+        candidate.organizationId,
+        candidate.obligationId,
+        candidate.dueDate,
+        ownerId,
+      );
       await this.notificationsService.createIdempotent(
-        contractObligationReminderIdempotencyKey(
-          candidate.organizationId,
-          candidate.obligationId,
-          candidate.dueDate,
-          ownerId,
-        ),
+        idempotencyKey,
         candidate.organizationId,
         ownerId,
         CONTRACT_OBLIGATION_REMINDER_TYPE,
@@ -114,6 +115,18 @@ export class ContractObligationReminderService implements OnModuleInit, OnModule
         candidate.contractId,
         tx,
       );
+      await appendAuditLogIfAbsent(tx, {
+        organizationId: candidate.organizationId,
+        entityType: 'contract_obligation',
+        entityId: candidate.obligationId,
+        action: 'reminder_created',
+        idempotencyKey,
+        metadata: {
+          contractId: candidate.contractId,
+          ownerId,
+          dueDate: candidate.dueDate.toISOString(),
+        },
+      });
       return true;
     });
   }

@@ -16,6 +16,7 @@ import {
   contractLines,
   contractObligations,
   contracts,
+  users,
   vendors,
 } from '@betterspend/db';
 import {
@@ -446,6 +447,8 @@ export class ContractsService {
     const extracted = this.extractContractIntelligence(extractedText, contract);
     const persisted = await this.db.transaction(async (tx) => {
       const lockedContract = await this.lockManagedContract(tx, contractId, organizationId, access);
+      const obligationOwnerId = lockedContract.ownerId ?? lockedContract.createdBy;
+      await this.assertObligationOwnerInOrganization(tx, organizationId, obligationOwnerId);
       const [extraction] = await tx
         .insert(contractExtractions)
         .values({
@@ -497,7 +500,7 @@ export class ContractsService {
                   clauseId: obligation.sourceClauseType
                     ? clauseByType.get(obligation.sourceClauseType)
                     : undefined,
-                  ownerId: lockedContract.ownerId ?? lockedContract.createdBy,
+                  ownerId: obligationOwnerId,
                   obligationType: obligation.obligationType,
                   title: obligation.title,
                   description: obligation.description,
@@ -661,6 +664,7 @@ export class ContractsService {
     const validatedInput = updateContractObligationSchema.parse(input);
     const updated = await this.db.transaction(async (tx) => {
       await this.lockManagedContract(tx, contractId, organizationId, access);
+      await this.assertObligationOwnerInOrganization(tx, organizationId, validatedInput.ownerId);
       const [changed] = await tx
         .update(contractObligations)
         .set({
@@ -1042,6 +1046,23 @@ export class ContractsService {
     await this.contractObligationReminderService
       .scanAndNotifyDueObligations(new Date(), { organizationId, contractId })
       .catch(() => {});
+  }
+
+  private async assertObligationOwnerInOrganization(
+    tx: ContractTransaction,
+    organizationId: string,
+    ownerId: string | null | undefined,
+  ) {
+    if (!ownerId) return;
+
+    const [owner] = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.id, ownerId), eq(users.organizationId, organizationId)))
+      .for('share');
+    if (!owner) {
+      throw new BadRequestException('The obligation owner must belong to the current organization');
+    }
   }
 
   private managedContractScope(organizationId: string, access?: AccessPolicy) {
