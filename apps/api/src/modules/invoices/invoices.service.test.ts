@@ -949,21 +949,44 @@ describe('InvoicesService external payments', () => {
       onboardingStatus?: string;
       sanctionsStatus?: string;
       accountUpdatedAt?: Date;
+      durableWebhookError?: Error;
     } = {},
   ) {
     const updates: Array<Record<string, unknown>> = [];
     const auditEntries: Array<Record<string, unknown>> = [];
-    const emittedEvents: Array<{ event: string; payload: unknown }> = [];
+    const durableEvents: Array<{ event: string; payload: unknown }> = [];
+    const queuedDeliveryIds: string[][] = [];
     const lockQueries: unknown[] = [];
+    let committed = false;
     const approvedAt = new Date('2026-08-01T00:00:00.000Z');
-    const invoice = {
+    const invoice: {
+      id: string;
+      status: string;
+      totalAmount: string;
+      vendorId: string;
+      approvedAt: Date;
+      paidAt: Date | null;
+      paymentReference: string | null;
+    } = {
       id: 'invoice-1',
       status,
       totalAmount: '125.00',
       vendorId: 'vendor-1',
       approvedAt,
+      paidAt: null,
+      paymentReference: null,
     };
     const transaction = {
+      query: {
+        invoices: {
+          findFirst: async () => ({
+            ...invoice,
+            status: 'paid',
+            paidAt: new Date('2026-08-24T12:00:00.000Z'),
+            paymentReference: 'WIRE-123',
+          }),
+        },
+      },
       execute: async (query: unknown) => {
         lockQueries.push(query);
         return [];
@@ -990,7 +1013,7 @@ describe('InvoicesService external payments', () => {
                   vendorStatus: gate.vendorStatus ?? 'active',
                   onboardingStatus: gate.onboardingStatus ?? 'approved',
                   sanctionsStatus: gate.sanctionsStatus ?? 'clear',
-                  paidAt: null,
+                  paidAt: invoice.paidAt,
                 },
               ];
             }
@@ -1011,6 +1034,11 @@ describe('InvoicesService external payments', () => {
       update: () => ({
         set: (values: Record<string, unknown>) => {
           updates.push(values);
+          if (typeof values.status === 'string') invoice.status = values.status;
+          if (values.paidAt instanceof Date) invoice.paidAt = values.paidAt;
+          if (typeof values.paymentReference === 'string') {
+            invoice.paymentReference = values.paymentReference;
+          }
           return {
             where: () => ({
               returning: async () => [{ id: 'invoice-1' }],
@@ -1020,8 +1048,17 @@ describe('InvoicesService external payments', () => {
       }),
     };
     const db = {
-      transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) =>
-        callback(transaction),
+      transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) => {
+        const previousInvoice = { ...invoice };
+        try {
+          const result = await callback(transaction);
+          committed = true;
+          return result;
+        } catch (error: unknown) {
+          Object.assign(invoice, previousInvoice);
+          throw error;
+        }
+      },
     } as unknown as Db;
     const audit = {
       log: async (
@@ -1036,8 +1073,17 @@ describe('InvoicesService external payments', () => {
       },
     } as unknown as AuditService;
     const webhookEvents = {
-      emit: (_organizationId: string, event: string, payload: unknown) => {
-        emittedEvents.push({ event, payload });
+      recordInvoicePaidInTransaction: async (
+        _tx: unknown,
+        _organizationId: string,
+        invoicePayload: unknown,
+      ) => {
+        if (gate.durableWebhookError) throw gate.durableWebhookError;
+        durableEvents.push({ event: 'invoice.paid', payload: { invoice: invoicePayload } });
+        return ['delivery-1'];
+      },
+      enqueueDurableDeliveries: async (deliveryIds: readonly string[]) => {
+        queuedDeliveryIds.push([...deliveryIds]);
       },
     } as unknown as WebhookEventService;
     const service = new InvoicesService(
@@ -1057,7 +1103,15 @@ describe('InvoicesService external payments', () => {
     );
     (service as unknown as { findOne: () => Promise<typeof invoice> }).findOne = async () =>
       invoice;
-    return { service, updates, auditEntries, emittedEvents, lockQueries };
+    return {
+      service,
+      updates,
+      auditEntries,
+      durableEvents,
+      queuedDeliveryIds,
+      lockQueries,
+      wasCommitted: () => committed,
+    };
   }
 
   it('requires an auditable external payment date, method, and reference', async () => {
@@ -1092,7 +1146,8 @@ describe('InvoicesService external payments', () => {
   });
 
   it('records external payment details in the invoice and audit trail', async () => {
-    const { service, updates, auditEntries, emittedEvents, lockQueries } = createPaymentService();
+    const { service, updates, auditEntries, durableEvents, queuedDeliveryIds, lockQueries } =
+      createPaymentService();
 
     await service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
       paymentDate: '2026-08-24',
@@ -1109,7 +1164,12 @@ describe('InvoicesService external payments', () => {
       paymentMethod: 'wire',
       paymentReference: 'WIRE-123',
     });
-    assert.equal(emittedEvents[0].event, 'invoice.paid');
+    assert.equal(durableEvents[0].event, 'invoice.paid');
+    assert.equal(
+      (durableEvents[0].payload as { invoice: { status: string } }).invoice.status,
+      'paid',
+    );
+    assert.deepEqual(queuedDeliveryIds, [['delivery-1']]);
     assert.equal(lockQueries.length, 1);
     assert.match(new PgDialect().sqlToQuery(lockQueries[0] as never).sql, /pg_advisory_xact_lock/);
   });
@@ -1149,5 +1209,43 @@ describe('InvoicesService external payments', () => {
       }),
       /changed after invoice approval/,
     );
+  });
+
+  it('rolls back the manual payment when durable webhook recording fails', async () => {
+    const { service, queuedDeliveryIds, wasCommitted } = createPaymentService('ready_for_release', {
+      durableWebhookError: new Error('webhook persistence failed'),
+    });
+
+    await assert.rejects(
+      service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
+        paymentDate: '2026-08-24',
+        paymentMethod: 'wire',
+        paymentReference: 'WIRE-123',
+      }),
+      /webhook persistence failed/,
+    );
+    assert.equal(wasCommitted(), false);
+    assert.deepEqual(queuedDeliveryIds, []);
+  });
+
+  it('does not create a duplicate durable event when manual payment is retried', async () => {
+    const harness = createPaymentService();
+
+    await harness.service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
+      paymentDate: '2026-08-24',
+      paymentMethod: 'wire',
+      paymentReference: 'WIRE-123',
+    });
+    await assert.rejects(
+      harness.service.markPaid('invoice-1', '00000000-0000-4000-8000-000000000001', 'user-1', {
+        paymentDate: '2026-08-24',
+        paymentMethod: 'wire',
+        paymentReference: 'WIRE-123',
+      }),
+      /Only released invoices can be marked as paid/,
+    );
+
+    assert.equal(harness.durableEvents.length, 1);
+    assert.deepEqual(harness.queuedDeliveryIds, [['delivery-1']]);
   });
 });

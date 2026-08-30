@@ -18,6 +18,7 @@ import {
   vendorVirtualCards,
   vendors,
 } from '@betterspend/db';
+import { sumMoney } from '@betterspend/shared';
 import { AuditService } from '../audit/audit.service';
 import type { AccessPolicy } from '../auth/access-policy';
 import {
@@ -36,6 +37,13 @@ import {
 import { lockPaymentReleaseVendor } from './payment-release-lock';
 
 type PaymentMethod = 'ach' | 'wire' | 'check' | 'virtual_card' | 'manual';
+
+/** Sum persisted invoice amounts without converting decimal values to floats. */
+export function sumPaymentRunInvoiceAmounts(
+  amounts: readonly (string | null | undefined)[],
+): string {
+  return sumMoney(amounts.map((amount) => amount ?? '0'));
+}
 
 function vendorPaymentAccountScopePredicates(orgId: string) {
   return {
@@ -351,9 +359,8 @@ export class PaymentRunsService {
         throw new BadRequestException('Create separate payment runs for each legal entity');
       }
 
-      const totalAmount = selectedInvoices.reduce(
-        (sum, invoice) => sum + Number(invoice.totalAmount ?? 0),
-        0,
+      const totalAmount = sumPaymentRunInvoiceAmounts(
+        selectedInvoices.map((invoice) => invoice.totalAmount),
       );
       const currency = selectedInvoices[0]?.currency ?? 'USD';
       const [run] = await tx
@@ -366,7 +373,7 @@ export class PaymentRunsService {
           runDate,
           scheduledDate: input.scheduledDate ?? runDate,
           currency,
-          totalAmount: totalAmount.toFixed(4),
+          totalAmount,
           invoiceCount: String(selectedInvoices.length),
           notes: input.notes ?? null,
           createdBy: userId,
@@ -460,7 +467,7 @@ export class PaymentRunsService {
     const providerBatchId = input.providerBatchId?.trim() || null;
     const now = new Date();
 
-    await this.db.transaction(async (tx) => {
+    const webhookDeliveryIds = await this.db.transaction(async (tx) => {
       const [lockedRun] = await tx
         .select({ status: paymentRuns.status })
         .from(paymentRuns)
@@ -581,6 +588,31 @@ export class PaymentRunsService {
           ),
         );
 
+      const paidInvoices = await tx.query.invoices.findMany({
+        where: (invoice, { and, eq, inArray }) =>
+          and(
+            eq(invoice.organizationId, orgId),
+            inArray(
+              invoice.id,
+              invoiceLinks.map((link) => link.invoiceId),
+            ),
+          ),
+        with: {
+          vendor: { columns: { punchoutConfig: false } },
+          entity: true,
+          purchaseOrder: true,
+        },
+      });
+      const paidInvoiceById = new Map(paidInvoices.map((invoice) => [invoice.id, invoice]));
+      const deliveryIds: string[] = [];
+      for (const link of invoiceLinks) {
+        const invoice = paidInvoiceById.get(link.invoiceId);
+        if (!invoice) throw new NotFoundException(`Invoice ${link.invoiceId} not found`);
+        deliveryIds.push(
+          ...(await this.webhookEvents.recordInvoicePaidInTransaction(tx, orgId, invoice)),
+        );
+      }
+
       const cardRows = invoiceLinks.filter((link) => link.paymentMethod === 'virtual_card');
       if (cardRows.length > 0) {
         await tx.insert(vendorVirtualCards).values(
@@ -611,6 +643,8 @@ export class PaymentRunsService {
         metadata: { paymentReference, providerBatchId },
         createdBy: userId,
       });
+
+      return deliveryIds;
     });
 
     await this.audit
@@ -618,9 +652,7 @@ export class PaymentRunsService {
       .catch(() => {});
 
     const submittedRun = await this.findOne(id, orgId, access, ['payments:manage']);
-    for (const link of submittedRun.paymentRunInvoices) {
-      this.webhookEvents.emit(orgId, 'invoice.paid', { invoice: link.invoice });
-    }
+    await this.webhookEvents.enqueueDurableDeliveries(webhookDeliveryIds);
     return submittedRun;
   }
 

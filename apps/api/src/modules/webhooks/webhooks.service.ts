@@ -13,6 +13,7 @@ import { createHmac, randomBytes } from 'crypto';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { webhookEndpoints, webhookDeliveries } from '@betterspend/db';
+import { enqueueWebhookDelivery } from './webhook-event.service';
 import * as webhookUrlPolicy from './webhook-url-policy';
 
 const MAX_ATTEMPTS = 5;
@@ -40,18 +41,20 @@ export class WebhooksService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    const retrying = await this.db.query.webhookDeliveries.findMany({
-      where: (delivery, { eq }) => eq(delivery.status, 'retrying'),
+    const recoverable = await this.db.query.webhookDeliveries.findMany({
+      where: (delivery, { inArray }) => inArray(delivery.status, ['pending', 'retrying']),
     });
 
     await Promise.all(
-      retrying.map((delivery) =>
-        this.enqueueRetry(delivery.id, delivery.attempts, delivery.nextRetryAt ?? new Date()),
+      recoverable.map((delivery) =>
+        delivery.status === 'retrying'
+          ? this.enqueueRetry(delivery.id, delivery.attempts, delivery.nextRetryAt ?? new Date())
+          : this.enqueuePending(delivery.id),
       ),
     );
 
-    if (retrying.length > 0) {
-      this.logger.log(`Recovered ${retrying.length} webhook deliveries awaiting retry`);
+    if (recoverable.length > 0) {
+      this.logger.log(`Recovered ${recoverable.length} webhook deliveries awaiting delivery`);
     }
   }
 
@@ -126,8 +129,7 @@ export class WebhooksService implements OnModuleInit {
     payload: Record<string, unknown>,
   ): Promise<void> {
     const endpoints = await this.db.query.webhookEndpoints.findMany({
-      where: (w, { and, eq }) =>
-        and(eq(w.organizationId, organizationId), eq(w.isActive, true)),
+      where: (w, { and, eq }) => and(eq(w.organizationId, organizationId), eq(w.isActive, true)),
     });
 
     const matched = endpoints.filter(
@@ -170,6 +172,10 @@ export class WebhooksService implements OnModuleInit {
     await this.attemptDelivery(deliveryId);
   }
 
+  async processDelivery(deliveryId: string): Promise<void> {
+    await this.attemptDelivery(deliveryId);
+  }
+
   private async attemptDelivery(
     deliveryId: string,
     knownEndpoint?: { url: string; secret: string },
@@ -177,7 +183,7 @@ export class WebhooksService implements OnModuleInit {
     const delivery = await this.db.query.webhookDeliveries.findFirst({
       where: (d, { eq }) => eq(d.id, deliveryId),
     });
-    if (!delivery) return;
+    if (!delivery || !['pending', 'retrying'].includes(delivery.status)) return;
 
     const endpoint =
       knownEndpoint ??
@@ -250,7 +256,9 @@ export class WebhooksService implements OnModuleInit {
           updatedAt: new Date(),
         })
         .where(eq(webhookDeliveries.id, deliveryId));
-      this.logger.error(`Webhook delivery ${deliveryId} permanently failed after ${attempt} attempts`);
+      this.logger.error(
+        `Webhook delivery ${deliveryId} permanently failed after ${attempt} attempts`,
+      );
       return;
     }
 
@@ -287,6 +295,10 @@ export class WebhooksService implements OnModuleInit {
         removeOnFail: true,
       },
     );
+  }
+
+  private async enqueuePending(deliveryId: string): Promise<void> {
+    await enqueueWebhookDelivery(this.webhookQueue, deliveryId);
   }
 
   private async validateConfiguredUrl(rawUrl: string): Promise<string> {

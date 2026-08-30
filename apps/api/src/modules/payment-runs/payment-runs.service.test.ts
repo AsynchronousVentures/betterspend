@@ -4,6 +4,9 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import {
   auditLog,
   invoices,
+  paymentRunEvents,
+  paymentRunInvoices,
+  paymentRuns,
   vendorPaymentAccounts,
   vendors,
   type Db,
@@ -13,9 +16,13 @@ import type { AuditService } from '../audit/audit.service';
 import type { BudgetsService } from '../budgets/budgets.service';
 import type { WebhookEventService } from '../webhooks/webhook-event.service';
 import type { WorkflowExecutionService } from '../workflow-execution/workflow-execution.service';
-import { PaymentRunsService } from './payment-runs.service';
+import { PaymentRunsService, sumPaymentRunInvoiceAmounts } from './payment-runs.service';
 
 const organizationId = '00000000-0000-4000-8000-000000000001';
+
+test('sums payment-run invoice amounts with decimal-safe arithmetic', () => {
+  assert.equal(sumPaymentRunInvoiceAmounts(['0.1', '0.2', '0.3']), '0.60');
+});
 
 function createAccountChangeHarness(
   options: { workflowConfigured?: boolean; workflowError?: Error } = {},
@@ -167,6 +174,152 @@ function createAccountChangeHarness(
   };
 }
 
+function createPaymentSubmitHarness(
+  options: { invoiceCount?: number; durableWebhookError?: Error } = {},
+) {
+  const invoiceCount = options.invoiceCount ?? 2;
+  const invoiceIds = Array.from({ length: invoiceCount }, (_, index) => `invoice-${index + 1}`);
+  const state = {
+    runStatus: 'approved',
+    invoiceStatuses: new Map(invoiceIds.map((invoiceId) => [invoiceId, 'ready_for_release'])),
+    committed: false,
+    updates: [] as Array<{ table: unknown; values: Record<string, unknown> }>,
+    events: [] as Array<Record<string, unknown>>,
+  };
+  const invoiceLinks = invoiceIds.map((invoiceId, index) => ({
+    invoiceId,
+    paymentMethod: 'manual',
+    amount: index === 0 ? '0.10' : '0.20',
+    currency: 'USD',
+    vendorId: 'vendor-1',
+    status: 'ready_for_release',
+    paidAt: null,
+    approvedAt: new Date('2026-08-01T00:00:00.000Z'),
+    vendorName: 'Acme Supplies',
+    vendorStatus: 'active',
+    onboardingStatus: 'approved',
+    sanctionsStatus: 'clear',
+  }));
+  const paidInvoices = invoiceLinks.map((link) => ({
+    id: link.invoiceId,
+    organizationId,
+    vendorId: link.vendorId,
+    status: 'paid',
+    totalAmount: link.amount,
+    paidAt: new Date('2026-08-24T00:00:00.000Z'),
+    paymentReference: 'RUN-REF',
+  }));
+  const durableEvents: Array<{ event: string; payload: unknown }> = [];
+  const queuedDeliveryIds: string[][] = [];
+  const vendorRows = [{ vendorId: 'vendor-1' }];
+  const accountRows = [
+    {
+      vendorId: 'vendor-1',
+      verificationStatus: 'verified',
+      createdAt: new Date('2026-07-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-07-15T00:00:00.000Z'),
+    },
+  ];
+
+  let selectCall = 0;
+  type SelectQuery = {
+    from(table: unknown): SelectQuery;
+    innerJoin(...args: unknown[]): SelectQuery;
+    where(...args: unknown[]): SelectQuery | Promise<unknown>;
+    for(...args: unknown[]): Promise<unknown>;
+  };
+  const transaction = {
+    execute: async () => [],
+    query: {
+      invoices: {
+        findMany: async () => paidInvoices,
+      },
+    },
+    select: () => {
+      const call = selectCall++;
+      let table: unknown;
+      const query = {} as SelectQuery;
+      query.from = (nextTable) => {
+        table = nextTable;
+        return query;
+      };
+      query.innerJoin = () => query;
+      query.where = () => (call === 1 ? Promise.resolve(vendorRows) : query);
+      query.for = async () => {
+        if (call === 0) return [{ status: state.runStatus }];
+        if (call === 2) return invoiceLinks;
+        if (call === 3 && table === vendorPaymentAccounts) return accountRows;
+        return [];
+      };
+      return query;
+    },
+    update: (table: unknown) => ({
+      set: (values: Record<string, unknown>) => {
+        state.updates.push({ table, values });
+        if (table === paymentRuns && typeof values.status === 'string') {
+          state.runStatus = values.status;
+        }
+        if (table === invoices && values.status === 'paid') {
+          for (const invoiceId of invoiceIds) state.invoiceStatuses.set(invoiceId, 'paid');
+        }
+        return { where: async () => undefined };
+      },
+    }),
+    insert: (table: unknown) => ({
+      values: async (values: Record<string, unknown>) => {
+        if (table === paymentRunEvents) state.events.push(values);
+      },
+    }),
+  } as unknown as DbTransaction;
+  const db = {
+    transaction: async (callback: (tx: DbTransaction) => Promise<unknown>) => {
+      const previousRunStatus = state.runStatus;
+      const previousInvoiceStatuses = new Map(state.invoiceStatuses);
+      const previousUpdateCount = state.updates.length;
+      const previousEventCount = state.events.length;
+      try {
+        const result = await callback(transaction);
+        state.committed = true;
+        return result;
+      } catch (error: unknown) {
+        state.runStatus = previousRunStatus;
+        state.invoiceStatuses = previousInvoiceStatuses;
+        state.updates.length = previousUpdateCount;
+        state.events.length = previousEventCount;
+        throw error;
+      }
+    },
+  } as unknown as Db;
+  const webhookEvents = {
+    recordInvoicePaidInTransaction: async (
+      _tx: DbTransaction,
+      _organizationId: string,
+      invoice: unknown,
+    ) => {
+      if (options.durableWebhookError) throw options.durableWebhookError;
+      durableEvents.push({ event: 'invoice.paid', payload: { invoice } });
+      return durableEvents.map((_event, index) => `delivery-${index + 1}`).slice(-1);
+    },
+    enqueueDurableDeliveries: async (deliveryIds: readonly string[]) => {
+      queuedDeliveryIds.push([...deliveryIds]);
+    },
+  } as unknown as WebhookEventService;
+  const service = new PaymentRunsService(
+    db,
+    { log: async () => undefined } as unknown as AuditService,
+    {} as BudgetsService,
+    webhookEvents,
+    {} as WorkflowExecutionService,
+  );
+  (service as unknown as { findOne: () => Promise<unknown> }).findOne = async () => ({
+    id: 'run-1',
+    status: state.runStatus,
+    paymentRunInvoices: paidInvoices.map((invoice) => ({ invoice })),
+  });
+
+  return { service, state, durableEvents, queuedDeliveryIds };
+}
+
 test('invalidates an approved invoice and starts replacement approval in the same transaction', async () => {
   const harness = createAccountChangeHarness();
 
@@ -237,4 +390,51 @@ test('propagates replacement workflow failures so account and invalidation share
     /workflow start failed/,
   );
   assert.notEqual(harness.initiatedTransaction(), undefined);
+});
+
+test('submits a payment run once and queues one durable event per invoice after commit', async () => {
+  const harness = createPaymentSubmitHarness();
+
+  await harness.service.submit('run-1', organizationId, 'user-1', {
+    paymentReference: 'RUN-REF',
+  });
+
+  assert.equal(harness.state.committed, true);
+  assert.equal(harness.state.runStatus, 'paid');
+  assert.deepEqual([...harness.state.invoiceStatuses.values()], ['paid', 'paid']);
+  assert.deepEqual(
+    harness.durableEvents.map(({ event }) => event),
+    ['invoice.paid', 'invoice.paid'],
+  );
+  assert.deepEqual(harness.queuedDeliveryIds, [['delivery-1', 'delivery-2']]);
+});
+
+test('rolls back a payment run when durable webhook recording fails', async () => {
+  const harness = createPaymentSubmitHarness({ durableWebhookError: new Error('webhook failed') });
+
+  await assert.rejects(
+    harness.service.submit('run-1', organizationId, 'user-1', { paymentReference: 'RUN-REF' }),
+    /webhook failed/,
+  );
+
+  assert.equal(harness.state.committed, false);
+  assert.equal(harness.state.runStatus, 'approved');
+  assert.deepEqual(
+    [...harness.state.invoiceStatuses.values()],
+    ['ready_for_release', 'ready_for_release'],
+  );
+  assert.deepEqual(harness.queuedDeliveryIds, []);
+});
+
+test('does not create duplicate durable payment events after a submitted run is retried', async () => {
+  const harness = createPaymentSubmitHarness({ invoiceCount: 1 });
+
+  await harness.service.submit('run-1', organizationId, 'user-1', { paymentReference: 'RUN-REF' });
+  await assert.rejects(
+    harness.service.submit('run-1', organizationId, 'user-1', { paymentReference: 'RUN-REF' }),
+    /Only approved payment runs can be submitted/,
+  );
+
+  assert.equal(harness.durableEvents.length, 1);
+  assert.deepEqual(harness.queuedDeliveryIds, [['delivery-1']]);
 });

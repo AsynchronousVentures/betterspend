@@ -1345,7 +1345,7 @@ export class InvoicesService {
     if (typeof vendorId !== 'string') {
       throw new BadRequestException('Invoice has no vendor payment details');
     }
-    const transitioned = await this.db.transaction(async (tx) => {
+    const payment = await this.db.transaction(async (tx) => {
       await lockPaymentReleaseVendor(tx, organizationId, vendorId);
       const [lockedInvoice] = await tx
         .select({
@@ -1413,7 +1413,13 @@ export class InvoicesService {
         )
         .returning({ id: invoices.id });
       if (!updated) throw new BadRequestException('Invoice is no longer ready for payment');
-      return updated;
+      const paidInvoice = await this.findOneWithExecutor(id, organizationId, tx);
+      const webhookDeliveryIds = await this.webhookEvents.recordInvoicePaidInTransaction(
+        tx,
+        organizationId,
+        paidInvoice,
+      );
+      return { webhookDeliveryIds };
     });
     const updated = await this.findOne(id, organizationId);
     this.audit
@@ -1424,7 +1430,7 @@ export class InvoicesService {
         paymentReference,
       })
       .catch(() => {});
-    this.webhookEvents.emit(organizationId, 'invoice.paid', { invoice: updated });
+    await this.webhookEvents.enqueueDurableDeliveries(payment.webhookDeliveryIds);
     return updated;
   }
 

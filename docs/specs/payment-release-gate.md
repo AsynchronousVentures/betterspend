@@ -48,6 +48,12 @@ payment-run paths consume released invoices. Provider-specific orchestration
 and QuickBooks payment write-back remain outside this issue and belong to #64
 and #98 follow-up work.
 
+Manual payment and payment-run submission each record matching `invoice.paid`
+webhook deliveries inside the payment transaction, then queue stable delivery
+jobs after commit. Pending and retrying delivery rows are re-queued during
+webhook worker startup, so a queue outage cannot erase a committed payment
+notification. Other webhook events retain their existing enqueue semantics.
+
 The current vendor model treats `not_started` onboarding as allowed, matching
 the existing purchase-order compliance gate. Sanctions screening blocks
 `flagged` vendors; the product does not yet define whether `untested` should
