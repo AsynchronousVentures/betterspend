@@ -91,3 +91,27 @@ test('does not treat a missing QBO display name as a match', () => {
 
   assert.equal(rows[0].suggestion, null);
 });
+
+test('keeps an exact code match ahead of a long token overlap', () => {
+  const exactCode = {
+    ...BASE_MAPPING,
+    id: '00000000-0000-4000-8000-000000000006',
+    displayName: 'General Operations',
+    payload: { AcctNum: 'OPS-100' },
+  };
+  const rows = mappingRows(
+    [
+      {
+        id: 'local-token-overlap',
+        name: 'General Operations Administration Services',
+        code: null,
+        active: true,
+      },
+      { id: 'local-exact-code', name: 'Field Team', code: 'OPS-100', active: true },
+    ],
+    [exactCode],
+  );
+
+  assert.equal(rows.find((row) => row.id === 'local-exact-code')?.suggestion?.id, exactCode.id);
+  assert.equal(rows.find((row) => row.id === 'local-token-overlap')?.suggestion, null);
+});

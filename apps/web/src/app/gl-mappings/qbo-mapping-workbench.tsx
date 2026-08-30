@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import type { QboExternalEntityMapping, QboSyncEntity } from '@betterspend/shared';
+import type { QboExternalEntityMapping } from '@betterspend/shared';
 import {
   AlertTriangle,
   ArrowRight,
@@ -31,31 +31,36 @@ import {
 
 const SECTION_META: Record<
   MappingSection,
-  { label: string; localLabel: string; externalLabel: string; externalEntity: QboSyncEntity }
+  {
+    label: string;
+    localLabel: string;
+    externalLabel: string;
+    externalEntities: readonly QboExternalEntityMapping['externalEntity'][];
+  }
 > = {
   accounts: {
     label: 'Accounts',
     localLabel: 'GL accounts',
     externalLabel: 'QBO accounts',
-    externalEntity: 'Account',
+    externalEntities: ['Account'],
   },
   departments: {
     label: 'Departments',
     localLabel: 'Departments',
-    externalLabel: 'QBO classes',
-    externalEntity: 'Class',
+    externalLabel: 'QBO classes and locations',
+    externalEntities: ['Class', 'Department'],
   },
   projects: {
     label: 'Projects',
     localLabel: 'Projects',
     externalLabel: 'QBO customers',
-    externalEntity: 'Customer',
+    externalEntities: ['Customer'],
   },
   vendors: {
     label: 'Vendors',
     localLabel: 'Vendors',
     externalLabel: 'QBO vendors',
-    externalEntity: 'Vendor',
+    externalEntities: ['Vendor'],
   },
 };
 
@@ -152,8 +157,8 @@ export function QboMappingWorkbench() {
   const mappingsBySection = useMemo(() => {
     const result = {} as Record<MappingSection, QboExternalEntityMapping[]>;
     for (const key of SECTIONS) {
-      result[key] = (data?.mappings ?? []).filter(
-        (mapping) => mapping.externalEntity === SECTION_META[key].externalEntity,
+      result[key] = (data?.mappings ?? []).filter((mapping) =>
+        SECTION_META[key].externalEntities.includes(mapping.externalEntity),
       );
     }
     return result;
@@ -234,7 +239,7 @@ export function QboMappingWorkbench() {
     setSyncing(true);
     setNotice('');
     try {
-      await api.qboMappings.sync(['Account', 'Vendor', 'Class', 'Customer']);
+      await api.qboMappings.sync(['Account', 'Vendor', 'Class', 'Department', 'Customer']);
       setNotice('QuickBooks sync queued. Refresh in a moment to see imported changes.');
     } catch (nextError) {
       setNotice(

@@ -40,7 +40,10 @@ function matchScore(local: LocalMappingRecord, external: QboExternalEntityMappin
 
   const localTokens = new Set(localName.split(' ').filter((token) => token.length >= 4));
   const externalTokens = externalName.split(' ').filter((token) => token.length >= 4);
-  return externalTokens.reduce((score, token) => score + (localTokens.has(token) ? 30 : 0), 0);
+  return Math.min(
+    90,
+    externalTokens.reduce((score, token) => score + (localTokens.has(token) ? 30 : 0), 0),
+  );
 }
 
 export function mappingCode(mapping: QboExternalEntityMapping): string | null {
@@ -70,7 +73,10 @@ export function mappingRows(
     )
     .filter((pair) => pair.score >= 30)
     .sort(
-      (left, right) => right.score - left.score || left.local.name.localeCompare(right.local.name),
+      (left, right) =>
+        right.score - left.score ||
+        left.local.name.localeCompare(right.local.name) ||
+        left.mapping.externalEntity.localeCompare(right.mapping.externalEntity),
     );
 
   for (const pair of suggestionPairs) {
