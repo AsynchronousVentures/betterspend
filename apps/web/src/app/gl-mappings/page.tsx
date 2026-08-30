@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Cable, ExternalLink, Filter, Plus, Trash2 } from 'lucide-react';
+import { Cable, ExternalLink, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { GlExportHistory } from '../../components/gl-export-history';
 import { PageHeader } from '../../components/page-header';
@@ -10,10 +10,24 @@ import { StatusBadge } from '../../components/status-badge';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
 import { Select } from '../../components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../components/ui/table';
+import { QboMappingWorkbench } from './qbo-mapping-workbench';
 
 type TargetSystem = 'qbo' | 'xero';
 
@@ -36,7 +50,7 @@ const SYSTEM_LABELS: Record<string, string> = {
 const EMPTY_FORM = {
   glAccount: '',
   glAccountName: '',
-  targetSystem: 'qbo' as TargetSystem,
+  targetSystem: 'xero' as TargetSystem,
   externalAccountCode: '',
   externalAccountName: '',
 };
@@ -44,14 +58,16 @@ const EMPTY_FORM = {
 function GlMappingsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const activeTab = searchParams.get('view') === 'export-history' ? 'jobs' : 'mappings';
+  const activeTab =
+    searchParams.get('view') === 'export-history'
+      ? 'jobs'
+      : searchParams.get('view') === 'xero'
+        ? 'xero'
+        : 'qbo';
   const [mappings, setMappings] = useState<GlMapping[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [filterSystem, setFilterSystem] = useState<TargetSystem | ''>(() => {
-    const targetSystem = searchParams.get('targetSystem');
-    return targetSystem === 'qbo' || targetSystem === 'xero' ? targetSystem : '';
-  });
+  const filterSystem: TargetSystem = 'xero';
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
@@ -69,22 +85,21 @@ function GlMappingsContent() {
   }
 
   useEffect(() => {
+    if (activeTab !== 'xero') return;
     setLoading(true);
     loadMappings().finally(() => setLoading(false));
-  }, [filterSystem]);
+  }, [activeTab, filterSystem]);
 
-  function selectView(view: 'mappings' | 'jobs') {
+  function selectView(view: 'qbo' | 'xero' | 'jobs') {
     const params = new URLSearchParams(searchParams.toString());
     if (view === 'jobs') {
       params.set('view', 'export-history');
+    } else if (view === 'xero') {
+      params.set('view', 'xero');
     } else {
       params.delete('view');
     }
-    if (filterSystem) {
-      params.set('targetSystem', filterSystem);
-    } else {
-      params.delete('targetSystem');
-    }
+    params.delete('targetSystem');
     const query = params.toString();
     router.replace(`/gl-mappings${query ? `?${query}` : ''}`);
   }
@@ -124,60 +139,118 @@ function GlMappingsContent() {
   return (
     <div className="space-y-6 p-4 lg:p-8">
       <PageHeader
-        title="GL Integration"
-        description="Map internal GL accounts to QuickBooks Online and Xero, then monitor how approved invoices move through export history."
+        title="Accounting Integration"
+        description="Link BetterSpend records to synced accounting catalogs and monitor approved invoice exports."
         actions={
-          <div className="flex gap-2 rounded-full border border-border/70 bg-background/80 p-1">
-            <Button type="button" size="sm" variant={activeTab === 'mappings' ? 'default' : 'ghost'} onClick={() => selectView('mappings')}>
-              Account Mappings
+          <div className="flex border-b border-border/70">
+            <Button
+              type="button"
+              size="sm"
+              variant={activeTab === 'qbo' ? 'default' : 'ghost'}
+              className="rounded-none"
+              onClick={() => selectView('qbo')}
+            >
+              QBO Mappings
             </Button>
-            <Button type="button" size="sm" variant={activeTab === 'jobs' ? 'default' : 'ghost'} onClick={() => selectView('jobs')}>
+            <Button
+              type="button"
+              size="sm"
+              variant={activeTab === 'xero' ? 'default' : 'ghost'}
+              className="rounded-none"
+              onClick={() => selectView('xero')}
+            >
+              Xero Accounts
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={activeTab === 'jobs' ? 'default' : 'ghost'}
+              className="rounded-none"
+              onClick={() => selectView('jobs')}
+            >
               Export History
             </Button>
           </div>
         }
       />
 
-      {loadError ? (
+      {activeTab === 'xero' && loadError ? (
         <Alert variant="destructive">
           <AlertDescription>{loadError}</AlertDescription>
         </Alert>
       ) : null}
 
-      {activeTab === 'mappings' ? (
+      {activeTab === 'qbo' ? (
+        <QboMappingWorkbench />
+      ) : activeTab === 'xero' ? (
         <>
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.9fr)]">
             <Card className="rounded-lg">
               <CardHeader>
                 <CardTitle className="text-xl">Mapping details</CardTitle>
-                <CardDescription>Maintain the translation layer between internal chart-of-accounts values and the accounting system codes that exports require.</CardDescription>
+                <CardDescription>
+                  Maintain the translation layer between internal chart-of-accounts values and the
+                  accounting system codes that exports require.
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 {showForm ? (
                   <form onSubmit={handleCreate} className="space-y-5">
                     <div className="grid gap-4">
                       <div>
-                        <label className="mb-2 block text-sm font-medium text-foreground">GL account code</label>
-                        <Input required value={form.glAccount} onChange={(event) => setField('glAccount', event.target.value)} placeholder="6000" />
+                        <label className="mb-2 block text-sm font-medium text-foreground">
+                          GL account code
+                        </label>
+                        <Input
+                          required
+                          value={form.glAccount}
+                          onChange={(event) => setField('glAccount', event.target.value)}
+                          placeholder="6000"
+                        />
                       </div>
                       <div>
-                        <label className="mb-2 block text-sm font-medium text-foreground">GL account name</label>
-                        <Input value={form.glAccountName} onChange={(event) => setField('glAccountName', event.target.value)} placeholder="Office Supplies" />
+                        <label className="mb-2 block text-sm font-medium text-foreground">
+                          GL account name
+                        </label>
+                        <Input
+                          value={form.glAccountName}
+                          onChange={(event) => setField('glAccountName', event.target.value)}
+                          placeholder="Office Supplies"
+                        />
                       </div>
                       <div>
-                        <label className="mb-2 block text-sm font-medium text-foreground">Target system</label>
-                        <Select value={form.targetSystem} onChange={(event) => setField('targetSystem', event.target.value)} className="w-full">
-                          <option value="qbo">QuickBooks Online</option>
+                        <label className="mb-2 block text-sm font-medium text-foreground">
+                          Target system
+                        </label>
+                        <Select
+                          value={form.targetSystem}
+                          onChange={(event) => setField('targetSystem', event.target.value)}
+                          className="w-full"
+                          disabled
+                        >
                           <option value="xero">Xero</option>
                         </Select>
                       </div>
                       <div>
-                        <label className="mb-2 block text-sm font-medium text-foreground">External account code</label>
-                        <Input required value={form.externalAccountCode} onChange={(event) => setField('externalAccountCode', event.target.value)} placeholder="200 or OFFSUPP" />
+                        <label className="mb-2 block text-sm font-medium text-foreground">
+                          External account code
+                        </label>
+                        <Input
+                          required
+                          value={form.externalAccountCode}
+                          onChange={(event) => setField('externalAccountCode', event.target.value)}
+                          placeholder="200 or OFFSUPP"
+                        />
                       </div>
                       <div>
-                        <label className="mb-2 block text-sm font-medium text-foreground">External account name</label>
-                        <Input value={form.externalAccountName} onChange={(event) => setField('externalAccountName', event.target.value)} placeholder="Name from the destination accounting system" />
+                        <label className="mb-2 block text-sm font-medium text-foreground">
+                          External account name
+                        </label>
+                        <Input
+                          value={form.externalAccountName}
+                          onChange={(event) => setField('externalAccountName', event.target.value)}
+                          placeholder="Name from the destination accounting system"
+                        />
                       </div>
                     </div>
                     {formError ? (
@@ -198,8 +271,13 @@ function GlMappingsContent() {
                 ) : (
                   <div className="rounded-lg border border-dashed border-border/70 bg-muted/20 px-6 py-10 text-center">
                     <Cable className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
-                    <div className="text-sm font-medium text-foreground">Chart-of-accounts bridge ready</div>
-                    <p className="mt-2 text-sm text-muted-foreground">Create a mapping whenever a spend category needs to land in a new destination account.</p>
+                    <div className="text-sm font-medium text-foreground">
+                      Chart-of-accounts bridge ready
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Create a mapping whenever a spend category needs to land in a new destination
+                      account.
+                    </p>
                     <div className="mt-5">
                       <Button type="button" onClick={() => setShowForm(true)}>
                         <Plus className="h-4 w-4" />
@@ -215,16 +293,11 @@ function GlMappingsContent() {
               <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
                 <div>
                   <CardTitle className="text-xl">Account mappings</CardTitle>
-                  <CardDescription>Filter by destination system and keep only active mappings that finance actually exports against.</CardDescription>
+                  <CardDescription>
+                    Keep only active mappings that finance actually exports against.
+                  </CardDescription>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Filter className="h-4 w-4 text-muted-foreground" />
-                  <Select value={filterSystem} onChange={(event) => setFilterSystem(event.target.value as TargetSystem | '')} className="min-w-[11rem]">
-                    <option value="">All systems</option>
-                    <option value="qbo">QuickBooks Online</option>
-                    <option value="xero">Xero</option>
-                  </Select>
-                </div>
+                <Badge variant="outline">Xero</Badge>
               </CardHeader>
               <CardContent className="pt-0">
                 {loading ? (
@@ -252,11 +325,18 @@ function GlMappingsContent() {
                       {mappings.map((mapping) => (
                         <TableRow key={mapping.id}>
                           <TableCell>
-                            <code className="rounded-md bg-muted px-2 py-1 text-xs font-semibold text-foreground">{mapping.glAccount}</code>
+                            <code className="rounded-md bg-muted px-2 py-1 text-xs font-semibold text-foreground">
+                              {mapping.glAccount}
+                            </code>
                           </TableCell>
-                          <TableCell className="text-muted-foreground">{mapping.glAccountName ?? '—'}</TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {mapping.glAccountName ?? '—'}
+                          </TableCell>
                           <TableCell>
-                            <Badge variant="outline" className="border-border/80 bg-muted/40 text-muted-foreground">
+                            <Badge
+                              variant="outline"
+                              className="border-border/80 bg-muted/40 text-muted-foreground"
+                            >
                               {SYSTEM_LABELS[mapping.targetSystem] ?? mapping.targetSystem}
                             </Badge>
                           </TableCell>
@@ -266,12 +346,19 @@ function GlMappingsContent() {
                               {mapping.externalAccountCode}
                             </div>
                           </TableCell>
-                          <TableCell className="text-muted-foreground">{mapping.externalAccountName ?? '—'}</TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {mapping.externalAccountName ?? '—'}
+                          </TableCell>
                           <TableCell>
                             <StatusBadge value={mapping.isActive ? 'active' : 'inactive'} />
                           </TableCell>
                           <TableCell className="text-right">
-                            <Button type="button" variant="outline" size="sm" onClick={() => handleDelete(mapping.id)}>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDelete(mapping.id)}
+                            >
                               <Trash2 className="h-3.5 w-3.5" />
                               Delete
                             </Button>
@@ -285,14 +372,20 @@ function GlMappingsContent() {
             </Card>
           </div>
         </>
-      ) : <GlExportHistory selectedJobId={searchParams.get('job')} />}
+      ) : (
+        <GlExportHistory selectedJobId={searchParams.get('job')} />
+      )}
     </div>
   );
 }
 
 export default function GlMappingsPage() {
   return (
-    <Suspense fallback={<div className="p-4 text-sm text-muted-foreground lg:p-8">Loading GL Integration...</div>}>
+    <Suspense
+      fallback={
+        <div className="p-4 text-sm text-muted-foreground lg:p-8">Loading GL Integration...</div>
+      }
+    >
       <GlMappingsContent />
     </Suspense>
   );
