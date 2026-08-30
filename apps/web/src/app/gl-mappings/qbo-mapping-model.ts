@@ -14,7 +14,7 @@ export interface LocalMappingRow extends LocalMappingRecord {
   suggestion: QboExternalEntityMapping | null;
 }
 
-function normalized(value: string | null | undefined): string {
+export function normalizeMappingText(value: string | null | undefined): string {
   return (value ?? '')
     .normalize('NFKD')
     .toLowerCase()
@@ -22,28 +22,15 @@ function normalized(value: string | null | undefined): string {
     .trim();
 }
 
-function matchScore(local: LocalMappingRecord, external: QboExternalEntityMapping): number {
-  const localName = normalized(local.name);
-  const localCode = normalized(local.code);
-  const externalName = normalized(external.displayName);
-  const externalCode = normalized(mappingCode(external));
+function matchRank(local: LocalMappingRecord, external: QboExternalEntityMapping): number {
+  const localName = normalizeMappingText(local.name);
+  const localCode = normalizeMappingText(local.code);
+  const externalName = normalizeMappingText(external.displayName);
+  const externalCode = normalizeMappingText(mappingCode(external));
 
-  if (localCode && localCode === externalCode) return 100;
-  if (localName && localName === externalName) return 95;
-  if (
-    localName &&
-    externalName &&
-    (externalName.includes(localName) || localName.includes(externalName))
-  ) {
-    return 75;
-  }
-
-  const localTokens = new Set(localName.split(' ').filter((token) => token.length >= 4));
-  const externalTokens = externalName.split(' ').filter((token) => token.length >= 4);
-  return Math.min(
-    90,
-    externalTokens.reduce((score, token) => score + (localTokens.has(token) ? 30 : 0), 0),
-  );
+  if (localCode && localCode === externalCode) return 2;
+  if (localName && localName === externalName) return 1;
+  return 0;
 }
 
 export function mappingCode(mapping: QboExternalEntityMapping): string | null {
@@ -69,14 +56,16 @@ export function mappingRows(
   const suggestionPairs = localRecords
     .filter((local) => !activeCatalog.some((mapping) => mapping.localId === local.id))
     .flatMap((local) =>
-      available.map((mapping) => ({ local, mapping, score: matchScore(local, mapping) })),
+      available.map((mapping) => ({ local, mapping, rank: matchRank(local, mapping) })),
     )
-    .filter((pair) => pair.score >= 30)
+    .filter((pair) => pair.rank > 0)
     .sort(
       (left, right) =>
-        right.score - left.score ||
+        right.rank - left.rank ||
         left.local.name.localeCompare(right.local.name) ||
-        left.mapping.externalEntity.localeCompare(right.mapping.externalEntity),
+        left.local.id.localeCompare(right.local.id) ||
+        left.mapping.externalEntity.localeCompare(right.mapping.externalEntity) ||
+        left.mapping.id.localeCompare(right.mapping.id),
     );
 
   for (const pair of suggestionPairs) {
@@ -99,8 +88,7 @@ export function mappingRows(
 }
 
 export function catalogSearchText(mapping: QboExternalEntityMapping): string {
-  return [mapping.displayName, mappingCode(mapping), mapping.externalId]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
+  return normalizeMappingText(
+    [mapping.displayName, mappingCode(mapping), mapping.externalId].filter(Boolean).join(' '),
+  );
 }

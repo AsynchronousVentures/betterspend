@@ -24,6 +24,7 @@ import {
   catalogSearchText,
   mappingCode,
   mappingRows,
+  normalizeMappingText,
   type LocalMappingRecord,
   type LocalMappingRow,
   type MappingSection,
@@ -47,8 +48,8 @@ const SECTION_META: Record<
   departments: {
     label: 'Departments',
     localLabel: 'Departments',
-    externalLabel: 'QBO classes and locations',
-    externalEntities: ['Class', 'Department'],
+    externalLabel: 'QBO classes',
+    externalEntities: ['Class'],
   },
   projects: {
     label: 'Projects',
@@ -121,6 +122,7 @@ export function QboMappingWorkbench() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const loadRequestId = useRef(0);
+  const mutationInFlight = useRef(false);
 
   const load = useCallback(async () => {
     const requestId = ++loadRequestId.current;
@@ -193,7 +195,7 @@ export function QboMappingWorkbench() {
       mapping.isActive &&
       !mapping.isDeleted &&
       (!mapping.localId || mapping.localId === selected?.id) &&
-      (!catalogQuery || catalogSearchText(mapping).includes(catalogQuery.toLowerCase())),
+      (!catalogQuery || catalogSearchText(mapping).includes(normalizeMappingText(catalogQuery))),
   );
   const unresolved = rows.filter((row) => !row.mapping);
   const linked = rows.filter((row) => row.mapping);
@@ -217,39 +219,54 @@ export function QboMappingWorkbench() {
     );
   }
 
-  async function link(mapping: QboExternalEntityMapping, local: LocalMappingRow) {
-    if (!canManage || busyId || local.mapping) return;
-    setBusyId(local.id);
+  async function saveMapping({
+    mappingId,
+    localId,
+    rowId,
+    successNotice,
+  }: {
+    mappingId: string;
+    localId: string | null;
+    rowId: string;
+    successNotice: string;
+  }) {
+    if (!canManage || mutationInFlight.current) return;
+    mutationInFlight.current = true;
+    setBusyId(rowId);
     setNotice('');
     try {
-      const updated = await api.qboMappings.link(mapping.id, { localId: local.id });
+      const updated = await api.qboMappings.link(mappingId, { localId });
       loadRequestId.current += 1;
       setLoading(false);
       updateMapping(updated);
-      setNotice(`${local.name} linked to ${externalName(mapping)}.`);
+      setNotice(successNotice);
     } catch (nextError) {
       setNotice(nextError instanceof Error ? nextError.message : 'Unable to save this mapping.');
       await load();
     } finally {
+      mutationInFlight.current = false;
       setBusyId(null);
     }
   }
 
+  async function link(mapping: QboExternalEntityMapping, local: LocalMappingRow) {
+    if (local.mapping) return;
+    await saveMapping({
+      mappingId: mapping.id,
+      localId: local.id,
+      rowId: local.id,
+      successNotice: `${local.name} linked to ${externalName(mapping)}.`,
+    });
+  }
+
   async function unlink(row: LocalMappingRow) {
-    if (!canManage || !row.mapping || busyId) return;
-    setBusyId(row.id);
-    setNotice('');
-    try {
-      const updated = await api.qboMappings.link(row.mapping.id, { localId: null });
-      loadRequestId.current += 1;
-      setLoading(false);
-      updateMapping(updated);
-      setNotice(`${row.name} is no longer linked.`);
-    } catch (nextError) {
-      setNotice(nextError instanceof Error ? nextError.message : 'Unable to unlink this mapping.');
-    } finally {
-      setBusyId(null);
-    }
+    if (!row.mapping) return;
+    await saveMapping({
+      mappingId: row.mapping.id,
+      localId: null,
+      rowId: row.id,
+      successNotice: `${row.name} is no longer linked.`,
+    });
   }
 
   async function syncQbo() {
@@ -257,7 +274,7 @@ export function QboMappingWorkbench() {
     setSyncing(true);
     setNotice('');
     try {
-      await api.qboMappings.sync(['Account', 'Vendor', 'Class', 'Department', 'Customer']);
+      await api.qboMappings.sync(['Account', 'Vendor', 'Class', 'Customer']);
       setNotice('QuickBooks sync queued. Refresh in a moment to see imported changes.');
     } catch (nextError) {
       setNotice(
@@ -366,6 +383,7 @@ export function QboMappingWorkbench() {
                 <button
                   key={key}
                   type="button"
+                  aria-current={section === key ? 'page' : undefined}
                   onClick={() => {
                     setSection(key);
                     setSelectedLocalId(null);
@@ -617,6 +635,8 @@ function CatalogPicker({
   onQuery: (value: string) => void;
   onLink: (mapping: QboExternalEntityMapping) => void;
 }) {
+  const [visibleCount, setVisibleCount] = useState(30);
+
   if (row.mapping) {
     return (
       <div>
@@ -645,8 +665,12 @@ function CatalogPicker({
       <label className="relative mt-5 block">
         <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-zinc-600" />
         <Input
+          aria-label="Search synced QBO records"
           value={query}
-          onChange={(event) => onQuery(event.target.value)}
+          onChange={(event) => {
+            setVisibleCount(30);
+            onQuery(event.target.value);
+          }}
           placeholder="Search synced QBO records"
           className="border-white/15 bg-black pl-9 text-white"
         />
@@ -655,7 +679,7 @@ function CatalogPicker({
         {mappings.length === 0 ? (
           <p className="py-5 text-xs text-zinc-600">No available QuickBooks records.</p>
         ) : (
-          mappings.slice(0, 30).map((mapping) => (
+          mappings.slice(0, visibleCount).map((mapping) => (
             <button
               key={mapping.id}
               type="button"
@@ -678,6 +702,17 @@ function CatalogPicker({
           ))
         )}
       </div>
+      {mappings.length > visibleCount ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="mt-3 w-full"
+          onClick={() => setVisibleCount((current) => current + 30)}
+        >
+          Show 30 more ({mappings.length - visibleCount} remaining)
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -686,7 +721,8 @@ function AccountCatalog({ mappings }: { mappings: QboExternalEntityMapping[] }) 
   const [query, setQuery] = useState('');
   const visible = mappings.filter(
     (mapping) =>
-      !mapping.isDeleted && (!query || catalogSearchText(mapping).includes(query.toLowerCase())),
+      !mapping.isDeleted &&
+      (!query || catalogSearchText(mapping).includes(normalizeMappingText(query))),
   );
   return (
     <div>
@@ -694,6 +730,7 @@ function AccountCatalog({ mappings }: { mappings: QboExternalEntityMapping[] }) 
         <label className="relative block max-w-sm">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-zinc-600" />
           <Input
+            aria-label="Search the synced chart of accounts"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search the synced chart of accounts"

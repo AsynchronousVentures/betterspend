@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { QboExternalEntityMapping } from '@betterspend/shared';
-import { mappingRows } from './qbo-mapping-model';
+import {
+  catalogSearchText,
+  mappingRows,
+  normalizeMappingText,
+} from './qbo-mapping-model';
 
 const BASE_MAPPING: QboExternalEntityMapping = {
   id: '00000000-0000-4000-8000-000000000001',
   organizationId: '00000000-0000-4000-8000-000000000002',
   connectionId: '00000000-0000-4000-8000-000000000003',
+  realmId: '1234567890',
   provider: 'qbo',
   externalEntity: 'Class',
   externalId: '42',
@@ -68,7 +73,7 @@ test('does not suggest inactive or already-linked QBO records', () => {
   assert.equal(rows[0].suggestion, null);
 });
 
-test('does not guess at weak matches or reuse a suggestion', () => {
+test('does not promote partial-name matches to one-action suggestions', () => {
   const rows = mappingRows(
     [
       { id: 'local-ops-one', name: 'Operations North', code: null, active: true },
@@ -78,9 +83,20 @@ test('does not guess at weak matches or reuse a suggestion', () => {
     [BASE_MAPPING],
   );
 
-  const suggestions = rows.flatMap((row) => (row.suggestion ? [row.suggestion.id] : []));
-  assert.deepEqual(suggestions, [BASE_MAPPING.id]);
-  assert.equal(rows.find((row) => row.id === 'local-legal')?.suggestion, null);
+  assert.equal(rows.every((row) => row.suggestion === null), true);
+});
+
+test('does not reuse an exact-match suggestion', () => {
+  const rows = mappingRows(
+    [
+      { id: 'local-ops-one', name: 'Operations', code: null, active: true },
+      { id: 'local-ops-two', name: 'Operations', code: null, active: true },
+    ],
+    [BASE_MAPPING],
+  );
+
+  assert.equal(rows.filter((row) => row.suggestion?.id === BASE_MAPPING.id).length, 1);
+  assert.equal(rows.find((row) => row.id === 'local-ops-one')?.suggestion?.id, BASE_MAPPING.id);
 });
 
 test('does not treat a missing QBO display name as a match', () => {
@@ -114,4 +130,15 @@ test('keeps an exact code match ahead of a long token overlap', () => {
 
   assert.equal(rows.find((row) => row.id === 'local-exact-code')?.suggestion?.id, exactCode.id);
   assert.equal(rows.find((row) => row.id === 'local-token-overlap')?.suggestion, null);
+});
+
+test('normalizes punctuation and whitespace when searching the QBO catalog', () => {
+  const searchText = catalogSearchText({
+    ...BASE_MAPPING,
+    displayName: 'Operations: North',
+    payload: { AcctNum: 'OPS-100' },
+  });
+
+  assert.equal(searchText.includes(normalizeMappingText('OPS 100')), true);
+  assert.equal(searchText.includes(normalizeMappingText('operations north')), true);
 });
