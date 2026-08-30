@@ -5,6 +5,7 @@ import {
   BUILT_IN_ROLE_PERMISSIONS,
   BUILT_IN_ROLES,
   normalizePermissions,
+  hasPaymentReleasePermissionConflict,
   type AccessResource,
   type AccessScopeDescriptor,
   type BuiltInRole,
@@ -87,8 +88,10 @@ export const PERMISSION_RESOURCES = {
   'invoices:manage': 'invoice',
   'payments:view': 'payment',
   'payments:manage': 'payment',
+  'payments:release': 'payment',
   'vendors:create': 'vendor',
   'vendors:edit': 'vendor',
+  'vendors:edit_payment_details': 'vendor',
   'vendors:view': 'vendor',
   'rfqs:view': 'rfq',
   'rfqs:manage': 'rfq',
@@ -124,6 +127,7 @@ export function createAccessPolicy(
   assignments: readonly AccessAssignment[],
 ): AccessPolicy {
   const scopesByPermission = new Map<PermissionKey, AccessScopeDescriptor[]>();
+  const effectivePermissions = new Set<PermissionKey>();
   let globalBuiltInAdmin = false;
 
   for (const assignment of assignments) {
@@ -145,6 +149,8 @@ export function createAccessPolicy(
       // Invalid or cross-organization rows fail closed rather than widening access.
       continue;
     }
+
+    for (const permission of permissions) effectivePermissions.add(permission);
 
     const descriptor: AccessScopeDescriptor = {
       scopeType: assignment.scopeType,
@@ -172,6 +178,13 @@ export function createAccessPolicy(
     ) {
       globalBuiltInAdmin = true;
     }
+  }
+
+  // Bad legacy/custom-role data must never grant both sides of the payment
+  // release toxic pair, even before role-management validation can repair it.
+  if (hasPaymentReleasePermissionConflict(effectivePermissions)) {
+    scopesByPermission.delete('payments:release');
+    scopesByPermission.delete('vendors:edit_payment_details');
   }
 
   const permissions = Array.from(scopesByPermission.keys()).sort();

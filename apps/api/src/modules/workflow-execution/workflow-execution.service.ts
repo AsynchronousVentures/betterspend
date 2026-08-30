@@ -622,7 +622,8 @@ export class WorkflowExecutionService implements OnModuleInit {
     tx: DbTransaction,
     options: {
       allowApproved?: boolean;
-      reason?: 'material_edit_requires_rematch' | 'invoice_match_invalidated';
+      reason?:
+        'material_edit_requires_rematch' | 'invoice_match_invalidated' | 'payment_details_changed';
     } = {},
   ): Promise<void> {
     const request = await this.lockVersionedRequest(tx, requestId, organizationId);
@@ -653,7 +654,9 @@ export class WorkflowExecutionService implements OnModuleInit {
       comment:
         reason === 'invoice_match_invalidated'
           ? 'Cancelled because the invoice no longer fully matches'
-          : 'Cancelled because a material edit requires a new successful match',
+          : reason === 'payment_details_changed'
+            ? 'Cancelled because vendor payment details changed after invoice approval'
+            : 'Cancelled because a material edit requires a new successful match',
       metadata: { reason },
     });
     await this.audit.log(

@@ -140,7 +140,7 @@ export class InvoicesController {
   }
 
   @Patch(':id/mark-paid')
-  @ApiOperation({ summary: 'Mark an approved invoice as paid' })
+  @ApiOperation({ summary: 'Mark a released invoice as paid' })
   markPaid(
     @Param('id') id: string,
     @CurrentOrgId() orgId: string,

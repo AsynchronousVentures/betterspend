@@ -5,7 +5,7 @@ import {
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
-import { eq, and, sql } from 'drizzle-orm';
+import { asc, eq, and, inArray, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
@@ -21,15 +21,37 @@ import {
 } from '@betterspend/db';
 import {
   builtInRoleSchema,
+  BUILT_IN_ROLE_PERMISSIONS,
+  hasPaymentReleasePermissionConflict,
   normalizePermissions,
   PERMISSION_CATALOG,
   userRoleAssignmentSchema,
+  type PermissionKey,
   type ScopeType,
 } from '@betterspend/shared';
 import { hashCredentialPassword } from '../../auth/credential-password';
 import { AuditService } from '../audit/audit.service';
 
 const EMAIL_UNIQUE_CONSTRAINTS = new Set(['users_email_unique', 'users_email_normalized_unique']);
+const PAYMENT_RELEASE_CONFLICT_MESSAGE =
+  'A user cannot hold both payment release and vendor payment-detail permissions';
+
+function permissionsForRole(role: string, customPermissions: unknown): readonly PermissionKey[] {
+  const builtIn = builtInRoleSchema.safeParse(role);
+  if (builtIn.success) return BUILT_IN_ROLE_PERMISSIONS[builtIn.data];
+  if (role === 'custom') return normalizePermissions(customPermissions);
+  return [];
+}
+
+export function sortUniqueIdsForLocking(ids: readonly string[]): string[] {
+  return [...new Set(ids)].sort();
+}
+
+function assertPaymentReleaseSeparation(permissions: Iterable<PermissionKey>): void {
+  if (hasPaymentReleasePermissionConflict(permissions)) {
+    throw new BadRequestException(PAYMENT_RELEASE_CONFLICT_MESSAGE);
+  }
+}
 
 function isEmailUniqueViolation(error: unknown): boolean {
   const seen = new Set<object>();
@@ -155,15 +177,10 @@ export class UsersService {
 
     try {
       return await this.db.transaction(async (transaction) => {
-        const [user] = await transaction
-          .select({ id: users.id })
-          .from(users)
-          .where(and(eq(users.id, userId), eq(users.organizationId, organizationId)))
-          .for('update');
-        if (!user) throw new NotFoundException(`User ${userId} not found`);
+        let candidatePermissions: readonly PermissionKey[];
         if (assignment.customRoleId) {
           const [customRole] = await transaction
-            .select({ id: customRoles.id })
+            .select({ id: customRoles.id, permissions: customRoles.permissions })
             .from(customRoles)
             .where(
               and(
@@ -174,7 +191,22 @@ export class UsersService {
             .for('update');
           if (!customRole)
             throw new NotFoundException(`Custom role ${assignment.customRoleId} not found`);
+          candidatePermissions = permissionsForRole('custom', customRole.permissions);
+        } else {
+          candidatePermissions = permissionsForRole(assignment.role!, undefined);
         }
+        const [user] = await transaction
+          .select({ id: users.id })
+          .from(users)
+          .where(and(eq(users.id, userId), eq(users.organizationId, organizationId)))
+          .for('update');
+        if (!user) throw new NotFoundException(`User ${userId} not found`);
+        await this.assertUserPaymentReleaseSeparation(
+          transaction,
+          organizationId,
+          userId,
+          candidatePermissions,
+        );
         await this.assertScopeTarget(
           organizationId,
           assignment.scopeType,
@@ -338,6 +370,8 @@ export class UsersService {
   ) {
     const name = data.name?.trim();
     if (!name) throw new BadRequestException('Role name is required');
+    const permissions = normalizePermissions(data.permissions);
+    assertPaymentReleaseSeparation(permissions);
     await this.assertUniqueCustomRoleName(organizationId, name);
 
     return this.db.transaction(async (transaction) => {
@@ -347,7 +381,7 @@ export class UsersService {
           organizationId,
           name,
           description: data.description?.trim() || null,
-          permissions: normalizePermissions(data.permissions),
+          permissions,
         })
         .returning();
       if (!role) throw new BadRequestException('Custom role could not be created');
@@ -381,6 +415,7 @@ export class UsersService {
       data.permissions === undefined
         ? normalizePermissions(existing.permissions)
         : normalizePermissions(data.permissions);
+    assertPaymentReleaseSeparation(nextPermissions);
     const permissionsChanged =
       JSON.stringify([...normalizePermissions(existing.permissions)].sort()) !==
       JSON.stringify([...nextPermissions].sort());
@@ -388,6 +423,18 @@ export class UsersService {
       data.description === undefined ? existing.description : data.description?.trim() || null;
 
     return this.db.transaction(async (transaction) => {
+      const [lockedRole] = await transaction
+        .select({ id: customRoles.id })
+        .from(customRoles)
+        .where(and(eq(customRoles.id, id), eq(customRoles.organizationId, organizationId)))
+        .for('update');
+      if (!lockedRole) throw new NotFoundException(`Custom role ${id} not found`);
+      await this.assertAssignedUsersPaymentReleaseSeparation(
+        transaction,
+        organizationId,
+        id,
+        nextPermissions,
+      );
       const [role] = await transaction
         .update(customRoles)
         .set({
@@ -473,6 +520,116 @@ export class UsersService {
     return role;
   }
 
+  private async assertUserPaymentReleaseSeparation(
+    transaction: DbTransaction,
+    organizationId: string,
+    userId: string,
+    candidatePermissions: readonly PermissionKey[],
+  ) {
+    const assignments = await transaction
+      .select({
+        role: userRoles.role,
+        customRoleId: userRoles.customRoleId,
+      })
+      .from(userRoles)
+      .where(and(eq(userRoles.userId, userId), eq(userRoles.organizationId, organizationId)))
+      .for('update');
+    const customRoleIds = assignments.flatMap((assignment) =>
+      assignment.customRoleId ? [assignment.customRoleId] : [],
+    );
+    const customRolePermissions = new Map<string, unknown>();
+    if (customRoleIds.length > 0) {
+      const customRolesForUser = await transaction
+        .select({ id: customRoles.id, permissions: customRoles.permissions })
+        .from(customRoles)
+        .where(
+          and(
+            eq(customRoles.organizationId, organizationId),
+            inArray(customRoles.id, customRoleIds),
+          ),
+        );
+      customRolesForUser.forEach((role) => customRolePermissions.set(role.id, role.permissions));
+    }
+
+    const existingPermissions = assignments.flatMap((assignment) =>
+      permissionsForRole(
+        assignment.role,
+        assignment.customRoleId ? customRolePermissions.get(assignment.customRoleId) : undefined,
+      ),
+    );
+    assertPaymentReleaseSeparation([...existingPermissions, ...candidatePermissions]);
+  }
+
+  private async assertAssignedUsersPaymentReleaseSeparation(
+    transaction: DbTransaction,
+    organizationId: string,
+    customRoleId: string,
+    nextPermissions: readonly PermissionKey[],
+  ) {
+    const assignedRows = await transaction
+      .select({ userId: userRoles.userId })
+      .from(userRoles)
+      .where(
+        and(eq(userRoles.organizationId, organizationId), eq(userRoles.customRoleId, customRoleId)),
+      );
+    const userIds = sortUniqueIdsForLocking(assignedRows.map((assignment) => assignment.userId));
+    if (userIds.length === 0) return;
+
+    await transaction
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.organizationId, organizationId), inArray(users.id, userIds)))
+      .orderBy(asc(users.id))
+      .for('update');
+
+    const assignments = await transaction
+      .select({
+        userId: userRoles.userId,
+        role: userRoles.role,
+        customRoleId: userRoles.customRoleId,
+      })
+      .from(userRoles)
+      .where(and(eq(userRoles.organizationId, organizationId), inArray(userRoles.userId, userIds)))
+      .orderBy(asc(userRoles.userId), asc(userRoles.id))
+      .for('update');
+    const customRoleIds = [
+      ...new Set(
+        assignments.flatMap((assignment) =>
+          assignment.customRoleId ? [assignment.customRoleId] : [],
+        ),
+      ),
+    ];
+    const customRolePermissions = new Map<string, unknown>();
+    if (customRoleIds.length > 0) {
+      const customRolesForUsers = await transaction
+        .select({ id: customRoles.id, permissions: customRoles.permissions })
+        .from(customRoles)
+        .where(
+          and(
+            eq(customRoles.organizationId, organizationId),
+            inArray(customRoles.id, customRoleIds),
+          ),
+        );
+      customRolesForUsers.forEach((role) => customRolePermissions.set(role.id, role.permissions));
+    }
+
+    for (const userId of userIds) {
+      const permissions = assignments
+        .filter((assignment) => assignment.userId === userId)
+        .flatMap((assignment) =>
+          assignment.customRoleId === customRoleId
+            ? nextPermissions
+            : permissionsForRole(
+                assignment.role,
+                assignment.customRoleId
+                  ? customRolePermissions.get(assignment.customRoleId)
+                  : undefined,
+              ),
+        );
+      assertPaymentReleaseSeparation(permissions);
+    }
+  }
+
   private parseRoleAssignment(data: {
     role?: string;
     customRoleId?: string;
@@ -519,9 +676,7 @@ export class UsersService {
       const [entity] = await database
         .select({ id: legalEntities.id })
         .from(legalEntities)
-        .where(
-          and(eq(legalEntities.id, scopeId), eq(legalEntities.organizationId, organizationId)),
-        )
+        .where(and(eq(legalEntities.id, scopeId), eq(legalEntities.organizationId, organizationId)))
         .for('share');
       exists = Boolean(entity);
     }

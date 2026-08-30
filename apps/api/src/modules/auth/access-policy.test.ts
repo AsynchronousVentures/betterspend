@@ -126,3 +126,27 @@ test('operational permission scopes are resolved from the shared catalog and fai
   assert.deepEqual(policy.scopeFor('catalog', 'catalog:view').entityIds, [entityId]);
   assert.equal(policy.can('inventory:view'), false);
 });
+
+test('fails closed when legacy assignments contain the payment release toxic pair', () => {
+  const policy = createAccessPolicy(identity, [
+    {
+      role: 'custom',
+      customRoleId: 'release-role',
+      customRoleOrganizationId: identity.organizationId,
+      customPermissions: ['payments:release'],
+      scopeType: 'global',
+      scopeId: null,
+    },
+    {
+      role: 'custom',
+      customRoleId: 'vendor-details-role',
+      customRoleOrganizationId: identity.organizationId,
+      customPermissions: ['vendors:edit_payment_details'],
+      scopeType: 'global',
+      scopeId: null,
+    },
+  ]);
+
+  assert.equal(policy.can('payments:release'), false);
+  assert.equal(policy.can('vendors:edit_payment_details'), false);
+});

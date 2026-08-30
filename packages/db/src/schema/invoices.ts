@@ -60,6 +60,8 @@ export const invoices = pgTable(
     createdBy: uuid('created_by'),
     approvedBy: uuid('approved_by').references(() => users.id),
     approvedAt: timestamp('approved_at', { withTimezone: true }),
+    releasedBy: uuid('released_by').references(() => users.id),
+    releasedAt: timestamp('released_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

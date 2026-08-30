@@ -19,6 +19,7 @@ import {
   requisitions,
   vendors,
   approvalRequests,
+  vendorPaymentAccounts,
 } from '@betterspend/db';
 import { SequenceService } from '../../common/services/sequence.service';
 import { MatchingService } from './matching.service';
@@ -50,6 +51,12 @@ import {
   requireAnyPermission,
   requirePermission,
 } from '../auth/access-scope';
+import {
+  paymentReleaseBlockReason,
+  type PaymentReleaseAccountSnapshot,
+  type PaymentReleaseInvoiceSnapshot,
+} from '../payment-runs/payment-release-policy';
+import { lockPaymentReleaseVendor } from '../payment-runs/payment-release-lock';
 
 type InvoiceLookupPermission =
   'invoices:view_all' | 'invoices:manage' | 'invoices:approve' | 'payments:manage';
@@ -762,7 +769,7 @@ export class InvoicesService {
             baseTotalAmount: lockedInvoice.baseTotalAmount,
           };
 
-      if (material && lockedInvoice.status === 'approved') {
+      if (material && ['approved', 'ready_for_release'].includes(lockedInvoice.status)) {
         await this.budgets.reopenInvoice(tx, organizationId, id, editedAt);
       }
       await tx
@@ -788,6 +795,8 @@ export class InvoicesService {
                 status: lockedInvoice.matchStatus === 'full_match' ? 'matched' : 'pending_match',
                 approvedBy: null,
                 approvedAt: null,
+                releasedBy: null,
+                releasedAt: null,
               }
             : {}),
           updatedAt: editedAt,
@@ -1178,9 +1187,49 @@ export class InvoicesService {
 
       const match = await this.matchingService.runMatch(id, tx);
       let publishRequestId: string | null = null;
-      if (
+      const requiresReapproval = ['approved', 'ready_for_release'].includes(lockedInvoice.status);
+      if (match.matchStatus === 'full_match' && requiresReapproval) {
+        const rematchedAt = new Date();
+        await this.budgets.reopenInvoice(tx, organizationId, id, rematchedAt);
+        await tx
+          .update(invoices)
+          .set({
+            status: 'pending_approval',
+            approvedBy: null,
+            approvedAt: null,
+            releasedBy: null,
+            releasedAt: null,
+            updatedAt: rematchedAt,
+          })
+          .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+        if (currentRequest) {
+          await this.workflowExecution.cancelForEditInTransaction(
+            currentRequest.id,
+            organizationId,
+            actorId,
+            tx,
+            { allowApproved: true, reason: 'invoice_match_invalidated' },
+          );
+        }
+        const initiated = await this.workflowExecution.initiateIfConfigured(
+          organizationId,
+          'invoice',
+          id,
+          actorId,
+          undefined,
+          undefined,
+          tx,
+        );
+        if (initiated) {
+          publishRequestId = initiated.requestId;
+        } else {
+          await tx
+            .update(invoices)
+            .set({ status: 'matched', updatedAt: new Date() })
+            .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+        }
+      } else if (
         match.matchStatus === 'full_match' &&
-        lockedInvoice.status !== 'approved' &&
         lockedInvoice.status !== 'pending_approval'
       ) {
         await tx
@@ -1206,7 +1255,7 @@ export class InvoicesService {
         }
       } else if (match.matchStatus !== 'full_match') {
         const rematchStatus = match.matchStatus === 'exception' ? 'exception' : 'partial_match';
-        if (lockedInvoice.status === 'approved') {
+        if (['approved', 'ready_for_release'].includes(lockedInvoice.status)) {
           await this.budgets.reopenInvoice(tx, organizationId, id, new Date());
         }
         await tx
@@ -1215,6 +1264,8 @@ export class InvoicesService {
             status: rematchStatus,
             approvedBy: null,
             approvedAt: null,
+            releasedBy: null,
+            releasedAt: null,
             updatedAt: new Date(),
           })
           .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
@@ -1287,18 +1338,83 @@ export class InvoicesService {
     } else {
       invoice = await this.findOne(id, organizationId, access, ['payments:manage'], 'payment');
     }
-    if ((invoice as any).status !== 'approved') {
-      throw new BadRequestException('Only approved invoices can be marked as paid');
+    if ((invoice as any).status !== 'ready_for_release') {
+      throw new BadRequestException('Only released invoices can be marked as paid');
     }
-    const [transitioned] = await this.db
-      .update(invoices)
-      .set({
-        status: 'paid',
-        paidAt,
-        paymentReference,
-        updatedAt: new Date(),
-      } as any)
-      .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+    const vendorId = (invoice as { vendorId?: unknown }).vendorId;
+    if (typeof vendorId !== 'string') {
+      throw new BadRequestException('Invoice has no vendor payment details');
+    }
+    const transitioned = await this.db.transaction(async (tx) => {
+      await lockPaymentReleaseVendor(tx, organizationId, vendorId);
+      const [lockedInvoice] = await tx
+        .select({
+          id: invoices.id,
+          status: invoices.status,
+          approvedAt: invoices.approvedAt,
+          vendorId: invoices.vendorId,
+          vendorName: vendors.name,
+          vendorStatus: vendors.status,
+          onboardingStatus: vendors.onboardingStatus,
+          sanctionsStatus: vendors.sanctionsStatus,
+          paidAt: invoices.paidAt,
+        })
+        .from(invoices)
+        .innerJoin(vendors, eq(invoices.vendorId, vendors.id))
+        .where(
+          and(
+            eq(invoices.id, id),
+            eq(invoices.organizationId, organizationId),
+            eq(vendors.organizationId, organizationId),
+          ),
+        )
+        .for('update');
+      if (!lockedInvoice) throw new NotFoundException(`Invoice ${id} not found`);
+
+      const accounts: PaymentReleaseAccountSnapshot[] = await tx
+        .select({
+          verificationStatus: vendorPaymentAccounts.verificationStatus,
+          createdAt: vendorPaymentAccounts.createdAt,
+          updatedAt: vendorPaymentAccounts.updatedAt,
+        })
+        .from(vendorPaymentAccounts)
+        .where(
+          and(
+            eq(vendorPaymentAccounts.orgId, organizationId),
+            eq(vendorPaymentAccounts.vendorId, lockedInvoice.vendorId),
+          ),
+        )
+        .for('share');
+      const blockReason = paymentReleaseBlockReason(
+        lockedInvoice satisfies PaymentReleaseInvoiceSnapshot,
+        accounts,
+        'ready_for_release',
+      );
+      if (blockReason) throw new BadRequestException(blockReason);
+      if (lockedInvoice.paidAt) {
+        throw new BadRequestException('Invoice is no longer ready for payment');
+      }
+
+      const [updated] = await tx
+        .update(invoices)
+        .set({
+          status: 'paid',
+          paidAt,
+          paymentReference,
+          updatedAt: new Date(),
+        } as any)
+        .where(
+          and(
+            eq(invoices.id, id),
+            eq(invoices.organizationId, organizationId),
+            eq(invoices.status, 'ready_for_release'),
+            isNull(invoices.paidAt),
+          ),
+        )
+        .returning({ id: invoices.id });
+      if (!updated) throw new BadRequestException('Invoice is no longer ready for payment');
+      return updated;
+    });
     const updated = await this.findOne(id, organizationId);
     this.audit
       .log(organizationId, userId, 'invoice', id, 'paid', {
@@ -1550,7 +1666,11 @@ export class InvoicesService {
       if (lockedInvoice.matchStatus !== 'full_match') {
         throw new BadRequestException('Invoice requires a full three-way match before approval');
       }
-      if (lockedInvoice.status === 'approved' || lockedInvoice.status === 'paid') {
+      if (
+        lockedInvoice.status === 'approved' ||
+        lockedInvoice.status === 'ready_for_release' ||
+        lockedInvoice.status === 'paid'
+      ) {
         return {
           approved: await this.findOneWithExecutor(id, organizationId, tx),
           transitioned: false,
@@ -1631,6 +1751,8 @@ export class InvoicesService {
           status: 'approved',
           approvedBy: approverId,
           approvedAt,
+          releasedBy: null,
+          releasedAt: null,
           updatedAt: approvedAt,
         })
         .where(
@@ -1638,6 +1760,7 @@ export class InvoicesService {
             eq(invoices.id, id),
             eq(invoices.organizationId, organizationId),
             ne(invoices.status, 'approved'),
+            ne(invoices.status, 'ready_for_release'),
             ne(invoices.status, 'paid'),
             eq(invoices.matchStatus, 'full_match'),
           ),

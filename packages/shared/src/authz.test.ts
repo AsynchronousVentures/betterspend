@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   BUILT_IN_ROLE_PERMISSIONS,
+  hasPaymentReleasePermissionConflict,
   normalizePermissions,
   PERMISSION_CATALOG,
   type PermissionKey,
@@ -107,4 +108,15 @@ test('operational permissions are catalogued instead of living in a second key l
   assert.equal(BUILT_IN_ROLE_PERMISSIONS.requester.includes('catalog:view'), true);
   assert.equal(BUILT_IN_ROLE_PERMISSIONS.receiver.includes('inventory:manage'), true);
   assert.equal(BUILT_IN_ROLE_PERMISSIONS.finance.includes('contracts:manage'), true);
+});
+
+test('payment release and vendor payment-detail permissions cannot be held together', () => {
+  assert.equal(
+    hasPaymentReleasePermissionConflict(['payments:release', 'vendors:edit_payment_details']),
+    true,
+  );
+  assert.equal(hasPaymentReleasePermissionConflict(['payments:release']), false);
+  assert.equal(hasPaymentReleasePermissionConflict(['vendors:edit_payment_details']), false);
+  assert.equal(BUILT_IN_ROLE_PERMISSIONS.admin.includes('payments:release'), false);
+  assert.equal(BUILT_IN_ROLE_PERMISSIONS.finance.includes('vendors:edit_payment_details'), false);
 });
