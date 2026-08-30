@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
@@ -21,6 +22,7 @@ import type { PermissionKey } from '@betterspend/shared';
 import { AuditService } from '../audit/audit.service';
 import { DocumentsService } from '../documents/documents.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ContractObligationReminderService } from './contract-obligation-reminder.service';
 import type { AccessPolicy } from '../auth/access-policy';
 import {
   operationalScope,
@@ -61,6 +63,8 @@ export class ContractsService {
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
     private readonly documentsService: DocumentsService,
+    @Optional()
+    private readonly contractObligationReminderService?: ContractObligationReminderService,
   ) {}
 
   async findAll(
@@ -503,11 +507,7 @@ export class ContractsService {
       return { contract: lockedContract, extraction, clauses, obligations };
     });
 
-    await this.createObligationNotifications(
-      organizationId,
-      persisted.contract,
-      persisted.obligations,
-    );
+    await this.createObligationNotifications(organizationId, persisted.contract.id);
     await this.auditService
       .log(organizationId, userId, 'contract', contractId, 'intelligence_extracted', {
         extractionId: persisted.extraction.id,
@@ -1035,29 +1035,11 @@ export class ContractsService {
     return updates;
   }
 
-  private async createObligationNotifications(
-    organizationId: string,
-    contract: any,
-    obligations: Array<typeof contractObligations.$inferSelect>,
-  ) {
-    for (const obligation of obligations) {
-      const ownerId = obligation.ownerId ?? contract.ownerId ?? contract.createdBy;
-      if (!ownerId || !obligation.dueDate) continue;
-      const leadDate = new Date(obligation.dueDate);
-      leadDate.setDate(leadDate.getDate() - obligation.notificationLeadDays);
-      if (leadDate > new Date()) continue;
-      await this.notificationsService
-        .create(
-          organizationId,
-          ownerId,
-          'contract_obligation',
-          `Contract obligation due: ${obligation.title}`,
-          `${contract.title}: ${obligation.description ?? obligation.title}`,
-          'contract',
-          contract.id,
-        )
-        .catch(() => {});
-    }
+  private async createObligationNotifications(organizationId: string, contractId: string) {
+    if (!this.contractObligationReminderService) return;
+    await this.contractObligationReminderService
+      .scanAndNotifyDueObligations(new Date(), { organizationId, contractId })
+      .catch(() => {});
   }
 
   private managedContractScope(organizationId: string, access?: AccessPolicy) {
