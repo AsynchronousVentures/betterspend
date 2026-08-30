@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import * as dbModule from '@betterspend/db';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { QboResourceNotFoundError } from '../../gl/qbo-client.service';
@@ -15,6 +15,8 @@ type QueueJob = {
   getState: jest.Mock<Promise<string>, []>;
   remove: jest.Mock<Promise<void>, []>;
 };
+
+const webhookTestSecret = randomBytes(32).toString('hex');
 
 type WhereFactory = (
   row: Record<string, string>,
@@ -323,7 +325,7 @@ describe('QboInboundService', () => {
   });
 
   it('verifies the exact raw webhook bytes with a constant-time-safe comparison', () => {
-    const secret = 'webhook-secret';
+    const secret = webhookTestSecret;
     const body = Buffer.from('{"eventNotifications":[]}');
     const signature = createHmac('sha256', secret).update(body).digest('base64');
 
@@ -333,7 +335,7 @@ describe('QboInboundService', () => {
   });
 
   it('queues signed webhook entities without doing provider work in the request path', async () => {
-    const secret = 'webhook-secret';
+    const secret = webhookTestSecret;
     process.env.QBO_WEBHOOK_VERIFIER_TOKEN = secret;
     const body = Buffer.from(
       JSON.stringify({
@@ -373,7 +375,7 @@ describe('QboInboundService', () => {
   it('fails a slow webhook enqueue before the provider deadline and keeps a stable retry ID', async () => {
     jest.useFakeTimers();
     try {
-      const secret = 'webhook-secret';
+      const secret = webhookTestSecret;
       process.env.QBO_WEBHOOK_VERIFIER_TOKEN = secret;
       const body = Buffer.from(
         JSON.stringify({
@@ -440,7 +442,7 @@ describe('QboInboundService', () => {
   });
 
   it('accepts bounded QBO CloudEvents and keeps merge data for async processing', async () => {
-    const secret = 'webhook-secret';
+    const secret = webhookTestSecret;
     process.env.QBO_WEBHOOK_VERIFIER_TOKEN = secret;
     const body = Buffer.from(
       JSON.stringify([
@@ -486,7 +488,7 @@ describe('QboInboundService', () => {
   });
 
   it('rejects an invalid webhook signature before parsing or enqueueing', async () => {
-    process.env.QBO_WEBHOOK_VERIFIER_TOKEN = 'webhook-secret';
+    process.env.QBO_WEBHOOK_VERIFIER_TOKEN = webhookTestSecret;
     const body = Buffer.from('{"eventNotifications":[]}');
     const harness = service();
 
@@ -497,7 +499,7 @@ describe('QboInboundService', () => {
   });
 
   it('never persists a malformed signed webhook event to Redis', async () => {
-    const secret = 'webhook-secret';
+    const secret = webhookTestSecret;
     process.env.QBO_WEBHOOK_VERIFIER_TOKEN = secret;
     const body = Buffer.from(
       JSON.stringify({
@@ -920,7 +922,7 @@ describe('QboInboundService', () => {
   });
 
   it('does not enqueue tax webhook events because tax data is snapshot-only', async () => {
-    process.env.QBO_WEBHOOK_VERIFIER_TOKEN = 'webhook-secret';
+    process.env.QBO_WEBHOOK_VERIFIER_TOKEN = webhookTestSecret;
     const body = Buffer.from(
       JSON.stringify({
         eventNotifications: [
@@ -936,7 +938,7 @@ describe('QboInboundService', () => {
         ],
       }),
     );
-    const signature = createHmac('sha256', 'webhook-secret').update(body).digest('base64');
+    const signature = createHmac('sha256', webhookTestSecret).update(body).digest('base64');
     const harness = service();
 
     await expect(harness.instance.receiveWebhook(body, signature)).resolves.toEqual({
