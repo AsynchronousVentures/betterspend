@@ -9,8 +9,13 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import axios from 'axios';
-import { and, desc, eq, isNull } from 'drizzle-orm';
-import { appendAuditLog, integrationConnections, type Db } from '@betterspend/db';
+import { and, desc, eq, isNotNull, isNull, or } from 'drizzle-orm';
+import {
+  appendAuditLog,
+  externalEntityMappings,
+  integrationConnections,
+  type Db,
+} from '@betterspend/db';
 import { INTEGRATION_CONNECTION_STATUS } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
 import {
@@ -87,6 +92,7 @@ export class OAuthService {
     private readonly crypto: CredentialCryptoService,
     private readonly oauthRedis: OAuthRedisService,
     @Optional() @InjectQueue(QBO_SYNC_QUEUE_NAME) private readonly qboSyncQueue?: Queue,
+    @Optional() @InjectQueue('qbo-cdc') private readonly qboCdcQueue?: Queue,
   ) {}
 
   async getQboAuthUrl(organizationId: string, userId: string, sessionId: string): Promise<string> {
@@ -423,6 +429,83 @@ export class OAuthService {
     await assertHeld?.();
     await this.db.transaction(async (transaction) => {
       await assertHeld?.();
+      if (provider === 'qbo') {
+        const [existingConnection] = await transaction
+          .select({ id: integrationConnections.id, realmId: integrationConnections.realmId })
+          .from(integrationConnections)
+          .where(
+            and(
+              eq(integrationConnections.organizationId, binding.organizationId),
+              eq(integrationConnections.provider, provider),
+            ),
+          )
+          .for('update')
+          .limit(1);
+
+        if (existingConnection && existingConnection.realmId !== realmId) {
+          const linkedMappings = await transaction
+            .select({
+              id: externalEntityMappings.id,
+              localId: externalEntityMappings.localId,
+              autoCreated: externalEntityMappings.autoCreated,
+            })
+            .from(externalEntityMappings)
+            .where(
+              and(
+                eq(externalEntityMappings.organizationId, binding.organizationId),
+                eq(externalEntityMappings.connectionId, existingConnection.id),
+                eq(externalEntityMappings.provider, 'qbo'),
+                or(
+                  isNotNull(externalEntityMappings.localId),
+                  eq(externalEntityMappings.autoCreated, true),
+                ),
+              ),
+            )
+            .for('update');
+
+          if (linkedMappings.length > 0) {
+            const resetAt = new Date();
+            await assertHeld?.();
+            await transaction
+              .update(externalEntityMappings)
+              .set({ localId: null, autoCreated: false, updatedAt: resetAt })
+              .where(
+                and(
+                  eq(externalEntityMappings.organizationId, binding.organizationId),
+                  eq(externalEntityMappings.connectionId, existingConnection.id),
+                  eq(externalEntityMappings.provider, 'qbo'),
+                  or(
+                    isNotNull(externalEntityMappings.localId),
+                    eq(externalEntityMappings.autoCreated, true),
+                  ),
+                ),
+              )
+              .returning({ id: externalEntityMappings.id });
+
+            for (const mapping of linkedMappings) {
+              await assertHeld?.();
+              await appendAuditLog(transaction, {
+                organizationId: binding.organizationId,
+                userId: binding.userId,
+                entityType: 'external_entity_mapping',
+                entityId: mapping.id,
+                action: 'unlinked',
+                changes: {
+                  localId: { from: mapping.localId, to: null },
+                  autoCreated: { from: mapping.autoCreated, to: false },
+                },
+                metadata: {
+                  actor: binding.userId ? 'user' : 'system',
+                  provider: 'qbo',
+                  source: 'oauth',
+                  reason: 'realm_changed',
+                },
+                createdAt: resetAt,
+              });
+            }
+          }
+        }
+      }
       const [connection] = await transaction
         .insert(integrationConnections)
         .values(values)
@@ -718,6 +801,16 @@ export class OAuthService {
             });
           }
         });
+        if (provider === 'qbo') {
+          try {
+            await assertHeld?.();
+            await this.removeQboSchedules(organizationId);
+          } catch (error: unknown) {
+            this.logger.error(
+              `Unable to remove QBO schedules for ${organizationId}: ${String(error)}`,
+            );
+          }
+        }
       }
       if (revocationError) throw revocationError;
       this.logger.log(`${provider.toUpperCase()} disconnected for org ${organizationId}`);
@@ -728,6 +821,23 @@ export class OAuthService {
       return;
     }
     await run();
+  }
+
+  private async removeQboSchedules(organizationId: string): Promise<void> {
+    await Promise.all([
+      this.removeQboSchedule(this.qboSyncQueue, `qbo-hourly-sync-${organizationId}`),
+      this.removeQboSchedule(this.qboCdcQueue, `qbo-daily-cdc-${organizationId}`),
+    ]);
+  }
+
+  private async removeQboSchedule(queue: Queue | undefined, jobId: string): Promise<void> {
+    if (!queue) return;
+    const repeatableJobs = await queue.getRepeatableJobs();
+    await Promise.all(
+      repeatableJobs
+        .filter((job) => job.id === jobId)
+        .map((job) => queue.removeRepeatableByKey(job.key)),
+    );
   }
 
   private isInvalidRefreshToken(error: unknown): boolean {

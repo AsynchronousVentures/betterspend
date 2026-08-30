@@ -14,6 +14,7 @@ import type { Queue } from 'bullmq';
 import { and, eq, isNull } from 'drizzle-orm';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { z } from 'zod';
 import {
   appendAuditLog,
   departments,
@@ -29,6 +30,7 @@ import {
   QBO_CATALOG_ENTITY_TYPES,
   QBO_TAX_ENTITY_TYPES,
   QBO_TRANSACTION_ENTITY_TYPES,
+  qboSyncEntitySchema,
   type QboMappingLinkInput,
   type QboSyncEntity,
 } from '@betterspend/shared';
@@ -56,6 +58,8 @@ const QBO_WEBHOOK_ENTITY_TYPES = [
 ] as const;
 
 const QBO_WEBHOOK_OPERATIONS = ['create', 'update', 'delete', 'merge'] as const;
+const qboOrganizationIdSchema = z.string().min(1).max(255);
+const qboSyncEntityTypesSchema = z.array(qboSyncEntitySchema).min(1).optional();
 
 const QBO_ACCOUNT_TYPES = new Set([
   'Accounts Payable',
@@ -71,6 +75,50 @@ const MAX_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const MAX_LOOKBACK_DAYS = 30;
 const PENDING_INITIAL_SYNC_RECOVERY_INTERVAL_MS = 30_000;
 const QBO_ACTIVE_ENTITY_TYPES = new Set<QboSyncEntity>(QBO_CATALOG_ENTITY_TYPES);
+
+export const qboWebhookEventSchema = z
+  .object({
+    realmId: z.string().min(1).max(255),
+    entityName: z.enum(QBO_WEBHOOK_ENTITY_TYPES),
+    entityId: z.string().min(1).max(255),
+    operation: z.enum(QBO_WEBHOOK_OPERATIONS),
+    lastUpdated: z.string().min(1).max(100).optional(),
+    payload: z.record(z.string(), z.unknown()),
+  })
+  .strict();
+
+export const qboCdcJobDataSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('webhook'),
+      event: qboWebhookEventSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('cdc-sweep'),
+      organizationId: qboOrganizationIdSchema,
+      lookbackDays: z.number().int().min(1).max(MAX_LOOKBACK_DAYS).optional(),
+    })
+    .strict(),
+]);
+
+export const qboSyncJobDataSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('initial'),
+      organizationId: qboOrganizationIdSchema,
+      entityTypes: qboSyncEntityTypesSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('scheduled'),
+      organizationId: qboOrganizationIdSchema,
+      entityTypes: qboSyncEntityTypesSchema,
+    })
+    .strict(),
+]);
 
 type QboObject = Record<string, unknown>;
 
@@ -136,6 +184,7 @@ type MappingUpsert = {
   realmId: string;
   entityName: string;
   entity: QboObject;
+  providerUpdatedAt?: Date;
   deleted: boolean;
   mergedIntoExternalId?: string | null;
   localId?: string | null;
@@ -599,6 +648,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
     assertLock: OAuthLockGuard,
   ): Promise<void> {
     await assertLock();
+    const providerUpdatedAt = parseQboTimestamp(event.lastUpdated);
     if (event.operation === 'merge' && event.entityName === 'Vendor') {
       await this.handleVendorMerge(
         connection.organizationId,
@@ -618,6 +668,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
           realmId: connection.realmId,
           entityName: event.entityName,
           entity: { ...event.payload, Id: event.entityId },
+          providerUpdatedAt,
           deleted: true,
           auditSource: 'webhook',
         },
@@ -642,6 +693,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
           realmId: connection.realmId,
           entityName: event.entityName,
           entity: { Id: event.entityId },
+          providerUpdatedAt,
           deleted: true,
           auditSource: 'webhook',
         },
@@ -669,6 +721,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
         realmId: connection.realmId,
         entityName: event.entityName,
         entity,
+        providerUpdatedAt,
         deleted: false,
         auditSource: 'webhook',
       },
@@ -1142,8 +1195,15 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
     input: MappingUpsert,
     assertLock?: OAuthLockGuard,
   ): Promise<string | undefined> {
-    const { organizationId, connectionId, entityName, entity, deleted, mergedIntoExternalId } =
-      input;
+    const {
+      organizationId,
+      connectionId,
+      entityName,
+      entity,
+      deleted,
+      mergedIntoExternalId,
+      providerUpdatedAt,
+    } = input;
     const externalId = stringValue(entity.Id);
     if (!externalId) return undefined;
     if (assertLock) await assertLock();
@@ -1176,8 +1236,22 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
         isDeleted: true,
         mergedIntoExternalId: true,
         payload: true,
+        localId: true,
+        autoCreated: true,
+        syncedAt: true,
       },
     });
+    const connectionChanged = existing != null && existing.connectionId !== connectionId;
+    if (
+      !connectionChanged &&
+      existing?.syncedAt &&
+      providerUpdatedAt &&
+      providerUpdatedAt.getTime() <= existing.syncedAt.getTime()
+    ) {
+      return existing.id;
+    }
+    const existingLocalId = existing?.localId ?? null;
+    const existingAutoCreated = existing?.autoCreated ?? false;
     const now = new Date();
     const existingDelete = deleted && existing ? existing : null;
     const values = {
@@ -1191,16 +1265,16 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
         : (definition?.displayName(entity) ?? displayNameFromQbo(entity)),
       syncToken: existingDelete ? existingDelete.syncToken : stringValue(entity.SyncToken),
       localEntity: definition?.localEntity ?? 'qbo_transaction',
-      localId: input.localId ?? null,
+      localId: connectionChanged ? null : (input.localId ?? existingLocalId),
       direction: 'inbound' as const,
-      autoCreated: input.autoCreated ?? false,
+      autoCreated: connectionChanged ? false : (input.autoCreated ?? existingAutoCreated),
       isActive: !deleted && entity.Active !== false,
       isDeleted: deleted,
       mergedIntoExternalId: existingDelete
         ? existingDelete.mergedIntoExternalId
         : (mergedIntoExternalId ?? null),
       payload: existingDelete ? existingDelete.payload : entity,
-      syncedAt: now,
+      syncedAt: providerUpdatedAt ?? now,
       updatedAt: now,
     };
 
@@ -1224,6 +1298,9 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
           isDeleted: values.isDeleted,
           mergedIntoExternalId: values.mergedIntoExternalId,
           payload: values.payload,
+          ...(connectionChanged || input.localId !== undefined || input.autoCreated !== undefined
+            ? { localId: values.localId, autoCreated: values.autoCreated }
+            : {}),
           syncedAt: values.syncedAt,
           updatedAt: values.updatedAt,
         },
@@ -1239,6 +1316,8 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
       existing.isActive !== values.isActive ||
       existing.isDeleted !== values.isDeleted ||
       existing.mergedIntoExternalId !== values.mergedIntoExternalId ||
+      existingLocalId !== values.localId ||
+      existingAutoCreated !== values.autoCreated ||
       !isDeepStrictEqual(existing.payload, values.payload)
     ) {
       if (assertLock) await assertLock();
@@ -1252,7 +1331,16 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
           externalId,
           isActive: values.isActive,
           isDeleted: values.isDeleted,
-          ...(input.localId !== undefined ? { localId: input.localId } : {}),
+          ...(existing && existingLocalId !== values.localId
+            ? { localId: { from: existingLocalId, to: values.localId } }
+            : input.localId !== undefined
+              ? { localId: input.localId }
+              : {}),
+          ...(existing && existingAutoCreated !== values.autoCreated
+            ? { autoCreated: { from: existingAutoCreated, to: values.autoCreated } }
+            : input.autoCreated !== undefined
+              ? { autoCreated: input.autoCreated }
+              : {}),
         },
         source: input.auditSource ?? 'cdc',
         ...(input.auditReason || mergedIntoExternalId
@@ -1462,6 +1550,7 @@ export class QboInboundService implements OnModuleInit, OnModuleDestroy {
       }
     });
 
+    if (!sourceIdForNotification) return;
     await assertLock();
     const adminId = await resolveOrganizationAdminId(this.db, organizationId);
     if (adminId) {
@@ -1577,6 +1666,12 @@ function extractCdcEntries(data: unknown): CdcEntry[] {
 function hasDeletedStatus(entity: QboObject): boolean {
   const status = stringValue(entity.status) ?? stringValue(entity.Status);
   return status?.trim().toLowerCase() === 'deleted';
+}
+
+function parseQboTimestamp(value: string | undefined): Date | undefined {
+  if (!value) return undefined;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
 function parseQboWebhookEvents(payload: unknown): QboWebhookEvent[] {

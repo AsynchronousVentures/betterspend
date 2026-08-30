@@ -140,10 +140,18 @@ function insertCapturingDb(captured: Array<Record<string, unknown>>): Db {
   db.execute = jest.fn(async () => auditProjection);
   db.select = jest.fn(() => ({
     from: jest.fn(() => ({
-      where: jest.fn(() => ({
-        orderBy: jest.fn(() => ({ limit: jest.fn(async () => []) })),
-        limit: jest.fn(async () => []),
-      })),
+      where: jest.fn(() => {
+        const result: {
+          orderBy: jest.Mock;
+          limit: jest.Mock;
+          for: jest.Mock;
+        } = {
+          orderBy: jest.fn(() => ({ limit: jest.fn(async () => []) })),
+          limit: jest.fn(async () => []),
+          for: jest.fn(() => result),
+        };
+        return result;
+      }),
     })),
   }));
   db.insert = jest.fn(() => ({
@@ -314,6 +322,62 @@ describe('OAuthService', () => {
     expect(loggerError).toHaveBeenCalledWith(
       expect.stringContaining('Unable to queue initial QBO sync'),
     );
+  });
+
+  it('removes QBO repeatable schedules when disconnecting', async () => {
+    const organizationId = '00000000-0000-0000-0000-000000000001';
+    const connection = {
+      id: '00000000-0000-0000-0000-000000000010',
+      organizationId,
+      provider: 'qbo',
+      realmId: 'realm-1',
+      accessTokenEncrypted: crypto.encrypt('access-token'),
+      refreshTokenEncrypted: crypto.encrypt('refresh-token'),
+      status: 'active',
+    };
+    const db = insertCapturingDb([]) as unknown as {
+      query: { integrationConnections: { findMany: jest.Mock } };
+      update: jest.Mock;
+    };
+    db.query = {
+      integrationConnections: { findMany: jest.fn(async () => [connection]) },
+    };
+    db.update = jest.fn(() => ({
+      set: jest.fn(() => ({
+        where: jest.fn(() => ({
+          returning: jest.fn(async () => [connection]),
+        })),
+      })),
+    }));
+
+    const syncQueue = {
+      getRepeatableJobs: jest.fn(async () => [
+        { id: `qbo-hourly-sync-${organizationId}`, key: 'hourly-key' },
+        { id: 'other-job', key: 'other-key' },
+      ]),
+      removeRepeatableByKey: jest.fn(async () => undefined),
+    };
+    const cdcQueue = {
+      getRepeatableJobs: jest.fn(async () => [
+        { id: `qbo-daily-cdc-${organizationId}`, key: 'daily-key' },
+      ]),
+      removeRepeatableByKey: jest.fn(async () => undefined),
+    };
+    mockedAxios.post.mockResolvedValue({ data: {} });
+    const service = new OAuthService(
+      db as never,
+      crypto,
+      new FakeOAuthRedis() as never,
+      syncQueue as never,
+      cdcQueue as never,
+    );
+
+    await service.disconnectQbo(organizationId, userId);
+
+    expect(syncQueue.removeRepeatableByKey).toHaveBeenCalledWith('hourly-key');
+    expect(syncQueue.removeRepeatableByKey).toHaveBeenCalledTimes(1);
+    expect(cdcQueue.removeRepeatableByKey).toHaveBeenCalledWith('daily-key');
+    expect(cdcQueue.removeRepeatableByKey).toHaveBeenCalledTimes(1);
   });
 
   it('removes a failed initial-sync job before enqueueing a fresh import', async () => {
