@@ -121,7 +121,7 @@ export class ContractsController {
   @ApiOperation({ summary: 'Extract contract intelligence from terms or pasted document text' })
   processIntelligence(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { documentId?: string; documentText?: string; sourceName?: string },
+    @Body() body: unknown,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
     @CurrentAccess() access?: AccessPolicy,

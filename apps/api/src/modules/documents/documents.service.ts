@@ -1,9 +1,10 @@
-import { Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { eq, and } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { documents } from '@betterspend/db';
-import { StorageService } from '../../common/storage/storage.service';
+import { StorageObjectTooLargeError, StorageService } from '../../common/storage/storage.service';
 
 @Injectable()
 export class DocumentsService {
@@ -19,7 +20,7 @@ export class DocumentsService {
     entityType: string,
     entityId: string,
   ) {
-    const key = `${orgId}/${entityType}/${Date.now()}-${file.originalname}`;
+    const key = `${orgId}/${entityType}/${randomUUID()}-${file.originalname}`;
 
     await this.storage.upload(key, file.buffer, file.mimetype);
 
@@ -76,6 +77,40 @@ export class DocumentsService {
 
     const buffer = await this.storage.getBuffer(doc.storageKey);
     return buffer.toString('utf8');
+  }
+
+  async getDocumentContent(
+    orgId: string,
+    documentId: string,
+    entity?: { entityType: string; entityId: string },
+    maxBytes?: number,
+  ): Promise<{ document: typeof documents.$inferSelect; buffer: Buffer }> {
+    const doc = await this.db.query.documents.findFirst({
+      where: (d, { and: qand, eq: qeq }) => {
+        const conditions = [qeq(d.id, documentId), qeq(d.organizationId, orgId)];
+        if (entity) {
+          conditions.push(qeq(d.entityType, entity.entityType), qeq(d.entityId, entity.entityId));
+        }
+        return qand(...conditions);
+      },
+    });
+
+    if (!doc) throw new NotFoundException(`Document ${documentId} not found`);
+
+    if (maxBytes !== undefined && doc.sizeBytes > maxBytes) {
+      throw new BadRequestException('Document exceeds the extraction size limit');
+    }
+
+    let buffer: Buffer;
+    try {
+      buffer = await this.storage.getBuffer(doc.storageKey, maxBytes);
+    } catch (error: unknown) {
+      if (error instanceof StorageObjectTooLargeError) {
+        throw new BadRequestException('Document exceeds the extraction size limit');
+      }
+      throw error;
+    }
+    return { document: doc, buffer };
   }
 
   async delete(orgId: string, documentId: string): Promise<void> {
