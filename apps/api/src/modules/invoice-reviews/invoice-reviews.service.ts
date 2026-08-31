@@ -988,9 +988,26 @@ export class InvoiceReviewsService {
             resolvedAt: input.status === 'resolved' ? observedAt : null,
             updatedAt: observedAt,
           },
+          setWhere: lte(invoiceReviewSignals.lastSeenAt, observedAt),
         })
         .returning();
-      if (!signal) throw new Error('Invoice review signal could not be written');
+      if (!signal) {
+        const [currentSignal] = await tx
+          .select()
+          .from(invoiceReviewSignals)
+          .where(
+            and(
+              eq(invoiceReviewSignals.organizationId, input.organizationId),
+              eq(invoiceReviewSignals.caseId, reviewCase.id),
+              eq(invoiceReviewSignals.signalType, input.signalType),
+              eq(invoiceReviewSignals.sourceModule, input.sourceModule),
+              eq(invoiceReviewSignals.sourceRecordId, input.sourceRecordId),
+            ),
+          )
+          .limit(1);
+        if (!currentSignal) throw new Error('Invoice review signal could not be written');
+        return { case: reviewCase, signal: currentSignal };
+      }
 
       const currentSignals = await tx
         .select({ severity: invoiceReviewSignals.severity, status: invoiceReviewSignals.status })

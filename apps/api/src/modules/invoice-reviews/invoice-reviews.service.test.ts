@@ -437,6 +437,7 @@ test('recordSignal preserves one signal identity across repeated observations', 
         where: () => builder,
         limit: async () => {
           if (table === invoices) return [{ id: invoiceId }];
+          if (table === invoiceReviewSignals) return signals.slice(0, 1);
           if (table === auditIdempotencyKeys) {
             auditClaimLookups += 1;
             return auditClaimLookups === 3 ? [auditClaims[1]] : [];
@@ -517,6 +518,13 @@ test('recordSignal preserves one signal identity across repeated observations', 
                   signal.sourceRecordId === values.sourceRecordId,
               );
               if (existing) {
+                if (
+                  existing.lastSeenAt instanceof Date &&
+                  config.set.lastSeenAt instanceof Date &&
+                  existing.lastSeenAt > config.set.lastSeenAt
+                ) {
+                  return [];
+                }
                 Object.assign(existing, config.set, { id: existing.id });
                 return [existing];
               }
@@ -590,11 +598,17 @@ test('recordSignal preserves one signal identity across repeated observations', 
     summary: 'Match remains outside tolerance',
     observedAt: new Date('2026-08-02T00:00:00Z'),
   });
+  const staleResolved = await service.recordSignal({
+    ...input,
+    status: 'resolved',
+    observedAt: new Date('2026-08-01T12:00:00Z'),
+  });
 
   assert.equal(cases.length, 1);
   assert.equal(signals.length, 1);
   assert.equal(first.signal.id, second.signal.id);
   assert.equal(second.signal.id, retry.signal.id);
+  assert.equal(retry.signal.id, staleResolved.signal.id);
   assert.equal(signals[0]?.summary, 'Match remains outside tolerance');
   assert.deepEqual(signals[0]?.firstSeenAt, new Date('2026-08-01T00:00:00Z'));
   assert.deepEqual(signals[0]?.lastSeenAt, new Date('2026-08-02T00:00:00Z'));
@@ -604,17 +618,34 @@ test('recordSignal preserves one signal identity across repeated observations', 
   assert.equal(auditRows[0]?.action, 'review_signal_recorded');
   assert.equal(auditRows[0]?.entityType, 'invoice_review_case');
 
+  await service.recordSignal({
+    ...input,
+    status: 'resolved',
+    observedAt: new Date('2026-08-03T00:00:00Z'),
+  });
+  await service.recordSignal({
+    ...input,
+    status: 'open',
+    observedAt: new Date('2026-08-02T12:00:00Z'),
+  });
+
+  assert.equal(signals[0]?.status, 'resolved');
+  assert.deepEqual(signals[0]?.lastSeenAt, new Date('2026-08-03T00:00:00Z'));
+  assert.equal(cases[0]?.state, 'resolved');
+  assert.equal(auditRows.length, 3);
+  assert.equal(auditClaims.length, 3);
+
   failAudit = true;
   await assert.rejects(
     service.recordSignal({
       ...input,
       sourceRecordId: '00000000-0000-4000-8000-000000000022',
-      observedAt: new Date('2026-08-03T00:00:00Z'),
+      observedAt: new Date('2026-08-04T00:00:00Z'),
     }),
     /audit write failed/,
   );
   assert.equal(signals.length, 1);
   assert.equal(cases.length, 1);
-  assert.equal(auditRows.length, 2);
-  assert.equal(auditClaims.length, 2);
+  assert.equal(auditRows.length, 3);
+  assert.equal(auditClaims.length, 3);
 });
