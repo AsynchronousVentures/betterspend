@@ -972,6 +972,43 @@ describe('InvoicesService material edits', () => {
     assert.equal(typeof calls[0]?.correctionId, 'string');
   });
 
+  it('records line provenance when a correction changes tax inclusivity', async () => {
+    const fieldPaths: string[][] = [];
+    const invoiceProvenance = {
+      recordManualCorrectionProvenance: async (input: { fieldPaths: readonly string[] }) => {
+        fieldPaths.push([...input.fieldPaths]);
+        return [];
+      },
+    } as unknown as InvoiceReviewProvenanceService;
+    const fixture = createEditService(
+      'approved',
+      'full_match',
+      false,
+      'vendor-1',
+      true,
+      undefined,
+      invoiceProvenance,
+    );
+
+    await fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', {
+      lines: [
+        {
+          id: '00000000-0000-4000-8000-000000000101',
+          taxInclusive: true,
+        },
+      ],
+    });
+
+    assert.deepEqual(fieldPaths, [
+      [
+        'lines.00000000-0000-4000-8000-000000000101.taxInclusive',
+        'subtotal',
+        'taxAmount',
+        'totalAmount',
+      ],
+    ]);
+  });
+
   it('cancels approval without restarting when the edited invoice no longer fully matches', async () => {
     const fixture = createEditService('approved', 'partial_match');
 

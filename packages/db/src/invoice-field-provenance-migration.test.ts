@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { PGlite } from '@electric-sql/pglite';
+
 const migrationTag = '20260831054304_invoice_review_signals';
+const verifierPath = join(__dirname, 'verify-migrations.ts');
 
 test('invoice field provenance migration contains the runtime provenance shape', async () => {
   const migration = await readFile(join(__dirname, 'migrations', `${migrationTag}.sql`), 'utf8');
@@ -16,4 +19,77 @@ test('invoice field provenance migration contains the runtime provenance shape',
   assert.match(migration, /invoice_field_provenance_source_type_check/);
   assert.match(migration, /invoice_field_provenance_field_path_check/);
   assert.match(migration, /invoice_field_provenance_confidence_check/);
+});
+
+test('invoice field provenance keeps line references on the same invoice', async () => {
+  const migrationFiles = (await readdir(join(__dirname, 'migrations')))
+    .filter((file) => file.endsWith('.sql') && file >= `${migrationTag}.sql`)
+    .sort();
+  const database = new PGlite();
+  try {
+    await database.exec(`
+      CREATE TABLE organizations (id uuid PRIMARY KEY);
+      CREATE TABLE users (
+        id uuid PRIMARY KEY,
+        organization_id uuid NOT NULL,
+        UNIQUE (id, organization_id)
+      );
+      CREATE TABLE invoices (
+        id uuid PRIMARY KEY,
+        organization_id uuid NOT NULL,
+        UNIQUE (id, organization_id)
+      );
+      CREATE TABLE invoice_lines (
+        id uuid PRIMARY KEY,
+        invoice_id uuid NOT NULL
+      );
+      INSERT INTO organizations (id) VALUES ('00000000-0000-4000-8000-000000000001');
+      INSERT INTO invoices (id, organization_id) VALUES
+        ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001'),
+        ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000001');
+      INSERT INTO invoice_lines (id, invoice_id) VALUES
+        ('00000000-0000-4000-8000-000000000004', '00000000-0000-4000-8000-000000000002'),
+        ('00000000-0000-4000-8000-000000000005', '00000000-0000-4000-8000-000000000003');
+    `);
+    for (const file of migrationFiles) {
+      await database.exec(await readFile(join(__dirname, 'migrations', file), 'utf8'));
+    }
+
+    await database.exec(`
+      INSERT INTO invoice_field_provenance (
+        organization_id, invoice_id, invoice_line_id, field_path,
+        source_type, source_record_id, identity_key
+      ) VALUES (
+        '00000000-0000-4000-8000-000000000001',
+        '00000000-0000-4000-8000-000000000002',
+        '00000000-0000-4000-8000-000000000004',
+        'lines.00000000-0000-4000-8000-000000000004.description',
+        'manual', 'manual:valid', 'valid'
+      );
+    `);
+
+    await assert.rejects(
+      database.exec(`
+        INSERT INTO invoice_field_provenance (
+          organization_id, invoice_id, invoice_line_id, field_path,
+          source_type, source_record_id, identity_key
+        ) VALUES (
+          '00000000-0000-4000-8000-000000000001',
+          '00000000-0000-4000-8000-000000000002',
+          '00000000-0000-4000-8000-000000000005',
+          'lines.00000000-0000-4000-8000-000000000005.description',
+          'manual', 'manual:cross-invoice', 'cross-invoice'
+        );
+      `),
+    );
+  } finally {
+    await database.close();
+  }
+});
+
+test('migration verification scopes provenance checks to their table', async () => {
+  const verifier = await readFile(verifierPath, 'utf8');
+
+  assert.match(verifier, /table_name AS table/);
+  assert.match(verifier, /\$\{row\.table\}\.\$\{row\.name\}/);
 });

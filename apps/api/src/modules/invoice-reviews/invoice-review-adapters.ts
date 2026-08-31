@@ -60,7 +60,7 @@ export function normalizeOcrReviewSignal(
 ): RecordInvoiceReviewSignalInput {
   const confidence = input.confidence ?? {};
   const overall = score(confidence.overall);
-  const lowConfidence = input.status !== 'done' || input.reviewRequired === true;
+  const lowConfidence = input.status !== 'done' || input.reviewRequired === true || overall === 0;
   const severity: InvoiceReviewSignalSeverity =
     input.severity ??
     (input.status === 'failed' ? 'blocking' : lowConfidence ? 'review_required' : 'informational');

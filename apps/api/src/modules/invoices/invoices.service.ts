@@ -158,6 +158,7 @@ const manualLineProvenanceFields = [
   'unitPrice',
   'poLineId',
   'taxCodeId',
+  'taxInclusive',
   'glAccount',
 ] as const;
 

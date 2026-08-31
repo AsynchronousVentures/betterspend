@@ -163,7 +163,7 @@ export const invoiceFieldProvenance = pgTable(
       .notNull()
       .references(() => organizations.id),
     invoiceId: uuid('invoice_id').notNull(),
-    invoiceLineId: uuid('invoice_line_id').references(() => invoiceLines.id),
+    invoiceLineId: uuid('invoice_line_id'),
     fieldPath: varchar('field_path', { length: 150 }).notNull(),
     sourceType: varchar('source_type', { length: 30 }).notNull(),
     sourceRecordId: varchar('source_record_id', { length: 255 }).notNull(),
@@ -192,6 +192,11 @@ export const invoiceFieldProvenance = pgTable(
       columns: [table.invoiceId, table.organizationId],
       foreignColumns: [invoices.id, invoices.organizationId],
       name: 'invoice_field_provenance_invoice_org_fk',
+    }),
+    foreignKey({
+      columns: [table.invoiceLineId, table.invoiceId],
+      foreignColumns: [invoiceLines.id, invoiceLines.invoiceId],
+      name: 'invoice_field_provenance_invoice_line_invoice_fk',
     }),
     foreignKey({
       columns: [table.actorId, table.organizationId],

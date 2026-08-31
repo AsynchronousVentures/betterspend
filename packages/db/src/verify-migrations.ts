@@ -120,6 +120,12 @@ const EXPECTED_INDEXES = [
     columns: ['organization_id', 'source_type', 'source_record_id'],
     unique: false,
   },
+  {
+    name: 'invoice_lines_id_invoice_id_unique',
+    table: 'invoice_lines',
+    columns: ['id', 'invoice_id'],
+    unique: true,
+  },
 ] as const;
 
 const EXPECTED_TRIGGERS = [
@@ -129,9 +135,18 @@ const EXPECTED_TRIGGERS = [
 ] as const;
 
 const EXPECTED_CHECK_CONSTRAINTS = [
-  'invoice_field_provenance_source_type_check',
-  'invoice_field_provenance_field_path_check',
-  'invoice_field_provenance_confidence_check',
+  {
+    table: 'invoice_field_provenance',
+    name: 'invoice_field_provenance_source_type_check',
+  },
+  {
+    table: 'invoice_field_provenance',
+    name: 'invoice_field_provenance_field_path_check',
+  },
+  {
+    table: 'invoice_field_provenance',
+    name: 'invoice_field_provenance_confidence_check',
+  },
 ] as const;
 
 const EXPECTED_FOREIGN_KEYS = [
@@ -388,11 +403,11 @@ const EXPECTED_FOREIGN_KEYS = [
     parentColumns: ['id'],
   },
   {
-    name: 'invoice_field_provenance_invoice_line_id_invoice_lines_id_fk',
+    name: 'invoice_field_provenance_invoice_line_invoice_fk',
     child: 'invoice_field_provenance',
     parent: 'invoice_lines',
-    childColumns: ['invoice_line_id'],
-    parentColumns: ['id'],
+    childColumns: ['invoice_line_id', 'invoice_id'],
+    parentColumns: ['id', 'invoice_id'],
   },
   {
     name: 'invoice_field_provenance_invoice_org_fk',
@@ -495,12 +510,12 @@ async function main(): Promise<void> {
         AND trigger.tgenabled IN ('O', 'A')
         AND trigger.tgname IN ${client(EXPECTED_TRIGGERS)}
     `;
-    const checks = await client<{ name: string }[]>`
-      SELECT constraint_name AS name
+    const checks = await client<{ table: string; name: string }[]>`
+      SELECT table_name AS table, constraint_name AS name
       FROM information_schema.table_constraints
       WHERE constraint_schema = 'public'
         AND constraint_type = 'CHECK'
-        AND constraint_name IN ${client(EXPECTED_CHECK_CONSTRAINTS)}
+        AND constraint_name IN ${client(EXPECTED_CHECK_CONSTRAINTS.map((item) => item.name))}
     `;
     const indexes = await client<IndexDescription[]>`
       SELECT
@@ -531,7 +546,7 @@ async function main(): Promise<void> {
     const foundConstraints = new Set(constraints.map(foreignKeySignature));
     const foundColumns = new Set(columns.map((row) => `${row.table}.${row.column}`));
     const foundTriggers = new Set(triggers.map((row) => row.name));
-    const foundChecks = new Set(checks.map((row) => row.name));
+    const foundChecks = new Set(checks.map((row) => `${row.table}.${row.name}`));
     const foundIndexes = new Set(indexes.map(indexSignature));
     const missingTables = EXPECTED_TABLES.filter((name) => !foundTables.has(name));
     const missingConstraints = EXPECTED_FOREIGN_KEYS.filter(
@@ -541,7 +556,9 @@ async function main(): Promise<void> {
       (item) => !foundColumns.has(`${item.table}.${item.column}`),
     ).map((item) => `${item.table}.${item.column}`);
     const missingTriggers = EXPECTED_TRIGGERS.filter((name) => !foundTriggers.has(name));
-    const missingChecks = EXPECTED_CHECK_CONSTRAINTS.filter((name) => !foundChecks.has(name));
+    const missingChecks = EXPECTED_CHECK_CONSTRAINTS.filter(
+      (item) => !foundChecks.has(`${item.table}.${item.name}`),
+    ).map((item) => `${item.table}.${item.name}`);
     const missingIndexes = EXPECTED_INDEXES.filter(
       (index) => !foundIndexes.has(indexSignature(index)),
     ).map((index) => index.name);

@@ -48,6 +48,19 @@ test('OCR adapter preserves producer status and keeps extracted values out of de
   assert.equal(pending.status, 'open');
 });
 
+test('OCR keeps a completed zero-confidence result actionable', () => {
+  const signal = normalizeOcrReviewSignal({
+    organizationId,
+    invoiceId,
+    sourceRecordId: '00000000-0000-4000-8000-000000000003',
+    status: 'done',
+    confidence: { overall: 0 },
+  });
+
+  assert.equal(signal.severity, 'review_required');
+  assert.equal(signal.status, 'open');
+});
+
 test('spend guard adapter maps existing alert semantics without copying alert details', () => {
   const signal = normalizeSpendGuardReviewSignal({
     organizationId,
