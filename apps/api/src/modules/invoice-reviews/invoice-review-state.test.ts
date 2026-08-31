@@ -11,23 +11,23 @@ const signal = (
   status: ReviewSignalState['status'] = 'open',
 ): ReviewSignalState => ({ severity, status });
 
-test('an actionable first signal opens a case while informational evidence is resolved', () => {
+test('only a blocking first signal opens a case', () => {
   assert.equal(initialReviewCaseState(signal('blocking')), 'open');
-  assert.equal(initialReviewCaseState(signal('review_required')), 'open');
+  assert.equal(initialReviewCaseState(signal('review_required')), 'resolved');
   assert.equal(initialReviewCaseState(signal('informational')), 'resolved');
   assert.equal(initialReviewCaseState(signal('blocking', 'resolved')), 'resolved');
 });
 
-test('a newly actionable signal reopens a resolved case', () => {
+test('a new blocking signal reopens a resolved case', () => {
   assert.equal(nextReviewCaseState('resolved', [signal('blocking')]), 'open');
-  assert.equal(nextReviewCaseState('resolved', [signal('review_required')]), 'open');
+  assert.equal(nextReviewCaseState('resolved', [signal('review_required')]), 'resolved');
   assert.equal(nextReviewCaseState('resolved', [signal('informational')]), 'resolved');
 });
 
 test('an unclaimed case resolves when no blocking signal remains', () => {
   assert.equal(nextReviewCaseState('open', [signal('blocking', 'resolved')]), 'resolved');
   assert.equal(nextReviewCaseState('open', [signal('informational')]), 'resolved');
-  assert.equal(nextReviewCaseState('open', [signal('review_required')]), 'open');
+  assert.equal(nextReviewCaseState('open', [signal('review_required')]), 'resolved');
 });
 
 test('producer refreshes do not overwrite command-owned case states', () => {

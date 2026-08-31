@@ -1,10 +1,42 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { invoiceReviewCases, invoiceReviewSignals, invoices, type Db } from '@betterspend/db';
+import {
+  auditIdempotencyKeys,
+  auditLog,
+  invoiceReviewCases,
+  invoiceReviewSignals,
+  invoices,
+  type Db,
+} from '@betterspend/db';
+import type { AccessPolicy } from '../auth/access-policy';
+import type { PermissionKey } from '@betterspend/shared';
 import { InvoiceReviewsService } from './invoice-reviews.service';
 
 const organizationId = '00000000-0000-4000-8000-000000000001';
 const invoiceId = '00000000-0000-4000-8000-000000000002';
+const entityId = '00000000-0000-4000-8000-000000000004';
+const vendorId = '00000000-0000-4000-8000-000000000005';
+const purchaseOrderId = '00000000-0000-4000-8000-000000000017';
+const requisitionId = '00000000-0000-4000-8000-000000000018';
+const requesterId = '00000000-0000-4000-8000-000000000019';
+
+function accessFor(granted: readonly PermissionKey[]): AccessPolicy {
+  const permissions = new Set(granted);
+  return {
+    can: (permission) => permissions.has(permission),
+    scopeFor: (_resource, permission) => ({
+      organizationId,
+      userId: requesterId,
+      unrestricted: permissions.has(permission),
+      ownOnly: false,
+      departmentIds: [],
+      projectIds: [],
+      entityIds: [],
+    }),
+    isGlobalBuiltInAdmin: () => false,
+    toDocument: () => ({ permissions: [...permissions], scopes: {} }),
+  };
+}
 
 function createService() {
   const db = {
@@ -41,11 +73,13 @@ function createService() {
             matchStatus: 'exception',
             matchDetails: { reason: 'quantity variance' },
             documentId: '00000000-0000-4000-8000-000000000006',
+            createdBy: requesterId,
             createdAt: new Date('2026-07-31T00:00:00Z'),
             updatedAt: new Date('2026-08-02T00:00:00Z'),
             vendor: {
               id: '00000000-0000-4000-8000-000000000005',
               organizationId,
+              entityId,
               name: 'Acme Supplies',
               code: 'ACME',
               status: 'active',
@@ -57,7 +91,24 @@ function createService() {
               code: 'ACME-HQ',
               currency: 'USD',
             },
-            purchaseOrder: null,
+            purchaseOrder: {
+              id: purchaseOrderId,
+              organizationId,
+              issuedBy: requesterId,
+              number: 'PO-2026-0001',
+              status: 'issued',
+              entityId,
+              vendorId,
+              requisition: {
+                id: requisitionId,
+                organizationId,
+                number: 'REQ-2026-0001',
+                status: 'approved',
+                requesterId,
+                departmentId: '00000000-0000-4000-8000-000000000020',
+                projectId: null,
+              },
+            },
             lines: [
               {
                 id: '00000000-0000-4000-8000-000000000007',
@@ -151,7 +202,18 @@ function createService() {
         ],
       },
       messages: { findMany: async () => [] },
-      approvalRequests: { findMany: async () => [] },
+      approvalRequests: {
+        findMany: async () => [
+          {
+            id: '00000000-0000-4000-8000-000000000021',
+            status: 'pending',
+            currentStep: 1,
+            currentNodeId: null,
+            createdAt: new Date('2026-08-01T00:00:00Z'),
+            updatedAt: new Date('2026-08-02T00:00:00Z'),
+          },
+        ],
+      },
     },
   } as unknown as Db;
 
@@ -189,6 +251,30 @@ test('projection returns stable invoice summaries and explicit missing source ma
   assert.equal('storageKey' in (projection.documents[0] ?? {}), false);
   assert.equal(projection.provenance.available, false);
   assert.deepEqual(projection.provenance.fields, []);
+});
+
+test('projection redacts related records without their own permissions', async () => {
+  const projection = await createService().getProjection(
+    invoiceId,
+    organizationId,
+    accessFor(['invoices:view_all']),
+  );
+
+  assert.equal(projection.invoice.vendor, null);
+  assert.equal(projection.invoice.purchaseOrder, null);
+  assert.deepEqual(projection.approvals, []);
+  assert.deepEqual(projection.payments, []);
+});
+
+test('projection keeps the purchase order while independently redacting its requisition', async () => {
+  const projection = await createService().getProjection(
+    invoiceId,
+    organizationId,
+    accessFor(['invoices:view_all', 'purchase_orders:view_all']),
+  );
+
+  assert.equal(projection.invoice.purchaseOrder?.id, purchaseOrderId);
+  assert.equal(projection.invoice.purchaseOrder?.requisition, null);
 });
 
 test('queue returns bounded invoice summaries and a stable cursor', async () => {
@@ -299,8 +385,21 @@ test('queue returns bounded invoice summaries and a stable cursor', async () => 
 test('recordSignal preserves one signal identity across repeated observations', async () => {
   const cases: Array<Record<string, unknown>> = [];
   const signals: Array<Record<string, unknown>> = [];
+  const auditClaims: Array<Record<string, unknown>> = [];
+  const auditRows: Array<Record<string, unknown>> = [];
+  let failAudit = false;
   let nextId = 20;
   const tx = {
+    execute: async () => {
+      if (failAudit) throw new Error('audit write failed');
+      return [
+        {
+          changesJson: '{}',
+          metadataJson: '{}',
+          createdAtText: '2026-08-01T00:00:00.000000Z',
+        },
+      ];
+    },
     select: () => {
       let table: unknown;
       const builder = {
@@ -309,7 +408,12 @@ test('recordSignal preserves one signal identity across repeated observations', 
           return builder;
         },
         where: () => builder,
-        limit: async () => (table === invoices ? [{ id: invoiceId }] : []),
+        limit: async () => {
+          if (table === invoices) return [{ id: invoiceId }];
+          if (table === auditIdempotencyKeys) return auditClaims;
+          if (table === auditLog) return auditRows;
+          return [];
+        },
         for: async () => {
           if (table === invoiceReviewCases) return cases;
           if (table === invoiceReviewSignals) {
@@ -320,6 +424,7 @@ test('recordSignal preserves one signal identity across repeated observations', 
           }
           return [];
         },
+        orderBy: () => builder,
         then: (resolve: (value: unknown) => unknown) =>
           resolve(
             table === invoiceReviewSignals
@@ -327,70 +432,110 @@ test('recordSignal preserves one signal identity across repeated observations', 
                   severity: signal.severity,
                   status: signal.status,
                 }))
-              : [],
+              : table === auditLog
+                ? auditRows
+                : [],
           ),
       };
       return builder;
     },
     insert: (table: unknown) => ({
-      values: (values: Record<string, unknown>) => ({
-        onConflictDoNothing: () => ({
-          returning: async () => {
-            if (table !== invoiceReviewCases || cases.length > 0) return [];
-            const reviewCase = {
-              id: '00000000-0000-4000-8000-000000000016',
-              organizationId: values.organizationId,
-              invoiceId: values.invoiceId,
-              state: values.state,
-              ownerId: null,
-              version: 1,
-              openedAt: values.openedAt,
-              resolvedAt: null,
-              createdAt: values.createdAt,
-              updatedAt: values.updatedAt,
-            };
-            cases.push(reviewCase);
-            return [reviewCase];
-          },
-        }),
-        onConflictDoUpdate: (config: { set: Record<string, unknown> }) => ({
-          returning: async () => {
-            const existing = signals.find(
-              (signal) =>
-                signal.caseId === values.caseId &&
-                signal.signalType === values.signalType &&
-                signal.sourceModule === values.sourceModule &&
-                signal.sourceRecordId === values.sourceRecordId,
-            );
-            if (existing) {
-              Object.assign(existing, config.set, { id: existing.id });
-              return [existing];
-            }
-            const signal = { ...values, id: `signal-${nextId++}` };
-            signals.push(signal);
-            return [signal];
-          },
-        }),
-      }),
+      values: (values: Record<string, unknown>) => {
+        if (table === auditIdempotencyKeys) {
+          auditClaims.push(values);
+          return {};
+        }
+        if (table === auditLog) {
+          return {
+            returning: async () => {
+              const row = {
+                ...values,
+                entryHash: `hash-${String(values.id)}`,
+              };
+              auditRows.push(row);
+              return [row];
+            },
+          };
+        }
+        return {
+          onConflictDoNothing: () => ({
+            returning: async () => {
+              if (table !== invoiceReviewCases || cases.length > 0) return [];
+              const reviewCase = {
+                id: '00000000-0000-4000-8000-000000000016',
+                organizationId: values.organizationId,
+                invoiceId: values.invoiceId,
+                state: values.state,
+                ownerId: null,
+                version: 1,
+                openedAt: values.openedAt,
+                resolvedAt: null,
+                createdAt: values.createdAt,
+                updatedAt: values.updatedAt,
+              };
+              cases.push(reviewCase);
+              return [reviewCase];
+            },
+          }),
+          onConflictDoUpdate: (config: { set: Record<string, unknown> }) => ({
+            returning: async () => {
+              const existing = signals.find(
+                (signal) =>
+                  signal.caseId === values.caseId &&
+                  signal.signalType === values.signalType &&
+                  signal.sourceModule === values.sourceModule &&
+                  signal.sourceRecordId === values.sourceRecordId,
+              );
+              if (existing) {
+                Object.assign(existing, config.set, { id: existing.id });
+                return [existing];
+              }
+              const signal = { ...values, id: `signal-${nextId++}` };
+              signals.push(signal);
+              return [signal];
+            },
+          }),
+        };
+      },
     }),
     update: (table: unknown) => ({
       set: (values: Record<string, unknown>) => ({
-        where: () => ({
-          returning: async () => {
-            if (table !== invoiceReviewCases) return [];
-            const reviewCase = cases[0];
-            if (!reviewCase) return [];
-            Object.assign(reviewCase, values, {
-              version: Number(reviewCase.version) + 1,
-            });
-            return [reviewCase];
-          },
-        }),
+        where: () => {
+          if (table === auditIdempotencyKeys) {
+            Object.assign(auditClaims[0] ?? {}, values);
+            return undefined;
+          }
+          return {
+            returning: async () => {
+              if (table !== invoiceReviewCases) return [];
+              const reviewCase = cases[0];
+              if (!reviewCase) return [];
+              Object.assign(reviewCase, values, {
+                version: Number(reviewCase.version) + 1,
+              });
+              return [reviewCase];
+            },
+          };
+        },
       }),
     }),
   };
   const db = {
-    transaction: async <T>(callback: (executor: typeof tx) => Promise<T>) => callback(tx),
+    transaction: async <T>(callback: (executor: typeof tx) => Promise<T>) => {
+      const casesSnapshot = cases.map((reviewCase) => ({ ...reviewCase }));
+      const signalsSnapshot = signals.map((signal) => ({ ...signal }));
+      const auditClaimsSnapshot = auditClaims.map((claim) => ({ ...claim }));
+      const auditRowsSnapshot = auditRows.map((row) => ({ ...row }));
+      try {
+        return await callback(tx);
+      } catch (error) {
+        cases.splice(0, cases.length, ...casesSnapshot);
+        signals.splice(0, signals.length, ...signalsSnapshot);
+        auditClaims.splice(0, auditClaims.length, ...auditClaimsSnapshot);
+        auditRows.splice(0, auditRows.length, ...auditRowsSnapshot);
+        throw error;
+      }
+    },
   } as unknown as Db;
   const service = new InvoiceReviewsService(db);
   const input = {
@@ -418,4 +563,22 @@ test('recordSignal preserves one signal identity across repeated observations', 
   assert.deepEqual(signals[0]?.firstSeenAt, new Date('2026-08-01T00:00:00Z'));
   assert.deepEqual(signals[0]?.lastSeenAt, new Date('2026-08-02T00:00:00Z'));
   assert.equal(cases[0]?.state, 'open');
+  assert.equal(auditRows.length, 1);
+  assert.equal(auditClaims.length, 1);
+  assert.equal(auditRows[0]?.action, 'review_signal_recorded');
+  assert.equal(auditRows[0]?.entityType, 'invoice_review_case');
+
+  failAudit = true;
+  await assert.rejects(
+    service.recordSignal({
+      ...input,
+      sourceRecordId: '00000000-0000-4000-8000-000000000022',
+      observedAt: new Date('2026-08-03T00:00:00Z'),
+    }),
+    /audit write failed/,
+  );
+  assert.equal(signals.length, 1);
+  assert.equal(cases.length, 1);
+  assert.equal(auditRows.length, 1);
+  assert.equal(auditClaims.length, 1);
 });

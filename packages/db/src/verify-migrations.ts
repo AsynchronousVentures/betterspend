@@ -313,6 +313,20 @@ const EXPECTED_FOREIGN_KEYS = [
     parentColumns: ['id', 'organization_id'],
   },
   {
+    name: 'invoice_review_cases_organization_id_organizations_id_fk',
+    child: 'invoice_review_cases',
+    parent: 'organizations',
+    childColumns: ['organization_id'],
+    parentColumns: ['id'],
+  },
+  {
+    name: 'invoice_review_signals_organization_id_organizations_id_fk',
+    child: 'invoice_review_signals',
+    parent: 'organizations',
+    childColumns: ['organization_id'],
+    parentColumns: ['id'],
+  },
+  {
     name: 'invoice_review_cases_invoice_org_fk',
     child: 'invoice_review_cases',
     parent: 'invoices',

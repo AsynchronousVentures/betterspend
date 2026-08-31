@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from '@nes
 import { and, asc, eq, gt, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import {
   approvalRequests,
+  appendAuditLogIfAbsent,
   documents,
   emailIntakeItems,
   invoiceReviewCases,
@@ -30,6 +31,7 @@ import {
 import { DB_TOKEN } from '../../database/database.module';
 import type { AccessPolicy } from '../auth/access-policy';
 import { permissionScopePredicate } from '../auth/access-scope';
+import { canViewRelatedRecord } from '../auth/related-record-access';
 import { initialReviewCaseState, nextReviewCaseState } from './invoice-review-state';
 
 type SourceAvailability = 'present' | 'missing' | 'unknown';
@@ -202,6 +204,43 @@ interface ReviewCursor {
   sort: InvoiceReviewListQuery['sort'];
   value: string | null;
   id: string;
+}
+
+interface SignalAuditInput {
+  organizationId: string;
+  caseId: string;
+  signalId: string;
+  signalType: InvoiceReviewSignalType;
+  sourceModule: string;
+  sourceRecordId: string;
+  severity: InvoiceReviewSignalSeverity;
+  status: InvoiceReviewSignalStatus;
+  previousCaseState: InvoiceReviewCaseState;
+  nextCaseState: InvoiceReviewCaseState;
+}
+
+async function appendSignalAudit(
+  transaction: DbTransaction,
+  input: SignalAuditInput,
+): Promise<void> {
+  await appendAuditLogIfAbsent(transaction, {
+    organizationId: input.organizationId,
+    userId: null,
+    entityType: 'invoice_review_case',
+    entityId: input.caseId,
+    action: 'review_signal_recorded',
+    changes: {
+      signalId: input.signalId,
+      signalType: input.signalType,
+      sourceModule: input.sourceModule,
+      sourceRecordId: input.sourceRecordId,
+      severity: input.severity,
+      status: input.status,
+      previousCaseState: input.previousCaseState,
+      nextCaseState: input.nextCaseState,
+    },
+    idempotencyKey: `invoice-review-signal:${input.signalId}`,
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -524,6 +563,7 @@ export class InvoiceReviewsService {
         invoice: {
           columns: {
             id: true,
+            createdBy: true,
             internalNumber: true,
             invoiceNumber: true,
             status: true,
@@ -533,6 +573,7 @@ export class InvoiceReviewsService {
             taxAmount: true,
             totalAmount: true,
             currency: true,
+            entityId: true,
             baseCurrency: true,
             baseTotalAmount: true,
             documentId: true,
@@ -543,7 +584,14 @@ export class InvoiceReviewsService {
           },
           with: {
             vendor: {
-              columns: { id: true, organizationId: true, name: true, code: true, status: true },
+              columns: {
+                id: true,
+                organizationId: true,
+                entityId: true,
+                name: true,
+                code: true,
+                status: true,
+              },
             },
             entity: {
               columns: { id: true, organizationId: true, name: true, code: true, currency: true },
@@ -552,6 +600,7 @@ export class InvoiceReviewsService {
               columns: {
                 id: true,
                 organizationId: true,
+                issuedBy: true,
                 number: true,
                 status: true,
                 entityId: true,
@@ -624,7 +673,64 @@ export class InvoiceReviewsService {
       throw new NotFoundException(`Invoice review case for invoice ${invoiceId} not found`);
     }
 
-    const [documentRows, messageRows, approvalRows, sourceAvailability] = await Promise.all([
+    const invoice = reviewCase.invoice;
+    const purchaseOrder = invoice.purchaseOrder;
+    const purchaseOrderScope = {
+      ownerIds: [purchaseOrder?.issuedBy, purchaseOrder?.requisition?.requesterId],
+      departmentId: purchaseOrder?.requisition?.departmentId,
+      projectId: purchaseOrder?.requisition?.projectId,
+      entityId: purchaseOrder?.entityId,
+    };
+    const visiblePurchaseOrder =
+      purchaseOrder &&
+      canViewRelatedRecord(
+        access,
+        'purchase_order',
+        [
+          'purchase_orders:view_all',
+          'purchase_orders:view_own',
+          'purchase_orders:manage',
+          'purchase_orders:issue',
+        ],
+        purchaseOrderScope,
+      )
+        ? purchaseOrder
+        : null;
+    const visibleRequisition =
+      visiblePurchaseOrder?.requisition &&
+      canViewRelatedRecord(
+        access,
+        'requisition',
+        ['requisitions:view_all', 'requisitions:view_own', 'requisitions:manage'],
+        {
+          ownerIds: [visiblePurchaseOrder.requisition.requesterId],
+          departmentId: visiblePurchaseOrder.requisition.departmentId,
+          projectId: visiblePurchaseOrder.requisition.projectId,
+        },
+      )
+        ? visiblePurchaseOrder.requisition
+        : null;
+    const visibleVendor =
+      invoice.vendor &&
+      canViewRelatedRecord(access, 'vendor', ['vendors:view'], {
+        entityId: invoice.vendor.entityId,
+      })
+        ? invoice.vendor
+        : null;
+    const relatedRecordScope = {
+      ownerIds: [invoice.createdBy, purchaseOrder?.requisition?.requesterId],
+      departmentId: purchaseOrder?.requisition?.departmentId,
+      projectId: purchaseOrder?.requisition?.projectId,
+      entityId: invoice.entityId ?? purchaseOrder?.entityId,
+    };
+    const canViewApprovals = canViewRelatedRecord(
+      access,
+      'approval',
+      ['approvals:view', 'approvals:act'],
+      relatedRecordScope,
+    );
+
+    const [documentRows, messageRows, sourceAvailability] = await Promise.all([
       this.db.query.documents.findMany({
         where: (document, operators) =>
           operators.and(
@@ -660,30 +766,31 @@ export class InvoiceReviewsService {
         },
         orderBy: (message, operators) => operators.asc(message.createdAt),
       }),
-      this.db.query.approvalRequests.findMany({
-        where: (request, operators) =>
-          operators.and(
-            operators.eq(request.organizationId, organizationId),
-            operators.eq(request.approvableType, 'invoice'),
-            operators.eq(request.approvableId, invoiceId),
-          ),
-        columns: {
-          id: true,
-          status: true,
-          currentStep: true,
-          currentNodeId: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-        orderBy: (request, operators) => [
-          operators.asc(request.createdAt),
-          operators.asc(request.id),
-        ],
-      }),
       this.resolveSourceAvailability(organizationId, invoiceId, reviewCase.signals),
     ]);
 
-    const invoice = reviewCase.invoice;
+    const approvalRows = canViewApprovals
+      ? await this.db.query.approvalRequests.findMany({
+          where: (request, operators) =>
+            operators.and(
+              operators.eq(request.organizationId, organizationId),
+              operators.eq(request.approvableType, 'invoice'),
+              operators.eq(request.approvableId, invoiceId),
+            ),
+          columns: {
+            id: true,
+            status: true,
+            currentStep: true,
+            currentNodeId: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+          orderBy: (request, operators) => [
+            operators.asc(request.createdAt),
+            operators.asc(request.id),
+          ],
+        })
+      : [];
     const matchExceptions = invoice.lines.flatMap((line) =>
       line.matchResults.filter((result) => result.status === 'exception'),
     );
@@ -710,12 +817,12 @@ export class InvoiceReviewsService {
         baseTotalAmount: invoice.baseTotalAmount,
         documentId: invoice.documentId,
         vendor:
-          invoice.vendor?.organizationId === organizationId
+          visibleVendor?.organizationId === organizationId
             ? {
-                id: invoice.vendor.id,
-                name: invoice.vendor.name,
-                code: invoice.vendor.code,
-                status: invoice.vendor.status,
+                id: visibleVendor.id,
+                name: visibleVendor.name,
+                code: visibleVendor.code,
+                status: visibleVendor.status,
               }
             : null,
         entity:
@@ -728,22 +835,22 @@ export class InvoiceReviewsService {
               }
             : null,
         purchaseOrder:
-          invoice.purchaseOrder?.organizationId === organizationId
+          visiblePurchaseOrder?.organizationId === organizationId
             ? {
-                id: invoice.purchaseOrder.id,
-                number: invoice.purchaseOrder.number,
-                status: invoice.purchaseOrder.status,
-                entityId: invoice.purchaseOrder.entityId,
-                vendorId: invoice.purchaseOrder.vendorId,
+                id: visiblePurchaseOrder.id,
+                number: visiblePurchaseOrder.number,
+                status: visiblePurchaseOrder.status,
+                entityId: visiblePurchaseOrder.entityId,
+                vendorId: visiblePurchaseOrder.vendorId,
                 requisition:
-                  invoice.purchaseOrder.requisition?.organizationId === organizationId
+                  visibleRequisition?.organizationId === organizationId
                     ? {
-                        id: invoice.purchaseOrder.requisition.id,
-                        number: invoice.purchaseOrder.requisition.number,
-                        status: invoice.purchaseOrder.requisition.status,
-                        requesterId: invoice.purchaseOrder.requisition.requesterId,
-                        departmentId: invoice.purchaseOrder.requisition.departmentId,
-                        projectId: invoice.purchaseOrder.requisition.projectId,
+                        id: visibleRequisition.id,
+                        number: visibleRequisition.number,
+                        status: visibleRequisition.status,
+                        requesterId: visibleRequisition.requesterId,
+                        departmentId: visibleRequisition.departmentId,
+                        projectId: visibleRequisition.projectId,
                       }
                     : null,
               }
@@ -774,12 +881,17 @@ export class InvoiceReviewsService {
         exceptions: matchExceptions,
       },
       approvals: approvalRows,
-      payments: invoice.paymentRunInvoices
-        .filter((payment) => payment.paymentRun?.orgId === organizationId)
-        .map((payment) => ({
-          ...payment,
-          paymentRun: payment.paymentRun,
-        })),
+      payments: invoice.paymentRunInvoices.flatMap((payment) => {
+        if (
+          payment.paymentRun?.orgId !== organizationId ||
+          !canViewRelatedRecord(access, 'payment', ['payments:view', 'payments:manage'], {
+            entityId: payment.paymentRun.entityId,
+          })
+        ) {
+          return [];
+        }
+        return [{ ...payment, paymentRun: payment.paymentRun }];
+      }),
       provenance: { available: false, fields: [] },
       history: { available: false, entries: [] },
     };
@@ -907,6 +1019,19 @@ export class InvoiceReviewsService {
           ),
         )
         .returning();
+
+      await appendSignalAudit(tx, {
+        organizationId: input.organizationId,
+        caseId: reviewCase.id,
+        signalId: signal.id,
+        signalType: signal.signalType,
+        sourceModule: signal.sourceModule,
+        sourceRecordId: signal.sourceRecordId,
+        severity: signal.severity,
+        status: signal.status,
+        previousCaseState: reviewCase.state,
+        nextCaseState: nextState,
+      });
 
       return { case: updatedCase ?? reviewCase, signal };
     });

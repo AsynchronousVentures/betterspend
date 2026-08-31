@@ -13,12 +13,8 @@ export function isOpenBlockingSignal(signal: ReviewSignalState): boolean {
   return signal.status === 'open' && signal.severity === 'blocking';
 }
 
-export function isOpenReviewSignal(signal: ReviewSignalState): boolean {
-  return signal.status === 'open' && signal.severity !== 'informational';
-}
-
 export function initialReviewCaseState(signal: ReviewSignalState): InvoiceReviewCaseState {
-  return isOpenReviewSignal(signal) ? 'open' : 'resolved';
+  return isOpenBlockingSignal(signal) ? 'open' : 'resolved';
 }
 
 /**
@@ -29,7 +25,8 @@ export function nextReviewCaseState(
   current: InvoiceReviewCaseState,
   signals: readonly ReviewSignalState[],
 ): InvoiceReviewCaseState {
-  if (current === 'resolved' && signals.some(isOpenReviewSignal)) return 'open';
-  if (current === 'open' && !signals.some(isOpenReviewSignal)) return 'resolved';
+  const hasOpenBlockingSignal = signals.some(isOpenBlockingSignal);
+  if (current === 'resolved' && hasOpenBlockingSignal) return 'open';
+  if (current === 'open' && !hasOpenBlockingSignal) return 'resolved';
   return current;
 }

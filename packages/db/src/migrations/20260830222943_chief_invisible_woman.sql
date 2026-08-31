@@ -225,7 +225,7 @@ SET
 		WHERE signal."case_id" = c."id"
 			AND signal."organization_id" = c."organization_id"
 			AND signal."status" = 'open'
-			AND signal."severity" <> 'informational'
+			AND signal."severity" = 'blocking'
 	) THEN 'open' ELSE 'resolved' END,
 	"resolved_at" = CASE WHEN EXISTS (
 		SELECT 1
@@ -233,7 +233,7 @@ SET
 		WHERE signal."case_id" = c."id"
 			AND signal."organization_id" = c."organization_id"
 			AND signal."status" = 'open'
-			AND signal."severity" <> 'informational'
+			AND signal."severity" = 'blocking'
 	) THEN NULL ELSE now() END,
 	"updated_at" = now()
 WHERE EXISTS (
