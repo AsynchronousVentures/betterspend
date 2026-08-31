@@ -29,12 +29,12 @@ export function WorkflowPalette({
 
   if (collapsed) {
     return (
-      <aside className="flex w-11 shrink-0 flex-col items-center border-r border-white/15 bg-[#070707] py-3">
+      <aside className="flex w-11 shrink-0 flex-col items-center border-r border-border/70 bg-muted/30 py-3">
         <button
           type="button"
           onClick={onToggle}
           aria-label="Open step palette"
-          className="grid size-7 place-items-center text-zinc-500 hover:text-white"
+          className="grid size-7 place-items-center text-muted-foreground hover:text-foreground"
         >
           <ChevronRight className="size-4" />
         </button>
@@ -57,12 +57,12 @@ export function WorkflowPalette({
           event.dataTransfer.effectAllowed = 'copy';
         }}
         onClick={() => onAdd(definition.type, { x: 180, y: 120 })}
-        className="group flex w-full items-start gap-2.5 border-t border-white/8 px-3 py-2.5 text-left hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-40"
+        className="group flex w-full items-start gap-2.5 border-t border-border/60 px-3 py-2.5 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
       >
-        <Icon className="mt-0.5 size-3.5 shrink-0 text-orange-300" />
+        <Icon className="mt-0.5 size-3.5 shrink-0 text-primary" />
         <span className="min-w-0">
-          <span className="block text-xs font-medium text-white">{definition.label}</span>
-          <span className="mt-0.5 block text-[10px] leading-4 text-zinc-600 group-hover:text-zinc-400">
+          <span className="block text-xs font-medium text-foreground">{definition.label}</span>
+          <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">
             {definition.description}
           </span>
         </span>
@@ -71,19 +71,19 @@ export function WorkflowPalette({
   };
 
   return (
-    <aside className="w-56 shrink-0 overflow-y-auto border-r border-white/15 bg-[#070707] text-white">
-      <div className="flex h-12 items-center border-b border-white/12 px-3">
-        <span className="text-xs font-semibold">Add step</span>
+    <aside className="w-56 shrink-0 overflow-y-auto border-r border-border/70 bg-muted/30 text-foreground">
+      <div className="flex h-12 items-center border-b border-border/70 px-3">
+        <span className="text-xs font-semibold text-foreground">Add step</span>
         <button
           type="button"
           onClick={onToggle}
           aria-label="Collapse step palette"
-          className="ml-auto text-zinc-600 hover:text-white"
+          className="ml-auto text-muted-foreground hover:text-foreground"
         >
           <ChevronDown className="size-4 rotate-90" />
         </button>
       </div>
-      <div className="px-3 py-2 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-600">
+      <div className="px-3 py-2 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
         Common
       </div>
       {common.map((definition) => renderDefinition(definition.type))}
@@ -91,7 +91,7 @@ export function WorkflowPalette({
         type="button"
         onClick={() => setAdvancedOpen((open) => !open)}
         aria-expanded={advancedOpen}
-        className="flex w-full items-center border-y border-white/10 px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 hover:text-white"
+        className="flex w-full items-center border-y border-border/60 px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground hover:text-foreground"
       >
         Advanced
         {advancedOpen ? (
@@ -105,9 +105,9 @@ export function WorkflowPalette({
         type="button"
         onClick={onAddNote}
         disabled={disabled}
-        className="flex w-full items-center gap-2.5 border-b border-white/10 px-3 py-3 text-left text-xs text-zinc-400 hover:bg-white/[0.04] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+        className="flex w-full items-center gap-2.5 border-b border-border/60 px-3 py-3 text-left text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
       >
-        <StickyNote className="size-3.5 text-amber-300" /> Sticky note
+        <StickyNote className="size-3.5 text-amber-500" /> Sticky note
       </button>
     </aside>
   );

@@ -127,8 +127,8 @@ function WorkflowNodeCardView({ data, selected }: NodeProps<WorkflowFlowNode>) {
 
   return (
     <div
-      className={`w-52 border bg-[#090909] text-left shadow-[0_10px_30px_rgba(0,0,0,0.48)] ${
-        selected ? 'border-orange-400 ring-1 ring-orange-400/35' : 'border-white/18'
+      className={`w-52 rounded-lg border bg-card text-left shadow-sm ${
+        selected ? 'border-primary ring-1 ring-primary/35' : 'border-border'
       } ${disabled ? 'opacity-45' : ''}`}
     >
       {definition.ports.inputs.map((port, index) => (
@@ -138,7 +138,7 @@ function WorkflowNodeCardView({ data, selected }: NodeProps<WorkflowFlowNode>) {
           type="target"
           position={Position.Left}
           style={{ top: handleOffset(index, definition.ports.inputs.length) }}
-          className="!size-2.5 !rounded-none !border !border-sky-300 !bg-black"
+          className="!size-2.5 !rounded-full !border !border-accent !bg-card"
           title={`Input: ${port}`}
         />
       ))}
@@ -149,20 +149,22 @@ function WorkflowNodeCardView({ data, selected }: NodeProps<WorkflowFlowNode>) {
           type="source"
           position={Position.Right}
           style={{ top: handleOffset(index, definition.ports.outputs.length) }}
-          className="!size-2.5 !rounded-none !border !border-orange-300 !bg-black"
+          className="!size-2.5 !rounded-full !border !border-primary !bg-card"
           title={`Output: ${port}`}
         />
       ))}
 
-      <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
-        <Icon className="size-3.5 text-orange-300" />
-        <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+      <div className="flex items-center gap-2 border-b border-border/70 px-3 py-2">
+        <Icon className="size-3.5 text-primary" />
+        <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
           {definition.label}
         </span>
-        {disabled ? <span className="ml-auto text-[9px] uppercase text-zinc-500">Off</span> : null}
+        {disabled ? (
+          <span className="ml-auto text-[9px] uppercase text-muted-foreground">Off</span>
+        ) : null}
         {data.issues.length > 0 ? (
           <span
-            className="ml-auto grid min-w-4 place-items-center bg-amber-300 px-1 text-[9px] font-bold text-black"
+            className="ml-auto grid min-w-4 place-items-center rounded-sm bg-warning px-1 text-[9px] font-bold text-warning-foreground"
             title={data.issues.map((issue) => issue.message).join('\n')}
           >
             {data.issues.length}
@@ -170,13 +172,13 @@ function WorkflowNodeCardView({ data, selected }: NodeProps<WorkflowFlowNode>) {
         ) : null}
       </div>
       <div className="px-3 py-2.5">
-        <div className="truncate text-xs font-semibold text-white">{data.domainNode.name}</div>
-        <div className="mt-1 truncate font-mono text-[9px] text-zinc-500">
+        <div className="truncate text-xs font-semibold text-foreground">{data.domainNode.name}</div>
+        <div className="mt-1 truncate font-mono text-[9px] text-muted-foreground">
           {nodeSummary(data.domainNode)}
         </div>
       </div>
       {definition.ports.outputs.length > 1 ? (
-        <div className="flex flex-wrap gap-x-2 border-t border-white/10 px-3 py-1 font-mono text-[8px] text-zinc-500">
+        <div className="flex flex-wrap gap-x-2 border-t border-border/70 px-3 py-1 font-mono text-[8px] text-muted-foreground">
           {definition.ports.outputs.map((port) => (
             <span key={port}>{port}</span>
           ))}
@@ -202,14 +204,14 @@ export const WorkflowNodeCard = memo(
 function WorkflowNoteCardView({ data, selected }: NodeProps<WorkflowNoteFlowNode>) {
   return (
     <div
-      className={`w-52 -rotate-1 border bg-[#211d08] p-3 text-amber-50 shadow-[4px_4px_0_rgba(0,0,0,0.5)] ${
-        selected ? 'border-amber-200' : 'border-amber-200/35'
+      className={`w-52 -rotate-1 rounded-sm border bg-amber-100 p-3 text-amber-950 shadow-[4px_4px_0_rgba(26,26,26,0.08)] ${
+        selected ? 'border-amber-400' : 'border-amber-200'
       }`}
     >
-      <div className="flex items-center gap-2 text-[9px] font-semibold uppercase tracking-[0.14em] text-amber-300">
+      <div className="flex items-center gap-2 text-[9px] font-semibold uppercase tracking-[0.14em] text-amber-700">
         <StickyNote className="size-3" /> Note
       </div>
-      <div className="mt-2 whitespace-pre-wrap text-xs leading-5 text-amber-100/80">
+      <div className="mt-2 whitespace-pre-wrap text-xs leading-5 text-amber-900/80">
         {data.note.text}
       </div>
     </div>
