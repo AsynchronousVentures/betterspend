@@ -1080,7 +1080,10 @@ export class ContractsService {
       });
     }
 
-    const insurance = this.findSection(text, /insurance certificate|certificate of insurance|coi/i);
+    const insurance = this.findSection(
+      text,
+      /insurance certificate|certificate of insurance|\bcoi\b/i,
+    );
     if (insurance) {
       obligations.push({
         obligationType: 'insurance_certificate',

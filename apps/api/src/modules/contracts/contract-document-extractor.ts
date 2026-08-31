@@ -30,6 +30,8 @@ const MAX_XML_REFERENCES = 100_000;
 const DOCX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const WORDPROCESSINGML_MAIN_NAMESPACE =
   'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+const MARKUP_COMPATIBILITY_NAMESPACE =
+  'http://schemas.openxmlformats.org/markup-compatibility/2006';
 const PACKAGE_CONTENT_TYPES_NAMESPACE =
   'http://schemas.openxmlformats.org/package/2006/content-types';
 const PACKAGE_RELATIONSHIPS_NAMESPACE =
@@ -47,13 +49,12 @@ const INTERPRETED_WORD_ELEMENT_NAMES = new Map([
   ['r', 'r'],
   ['t', 't'],
   ['tab', 'tab'],
+  ['txbxcontent', 'txbxContent'],
 ]);
 
 const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
 const ZIP_LOCAL_FILE_SIGNATURE = 0x04034b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
-const ZIP64_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06064b50;
-const ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIGNATURE = 0x07064b50;
 const ZIP64_EXTRA_FIELD_ID = 0x0001;
 const ZIP_ENCRYPTED_FLAG = 0x1;
 const ZIP_DATA_DESCRIPTOR_FLAG = 0x8;
@@ -647,6 +648,9 @@ class XmlTokenizer {
           return;
         }
         const comment = this.input.slice(4, commentEnd);
+        if (Buffer.byteLength(this.input.slice(0, commentEnd + 3), 'utf8') > MAX_XML_TOKEN_BYTES) {
+          throw new ContractDocumentExtractionError('limit_exceeded');
+        }
         if (
           comment.includes('--') ||
           comment.endsWith('-') ||
@@ -665,6 +669,9 @@ class XmlTokenizer {
         this.assertTokenSize();
         return;
       }
+      if (Buffer.byteLength(this.input.slice(0, tokenEnd + 1), 'utf8') > MAX_XML_TOKEN_BYTES) {
+        throw new ContractDocumentExtractionError('limit_exceeded');
+      }
       const token = this.input.slice(0, tokenEnd + 1);
       this.input = this.input.slice(tokenEnd + 1);
       this.processToken(token);
@@ -682,6 +689,7 @@ class XmlTokenizer {
   }
 
   private processToken(token: string): void {
+    if (this.entityTail) throw new ContractDocumentExtractionError('malformed');
     this.accountToken();
     this.characterDataSuffix = '';
     if (token.startsWith('<!')) {
@@ -809,7 +817,7 @@ class XmlTokenizer {
 class DocxDocumentParser implements XmlHandler {
   private readonly stack: string[] = [];
   private readonly paragraphs: Array<{ text: string; styleId?: string }> = [];
-  private currentParagraph: { text: string; styleId?: string } | undefined;
+  private readonly paragraphStack: Array<{ text: string; styleId?: string }> = [];
   private paragraphCount = 0;
   private textBytes = 0;
   private parsed: ContractDocumentText | undefined;
@@ -819,6 +827,12 @@ class DocxDocumentParser implements XmlHandler {
   private textDepth = 0;
 
   start(token: XmlStartToken): void {
+    if (
+      token.namespaceUri === MARKUP_COMPATIBILITY_NAMESPACE &&
+      token.localName === 'alternatecontent'
+    ) {
+      throw new ContractDocumentExtractionError('malformed');
+    }
     if (!this.rootSeen) {
       this.wordPrefix = validateWordDocumentRoot(token);
       this.rootSeen = true;
@@ -826,15 +840,16 @@ class DocxDocumentParser implements XmlHandler {
       validateWordElementNamespace(token, this.wordPrefix);
     }
     const localName = token.localName.toLowerCase();
-    if (localName === 'del' || localName === 'deltext') this.deletedDepth += 1;
+    if (localName === 'del' || localName === 'deltext' || localName === 'movefrom') {
+      this.deletedDepth += 1;
+    }
     if (localName === 't') this.textDepth += 1;
     if (localName === 'p') {
-      if (this.currentParagraph) throw new ContractDocumentExtractionError('malformed');
       this.paragraphCount += 1;
       if (this.paragraphCount > CONTRACT_DOCUMENT_MAX_DOCX_SECTIONS) {
         throw new ContractDocumentExtractionError('limit_exceeded');
       }
-      this.currentParagraph = { text: '' };
+      this.paragraphStack.push({ text: '' });
     } else if (localName === 'pstyle' && this.currentParagraph) {
       const styleId = token.attributes.find(
         (attribute) => attribute.localName.toLowerCase() === 'val',
@@ -855,9 +870,11 @@ class DocxDocumentParser implements XmlHandler {
       if (!this.currentParagraph) throw new ContractDocumentExtractionError('malformed');
       const text = normalizeText(this.currentParagraph.text);
       if (text) this.paragraphs.push({ text, styleId: this.currentParagraph.styleId });
-      this.currentParagraph = undefined;
+      this.paragraphStack.pop();
     }
-    if (localName === 'del' || localName === 'deltext') this.deletedDepth -= 1;
+    if (localName === 'del' || localName === 'deltext' || localName === 'movefrom') {
+      this.deletedDepth -= 1;
+    }
     if (localName === 't') this.textDepth -= 1;
     this.stack.pop();
   }
@@ -869,7 +886,7 @@ class DocxDocumentParser implements XmlHandler {
   }
 
   finish(headingStyles: ReadonlyMap<string, string>): void {
-    if (!this.rootSeen || this.currentParagraph || this.stack.length) {
+    if (!this.rootSeen || this.paragraphStack.length || this.stack.length) {
       throw new ContractDocumentExtractionError('malformed');
     }
     if (!this.paragraphs.length) throw new ContractDocumentExtractionError('empty');
@@ -921,6 +938,10 @@ class DocxDocumentParser implements XmlHandler {
     }
     this.currentParagraph!.text += value;
     this.textBytes += valueBytes;
+  }
+
+  private get currentParagraph(): { text: string; styleId?: string } | undefined {
+    return this.paragraphStack.at(-1);
   }
 }
 
@@ -1017,7 +1038,7 @@ function normalizeText(text: string): string {
 }
 
 function normalizeProvenanceText(text: string): string {
-  return text.replace(/\s+/g, ' ').trim().toLowerCase();
+  return text.replace(/\s+/g, ' ').trim();
 }
 
 function localXmlName(name: string): string {
@@ -1041,9 +1062,12 @@ function validateWordDocumentRoot(token: XmlStartToken): string | undefined {
 }
 
 function validateWordElementNamespace(token: XmlStartToken, wordPrefix: string | undefined): void {
-  const { prefix, localName } = splitXmlQualifiedName(token.name);
+  const { localName } = splitXmlQualifiedName(token.name);
   const interpretedName = INTERPRETED_WORD_ELEMENT_NAMES.get(localName.toLowerCase());
-  if (interpretedName && (localName !== interpretedName || prefix !== wordPrefix)) {
+  if (
+    interpretedName &&
+    (localName !== interpretedName || token.namespaceUri !== WORDPROCESSINGML_MAIN_NAMESPACE)
+  ) {
     throw new ContractDocumentExtractionError('malformed');
   }
 
@@ -1077,7 +1101,7 @@ function splitXmlQualifiedName(name: string): { prefix: string | undefined; loca
 }
 
 function isSupportedXmlNcName(value: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_.-]*$/u.test(value);
+  return /^[\p{L}_][\p{L}\p{M}\p{N}._-]*$/u.test(value);
 }
 
 function validateNamespaceBindings(
@@ -1126,21 +1150,29 @@ function resolveXmlNamespaces(
   scope: ReadonlyMap<string, string>,
 ): XmlStartToken {
   const elementPrefix = splitXmlQualifiedName(token.name).prefix ?? '';
+  const attributes = token.attributes.map((attribute) => {
+    const prefix = splitXmlQualifiedName(attribute.name).prefix;
+    return {
+      ...attribute,
+      namespaceUri:
+        attribute.name === 'xmlns' || prefix === 'xmlns'
+          ? 'http://www.w3.org/2000/xmlns/'
+          : prefix
+            ? scope.get(prefix)
+            : undefined,
+    };
+  });
+  const expandedNames = new Set<string>();
+  for (const attribute of attributes) {
+    const localName = splitXmlQualifiedName(attribute.name).localName;
+    const expandedName = `${attribute.namespaceUri ?? ''}\0${localName}`;
+    if (expandedNames.has(expandedName)) throw new ContractDocumentExtractionError('malformed');
+    expandedNames.add(expandedName);
+  }
   return {
     ...token,
     namespaceUri: scope.get(elementPrefix),
-    attributes: token.attributes.map((attribute) => {
-      const prefix = splitXmlQualifiedName(attribute.name).prefix;
-      return {
-        ...attribute,
-        namespaceUri:
-          attribute.name === 'xmlns' || prefix === 'xmlns'
-            ? 'http://www.w3.org/2000/xmlns/'
-            : prefix
-              ? scope.get(prefix)
-              : undefined,
-      };
-    }),
+    attributes,
   };
 }
 
@@ -1235,7 +1267,6 @@ function parseXmlStartTag(token: string, accountReference: () => void): XmlStart
   cursor += name.length;
   const attributes: XmlAttribute[] = [];
   const seenAttributes = new Set<string>();
-  const seenLocalAttributes = new Set<string>();
   let selfClosing = false;
 
   while (cursor < token.length - 1) {
@@ -1269,13 +1300,10 @@ function parseXmlStartTag(token: string, accountReference: () => void): XmlStart
     const valueEnd = token.indexOf(quote, valueStart);
     if (valueEnd < 0) throw new ContractDocumentExtractionError('malformed');
     const value = decodeXmlAttributeValue(token.slice(valueStart, valueEnd), accountReference);
-    const normalizedName = attributeName.toLowerCase();
-    const normalizedLocalName = localXmlName(attributeName);
-    if (seenAttributes.has(normalizedName) || seenLocalAttributes.has(normalizedLocalName)) {
+    if (seenAttributes.has(attributeName)) {
       throw new ContractDocumentExtractionError('malformed');
     }
-    seenAttributes.add(normalizedName);
-    seenLocalAttributes.add(normalizedLocalName);
+    seenAttributes.add(attributeName);
     attributes.push({
       name: attributeName,
       localName: localXmlName(attributeName),
@@ -1308,7 +1336,7 @@ function parseXmlEndTag(token: string): string {
 }
 
 function readXmlName(value: string, start: number): string {
-  const match = /^[A-Za-z_][A-Za-z0-9_.:-]*/u.exec(value.slice(start));
+  const match = /^[\p{L}_][\p{L}\p{M}\p{N}._:-]*/u.exec(value.slice(start));
   if (!match?.[0]) throw new ContractDocumentExtractionError('malformed');
   splitXmlQualifiedName(match[0]);
   return match[0];
@@ -1389,7 +1417,6 @@ interface ZipEntryMetadata {
 
 function readZipEndOfCentralDirectory(buffer: Buffer): ZipArchiveMetadata {
   if (buffer.length < 22) throw new ContractDocumentExtractionError('malformed');
-  rejectZip64Signatures(buffer);
 
   const eocdOffsets: number[] = [];
   for (let offset = buffer.length - 22; offset >= 0; offset -= 1) {
@@ -1437,21 +1464,6 @@ function readZipEndOfCentralDirectory(buffer: Buffer): ZipArchiveMetadata {
     centralDirectorySize,
   });
   return { entryCount, centralDirectoryOffset, centralDirectorySize, entries };
-}
-
-function rejectZip64Signatures(buffer: Buffer): void {
-  if (
-    hasZipSignature(buffer, ZIP64_END_OF_CENTRAL_DIRECTORY_SIGNATURE) ||
-    hasZipSignature(buffer, ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIGNATURE)
-  ) {
-    throw new ContractDocumentExtractionError('malformed');
-  }
-}
-
-function hasZipSignature(buffer: Buffer, signature: number): boolean {
-  const bytes = Buffer.allocUnsafe(4);
-  bytes.writeUInt32LE(signature, 0);
-  return buffer.includes(bytes);
 }
 
 function parseCentralDirectory(
@@ -1740,7 +1752,9 @@ function readLocalDataRange(
   let rangeEnd = dataEnd;
   if (entry.generalPurposeBitFlag & ZIP_DATA_DESCRIPTOR_FLAG) {
     ensureBufferRange(buffer, dataEnd, 12);
-    const descriptorHasSignature = buffer.readUInt32LE(dataEnd) === ZIP_DATA_DESCRIPTOR_SIGNATURE;
+    const descriptorHasSignature =
+      buffer.readUInt32LE(dataEnd) === ZIP_DATA_DESCRIPTOR_SIGNATURE &&
+      entry.crc32 !== ZIP_DATA_DESCRIPTOR_SIGNATURE;
     const descriptorStart = descriptorHasSignature ? dataEnd + 4 : dataEnd;
     const descriptorLength = descriptorHasSignature ? 16 : 12;
     ensureBufferRange(buffer, dataEnd, descriptorLength);
@@ -1805,7 +1819,10 @@ function ensureBufferRange(buffer: Buffer, offset: number, length: number): void
 
 function decodeZipName(bytes: Buffer, flags: number): string {
   try {
-    if (!(flags & ZIP_UTF8_FLAG)) return bytes.toString('utf8');
+    if (!(flags & ZIP_UTF8_FLAG)) {
+      if (bytes.some((byte) => byte > 0x7f)) throw new ContractDocumentExtractionError('malformed');
+      return bytes.toString('ascii');
+    }
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
     throw new ContractDocumentExtractionError('malformed');

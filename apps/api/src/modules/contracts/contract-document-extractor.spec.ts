@@ -156,9 +156,17 @@ describe('ContractDocumentExtractorService', () => {
   it.each([
     ['ZIP64 end record', Buffer.from([0x50, 0x4b, 0x06, 0x06])],
     ['ZIP64 locator', Buffer.from([0x50, 0x4b, 0x06, 0x07])],
-  ])('rejects a %s even when ordinary EOCD fields are present', async (_label, signature) => {
+  ])('allows %s signature bytes inside an EOCD comment', async (_label, signature) => {
     const buffer = appendZipComment(await makeDocx([{ text: 'Content' }]), signature);
 
+    await expect(extractor.extract(asDocxInput(buffer))).resolves.toMatchObject({
+      text: 'Content',
+    });
+  });
+
+  it('rejects legacy non-ASCII ZIP names instead of decoding them inconsistently', async () => {
+    const buffer = await makeDocx([{ text: 'Content' }]);
+    setZipEntryNameBytes(buffer, 'word/styles.xml', Buffer.from('word/styl\x82s.xml', 'binary'));
     await expect(extractor.extract(asDocxInput(buffer))).rejects.toMatchObject({
       code: 'malformed',
     });
@@ -293,6 +301,59 @@ describe('ContractDocumentExtractorService', () => {
     });
 
     await expect(extractor.extract(asDocxInput(buffer))).rejects.toMatchObject({
+      code: 'malformed',
+    });
+  });
+
+  it('rejects an entity reference interrupted by markup', async () => {
+    const buffer = await makeDocx([{ text: 'unused' }], {
+      documentXml:
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+        '<w:body><w:p><w:r><w:t>&amp<w:br/>;</w:t></w:r></w:p></w:body></w:document>',
+    });
+    await expect(extractor.extract(asDocxInput(buffer))).rejects.toMatchObject({
+      code: 'malformed',
+    });
+  });
+
+  it('rejects a completed XML token over the token byte limit', async () => {
+    const buffer = await makeDocx([{ text: 'unused' }], {
+      documentXml:
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+        `<w:body data="${'a'.repeat(300_000)}"><w:p><w:r><w:t>Content</w:t></w:r></w:p></w:body></w:document>`,
+    });
+    await expect(extractor.extract(asDocxInput(buffer))).rejects.toMatchObject({
+      code: 'limit_exceeded',
+    });
+  });
+
+  it('extracts text-box paragraphs and ignores moved-from text', async () => {
+    const buffer = await makeDocx([{ text: 'unused' }], {
+      documentXml:
+        '<x:document xmlns:x="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+        '<x:body><x:p><x:r><x:txbxContent><x:p><x:r><x:t>Text box</x:t></x:r></x:p></x:txbxContent></x:r></x:p>' +
+        '<x:p><x:moveFrom><x:r><x:t>Old text</x:t></x:r></x:moveFrom><x:r><x:t>Current text</x:t></x:r></x:p>' +
+        '</x:body></x:document>',
+    });
+    await expect(extractor.extract(asDocxInput(buffer))).resolves.toMatchObject({
+      text: 'Text box\n\nCurrent text',
+    });
+  });
+
+  it('accepts supported Unicode NCNames and rejects duplicate expanded attributes', async () => {
+    const valid = await makeDocx([{ text: 'unused' }], {
+      documentXml:
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:é="urn:test">' +
+        '<w:body><é:élément/><w:p><w:r><w:t>Content</w:t></w:r></w:p></w:body></w:document>',
+    });
+    await expect(extractor.extract(asDocxInput(valid))).resolves.toMatchObject({ text: 'Content' });
+
+    const duplicate = await makeDocx([{ text: 'unused' }], {
+      documentXml:
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:a="urn:test" xmlns:b="urn:test">' +
+        '<w:body a:value="one" b:value="two"><w:p><w:r><w:t>Content</w:t></w:r></w:p></w:body></w:document>',
+    });
+    await expect(extractor.extract(asDocxInput(duplicate))).rejects.toMatchObject({
       code: 'malformed',
     });
   });
@@ -634,6 +695,33 @@ describe('ContractDocumentExtractorService', () => {
     ).toBe('document:document-id#docx:section:payment:2');
   });
 
+  it('keeps provenance matching case-sensitive', () => {
+    expect(
+      resolveDocumentSourceReference(
+        'document-id',
+        {
+          kind: 'docx',
+          text: 'NET 30\n\nnet 30',
+          segments: [
+            {
+              text: 'NET 30',
+              sourceReference: 'docx:section:upper:1',
+              startOffset: 0,
+              endOffset: 6,
+            },
+            {
+              text: 'net 30',
+              sourceReference: 'docx:section:lower:2',
+              startOffset: 8,
+              endOffset: 14,
+            },
+          ],
+        },
+        'net 30',
+      ),
+    ).toBe('document:document-id#docx:section:lower:2');
+  });
+
   it('chooses the most-specific section containing legitimate evidence', () => {
     expect(
       resolveDocumentSourceReference(
@@ -840,8 +928,16 @@ function injectZip64Extra(buffer: Buffer, location: 'local' | 'central'): Buffer
 }
 
 function setZipEntryName(buffer: Buffer, currentName: string, replacementName: string): void {
-  const currentNameBytes = Buffer.from(currentName, 'utf8');
   const replacementNameBytes = Buffer.from(replacementName, 'utf8');
+  setZipEntryNameBytes(buffer, currentName, replacementNameBytes);
+}
+
+function setZipEntryNameBytes(
+  buffer: Buffer,
+  currentName: string,
+  replacementNameBytes: Buffer,
+): void {
+  const currentNameBytes = Buffer.from(currentName, 'utf8');
   if (currentNameBytes.length !== replacementNameBytes.length) {
     throw new Error('ZIP test names must have equal byte lengths');
   }
