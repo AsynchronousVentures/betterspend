@@ -57,6 +57,7 @@ const INTERPRETED_WORD_ELEMENT_NAMES = new Map([
 const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
 const ZIP_LOCAL_FILE_SIGNATURE = 0x04034b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
+const ZIP64_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06064b50;
 const ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIGNATURE = 0x07064b50;
 const ZIP64_EXTRA_FIELD_ID = 0x0001;
 const ZIP_ENCRYPTED_FLAG = 0x1;
@@ -252,7 +253,7 @@ async function extractDocxArchive(buffer: Buffer): Promise<ContractDocumentText>
   const packageState = { contentTypesValid: false, rootRelationshipValid: false };
   const xmlBudget: XmlExtractionBudget = { tokens: 0, textNodes: 0, references: 0 };
 
-  const zipFile = await openZip(buffer);
+  const zipFile = await openZip(buffer, archive);
   try {
     if (zipFile.entryCount !== archive.entryCount) {
       throw new ContractDocumentExtractionError('malformed');
@@ -388,6 +389,7 @@ async function processZipEntry(
       if (actualUncompressedBytes > MAX_DOCX_ENTRY_BYTES) {
         throw new ContractDocumentExtractionError('limit_exceeded');
       }
+      accountBytes(chunkBuffer.length);
       scanner?.push(chunkBuffer);
     }
   } catch (error: unknown) {
@@ -401,7 +403,6 @@ async function processZipEntry(
   if (actualUncompressedBytes !== expected.uncompressedSize || actualCrc32 !== expected.crc32) {
     throw new ContractDocumentExtractionError('malformed');
   }
-  accountBytes(actualUncompressedBytes);
 }
 
 function createXmlScanner(
@@ -1447,6 +1448,7 @@ interface ZipArchiveMetadata {
   entryCount: number;
   centralDirectoryOffset: number;
   centralDirectorySize: number;
+  eocdOffset: number;
   entries: readonly ZipEntryMetadata[];
 }
 
@@ -1463,6 +1465,7 @@ interface ZipEntryMetadata {
   uncompressedSize: number;
   externalFileAttributes: number;
   relativeOffsetOfLocalHeader: number;
+  centralDirectoryCommentRange: { start: number; end: number };
   dataRange: { start: number; end: number; dataStart: number; dataEnd: number };
 }
 
@@ -1470,7 +1473,8 @@ function readZipEndOfCentralDirectory(buffer: Buffer): ZipArchiveMetadata {
   if (buffer.length < 22) throw new ContractDocumentExtractionError('malformed');
 
   const eocdOffsets: number[] = [];
-  for (let offset = buffer.length - 22; offset >= 0; offset -= 1) {
+  const minimumEocdOffset = Math.max(0, buffer.length - 22 - 0xffff);
+  for (let offset = buffer.length - 22; offset >= minimumEocdOffset; offset -= 1) {
     if (buffer.readUInt32LE(offset) !== ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE) continue;
     const commentLength = buffer.readUInt16LE(offset + 20);
     if (offset + 22 + commentLength === buffer.length) eocdOffsets.push(offset);
@@ -1478,10 +1482,7 @@ function readZipEndOfCentralDirectory(buffer: Buffer): ZipArchiveMetadata {
   if (eocdOffsets.length !== 1) throw new ContractDocumentExtractionError('malformed');
 
   const eocdOffset = eocdOffsets[0]!;
-  if (
-    eocdOffset >= 20 &&
-    buffer.readUInt32LE(eocdOffset - 20) === ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIGNATURE
-  ) {
+  if (eocdOffset >= 20 && isZip64Locator(buffer, eocdOffset - 20)) {
     throw new ContractDocumentExtractionError('malformed');
   }
   const diskNumber = buffer.readUInt16LE(eocdOffset + 4);
@@ -1520,7 +1521,32 @@ function readZipEndOfCentralDirectory(buffer: Buffer): ZipArchiveMetadata {
     centralDirectoryOffset,
     centralDirectorySize,
   });
-  return { entryCount, centralDirectoryOffset, centralDirectorySize, entries };
+  return { entryCount, centralDirectoryOffset, centralDirectorySize, eocdOffset, entries };
+}
+
+function isZip64Locator(buffer: Buffer, locatorOffset: number): boolean {
+  if (
+    locatorOffset < 0 ||
+    locatorOffset + 20 > buffer.length ||
+    buffer.readUInt32LE(locatorOffset) !== ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIGNATURE
+  ) {
+    return false;
+  }
+
+  const diskNumber = buffer.readUInt32LE(locatorOffset + 4);
+  const totalDisks = buffer.readUInt32LE(locatorOffset + 16);
+  if (diskNumber !== 0 || totalDisks !== 1) return false;
+
+  const zip64RecordOffset = buffer.readBigUInt64LE(locatorOffset + 8);
+  if (zip64RecordOffset > BigInt(Number.MAX_SAFE_INTEGER)) return false;
+  const recordOffset = Number(zip64RecordOffset);
+  if (recordOffset < 0 || recordOffset + 12 > locatorOffset) return false;
+  if (buffer.readUInt32LE(recordOffset) !== ZIP64_END_OF_CENTRAL_DIRECTORY_SIGNATURE) {
+    return false;
+  }
+
+  const recordSize = buffer.readBigUInt64LE(recordOffset + 4);
+  return recordSize >= 44n && BigInt(recordOffset) + 12n + recordSize === BigInt(locatorOffset);
 }
 
 function parseCentralDirectory(
@@ -1609,6 +1635,10 @@ function parseCentralDirectory(
       uncompressedSize,
       externalFileAttributes,
       relativeOffsetOfLocalHeader,
+      centralDirectoryCommentRange: {
+        start: cursor + 46 + filenameLength + extraLength,
+        end: cursor + recordLength,
+      },
       dataRange,
     });
     cursor += recordLength;
@@ -1908,10 +1938,11 @@ function isZipSymlink(versionMadeBy: number, externalFileAttributes: number): bo
   return madeByPlatform === 3 && (mode & 0xf000) === 0xa000;
 }
 
-function openZip(buffer: Buffer): Promise<yauzl.ZipFile> {
+function openZip(buffer: Buffer, archive: ZipArchiveMetadata): Promise<yauzl.ZipFile> {
+  const yauzlBuffer = bufferWithSafeZip64LocatorComment(buffer, archive);
   return new Promise((resolve, reject) => {
     yauzl.fromBuffer(
-      buffer,
+      yauzlBuffer,
       {
         lazyEntries: true,
         validateEntrySizes: false,
@@ -1927,6 +1958,26 @@ function openZip(buffer: Buffer): Promise<yauzl.ZipFile> {
       },
     );
   });
+}
+
+function bufferWithSafeZip64LocatorComment(buffer: Buffer, archive: ZipArchiveMetadata): Buffer {
+  const locatorOffset = archive.eocdOffset - 20;
+  if (
+    locatorOffset < 0 ||
+    buffer.readUInt32LE(locatorOffset) !== ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIGNATURE ||
+    isZip64Locator(buffer, locatorOffset) ||
+    !archive.entries.some(
+      (entry) =>
+        locatorOffset >= entry.centralDirectoryCommentRange.start &&
+        locatorOffset + 20 <= entry.centralDirectoryCommentRange.end,
+    )
+  ) {
+    return buffer;
+  }
+
+  const sanitized = Buffer.from(buffer);
+  sanitized.writeUInt32LE(0, locatorOffset);
+  return sanitized;
 }
 
 function sameZipEntry(entry: yauzl.Entry, expected: ZipEntryMetadata): boolean {

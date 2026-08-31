@@ -63,6 +63,18 @@ describe('ContractDocumentExtractorService', () => {
     ).rejects.toMatchObject({ code: 'too_large' });
   });
 
+  it('rejects a large malformed archive without scanning beyond the ZIP comment window', async () => {
+    const startedAt = performance.now();
+
+    await expect(
+      extractor.extract(asDocxInput(Buffer.alloc(CONTRACT_DOCUMENT_MAX_BYTES))),
+    ).rejects.toMatchObject({
+      code: 'malformed',
+    });
+
+    expect(performance.now() - startedAt).toBeLessThan(250);
+  });
+
   const docxFailureCases: Array<
     [string, () => Buffer | Promise<Buffer>, ContractDocumentExtractionFailure]
   > = [
@@ -122,6 +134,23 @@ describe('ContractDocumentExtractorService', () => {
     });
   });
 
+  it('enforces the cumulative decompression limit before scanning the rest of an entry', async () => {
+    const buffer = await makeDocx([{ text: 'Content' }], {
+      extraFiles: {
+        'word/media/first.dat': Buffer.alloc(7_500_000, 0x61),
+        'word/media/second.dat': Buffer.alloc(7_500_000, 0x61),
+        'word/media/third.dat': Buffer.alloc(7_500_000, 0x61),
+        'customXml/after-limit.xml': Buffer.from(
+          `<root>${'a'.repeat(5 * 1024 * 1024)}<customUI/></root>`,
+        ),
+      },
+    });
+
+    await expect(extractor.extract(asDocxInput(buffer))).rejects.toMatchObject({
+      code: 'limit_exceeded',
+    });
+  });
+
   it('rejects encrypted DOCX entries before extracting XML', async () => {
     const buffer = await makeDocx([{ text: 'Encrypted' }]);
     setCentralDirectoryFlag(buffer, 'word/document.xml', 0x1);
@@ -159,6 +188,19 @@ describe('ContractDocumentExtractorService', () => {
     ['ZIP64 locator', Buffer.from([0x50, 0x4b, 0x06, 0x07])],
   ])('allows %s signature bytes inside an EOCD comment', async (_label, signature) => {
     const buffer = appendZipComment(await makeDocx([{ text: 'Content' }]), signature);
+
+    await expect(extractor.extract(asDocxInput(buffer))).resolves.toMatchObject({
+      text: 'Content',
+    });
+  });
+
+  it('allows a ZIP64 locator signature in a final central-directory comment', async () => {
+    const comment = Buffer.alloc(20);
+    comment.writeUInt32LE(0x07064b50, 0);
+    const buffer = appendFinalCentralDirectoryComment(
+      await makeDocx([{ text: 'Content' }]),
+      comment,
+    );
 
     await expect(extractor.extract(asDocxInput(buffer))).resolves.toMatchObject({
       text: 'Content',
@@ -993,6 +1035,30 @@ function appendZipComment(buffer: Buffer, comment: Buffer): Buffer {
   const header = Buffer.from(buffer);
   header.writeUInt16LE(comment.length, eocdOffset + 20);
   return Buffer.concat([header, comment]);
+}
+
+function appendFinalCentralDirectoryComment(buffer: Buffer, comment: Buffer): Buffer {
+  const eocdOffset = getEndOfCentralDirectoryOffset(buffer);
+  const centralDirectoryOffset = getCentralDirectoryOffset(buffer);
+  const centralDirectorySize = buffer.readUInt32LE(eocdOffset + 12);
+  const finalEntry = findCentralEntry(buffer, 'word/document.xml');
+  if (finalEntry.end !== eocdOffset || finalEntry.offset < centralDirectoryOffset) {
+    throw new Error('Expected word/document.xml to be the final central-directory entry');
+  }
+
+  const filenameLength = buffer.readUInt16LE(finalEntry.offset + 28);
+  const extraLength = buffer.readUInt16LE(finalEntry.offset + 30);
+  const mutated = insertBytes(buffer, eocdOffset, comment);
+  const shiftedEocdOffset = eocdOffset + comment.length;
+  mutated.writeUInt16LE(comment.length, finalEntry.offset + 32);
+  mutated.writeUInt32LE(centralDirectorySize + comment.length, shiftedEocdOffset + 12);
+  if (
+    filenameLength + extraLength + 46 + comment.length !==
+    shiftedEocdOffset - finalEntry.offset
+  ) {
+    throw new Error('Central-directory comment was not appended to the final entry');
+  }
+  return mutated;
 }
 
 function setCentralDirectoryFlag(buffer: Buffer, filename: string, mask: number): void {
