@@ -3,6 +3,9 @@
 DO $$
 BEGIN
 	IF to_regclass('public.invoice_lines_id_invoice_id_unique') IS NULL THEN
+		IF EXISTS (SELECT 1 FROM "invoice_lines" LIMIT 1) THEN
+			RAISE EXCEPTION 'invoice_lines is populated; rerun through the migration runner to build the parent key concurrently';
+		END IF;
 		EXECUTE 'CREATE UNIQUE INDEX "invoice_lines_id_invoice_id_unique" ON "invoice_lines" USING btree ("id","invoice_id")';
 	END IF;
 END

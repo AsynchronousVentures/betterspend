@@ -52,6 +52,9 @@ test('invoice field provenance keeps line references on the same invoice', async
         ('00000000-0000-4000-8000-000000000004', '00000000-0000-4000-8000-000000000002'),
         ('00000000-0000-4000-8000-000000000005', '00000000-0000-4000-8000-000000000003');
     `);
+    await database.exec(
+      'CREATE UNIQUE INDEX "invoice_lines_id_invoice_id_unique" ON "invoice_lines" ("id", "invoice_id");',
+    );
     for (const file of migrationFiles) {
       await database.exec(await readFile(join(__dirname, 'migrations', file), 'utf8'));
     }
@@ -99,6 +102,11 @@ test('invoice line parent key uses a concurrent existing-database rollout', asyn
 
   assert.match(migration, /Existing databases build this concurrently in migrate\.ts/);
   assert.match(migration, /This fallback creates it only while bootstrapping an empty database/);
+  assert.match(migration, /IF EXISTS \(SELECT 1 FROM "invoice_lines" LIMIT 1\)/);
+  assert.match(
+    migration,
+    /rerun through the migration runner to build the parent key concurrently/,
+  );
   assert.match(migration, /CREATE UNIQUE INDEX "invoice_lines_id_invoice_id_unique"/);
   assert.match(
     migrationRunner,
