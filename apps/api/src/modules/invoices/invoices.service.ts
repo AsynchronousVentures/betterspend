@@ -139,18 +139,13 @@ function invoiceReportScopePredicate(access: AccessPolicy | undefined, organizat
 
 export type { UpdateInvoiceInput } from '@betterspend/shared';
 
-const manualHeaderProvenanceFields: Partial<
-  Record<
-    keyof UpdateInvoiceInput,
-    'vendor' | 'invoiceDate' | 'dueDate' | 'currency' | 'exchangeRate'
-  >
-> = {
-  vendorId: 'vendor',
-  invoiceDate: 'invoiceDate',
-  dueDate: 'dueDate',
-  currency: 'currency',
-  exchangeRate: 'exchangeRate',
-};
+const manualHeaderProvenanceFields = [
+  ['vendorId', 'vendorId', 'vendor'],
+  ['invoiceDate', 'invoiceDate', 'invoiceDate'],
+  ['dueDate', 'dueDate', 'dueDate'],
+  ['currency', 'currency', 'currency'],
+  ['exchangeRate', 'exchangeRate', 'exchangeRate'],
+] as const;
 
 const manualLineProvenanceFields = [
   'description',
@@ -162,23 +157,52 @@ const manualLineProvenanceFields = [
   'glAccount',
 ] as const;
 
-function manualCorrectionFieldPaths(input: UpdateInvoiceInput): string[] {
-  const paths: string[] = Object.entries(manualHeaderProvenanceFields).flatMap(
-    ([inputField, fieldPath]) =>
-      input[inputField as keyof UpdateInvoiceInput] === undefined ? [] : [fieldPath],
+function manualCorrectionFieldPaths(
+  input: UpdateInvoiceInput,
+  previous: MaterialInvoiceState,
+  next: MaterialInvoiceState,
+  previousLines: readonly { id: string; description: string }[],
+  nextLines: readonly { id: string; description: string }[],
+  previousTotals: { subtotal: string; taxAmount: string; totalAmount: string },
+  nextTotals: { subtotal: string; taxAmount: string; totalAmount: string },
+): string[] {
+  const paths: string[] = manualHeaderProvenanceFields.flatMap(
+    ([inputField, stateField, fieldPath]) =>
+      input[inputField] !== undefined && previous[stateField] !== next[stateField]
+        ? [fieldPath]
+        : [],
   );
+  const previousStateById = new Map(previous.lines.map((line) => [line.id, line]));
+  const nextStateById = new Map(next.lines.map((line) => [line.id, line]));
+  const previousDescriptionById = new Map(previousLines.map((line) => [line.id, line.description]));
+  const nextDescriptionById = new Map(nextLines.map((line) => [line.id, line.description]));
   let lineAmountChanged = false;
   for (const line of input.lines ?? []) {
+    const previousLine = previousStateById.get(line.id);
+    const nextLine = nextStateById.get(line.id);
+    if (!previousLine || !nextLine) continue;
     for (const field of manualLineProvenanceFields) {
-      if (line[field] !== undefined) {
-        paths.push(`lines.${line.id}.${field}`);
-        lineAmountChanged ||=
-          field === 'quantity' || field === 'unitPrice' || field === 'taxCodeId';
+      if (line[field] === undefined) continue;
+      const changed =
+        field === 'description'
+          ? previousDescriptionById.get(line.id) !== nextDescriptionById.get(line.id)
+          : previousLine[field] !== nextLine[field];
+      if (!changed) continue;
+      paths.push(`lines.${line.id}.${field}`);
+      lineAmountChanged ||=
+        field === 'quantity' ||
+        field === 'unitPrice' ||
+        field === 'taxCodeId' ||
+        field === 'taxInclusive';
+    }
+  }
+  if (lineAmountChanged) {
+    for (const field of ['subtotal', 'taxAmount', 'totalAmount'] as const) {
+      if (normalizeMoney(previousTotals[field]) !== normalizeMoney(nextTotals[field])) {
+        paths.push(field);
       }
     }
-    if (line.taxInclusive !== undefined) lineAmountChanged = true;
   }
-  if (lineAmountChanged) paths.push('subtotal', 'taxAmount', 'totalAmount');
   return [...new Set(paths)];
 }
 
@@ -611,8 +635,6 @@ export class InvoicesService {
     access?: AccessPolicy,
   ) {
     const input = updateInvoiceSchema.parse(rawInput);
-    const manualFields = manualCorrectionFieldPaths(input);
-    const correctionId = manualFields.length > 0 ? randomUUID() : undefined;
     if (access) {
       const { authorizationScope } = await this.findOneWithAuthorizationScope(
         id,
@@ -831,9 +853,17 @@ export class InvoicesService {
         baseTotalAmount: convertMoney(totalAmount, exchangeRate),
         updatedAt: editedAt,
       };
-      const changedFields = changedMaterialInvoiceFields(
-        this.materialState(lockedInvoice, existingLines),
-        this.materialState(nextInvoice, nextLines),
+      const previousMaterialState = this.materialState(lockedInvoice, existingLines);
+      const nextMaterialState = this.materialState(nextInvoice, nextLines);
+      const changedFields = changedMaterialInvoiceFields(previousMaterialState, nextMaterialState);
+      const manualFields = manualCorrectionFieldPaths(
+        input,
+        previousMaterialState,
+        nextMaterialState,
+        existingLines,
+        nextLines,
+        lockedInvoice,
+        nextInvoice,
       );
       const material = changedFields.length > 0;
       const persistedInvoice = material
@@ -926,7 +956,7 @@ export class InvoicesService {
           invoiceId: id,
           actorId,
           fieldPaths: manualFields,
-          correctionId,
+          correctionId: randomUUID(),
           observedAt: editedAt,
           executor: tx,
         });

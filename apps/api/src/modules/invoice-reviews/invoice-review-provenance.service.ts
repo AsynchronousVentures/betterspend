@@ -241,19 +241,9 @@ export class InvoiceReviewProvenanceService {
     );
 
     const extractedLines = Array.isArray(extracted.lines) ? extracted.lines : [];
-    let invoiceLineIds = input.invoiceLineIds;
-    if (!invoiceLineIds && extractedLines.length > 0) {
-      const queryDb = input.executor ?? this.db;
-      const lines = await queryDb.query.invoiceLines.findMany({
-        where: (line, operators) => operators.eq(line.invoiceId, input.invoiceId),
-        columns: { id: true },
-        orderBy: (line, operators) => operators.asc(line.lineNumber),
-      });
-      invoiceLineIds = lines.map((line) => line.id);
-    }
     const lineInputs = extractedLines.flatMap((rawLine, index) => {
       const line = asRecord(rawLine);
-      const lineId = invoiceLineIds?.[index];
+      const lineId = input.invoiceLineIds?.[index];
       if (!lineId) return [];
       return (['description', 'quantity', 'unitPrice', 'glAccount'] as const).flatMap(
         (fieldPath) =>

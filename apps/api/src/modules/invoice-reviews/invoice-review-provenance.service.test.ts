@@ -290,6 +290,60 @@ test('provenance accepts manual corrections for tax-inclusive line fields', asyn
   assert.equal(rows.length, 1);
 });
 
+test('OCR provenance omits extracted lines without an explicit invoice-line mapping', async () => {
+  const { db, rows } = createDb();
+  let positionalLookupCalled = false;
+  Object.assign(db, {
+    query: {
+      invoiceLines: {
+        findMany: async () => {
+          positionalLookupCalled = true;
+          return [{ id: lineId }];
+        },
+      },
+    },
+  });
+  const service = new InvoiceReviewProvenanceService(db);
+
+  await service.recordOcrProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    sourceRecordId: 'ocr-job-1',
+    extractedData: {
+      invoiceNumber: 'OCR-100',
+      lines: [{ description: 'Unmapped extracted line' }],
+    },
+    confidence: { invoiceNumber: 0.99, lines: 0.85 },
+    observedAt: new Date('2026-08-04T00:00:00Z'),
+  });
+
+  assert.equal(positionalLookupCalled, false);
+  assert.deepEqual(
+    rows.map((row) => row.fieldPath),
+    ['invoiceNumber'],
+  );
+});
+
+test('OCR provenance records extracted lines with an explicit invoice-line mapping', async () => {
+  const { db, rows } = createDb();
+  const service = new InvoiceReviewProvenanceService(db);
+
+  await service.recordOcrProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    sourceRecordId: 'ocr-job-1',
+    extractedData: { lines: [{ description: 'Mapped extracted line' }] },
+    confidence: { lines: 0.85 },
+    invoiceLineIds: [lineId],
+    observedAt: new Date('2026-08-04T00:00:00Z'),
+  });
+
+  assert.deepEqual(
+    rows.map((row) => ({ invoiceLineId: row.invoiceLineId, fieldPath: row.fieldPath })),
+    [{ invoiceLineId: lineId, fieldPath: `lines.${lineId}.description` }],
+  );
+});
+
 test('provenance view rejects an unsupported persisted source type', () => {
   const { db } = createDb();
   const service = new InvoiceReviewProvenanceService(db);

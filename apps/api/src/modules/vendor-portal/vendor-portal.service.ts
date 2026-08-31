@@ -9,7 +9,7 @@ import {
 import { eq, and, gt, sql } from 'drizzle-orm';
 import { randomBytes } from 'crypto';
 import { DB_TOKEN } from '../../database/database.module';
-import type { Db, DbTransaction } from '@betterspend/db';
+import type { Db } from '@betterspend/db';
 import {
   vendorPortalTokens,
   vendorPortalSessions,
@@ -333,13 +333,9 @@ export class VendorPortalService {
         );
       }
 
+      await this.invoicesService.runMatchAndRecordReview(inv.id, orgId, tx);
       return inv.id;
     });
-
-    // Auto-run 3-way match and publish its review signal in the same transaction.
-    await this.db.transaction(async (tx: DbTransaction) =>
-      this.invoicesService.runMatchAndRecordReview(invoiceId, orgId, tx),
-    );
 
     return this.db.query.invoices.findFirst({
       where: (i, { eq }) => eq(i.id, invoiceId),

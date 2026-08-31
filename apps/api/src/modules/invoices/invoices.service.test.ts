@@ -972,6 +972,44 @@ describe('InvoicesService material edits', () => {
     assert.equal(typeof calls[0]?.correctionId, 'string');
   });
 
+  it('does not replace source provenance for a no-op invoice patch', async () => {
+    const fieldPaths: string[][] = [];
+    const invoiceProvenance = {
+      recordManualCorrectionProvenance: async (input: { fieldPaths: readonly string[] }) => {
+        fieldPaths.push([...input.fieldPaths]);
+        return [];
+      },
+    } as unknown as InvoiceReviewProvenanceService;
+    const fixture = createEditService(
+      'approved',
+      'full_match',
+      false,
+      'vendor-1',
+      true,
+      undefined,
+      invoiceProvenance,
+    );
+
+    await fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', {
+      invoiceDate: '2026-08-01',
+      dueDate: '2026-08-31',
+      currency: 'USD',
+      exchangeRate: 1,
+      lines: [
+        {
+          id: '00000000-0000-4000-8000-000000000101',
+          description: 'Consulting services',
+          quantity: 1,
+          unitPrice: 100,
+          glAccount: '6000',
+          taxInclusive: false,
+        },
+      ],
+    });
+
+    assert.deepEqual(fieldPaths, []);
+  });
+
   it('records line provenance when a correction changes tax inclusivity', async () => {
     const fieldPaths: string[][] = [];
     const invoiceProvenance = {
@@ -999,13 +1037,33 @@ describe('InvoicesService material edits', () => {
       ],
     });
 
+    assert.deepEqual(fieldPaths, [['lines.00000000-0000-4000-8000-000000000101.taxInclusive']]);
+  });
+
+  it('records only totals that actually change after a manual amount correction', async () => {
+    const fieldPaths: string[][] = [];
+    const invoiceProvenance = {
+      recordManualCorrectionProvenance: async (input: { fieldPaths: readonly string[] }) => {
+        fieldPaths.push([...input.fieldPaths]);
+        return [];
+      },
+    } as unknown as InvoiceReviewProvenanceService;
+    const fixture = createEditService(
+      'approved',
+      'full_match',
+      false,
+      'vendor-1',
+      true,
+      undefined,
+      invoiceProvenance,
+    );
+
+    await fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', {
+      lines: [{ id: '00000000-0000-4000-8000-000000000101', quantity: 2 }],
+    });
+
     assert.deepEqual(fieldPaths, [
-      [
-        'lines.00000000-0000-4000-8000-000000000101.taxInclusive',
-        'subtotal',
-        'taxAmount',
-        'totalAmount',
-      ],
+      ['lines.00000000-0000-4000-8000-000000000101.quantity', 'subtotal', 'totalAmount'],
     ]);
   });
 

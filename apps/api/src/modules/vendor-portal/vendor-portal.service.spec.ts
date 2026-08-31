@@ -296,4 +296,68 @@ describe('VendorPortalService sessions', () => {
     );
     expect(matchExecutor).toBe(signalExecutor);
   });
+
+  it('rolls back vendor invoice creation when review signal persistence fails', async () => {
+    const invoiceId = '00000000-0000-0000-0000-000000000004';
+    const committedInvoices: Array<{ id: string; invoiceNumber: string }> = [];
+    let matchAttempts = 0;
+    const db = {
+      query: {
+        purchaseOrders: {
+          findFirst: jest.fn(async () => ({ id: 'po-1' })),
+        },
+        invoices: {
+          findFirst: jest.fn(async () => committedInvoices[0] ?? null),
+        },
+      },
+      transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) => {
+        const pendingInvoices: Array<{ id: string; invoiceNumber: string }> = [];
+        const tx = {
+          insert: jest.fn(() => ({
+            values: jest.fn((values: { invoiceNumber: string }) => ({
+              returning: jest.fn(async () => {
+                const invoice = { id: invoiceId, invoiceNumber: values.invoiceNumber };
+                pendingInvoices.push(invoice);
+                return [invoice];
+              }),
+            })),
+          })),
+        };
+        const result = await callback(tx);
+        committedInvoices.push(...pendingInvoices);
+        return result;
+      }),
+    };
+    const invoicesService = {
+      runMatchAndRecordReview: jest.fn(async () => {
+        matchAttempts += 1;
+        throw new Error('review signal persistence failed');
+      }),
+    };
+    const service = new VendorPortalService(
+      db as unknown as Db,
+      {} as never,
+      {} as never,
+      { next: jest.fn(async () => 'INV-2026-0001') } as never,
+      invoicesService as never,
+      {} as never,
+      {} as never,
+    );
+    const submission = {
+      purchaseOrderId: 'po-1',
+      invoiceNumber: 'V-1',
+      invoiceDate: '2026-08-30',
+      lines: [],
+    };
+
+    await expect(service.submitInvoice(vendorId, organizationId, submission)).rejects.toThrow(
+      'review signal persistence failed',
+    );
+    await expect(service.submitInvoice(vendorId, organizationId, submission)).rejects.toThrow(
+      'review signal persistence failed',
+    );
+
+    expect(matchAttempts).toBe(2);
+    expect(committedInvoices).toEqual([]);
+  });
 });
