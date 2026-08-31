@@ -43,10 +43,11 @@ function daysOverdue(dueDateStr?: string | null) {
 }
 
 function agingTone(days: number) {
-  if (days <= 0) return '#16a34a';
-  if (days <= 30) return '#d97706';
-  if (days <= 60) return '#ea580c';
-  return '#dc2626';
+  // Overdue severity ramp — BRANDING §7 status colors (success → warning → deep warning → destructive).
+  if (days <= 0) return '#1f7a4f';
+  if (days <= 30) return '#f0a230';
+  if (days <= 60) return '#b45309';
+  return '#c23b33';
 }
 
 function RecordExternalPaymentModal({

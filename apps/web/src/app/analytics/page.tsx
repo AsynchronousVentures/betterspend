@@ -116,11 +116,13 @@ interface BudgetUtilRow {
   projectName: string | null;
 }
 
+// Aging buckets encode escalating severity, so they follow the BRANDING §7 status ramp
+// (success → warning → deeper warning → destructive) rather than the categorical palette.
 const AGING_COLORS: Record<string, string> = {
-  '0-30 days': '#22c55e',
-  '31-60 days': '#f59e0b',
-  '61-90 days': '#f97316',
-  '90+ days': '#e11d48',
+  '0-30 days': '#1f7a4f',
+  '31-60 days': '#f0a230',
+  '61-90 days': '#b45309',
+  '90+ days': '#c23b33',
 };
 
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -201,7 +203,7 @@ export default function AnalyticsPage() {
     bucket: row.bucket.replace(' days', '').replace('-', '–'),
     count: row.count,
     total: Number(row.total),
-    color: AGING_COLORS[row.bucket] ?? '#94a3b8',
+    color: AGING_COLORS[row.bucket] ?? '#6b6560',
   }));
 
   return (
@@ -262,10 +264,10 @@ export default function AnalyticsPage() {
               <Line
                 type="monotone"
                 dataKey="total"
-                stroke="#0f766e"
+                stroke="#0d9488"
                 strokeWidth={2.5}
-                dot={{ r: 3, fill: '#0f766e', strokeWidth: 0 }}
-                activeDot={{ r: 5, fill: '#134e4a' }}
+                dot={{ r: 3, fill: '#0d9488', strokeWidth: 0 }}
+                activeDot={{ r: 5, fill: '#0d9488' }}
                 name="Spend"
               />
             </LineChart>
@@ -284,7 +286,7 @@ export default function AnalyticsPage() {
                 <XAxis type="number" tickFormatter={fmtShort} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} width={110} axisLine={false} tickLine={false} />
                 <Tooltip content={<CustomTooltip />} />
-                <Bar dataKey="total" fill="#2563eb" radius={[0, 3, 3, 0]} name="Spend" />
+                <Bar dataKey="total" fill="#d4522e" radius={[0, 3, 3, 0]} name="Spend" />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -313,7 +315,7 @@ export default function AnalyticsPage() {
                 {aging.map((row) => {
                   const totalAging = aging.reduce((sum, current) => sum + Number(current.total), 0) || 1;
                   const pct = (Number(row.total) / totalAging) * 100;
-                  const color = AGING_COLORS[row.bucket] ?? '#94a3b8';
+                  const color = AGING_COLORS[row.bucket] ?? '#6b6560';
                   return (
                     <div key={row.bucket}>
                       <div className="mb-1 flex items-center justify-between text-xs">
@@ -382,7 +384,7 @@ export default function AnalyticsPage() {
               <TableBody>
                 {budgetUtil.map((budget) => {
                   const pct = Number(budget.utilizationPct ?? 0);
-                  const barColor = pct >= 100 ? '#e11d48' : pct >= 80 ? '#f59e0b' : '#22c55e';
+                  const barColor = pct >= 100 ? '#c23b33' : pct >= 80 ? '#f0a230' : '#1f7a4f';
                   return (
                     <TableRow key={budget.budgetId}>
                       <TableCell className="font-medium text-foreground">{budget.budgetName}</TableCell>
@@ -436,7 +438,7 @@ export default function AnalyticsPage() {
               <TableBody>
                 {vendPerf.map((vendor) => {
                   const excRate = Number(vendor.exceptionRate ?? 0);
-                  const excColor = excRate === 0 ? '#22c55e' : excRate < 20 ? '#f59e0b' : '#e11d48';
+                  const excColor = excRate === 0 ? '#1f7a4f' : excRate < 20 ? '#f0a230' : '#c23b33';
                   return (
                     <TableRow key={vendor.vendorId}>
                       <TableCell className="font-medium text-foreground">{vendor.vendorName}</TableCell>
@@ -477,7 +479,7 @@ export default function AnalyticsPage() {
                 <XAxis type="number" tickFormatter={fmtShort} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} width={120} axisLine={false} tickLine={false} />
                 <Tooltip content={<CustomTooltip />} />
-                <Bar dataKey="total" fill="#b45309" radius={[0, 3, 3, 0]} name="Spend" />
+                <Bar dataKey="total" fill="#d4522e" radius={[0, 3, 3, 0]} name="Spend" />
               </BarChart>
             </ResponsiveContainer>
           )}
