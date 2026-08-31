@@ -171,6 +171,50 @@ test('OCR stores extraction completion separately from mutable link timestamps',
   assert.equal(completionUpdate.extractionCompletedAt, completionUpdate.updatedAt);
 });
 
+test('OCR keeps a completed job done when post-completion observation fails', async () => {
+  const updates: Record<string, unknown>[] = [];
+  let lookups = 0;
+  const currentJob = {
+    id: jobId,
+    organizationId,
+    invoiceId,
+    status: 'processing',
+    extractedData: null,
+    confidence: null,
+  };
+  const db = {
+    query: {
+      ocrJobs: {
+        findFirst: async () => {
+          lookups += 1;
+          if (lookups === 1) return { ...currentJob, status: 'pending' };
+          if (lookups === 2) return currentJob;
+          if (lookups === 3) throw new Error('post-completion lookup unavailable');
+          return currentJob;
+        },
+      },
+    },
+    update: () => ({
+      set: (values: Record<string, unknown>) => {
+        updates.push(values);
+        return { where: async () => undefined };
+      },
+    }),
+  };
+  const service = new OcrService(
+    db as never,
+    {} as Queue,
+    {} as AiRuntimeService,
+    { recordOcrReviewSignal: async () => undefined } as never,
+    { recordOcrProvenance: async () => undefined } as never,
+  );
+
+  await service.runExtractionById(jobId);
+
+  assert.ok(updates.some((values) => values.status === 'done'));
+  assert.ok(!updates.some((values) => values.status === 'failed'));
+});
+
 test('OCR links completed extraction observations when linking races completion', async () => {
   const observations: unknown[] = [];
   const jobs = [

@@ -241,10 +241,19 @@ export class OcrService {
           updatedAt: completedAt,
         })
         .where(and(eq(ocrJobs.id, jobId), eq(ocrJobs.organizationId, initialJob.organizationId)));
-      const latestJob = await this.db.query.ocrJobs.findFirst({
-        where: (record, { and, eq }) =>
-          and(eq(record.id, jobId), eq(record.organizationId, initialJob.organizationId)),
-      });
+      const latestJob = await this.db.query.ocrJobs
+        .findFirst({
+          where: (record, { and, eq }) =>
+            and(eq(record.id, jobId), eq(record.organizationId, initialJob.organizationId)),
+        })
+        .catch((error: unknown) => {
+          this.logger.warn(
+            `Could not read completed OCR job ${jobId}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return null;
+        });
       const completedJob = latestJob ?? job;
       if (completedJob?.invoiceId) {
         await this.recordReviewObservation(
