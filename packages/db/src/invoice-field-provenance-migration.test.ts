@@ -7,6 +7,7 @@ import { PGlite } from '@electric-sql/pglite';
 
 const migrationTag = '20260831054304_invoice_review_signals';
 const verifierPath = join(__dirname, 'verify-migrations.ts');
+const migrationRunnerPath = join(__dirname, 'migrate.ts');
 
 test('invoice field provenance migration contains the runtime provenance shape', async () => {
   const migration = await readFile(join(__dirname, 'migrations', `${migrationTag}.sql`), 'utf8');
@@ -85,6 +86,31 @@ test('invoice field provenance keeps line references on the same invoice', async
   } finally {
     await database.close();
   }
+});
+
+test('invoice line parent key uses a concurrent existing-database rollout', async () => {
+  const [migration, migrationRunner] = await Promise.all([
+    readFile(
+      join(__dirname, 'migrations', '20260831131610_invoice_provenance_line_fk.sql'),
+      'utf8',
+    ),
+    readFile(migrationRunnerPath, 'utf8'),
+  ]);
+
+  assert.match(migration, /Existing databases build this concurrently in migrate\.ts/);
+  assert.match(migration, /This fallback creates it only while bootstrapping an empty database/);
+  assert.match(migration, /CREATE UNIQUE INDEX "invoice_lines_id_invoice_id_unique"/);
+  assert.match(
+    migrationRunner,
+    /CREATE UNIQUE INDEX CONCURRENTLY "invoice_lines_id_invoice_id_unique"[\s\S]*?ON "invoice_lines" \("id", "invoice_id"\)/,
+  );
+  const preparePosition = migrationRunner.indexOf('await prepareInvoiceLineInvoiceIndex(client)');
+  const migratePosition = migrationRunner.indexOf('await migrate(db');
+  assert.ok(preparePosition >= 0, 'invoice line index preparation must run');
+  assert.ok(
+    preparePosition < migratePosition,
+    'invoice line index preparation must run before transactional migrations',
+  );
 });
 
 test('migration verification scopes provenance checks to their table', async () => {

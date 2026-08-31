@@ -40,6 +40,12 @@ type IndexState = {
   indexIsValid: boolean;
 };
 
+type InvoiceLineInvoiceIndexState = {
+  invoiceLinesTableExists: boolean;
+  indexExists: boolean;
+  indexIsValid: boolean;
+};
+
 type LegalEntityIndexState = {
   legalEntitiesTableExists: boolean;
   indexExists: boolean;
@@ -397,7 +403,38 @@ async function prepareAuditHashIndex(client: postgres.Sql): Promise<void> {
   `;
 }
 
-/** Build the parent key without blocking writes before transactional migrations add its FK. */
+/** Build the invoice-line parent key without blocking writes before its FK is added. */
+async function prepareInvoiceLineInvoiceIndex(client: postgres.Sql): Promise<void> {
+  const [state] = await client<InvoiceLineInvoiceIndexState[]>`
+    SELECT
+      to_regclass('public.invoice_lines') IS NOT NULL AS "invoiceLinesTableExists",
+      index_class.oid IS NOT NULL AS "indexExists",
+      COALESCE(index_state.indisvalid, false) AS "indexIsValid"
+    FROM (VALUES (1)) AS singleton(value)
+    LEFT JOIN pg_class AS index_class
+      ON index_class.oid = to_regclass('public.invoice_lines_id_invoice_id_unique')
+    LEFT JOIN pg_index AS index_state ON index_state.indexrelid = index_class.oid
+  `;
+
+  if (!state?.invoiceLinesTableExists || state.indexIsValid) return;
+
+  await client`SET lock_timeout = '5s'`;
+  await client`SET statement_timeout = '5min'`;
+  try {
+    if (state.indexExists) {
+      await client`DROP INDEX CONCURRENTLY "invoice_lines_id_invoice_id_unique"`;
+    }
+    await client`
+      CREATE UNIQUE INDEX CONCURRENTLY "invoice_lines_id_invoice_id_unique"
+      ON "invoice_lines" ("id", "invoice_id")
+    `;
+  } finally {
+    await client`RESET statement_timeout`;
+    await client`RESET lock_timeout`;
+  }
+}
+
+/** Build the vendor parent key without blocking writes before transactional migrations add its FK. */
 async function prepareVendorOrganizationIndex(client: postgres.Sql): Promise<void> {
   const [state] = await client<IndexState[]>`
     SELECT
@@ -987,6 +1024,7 @@ async function main(): Promise<void> {
   try {
     await client`SELECT pg_advisory_lock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
     migrationLockAcquired = true;
+    await prepareInvoiceLineInvoiceIndex(client);
     await prepareVendorOrganizationIndex(client);
     await prepareLegalEntityOrganizationIndex(client);
     await prepareBudgetEventTypeConstraint(client);
