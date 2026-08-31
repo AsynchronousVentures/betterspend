@@ -368,12 +368,17 @@ test('queue returns bounded invoice summaries and a stable cursor', async () => 
     select: () => builder,
   } as unknown as Db;
 
-  const result = await new InvoiceReviewsService(db).listCases(organizationId, { limit: 1 });
+  const result = await new InvoiceReviewsService(db).listCases(
+    organizationId,
+    { limit: 1 },
+    accessFor(['invoices:view_all']),
+  );
 
   assert.equal(result.items.length, 1);
   assert.equal(result.items[0]?.invoice.internalNumber, 'INV-2026-0001');
   assert.equal(result.items[0]?.case.blockingSignalCount, 1);
   assert.equal(result.items[0]?.case.unresolvedSignalCount, 2);
+  assert.equal(result.items[0]?.invoice.vendor, null);
   assert.deepEqual(
     result.items[0]?.case.oldestUnresolvedSignalAt,
     new Date('2026-08-01T00:00:00.123Z'),
@@ -408,6 +413,7 @@ test('recordSignal preserves one signal identity across repeated observations', 
   const signals: Array<Record<string, unknown>> = [];
   const auditClaims: Array<Record<string, unknown>> = [];
   const auditRows: Array<Record<string, unknown>> = [];
+  let auditClaimLookups = 0;
   let failAudit = false;
   let nextId = 20;
   const tx = {
@@ -431,7 +437,10 @@ test('recordSignal preserves one signal identity across repeated observations', 
         where: () => builder,
         limit: async () => {
           if (table === invoices) return [{ id: invoiceId }];
-          if (table === auditIdempotencyKeys) return auditClaims;
+          if (table === auditIdempotencyKeys) {
+            auditClaimLookups += 1;
+            return auditClaimLookups === 3 ? [auditClaims[1]] : [];
+          }
           if (table === auditLog) return auditRows;
           return [];
         },
@@ -523,7 +532,7 @@ test('recordSignal preserves one signal identity across repeated observations', 
       set: (values: Record<string, unknown>) => ({
         where: () => {
           if (table === auditIdempotencyKeys) {
-            Object.assign(auditClaims[0] ?? {}, values);
+            Object.assign(auditClaims.at(-1) ?? {}, values);
             return undefined;
           }
           return {
@@ -576,16 +585,22 @@ test('recordSignal preserves one signal identity across repeated observations', 
     summary: 'Match remains outside tolerance',
     observedAt: new Date('2026-08-02T00:00:00Z'),
   });
+  const retry = await service.recordSignal({
+    ...input,
+    summary: 'Match remains outside tolerance',
+    observedAt: new Date('2026-08-02T00:00:00Z'),
+  });
 
   assert.equal(cases.length, 1);
   assert.equal(signals.length, 1);
   assert.equal(first.signal.id, second.signal.id);
+  assert.equal(second.signal.id, retry.signal.id);
   assert.equal(signals[0]?.summary, 'Match remains outside tolerance');
   assert.deepEqual(signals[0]?.firstSeenAt, new Date('2026-08-01T00:00:00Z'));
   assert.deepEqual(signals[0]?.lastSeenAt, new Date('2026-08-02T00:00:00Z'));
   assert.equal(cases[0]?.state, 'open');
-  assert.equal(auditRows.length, 1);
-  assert.equal(auditClaims.length, 1);
+  assert.equal(auditRows.length, 2);
+  assert.equal(auditClaims.length, 2);
   assert.equal(auditRows[0]?.action, 'review_signal_recorded');
   assert.equal(auditRows[0]?.entityType, 'invoice_review_case');
 
@@ -600,6 +615,6 @@ test('recordSignal preserves one signal identity across repeated observations', 
   );
   assert.equal(signals.length, 1);
   assert.equal(cases.length, 1);
-  assert.equal(auditRows.length, 1);
-  assert.equal(auditClaims.length, 1);
+  assert.equal(auditRows.length, 2);
+  assert.equal(auditClaims.length, 2);
 });

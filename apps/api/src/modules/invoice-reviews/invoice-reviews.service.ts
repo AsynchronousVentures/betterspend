@@ -218,6 +218,7 @@ interface SignalAuditInput {
   sourceRecordId: string;
   severity: InvoiceReviewSignalSeverity;
   status: InvoiceReviewSignalStatus;
+  observedAt: Date;
   previousCaseState: InvoiceReviewCaseState;
   nextCaseState: InvoiceReviewCaseState;
 }
@@ -239,10 +240,11 @@ async function appendSignalAudit(
       sourceRecordId: input.sourceRecordId,
       severity: input.severity,
       status: input.status,
+      observedAt: input.observedAt.toISOString(),
       previousCaseState: input.previousCaseState,
       nextCaseState: input.nextCaseState,
     },
-    idempotencyKey: `invoice-review-signal:${input.signalId}`,
+    idempotencyKey: `invoice-review-signal:${input.signalId}:${input.observedAt.toISOString()}`,
   });
 }
 
@@ -510,9 +512,13 @@ export class InvoiceReviewsService {
             dueDate: invoice.dueDate,
             totalAmount: invoice.totalAmount,
             currency: invoice.currency,
-            vendor: vendor
-              ? { id: vendor.id, name: vendor.name, code: vendor.code, status: vendor.status }
-              : null,
+            vendor:
+              vendor &&
+              canViewRelatedRecord(access, 'vendor', ['vendors:view'], {
+                entityId: vendor.entityId,
+              })
+                ? { id: vendor.id, name: vendor.name, code: vendor.code, status: vendor.status }
+                : null,
             entity: entity
               ? { id: entity.id, name: entity.name, code: entity.code, currency: entity.currency }
               : null,
@@ -1021,6 +1027,7 @@ export class InvoiceReviewsService {
         sourceRecordId: signal.sourceRecordId,
         severity: signal.severity,
         status: signal.status,
+        observedAt,
         previousCaseState: reviewCase.state,
         nextCaseState: nextState,
       });
