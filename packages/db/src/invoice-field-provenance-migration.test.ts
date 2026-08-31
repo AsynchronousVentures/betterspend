@@ -44,6 +44,21 @@ test('invoice field provenance keeps line references on the same invoice', async
         id uuid PRIMARY KEY,
         invoice_id uuid NOT NULL
       );
+      CREATE TABLE ocr_jobs (
+        id uuid PRIMARY KEY,
+        organization_id uuid NOT NULL,
+        uploaded_by uuid NOT NULL,
+        filename varchar(255) NOT NULL,
+        content_type varchar(100) NOT NULL,
+        storage_key varchar(500) NOT NULL,
+        status varchar(20) NOT NULL,
+        extracted_data jsonb,
+        confidence jsonb,
+        error_message text,
+        invoice_id uuid,
+        created_at timestamptz NOT NULL,
+        updated_at timestamptz NOT NULL
+      );
       INSERT INTO organizations (id) VALUES ('00000000-0000-4000-8000-000000000001');
       INSERT INTO invoices (id, organization_id) VALUES
         ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001'),
@@ -91,6 +106,34 @@ test('invoice field provenance keeps line references on the same invoice', async
         'manual', 'manual:tax-inclusive', 'tax-inclusive'
       );
     `);
+
+    await assert.rejects(
+      database.exec(`
+        INSERT INTO invoice_field_provenance (
+          organization_id, invoice_id, field_path,
+          source_type, source_record_id, identity_key
+        ) VALUES (
+          '00000000-0000-4000-8000-000000000001',
+          '00000000-0000-4000-8000-000000000002',
+          'lines.00000000-0000-4000-8000-000000000004.description',
+          'manual', 'manual:missing-line', 'missing-line'
+        );
+      `),
+    );
+    await assert.rejects(
+      database.exec(`
+        INSERT INTO invoice_field_provenance (
+          organization_id, invoice_id, invoice_line_id, field_path,
+          source_type, source_record_id, identity_key
+        ) VALUES (
+          '00000000-0000-4000-8000-000000000001',
+          '00000000-0000-4000-8000-000000000002',
+          '00000000-0000-4000-8000-000000000004',
+          'totalAmount',
+          'manual', 'manual:line-on-header', 'line-on-header'
+        );
+      `),
+    );
 
     await assert.rejects(
       database.exec(`
@@ -157,5 +200,8 @@ test('migration verification scopes provenance checks to their table', async () 
   assert.match(verifier, /table_name AS table/);
   assert.match(verifier, /\$\{row\.table\}\.\$\{row\.name\}/);
   assert.match(verifier, /pg_get_constraintdef/);
-  assert.match(verifier, /requiredDefinitionFragments/);
+  assert.match(verifier, /expectedDefinition/);
+  assert.match(verifier, /normalizeConstraintDefinition\(row\.definition\)/);
+  assert.match(verifier, /normalizeConstraintDefinition\(row\.definition\)[\s\S]*===/);
+  assert.doesNotMatch(verifier, /requiredDefinitionFragments/);
 });

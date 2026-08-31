@@ -209,7 +209,11 @@ export const invoiceFieldProvenance = pgTable(
     ),
     check(
       'invoice_field_provenance_field_path_check',
-      sql`${table.fieldPath} IN (${valuesCheck(INVOICE_REVIEW_PROVENANCE_HEADER_FIELDS)}) OR ${table.fieldPath} ~ ${sql.raw(provenanceLineFieldPathPattern)}`,
+      sql`(
+        (${table.fieldPath} IN (${valuesCheck(INVOICE_REVIEW_PROVENANCE_HEADER_FIELDS)}) AND ${table.invoiceLineId} IS NULL)
+        OR (${table.fieldPath} ~ ${sql.raw(provenanceLineFieldPathPattern)} AND ${table.invoiceLineId} IS NOT NULL)
+      )
+      `,
     ),
     check(
       'invoice_field_provenance_confidence_check',

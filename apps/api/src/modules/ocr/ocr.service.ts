@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Inject, NotFoundException, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { and, eq } from 'drizzle-orm';
@@ -162,10 +162,22 @@ export class OcrService {
         .where(and(eq(invoices.id, invoiceId), eq(invoices.organizationId, organizationId)))
         .limit(1);
       if (!invoice) throw new NotFoundException(`Invoice ${invoiceId} not found`);
-      const extractionCompletedAt = currentJob.status === 'done' ? currentJob.updatedAt : null;
+      if (currentJob.invoiceId && currentJob.invoiceId !== invoiceId) {
+        throw new BadRequestException(
+          `OCR job ${jobId} is already linked to invoice ${currentJob.invoiceId}`,
+        );
+      }
+      const extractionCompletedAt =
+        currentJob.status === 'done'
+          ? (currentJob.extractionCompletedAt ?? currentJob.updatedAt)
+          : null;
       const [updated] = await tx
         .update(ocrJobs)
-        .set({ invoiceId, updatedAt: linkedAt })
+        .set({
+          invoiceId,
+          updatedAt: currentJob.status === 'done' ? currentJob.updatedAt : linkedAt,
+          ...(currentJob.status === 'done' ? { extractionCompletedAt } : {}),
+        })
         .where(and(eq(ocrJobs.id, jobId), eq(ocrJobs.organizationId, organizationId)))
         .returning();
       return {
@@ -225,6 +237,7 @@ export class OcrService {
           status: 'done',
           extractedData: extracted as unknown as Record<string, unknown>,
           confidence: confidence as unknown as Record<string, unknown>,
+          extractionCompletedAt: completedAt,
           updatedAt: completedAt,
         })
         .where(and(eq(ocrJobs.id, jobId), eq(ocrJobs.organizationId, initialJob.organizationId)));

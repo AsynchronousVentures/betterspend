@@ -3,7 +3,9 @@ import { organizations } from './organizations';
 
 export const ocrJobs = pgTable('ocr_jobs', {
   id: uuid('id').primaryKey().defaultRandom(),
-  organizationId: uuid('organization_id').notNull().references(() => organizations.id),
+  organizationId: uuid('organization_id')
+    .notNull()
+    .references(() => organizations.id),
   uploadedBy: uuid('uploaded_by').notNull(),
   filename: varchar('filename', { length: 255 }).notNull(),
   contentType: varchar('content_type', { length: 100 }).notNull(),
@@ -14,6 +16,7 @@ export const ocrJobs = pgTable('ocr_jobs', {
   // Per-field confidence scores (0–1)
   confidence: jsonb('confidence'),
   errorMessage: text('error_message'),
+  extractionCompletedAt: timestamp('extraction_completed_at', { withTimezone: true }),
   // Once accepted, linked to the created invoice
   invoiceId: uuid('invoice_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

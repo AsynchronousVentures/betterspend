@@ -138,39 +138,20 @@ const EXPECTED_CHECK_CONSTRAINTS = [
   {
     table: 'invoice_field_provenance',
     name: 'invoice_field_provenance_source_type_check',
-    requiredDefinitionFragments: [
-      'source_type',
-      'OCR',
-      'email_intake',
-      'supplier',
-      'import',
-      'PO',
-      'catalog',
-      'manual',
-    ],
+    expectedDefinition:
+      "CHECK (((source_type)::text = ANY ((ARRAY['OCR'::character varying, 'email_intake'::character varying, 'supplier'::character varying, 'import'::character varying, 'PO'::character varying, 'catalog'::character varying, 'manual'::character varying])::text[])))",
   },
   {
     table: 'invoice_field_provenance',
     name: 'invoice_field_provenance_field_path_check',
-    requiredDefinitionFragments: [
-      'field_path',
-      'vendor',
-      'invoiceNumber',
-      'invoiceDate',
-      'dueDate',
-      'currency',
-      'exchangeRate',
-      'subtotal',
-      'taxAmount',
-      'totalAmount',
-      'lines\\.',
-      '(description|quantity|unitPrice|poLineId|taxCodeId|glAccount|taxInclusive)',
-    ],
+    expectedDefinition:
+      "CHECK (((((field_path)::text = ANY ((ARRAY['vendor'::character varying, 'invoiceNumber'::character varying, 'invoiceDate'::character varying, 'dueDate'::character varying, 'currency'::character varying, 'exchangeRate'::character varying, 'subtotal'::character varying, 'taxAmount'::character varying, 'totalAmount'::character varying])::text[])) AND (invoice_line_id IS NULL)) OR (((field_path)::text ~ '^lines\\.[^.]+\\.(description|quantity|unitPrice|poLineId|taxCodeId|glAccount|taxInclusive)$'::text) AND (invoice_line_id IS NOT NULL))))",
   },
   {
     table: 'invoice_field_provenance',
     name: 'invoice_field_provenance_confidence_check',
-    requiredDefinitionFragments: ['confidence IS NULL', 'confidence >=', 'confidence <='],
+    expectedDefinition:
+      'CHECK (((confidence IS NULL) OR ((confidence >= (0)::numeric) AND (confidence <= (1)::numeric))))',
   },
 ] as const;
 
@@ -595,9 +576,9 @@ async function main(): Promise<void> {
             (item) => item.table === row.table && item.name === row.name,
           );
           if (!expected) return false;
-          const definition = normalizeConstraintDefinition(row.definition);
-          return expected.requiredDefinitionFragments.every((fragment) =>
-            definition.includes(normalizeConstraintDefinition(fragment)),
+          return (
+            normalizeConstraintDefinition(row.definition) ===
+            normalizeConstraintDefinition(expected.expectedDefinition)
           );
         })
         .map((row) => `${row.table}.${row.name}`),

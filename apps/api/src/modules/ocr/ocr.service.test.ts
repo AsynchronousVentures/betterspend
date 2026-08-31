@@ -120,6 +120,57 @@ test('OCR publishes provenance at the completed extraction boundary', async () =
   assert.equal(observations.length, 1);
 });
 
+test('OCR stores extraction completion separately from mutable link timestamps', async () => {
+  const updates: Record<string, unknown>[] = [];
+  const jobs = [
+    {
+      id: jobId,
+      organizationId,
+      invoiceId: null,
+      status: 'pending',
+      extractedData: null,
+      confidence: null,
+    },
+    {
+      id: jobId,
+      organizationId,
+      invoiceId,
+      status: 'processing',
+      extractedData: null,
+      confidence: null,
+    },
+  ];
+  const db = {
+    query: { ocrJobs: { findFirst: async () => jobs.shift() ?? null } },
+    update: () => ({
+      set: (values: Record<string, unknown>) => {
+        updates.push(values);
+        return { where: async () => undefined };
+      },
+    }),
+  };
+  const provenance = {
+    recordOcrProvenance: async () => undefined,
+  } as unknown as InvoiceReviewProvenanceService;
+  const reviews = {
+    recordOcrReviewSignal: async () => undefined,
+  } as unknown as InvoiceReviewsService;
+  const service = new OcrService(
+    db as never,
+    {} as Queue,
+    {} as AiRuntimeService,
+    reviews,
+    provenance,
+  );
+
+  await service.runExtractionById(jobId);
+
+  const completionUpdate = updates.find((values) => values.status === 'done');
+  assert.ok(completionUpdate);
+  assert.ok(completionUpdate.extractionCompletedAt instanceof Date);
+  assert.equal(completionUpdate.extractionCompletedAt, completionUpdate.updatedAt);
+});
+
 test('OCR links completed extraction observations when linking races completion', async () => {
   const observations: unknown[] = [];
   const jobs = [
@@ -184,7 +235,8 @@ test('OCR keeps extraction completion time as provenance timestamp when linked l
     status: 'done',
     extractedData: { totalAmount: 100 },
     confidence: { overall: 0.9 },
-    updatedAt: extractionCompletedAt,
+    extractionCompletedAt,
+    updatedAt: new Date('2026-08-31T10:00:00Z'),
   };
   const transaction = {
     select: () => {
@@ -241,4 +293,65 @@ test('OCR keeps extraction completion time as provenance timestamp when linked l
     (provenanceInputs[0] as { sourceTimestamp: Date }).sourceTimestamp,
     extractionCompletedAt,
   );
+});
+
+test('OCR refuses to relink a job to another invoice', async () => {
+  const otherInvoiceId = '00000000-0000-4000-8000-000000000004';
+  let updateCalled = false;
+  const currentJob = {
+    id: jobId,
+    organizationId,
+    invoiceId,
+    status: 'done',
+    extractedData: null,
+    confidence: null,
+    extractionCompletedAt: new Date('2026-08-30T10:00:00Z'),
+    updatedAt: new Date('2026-08-30T10:00:00Z'),
+  };
+  const transaction = {
+    select: () => {
+      let table: unknown;
+      const query = {
+        from: (nextTable: unknown) => {
+          table = nextTable;
+          return query;
+        },
+        where: () => query,
+        for: async () => (table === ocrJobs ? [currentJob] : []),
+        limit: async () => (table === invoices ? [{ id: otherInvoiceId }] : []),
+      };
+      return query;
+    },
+    update: () => {
+      updateCalled = true;
+      return {
+        set: () => ({
+          where: () => ({ returning: async () => [] }),
+        }),
+      };
+    },
+  };
+  const db = {
+    transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) =>
+      callback(transaction),
+  };
+  const provenance = {
+    recordOcrProvenance: async () => undefined,
+  } as unknown as InvoiceReviewProvenanceService;
+  const reviews = {
+    recordOcrReviewSignal: async () => undefined,
+  } as unknown as InvoiceReviewsService;
+  const service = new OcrService(
+    db as never,
+    {} as Queue,
+    {} as AiRuntimeService,
+    reviews,
+    provenance,
+  );
+
+  await assert.rejects(
+    service.linkToInvoice(jobId, otherInvoiceId, organizationId),
+    /already linked to invoice/,
+  );
+  assert.equal(updateCalled, false);
 });
