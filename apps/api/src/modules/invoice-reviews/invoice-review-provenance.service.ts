@@ -309,19 +309,30 @@ export class InvoiceReviewProvenanceService {
 
   private async recordProvenanceInTransaction(
     tx: DbTransaction,
-    input: z.output<typeof recordInvoiceReviewProvenanceSchema>,
+    parsedInput: z.output<typeof recordInvoiceReviewProvenanceSchema>,
   ): Promise<InvoiceFieldProvenanceRow> {
-    const observedAt = input.observedAt ?? new Date();
-    if (!isHeaderField(input.fieldPath) && !input.fieldPath.startsWith('lines.')) {
-      throw new BadRequestException(`Unsupported invoice provenance field path ${input.fieldPath}`);
+    const observedAt = parsedInput.observedAt ?? new Date();
+    if (!isHeaderField(parsedInput.fieldPath) && !parsedInput.fieldPath.startsWith('lines.')) {
+      throw new BadRequestException(`Unsupported invoice provenance field path ${parsedInput.fieldPath}`);
     }
-    const pathLineId = this.invoiceLineIdFromPath(input.fieldPath);
-    if (pathLineId !== null && input.invoiceLineId?.toLowerCase() !== pathLineId) {
+    const pathLineId = this.invoiceLineIdFromPath(parsedInput.fieldPath);
+    if (pathLineId !== null && parsedInput.invoiceLineId?.toLowerCase() !== pathLineId) {
       throw new BadRequestException('Invoice provenance line path does not match invoiceLineId');
     }
-    if (pathLineId === null && input.invoiceLineId !== null) {
+    if (pathLineId === null && parsedInput.invoiceLineId !== null) {
       throw new BadRequestException('Header provenance cannot include invoiceLineId');
     }
+    const input =
+      pathLineId === null
+        ? parsedInput
+        : {
+            ...parsedInput,
+            invoiceLineId: pathLineId,
+            fieldPath: lineFieldPath(
+              pathLineId,
+              parsedInput.fieldPath.slice(parsedInput.fieldPath.lastIndexOf('.') + 1),
+            ),
+          };
 
     const [invoice] = await tx
       .select({ id: invoices.id })

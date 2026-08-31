@@ -8,6 +8,7 @@ const organizationOne = '00000000-0000-4000-8000-000000000001';
 const organizationTwo = '00000000-0000-4000-8000-000000000002';
 const invoiceId = '00000000-0000-4000-8000-000000000010';
 const lineId = '00000000-0000-4000-8000-000000000011';
+const caseSensitiveLineId = '00000000-0000-4000-8000-0000000000aa';
 const actorId = '00000000-0000-4000-8000-000000000012';
 
 function queryParameters(condition: unknown): unknown[] {
@@ -27,7 +28,10 @@ function createDb() {
     { id: invoiceId, organizationId: organizationOne },
     { id: invoiceId, organizationId: organizationTwo },
   ];
-  const lineRows = [{ id: lineId, invoiceId }];
+  const lineRows = [
+    { id: lineId, invoiceId },
+    { id: caseSensitiveLineId, invoiceId },
+  ];
   const actorRows = [{ id: actorId, organizationId: organizationOne }];
 
   const updateRows = (table: unknown, values: Record<string, unknown>, condition: unknown) => {
@@ -245,6 +249,38 @@ test('provenance applies source precedence and keeps retries idempotent', async 
   assert.equal(manual.isCurrent, true);
   assert.equal(retry.id, manual.id);
   assert.equal(rows.length, 2);
+});
+
+test('provenance canonicalizes line identity casing before recording', async () => {
+  const { db, rows } = createDb();
+  const service = new InvoiceReviewProvenanceService(db);
+  const sourceTimestamp = new Date('2026-08-01T00:00:00Z');
+  const lowercasePath = `lines.${caseSensitiveLineId}.description`;
+  const uppercaseLineId = caseSensitiveLineId.toUpperCase();
+
+  const first = await service.recordProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    invoiceLineId: caseSensitiveLineId,
+    fieldPath: lowercasePath,
+    sourceType: 'OCR',
+    sourceRecordId: 'ocr-job-case-identity',
+    sourceTimestamp,
+  });
+  const second = await service.recordProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    invoiceLineId: uppercaseLineId,
+    fieldPath: `lines.${uppercaseLineId}.description`,
+    sourceType: 'OCR',
+    sourceRecordId: 'ocr-job-case-identity',
+    sourceTimestamp,
+  });
+
+  assert.equal(second.id, first.id);
+  assert.equal(second.invoiceLineId, caseSensitiveLineId);
+  assert.equal(second.fieldPath, lowercasePath);
+  assert.equal(rows.length, 1);
 });
 
 test('provenance appends distinct manual corrections and isolates organizations', async () => {
