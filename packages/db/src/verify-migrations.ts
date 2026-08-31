@@ -145,7 +145,7 @@ const EXPECTED_CHECK_CONSTRAINTS = [
     table: 'invoice_field_provenance',
     name: 'invoice_field_provenance_field_path_check',
     expectedDefinition:
-      "CHECK (((((field_path)::text = ANY ((ARRAY['vendor'::character varying, 'invoiceNumber'::character varying, 'invoiceDate'::character varying, 'dueDate'::character varying, 'currency'::character varying, 'exchangeRate'::character varying, 'subtotal'::character varying, 'taxAmount'::character varying, 'totalAmount'::character varying])::text[])) AND (invoice_line_id IS NULL)) OR (((field_path)::text ~ '^lines\\.[^.]+\\.(description|quantity|unitPrice|poLineId|taxCodeId|glAccount|taxInclusive)$'::text) AND (invoice_line_id IS NOT NULL))))",
+      "CHECK (((((field_path)::text = ANY ((ARRAY['vendor'::character varying, 'invoiceNumber'::character varying, 'invoiceDate'::character varying, 'dueDate'::character varying, 'currency'::character varying, 'exchangeRate'::character varying, 'subtotal'::character varying, 'taxAmount'::character varying, 'totalAmount'::character varying])::text[])) AND (invoice_line_id IS NULL)) OR (((field_path)::text ~ '^lines\\.[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}\\.(description|quantity|unitPrice|poLineId|taxCodeId|glAccount|taxInclusive)$'::text) AND (invoice_line_id IS NOT NULL) AND (lower(split_part((field_path)::text, '.'::text, 2)) = (invoice_line_id)::text))))",
   },
   {
     table: 'invoice_field_provenance',

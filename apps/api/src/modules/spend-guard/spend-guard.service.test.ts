@@ -238,7 +238,7 @@ test('review signal failures do not suppress spend guard analysis results', asyn
         }),
         query: {
           spendGuardAlerts: {
-            findFirst: async () => alertRows.find((alert) => alert.status === 'open'),
+            findFirst: async () => undefined,
           },
         },
         insert,
@@ -265,6 +265,39 @@ test('review signal failures do not suppress spend guard analysis results', asyn
     'near_duplicate_invoice',
     'off_hours_submission',
   ]);
+  assert.equal(alertRows.length, 3);
+});
+
+test('invoice analysis does not report an alert that failed to persist', async () => {
+  const invoice = {
+    id: 'invoice-1',
+    organizationId: 'org-1',
+    vendorId: 'vendor-1',
+    invoiceNumber: 'INV-1',
+    totalAmount: '100.00',
+    invoiceDate: new Date('2026-08-30T23:00:00Z'),
+    vendor: { name: 'Vendor' },
+  };
+  const db = {
+    query: {
+      invoices: {
+        findFirst: async () => invoice,
+        findMany: async () => [],
+      },
+    },
+    transaction: async () => {
+      throw new Error('alert persistence unavailable');
+    },
+  };
+  const service = new SpendGuardService(
+    db as never,
+    { recordSpendGuardReviewSignal: async () => undefined } as never,
+    undefined,
+  );
+
+  const alerts = await service.analyzeInvoice('org-1', 'invoice-1');
+
+  assert.deepEqual(alerts, []);
 });
 
 test('repeated invoice analysis refreshes one normalized signal and case', async () => {
@@ -512,7 +545,7 @@ test('concurrent first-time invoice analyses create one alert, signal, and case'
   assert.deepEqual([...normalizedSignals.keys()], ['org-1:invoice-1:alert-1']);
 });
 
-test('invoice alert and review signal roll back together when signal persistence fails', async () => {
+test('invoice alert remains visible when review signal persistence fails', async () => {
   const rows: Array<Record<string, unknown>> = [];
   let transactions = 0;
   let signalExecutor: unknown;
@@ -585,7 +618,7 @@ test('invoice alert and review signal roll back together when signal persistence
   const alerts = await service.analyzeInvoice('org-1', 'invoice-1');
 
   assert.deepEqual(alerts, ['off_hours_submission']);
-  assert.equal(transactions, 1);
+  assert.equal(transactions, 2);
   assert.ok(signalExecutor);
-  assert.equal(rows.length, 0);
+  assert.equal(rows.length, 1);
 });

@@ -295,11 +295,16 @@ export class InvoiceReviewProvenanceService {
 
   private invoiceLineIdFromPath(fieldPath: string): string | null {
     const match = /^lines\.([^.]+)\.([^.]+)$/.exec(fieldPath);
-    if (!match) return null;
-    if (!match[1] || !isLineField(match[2])) {
+    if (!match) {
+      if (fieldPath.startsWith('lines.')) {
+        throw new BadRequestException(`Unsupported invoice provenance field path ${fieldPath}`);
+      }
+      return null;
+    }
+    if (!match[1] || !z.string().uuid().safeParse(match[1]).success || !isLineField(match[2])) {
       throw new BadRequestException(`Unsupported invoice provenance field path ${fieldPath}`);
     }
-    return match[1];
+    return match[1].toLowerCase();
   }
 
   private async recordProvenanceInTransaction(
@@ -311,7 +316,7 @@ export class InvoiceReviewProvenanceService {
       throw new BadRequestException(`Unsupported invoice provenance field path ${input.fieldPath}`);
     }
     const pathLineId = this.invoiceLineIdFromPath(input.fieldPath);
-    if (pathLineId !== null && input.invoiceLineId !== pathLineId) {
+    if (pathLineId !== null && input.invoiceLineId?.toLowerCase() !== pathLineId) {
       throw new BadRequestException('Invoice provenance line path does not match invoiceLineId');
     }
     if (pathLineId === null && input.invoiceLineId !== null) {

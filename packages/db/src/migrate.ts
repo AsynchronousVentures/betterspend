@@ -10,6 +10,7 @@ import {
 } from './audit-integrity';
 import { encryptCredential } from './credential-crypto';
 import { migrateBetterAuthAccounts } from './better-auth-migration';
+import { ensureInvoiceLineInvoiceForeignKey } from './invoice-line-provenance-migration';
 
 const LEGACY_KEYS = [
   'qbo_access_token',
@@ -44,12 +45,6 @@ type InvoiceLineInvoiceIndexState = {
   invoiceLinesTableExists: boolean;
   indexExists: boolean;
   indexIsValid: boolean;
-};
-
-type InvoiceLineForeignKeyState = {
-  newExists: boolean;
-  newValidated: boolean;
-  oldExists: boolean;
 };
 
 type LegalEntityIndexState = {
@@ -438,60 +433,6 @@ async function prepareInvoiceLineInvoiceIndex(client: postgres.Sql): Promise<voi
     await client`RESET statement_timeout`;
     await client`RESET lock_timeout`;
   }
-}
-
-/** Install the tenant-safe invoice-line foreign key after the parent key is ready. */
-async function ensureInvoiceLineInvoiceForeignKey(client: postgres.Sql): Promise<void> {
-  const [state] = await client<InvoiceLineForeignKeyState[]>`
-    SELECT
-      EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conrelid = to_regclass('public.invoice_field_provenance')
-          AND conname = 'invoice_field_provenance_invoice_line_invoice_fk'
-      ) AS "newExists",
-      COALESCE((
-        SELECT convalidated
-        FROM pg_constraint
-        WHERE conrelid = to_regclass('public.invoice_field_provenance')
-          AND conname = 'invoice_field_provenance_invoice_line_invoice_fk'
-      ), false) AS "newValidated",
-      EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conrelid = to_regclass('public.invoice_field_provenance')
-          AND conname = 'invoice_field_provenance_invoice_line_id_invoice_lines_id_fk'
-      ) AS "oldExists"
-  `;
-
-  if (!state || (state.newExists && state.newValidated && !state.oldExists)) return;
-
-  await client.begin(async (transaction) => {
-    await transaction`SET LOCAL lock_timeout = '5s'`;
-    await transaction`SET LOCAL statement_timeout = '5min'`;
-
-    if (!state.newExists) {
-      await transaction`
-        ALTER TABLE "invoice_field_provenance"
-        ADD CONSTRAINT "invoice_field_provenance_invoice_line_invoice_fk"
-        FOREIGN KEY ("invoice_line_id", "invoice_id")
-        REFERENCES "public"."invoice_lines"("id", "invoice_id")
-        NOT VALID
-      `;
-    }
-    if (!state.newValidated) {
-      await transaction`
-        ALTER TABLE "invoice_field_provenance"
-        VALIDATE CONSTRAINT "invoice_field_provenance_invoice_line_invoice_fk"
-      `;
-    }
-    if (state.oldExists) {
-      await transaction`
-        ALTER TABLE "invoice_field_provenance"
-        DROP CONSTRAINT "invoice_field_provenance_invoice_line_id_invoice_lines_id_fk"
-      `;
-    }
-  });
 }
 
 /** Build the vendor parent key without blocking writes before transactional migrations add its FK. */

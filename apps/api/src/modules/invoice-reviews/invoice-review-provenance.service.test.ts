@@ -52,9 +52,15 @@ function createDb() {
     );
     const identityKey = parameters.find((parameter) => parameter.length === 64);
     const rowId = parameters.find((parameter) => rows.some((row) => row.id === parameter));
+    const organizationId = parameters.find(
+      (parameter) => parameter === organizationOne || parameter === organizationTwo,
+    );
+    const invoiceIdParameter = parameters.find((parameter) => parameter === invoiceId);
     if (values.isCurrent === false) {
       for (const row of rows.filter(
         (candidate) =>
+          (!organizationId || candidate.organizationId === organizationId) &&
+          (!invoiceIdParameter || candidate.invoiceId === invoiceIdParameter) &&
           (!fieldPath || candidate.fieldPath === fieldPath) &&
           (!identityKey || candidate.identityKey !== identityKey) &&
           candidate.isCurrent,
@@ -67,6 +73,8 @@ function createDb() {
     }
     const matchingRows = rows.filter(
       (row) =>
+        (!organizationId || row.organizationId === organizationId) &&
+        (!invoiceIdParameter || row.invoiceId === invoiceIdParameter) &&
         (!rowId || row.id === rowId) &&
         (!fieldPath || row.fieldPath === fieldPath) &&
         (!identityKey || row.identityKey === identityKey),
@@ -256,6 +264,14 @@ test('provenance appends distinct manual corrections and isolates organizations'
     fieldPaths: [`lines.${lineId}.description`],
     observedAt: new Date('2026-08-02T00:00:00Z'),
   });
+  const organizationOneTotal = await service.recordProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    fieldPath: 'totalAmount',
+    sourceType: 'manual',
+    sourceRecordId: 'manual-correction-1',
+    observedAt: new Date('2026-08-02T00:00:00Z'),
+  });
   const otherOrganization = await service.recordProvenance({
     organizationId: organizationTwo,
     invoiceId,
@@ -270,8 +286,10 @@ test('provenance appends distinct manual corrections and isolates organizations'
   assert.notEqual(first[0]?.id, second[0]?.id);
   assert.equal(first[0]?.isCurrent, false);
   assert.equal(second[0]?.isCurrent, true);
-  assert.equal(otherOrganization.organizationId, organizationTwo);
-  assert.equal(rows.length, 3);
+  assert.equal(organizationOneTotal.isCurrent, true);
+  assert.equal(otherOrganization.isCurrent, true);
+  assert.notEqual(organizationOneTotal.id, otherOrganization.id);
+  assert.equal(rows.length, 4);
 });
 
 test('provenance accepts manual corrections for tax-inclusive line fields', async () => {
@@ -288,6 +306,31 @@ test('provenance accepts manual corrections for tax-inclusive line fields', asyn
 
   assert.equal(provenance?.fieldPath, `lines.${lineId}.taxInclusive`);
   assert.equal(rows.length, 1);
+});
+
+test('provenance rejects malformed line identity before opening a transaction', async () => {
+  let transactionCalled = false;
+  const db = {
+    transaction: async () => {
+      transactionCalled = true;
+      throw new Error('transaction should not start');
+    },
+  };
+  const service = new InvoiceReviewProvenanceService(db as unknown as Db);
+
+  await assert.rejects(
+    service.recordProvenance({
+      organizationId: organizationOne,
+      invoiceId,
+      invoiceLineId: lineId,
+      fieldPath: 'lines.not-a-uuid.description',
+      sourceType: 'manual',
+      sourceRecordId: 'manual:malformed-line',
+    }),
+    /Unsupported invoice provenance field path/,
+  );
+
+  assert.equal(transactionCalled, false);
 });
 
 test('OCR provenance omits extracted lines without an explicit invoice-line mapping', async () => {

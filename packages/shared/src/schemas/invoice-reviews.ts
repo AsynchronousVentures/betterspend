@@ -64,15 +64,22 @@ export const invoiceReviewProvenanceSourceTypeSchema = z.enum(
   INVOICE_REVIEW_PROVENANCE_SOURCE_TYPES,
 );
 
+const invoiceReviewProvenanceLineFieldPathPattern = new RegExp(
+  `^lines\\.([^.]+)\\.(${INVOICE_REVIEW_PROVENANCE_LINE_FIELDS.join('|')})$`,
+);
+
 const invoiceReviewProvenanceFieldPathSchema = z
   .string()
   .trim()
   .min(1)
   .max(150)
-  .regex(
-    /^(vendor|invoiceNumber|invoiceDate|dueDate|currency|exchangeRate|subtotal|taxAmount|totalAmount|lines\.[^.]+\.(description|quantity|unitPrice|poLineId|taxCodeId|glAccount|taxInclusive))$/,
-    'Unsupported invoice provenance field path',
-  );
+  .refine((fieldPath) => {
+    if ((INVOICE_REVIEW_PROVENANCE_HEADER_FIELDS as readonly string[]).includes(fieldPath)) {
+      return true;
+    }
+    const lineMatch = invoiceReviewProvenanceLineFieldPathPattern.exec(fieldPath);
+    return lineMatch?.[1] !== undefined && z.string().uuid().safeParse(lineMatch[1]).success;
+  }, 'Unsupported invoice provenance field path');
 
 export const recordInvoiceReviewSignalSchema = z
   .object({
@@ -102,7 +109,27 @@ export const recordInvoiceReviewProvenanceSchema = z
     actorId: z.string().uuid().nullable().default(null),
     observedAt: z.coerce.date().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((input, context) => {
+    const lineMatch = invoiceReviewProvenanceLineFieldPathPattern.exec(input.fieldPath);
+    if (lineMatch) {
+      if (lineMatch[1]?.toLowerCase() !== input.invoiceLineId?.toLowerCase()) {
+        context.addIssue({
+          code: 'custom',
+          path: ['invoiceLineId'],
+          message: 'Invoice provenance line path must match invoiceLineId',
+        });
+      }
+      return;
+    }
+    if (input.invoiceLineId !== null) {
+      context.addIssue({
+        code: 'custom',
+        path: ['invoiceLineId'],
+        message: 'Header provenance cannot include invoiceLineId',
+      });
+    }
+  });
 
 export const invoiceReviewListQuerySchema = z.object({
   state: invoiceReviewCaseStateSchema.optional(),

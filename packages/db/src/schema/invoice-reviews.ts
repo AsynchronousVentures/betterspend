@@ -153,7 +153,7 @@ export const invoiceReviewSignals = pgTable(
   ],
 );
 
-const provenanceLineFieldPathPattern = `'^lines\\.[^.]+\\.(${INVOICE_REVIEW_PROVENANCE_LINE_FIELDS.join('|')})$'`;
+const provenanceLineFieldPathPattern = `'^lines\\.[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}\\.(${INVOICE_REVIEW_PROVENANCE_LINE_FIELDS.join('|')})$'`;
 
 export const invoiceFieldProvenance = pgTable(
   'invoice_field_provenance',
@@ -211,7 +211,11 @@ export const invoiceFieldProvenance = pgTable(
       'invoice_field_provenance_field_path_check',
       sql`(
         (${table.fieldPath} IN (${valuesCheck(INVOICE_REVIEW_PROVENANCE_HEADER_FIELDS)}) AND ${table.invoiceLineId} IS NULL)
-        OR (${table.fieldPath} ~ ${sql.raw(provenanceLineFieldPathPattern)} AND ${table.invoiceLineId} IS NOT NULL)
+        OR (
+          ${table.fieldPath} ~ ${sql.raw(provenanceLineFieldPathPattern)}
+          AND ${table.invoiceLineId} IS NOT NULL
+          AND lower(split_part(${table.fieldPath}, '.', 2)) = ${table.invoiceLineId}::text
+        )
       )
       `,
     ),

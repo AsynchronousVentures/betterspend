@@ -201,7 +201,7 @@ export class SpendGuardService {
       (candidate) => Number(candidate.totalAmount ?? 0) === Number(invoice.totalAmount ?? 0),
     );
     if (exactAmountMatch) {
-      await this.persistInvoiceAlertWithSignal(orgId, invoice.id, {
+      const persisted = await this.persistInvoiceAlertWithSignal(orgId, invoice.id, {
         alertType: 'duplicate_invoice_amount',
         severity: 'high',
         recordType: 'invoice',
@@ -215,7 +215,7 @@ export class SpendGuardService {
           matchedInvoiceNumber: exactAmountMatch.invoiceNumber,
         },
       });
-      alerts.push('duplicate_invoice_amount');
+      if (persisted) alerts.push('duplicate_invoice_amount');
     }
 
     const nearDuplicate = duplicateCandidates.find((candidate) => {
@@ -225,7 +225,7 @@ export class SpendGuardService {
       return Math.abs(otherAmount - amount) / amount <= NEAR_DUPLICATE_TOLERANCE;
     });
     if (nearDuplicate) {
-      await this.persistInvoiceAlertWithSignal(orgId, invoice.id, {
+      const persisted = await this.persistInvoiceAlertWithSignal(orgId, invoice.id, {
         alertType: 'near_duplicate_invoice',
         severity: 'medium',
         recordType: 'invoice',
@@ -240,12 +240,12 @@ export class SpendGuardService {
           matchedAmount: nearDuplicate.totalAmount,
         },
       });
-      alerts.push('near_duplicate_invoice');
+      if (persisted) alerts.push('near_duplicate_invoice');
     }
 
     const hour = invoiceDate.getUTCHours();
     if (hour >= 22 || hour < 5) {
-      await this.persistInvoiceAlertWithSignal(orgId, invoice.id, {
+      const persisted = await this.persistInvoiceAlertWithSignal(orgId, invoice.id, {
         alertType: 'off_hours_submission',
         severity: 'low',
         recordType: 'invoice',
@@ -258,7 +258,7 @@ export class SpendGuardService {
           evaluatedTimezone: 'UTC',
         },
       });
-      alerts.push('off_hours_submission');
+      if (persisted) alerts.push('off_hours_submission');
     }
 
     return alerts;
@@ -416,9 +416,10 @@ export class SpendGuardService {
       recordId: string;
       details: Record<string, unknown>;
     },
-  ): Promise<void> {
+  ): Promise<boolean> {
+    let result: AlertWriteResult;
     try {
-      const result = await this.db.transaction(async (tx) => {
+      result = await this.db.transaction(async (tx) => {
         const [invoice] = await tx
           .select({ id: invoices.id })
           .from(invoices)
@@ -427,13 +428,21 @@ export class SpendGuardService {
         if (!invoice) throw new NotFoundException(`Invoice ${invoiceId} not found`);
 
         const alert = await this.createAlert(organizationId, input, tx);
-        await this.recordInvoiceAlertSignal(organizationId, invoiceId, alert.alert, tx);
         return alert;
       });
-      if (result.created) await this.notifyCreatedAlert(organizationId, result.alert);
     } catch {
-      // Review telemetry failures must not suppress source risk analysis results.
+      return false;
     }
+
+    try {
+      await this.db.transaction((tx) =>
+        this.recordInvoiceAlertSignal(organizationId, invoiceId, result.alert, tx),
+      );
+    } catch {
+      // The durable source alert remains visible and a later analysis can retry normalization.
+    }
+    if (result.created) await this.notifyCreatedAlert(organizationId, result.alert);
+    return true;
   }
 
   private async notifyCreatedAlert(
