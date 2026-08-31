@@ -491,6 +491,13 @@
       "when": 1788201745465,
       "tag": "20260831184225_invoice_review_command_delivery_intents",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1788218855644,
+      "tag": "20260831232735_invoice_review_supplier_delivery",
+      "breakpoints": true
     }
   ]
 }

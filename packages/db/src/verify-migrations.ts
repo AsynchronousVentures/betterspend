@@ -17,6 +17,7 @@ const EXPECTED_TABLES = [
   'invoice_field_provenance',
   'invoice_review_cases',
   'invoice_review_signals',
+  'invoice_review_notification_intents',
 ] as const;
 
 const EXPECTED_COLUMNS = [
@@ -44,6 +45,10 @@ const EXPECTED_COLUMNS = [
   { table: 'external_entity_mappings', column: 'sync_token' },
   { table: 'external_entity_mappings', column: 'local_id' },
   { table: 'invoice_field_provenance', column: 'superseded_at' },
+  { table: 'invoice_review_notification_intents', column: 'intent_kind' },
+  { table: 'invoice_review_notification_intents', column: 'message_id' },
+  { table: 'invoice_review_notification_intents', column: 'lease_token' },
+  { table: 'invoice_review_notification_intents', column: 'lease_expires_at' },
 ] as const;
 
 const EXPECTED_INDEXES = [
@@ -124,6 +129,12 @@ const EXPECTED_INDEXES = [
     name: 'invoice_lines_id_invoice_id_unique',
     table: 'invoice_lines',
     columns: ['id', 'invoice_id'],
+    unique: true,
+  },
+  {
+    name: 'messages_id_organization_id_unique',
+    table: 'messages',
+    columns: ['id', 'organization_id'],
     unique: true,
   },
 ] as const;
@@ -399,6 +410,13 @@ const EXPECTED_FOREIGN_KEYS = [
     child: 'invoice_review_signals',
     parent: 'users',
     childColumns: ['resolution_actor_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'invoice_review_notification_intents_message_org_fk',
+    child: 'invoice_review_notification_intents',
+    parent: 'messages',
+    childColumns: ['message_id', 'organization_id'],
     parentColumns: ['id', 'organization_id'],
   },
   {

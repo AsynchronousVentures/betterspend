@@ -1098,6 +1098,7 @@ export class EmailIntakeService implements OnModuleInit {
       user: process.env.EMAIL_INTAKE_SMTP_USER || '',
       pass: process.env.EMAIL_INTAKE_SMTP_PASS || '',
       from: process.env.EMAIL_INTAKE_SMTP_FROM || `noreply@${this.intakeDomain()}`,
+      targetPolicy: 'trusted',
     };
   }
 

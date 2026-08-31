@@ -19,10 +19,12 @@ import {
   INVOICE_REVIEW_PROVENANCE_LINE_FIELDS,
   INVOICE_REVIEW_PROVENANCE_SOURCE_TYPES,
   INVOICE_REVIEW_CASE_STATES,
+  INVOICE_REVIEW_NOTIFICATION_INTENT_KINDS,
   INVOICE_REVIEW_SIGNAL_SEVERITIES,
   INVOICE_REVIEW_SIGNAL_STATUSES,
   INVOICE_REVIEW_SIGNAL_TYPES,
   type InvoiceReviewCaseState,
+  type InvoiceReviewNotificationIntentKind,
   type InvoiceReviewSignalSeverity,
   type InvoiceReviewSignalStatus,
   type InvoiceReviewSignalType,
@@ -30,6 +32,7 @@ import {
 import { organizations } from './organizations';
 import { users } from './users';
 import { invoiceLines, invoices } from './invoices';
+import { messages } from './messages';
 
 const valuesCheck = (values: readonly string[]) =>
   sql.raw(values.map((value) => `'${value}'`).join(', '));
@@ -166,12 +169,19 @@ export const invoiceReviewNotificationIntents = pgTable(
       .notNull()
       .references(() => organizations.id),
     caseId: uuid('case_id').notNull(),
-    recipientUserId: uuid('recipient_user_id').notNull(),
+    intentKind: varchar('intent_kind', { length: 50 })
+      .$type<InvoiceReviewNotificationIntentKind>()
+      .notNull()
+      .default('internal_notification'),
+    recipientUserId: uuid('recipient_user_id'),
+    messageId: uuid('message_id'),
     action: varchar('action', { length: 50 }).notNull(),
     idempotencyKey: varchar('idempotency_key', { length: 255 }).notNull(),
     status: varchar('status', { length: 20 }).notNull().default('pending'),
     attempts: integer('attempts').notNull().default(0),
     lastError: text('last_error'),
+    leaseToken: uuid('lease_token'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
     deliveredAt: timestamp('delivered_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -192,9 +202,26 @@ export const invoiceReviewNotificationIntents = pgTable(
       foreignColumns: [users.id, users.organizationId],
       name: 'invoice_review_notification_intents_recipient_org_fk',
     }),
+    foreignKey({
+      columns: [table.messageId, table.organizationId],
+      foreignColumns: [messages.id, messages.organizationId],
+      name: 'invoice_review_notification_intents_message_org_fk',
+    }),
     check(
       'invoice_review_notification_intents_status_check',
       sql`${table.status} IN ('pending', 'delivered')`,
+    ),
+    check(
+      'invoice_review_notification_intents_kind_check',
+      sql`${table.intentKind} IN (${valuesCheck(INVOICE_REVIEW_NOTIFICATION_INTENT_KINDS)})`,
+    ),
+    check(
+      'invoice_review_notification_intents_delivery_shape_check',
+      sql`(
+        (${table.intentKind} = 'internal_notification' AND ${table.recipientUserId} IS NOT NULL AND ${table.messageId} IS NULL)
+        OR
+        (${table.intentKind} = 'supplier_message_email' AND ${table.recipientUserId} IS NULL AND ${table.messageId} IS NOT NULL)
+      )`,
     ),
   ],
 );

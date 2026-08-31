@@ -1,11 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { invoiceReviewCommandSchema, recordInvoiceReviewProvenanceSchema } from './invoice-reviews';
+import {
+  INVOICE_REVIEW_NOTIFICATION_INTENT_KINDS,
+  invoiceReviewCommandSchema,
+  recordInvoiceReviewProvenanceSchema,
+  type InvoiceReviewNotificationIntentKind,
+} from './invoice-reviews';
 
 const organizationId = '00000000-0000-4000-8000-000000000001';
 const invoiceId = '00000000-0000-4000-8000-000000000002';
 const invoiceLineId = '00000000-0000-4000-8000-000000000003';
+
+test('invoice review delivery intent kinds have one exported typed catalog', () => {
+  const expected: readonly InvoiceReviewNotificationIntentKind[] = [
+    'internal_notification',
+    'supplier_message_email',
+  ];
+
+  assert.deepEqual(INVOICE_REVIEW_NOTIFICATION_INTENT_KINDS, expected);
+});
 
 function provenanceInput(fieldPath: string, lineId?: string | null) {
   return {

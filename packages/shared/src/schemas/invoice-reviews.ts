@@ -24,6 +24,14 @@ export const INVOICE_REVIEW_SIGNAL_TYPES = [
   'manual_review',
 ] as const;
 
+export const INVOICE_REVIEW_NOTIFICATION_INTENT_KINDS = [
+  'internal_notification',
+  'supplier_message_email',
+] as const;
+
+export type InvoiceReviewNotificationIntentKind =
+  (typeof INVOICE_REVIEW_NOTIFICATION_INTENT_KINDS)[number];
+
 export const INVOICE_REVIEW_PROVENANCE_SOURCE_TYPES = [
   'OCR',
   'email_intake',

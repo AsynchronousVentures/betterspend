@@ -1,5 +1,5 @@
 import type { Queue } from 'bullmq';
-import { InvoiceReviewNotificationsService } from './invoice-review-notifications.service';
+import { InvoiceReviewDeliveries } from './invoice-review-deliveries.service';
 
 function pendingIntentDb() {
   const query = {
@@ -14,14 +14,16 @@ function pendingIntentDb() {
 }
 
 function serviceWith(queue: { add: jest.Mock }) {
-  return new InvoiceReviewNotificationsService(
+  return new InvoiceReviewDeliveries(
     queue as unknown as Queue,
     pendingIntentDb() as never,
     { createIdempotent: jest.fn() } as never,
+    undefined as never,
+    undefined as never,
   );
 }
 
-describe('InvoiceReviewNotificationsService scheduling', () => {
+describe('InvoiceReviewDeliveries scheduling', () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => {
     jest.useRealTimers();

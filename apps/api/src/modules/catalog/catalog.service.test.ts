@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Db } from '@betterspend/db';
-import type { MailOptions, MailService } from '../../common/mail/mail.service';
+import type { MailOptions, MailService, SmtpConfig } from '../../common/mail/mail.service';
 import { CatalogService } from './catalog.service';
 import type { SettingsService } from '../settings/settings.service';
 
@@ -34,6 +34,7 @@ describe('CatalogService price proposal emails', () => {
       item: { currency: 'EUR' },
     };
     const sent: MailOptions[] = [];
+    const smtpConfigs: SmtpConfig[] = [];
     const transaction = {
       execute: async () => auditProjection,
       select: () => ({
@@ -71,7 +72,8 @@ describe('CatalogService price proposal emails', () => {
       transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback(transaction),
     } as unknown as Db;
     const mailService = {
-      sendMail: async (_smtpConfig: unknown, options: MailOptions) => {
+      sendMail: async (smtpConfig: SmtpConfig, options: MailOptions) => {
+        smtpConfigs.push(smtpConfig);
         sent.push(options);
         return false;
       },
@@ -92,6 +94,7 @@ describe('CatalogService price proposal emails', () => {
     await service.reviewPriceProposal('proposal-1', '00000000-0000-4000-8000-000000000001', 'reviewer-1', { status: 'rejected' });
 
     assert.equal(sent.length, 1);
+    assert.equal(smtpConfigs[0]?.targetPolicy, 'public-only');
     assert.match(sent[0]?.html ?? '', /€1,234\.50/);
     assert.match(sent[0]?.html ?? '', /€1,500\.50/);
     assert.doesNotMatch(sent[0]?.html ?? '', /EUR 1234\.5/);
