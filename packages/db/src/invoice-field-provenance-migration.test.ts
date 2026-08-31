@@ -107,7 +107,11 @@ test('invoice line parent key uses a concurrent existing-database rollout', asyn
     migration,
     /rerun through the migration runner to build the parent key concurrently/,
   );
-  assert.match(migration, /CREATE UNIQUE INDEX "invoice_lines_id_invoice_id_unique"/);
+  assert.doesNotMatch(migration, /CREATE UNIQUE INDEX "invoice_lines_id_invoice_id_unique"/);
+  assert.match(
+    migration,
+    /ALTER TABLE "invoice_lines" ADD CONSTRAINT "invoice_lines_id_invoice_id_unique" UNIQUE \("id", "invoice_id"\)/,
+  );
   assert.match(
     migrationRunner,
     /CREATE UNIQUE INDEX CONCURRENTLY "invoice_lines_id_invoice_id_unique"[\s\S]*?ON "invoice_lines" \("id", "invoice_id"\)/,

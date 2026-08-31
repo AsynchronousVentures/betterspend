@@ -6,7 +6,7 @@ BEGIN
 		IF EXISTS (SELECT 1 FROM "invoice_lines" LIMIT 1) THEN
 			RAISE EXCEPTION 'invoice_lines is populated; rerun through the migration runner to build the parent key concurrently';
 		END IF;
-		EXECUTE 'CREATE UNIQUE INDEX "invoice_lines_id_invoice_id_unique" ON "invoice_lines" USING btree ("id","invoice_id")';
+		EXECUTE 'ALTER TABLE "invoice_lines" ADD CONSTRAINT "invoice_lines_id_invoice_id_unique" UNIQUE ("id", "invoice_id")';
 	END IF;
 END
 $$;
