@@ -375,8 +375,9 @@ function ScoreBadge({ score }: { score: number }) {
 }
 
 function ScoreBar({ score, label }: { score: number; label: string }) {
+  // Score meter — BRANDING §7 status ramp (success → warning → destructive).
   const tone =
-    score >= 80 ? '#15803d' : score >= 60 ? '#b45309' : '#be123c';
+    score >= 80 ? '#1f7a4f' : score >= 60 ? '#f0a230' : '#c23b33';
 
   return (
     <div>
