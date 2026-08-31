@@ -235,7 +235,9 @@ Motion — three keyframes in `globals.css`, all `ease-out both`:
 - `fadeIn` (0.3s; opacity + 6px rise) — page/section entrances: `animate-[fadeIn_0.25s_ease-out_both]`
 - `slideDown` (0.2s; 4px drop) — dropdowns: `animate-[slideDown_0.15s_ease-out_both]`
 - `scaleIn` (0.2s; from 0.97) — modals/popovers
-- All interactive elements get `transition-all duration-150` globally. Keep motion short
+- `a`, `button`, `input`, `textarea`, and `select` get `transition-all duration-150`
+  globally (per `globals.css`). Other interactive elements (custom `div` roles, radix
+  triggers, etc.) need an explicit transition. Keep motion short
   (≤300ms) and entrance-only; no looping or attention-grabbing animation.
 
 Focus — global `:focus-visible` is `outline-none ring-2 ring-ring/60 ring-offset-2
