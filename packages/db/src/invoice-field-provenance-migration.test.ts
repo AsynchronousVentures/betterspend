@@ -58,6 +58,14 @@ test('invoice field provenance keeps line references on the same invoice', async
     for (const file of migrationFiles) {
       await database.exec(await readFile(join(__dirname, 'migrations', file), 'utf8'));
     }
+    await database.exec(`
+      ALTER TABLE invoice_field_provenance
+        DROP CONSTRAINT invoice_field_provenance_invoice_line_id_invoice_lines_id_fk;
+      ALTER TABLE invoice_field_provenance
+        ADD CONSTRAINT invoice_field_provenance_invoice_line_invoice_fk
+        FOREIGN KEY (invoice_line_id, invoice_id)
+        REFERENCES invoice_lines (id, invoice_id);
+    `);
 
     await database.exec(`
       INSERT INTO invoice_field_provenance (
@@ -91,7 +99,7 @@ test('invoice field provenance keeps line references on the same invoice', async
   }
 });
 
-test('invoice line parent key uses a concurrent existing-database rollout', async () => {
+test('invoice line parent key uses a concurrent migration-runner rollout', async () => {
   const [migration, migrationRunner] = await Promise.all([
     readFile(
       join(__dirname, 'migrations', '20260831131610_invoice_provenance_line_fk.sql'),
@@ -100,28 +108,34 @@ test('invoice line parent key uses a concurrent existing-database rollout', asyn
     readFile(migrationRunnerPath, 'utf8'),
   ]);
 
-  assert.match(migration, /Existing databases build this concurrently in migrate\.ts/);
-  assert.match(migration, /This fallback creates it only while bootstrapping an empty database/);
-  assert.match(migration, /IF EXISTS \(SELECT 1 FROM "invoice_lines" LIMIT 1\)/);
-  assert.match(
-    migration,
-    /rerun through the migration runner to build the parent key concurrently/,
-  );
-  assert.doesNotMatch(migration, /CREATE UNIQUE INDEX "invoice_lines_id_invoice_id_unique"/);
-  assert.match(
-    migration,
-    /ALTER TABLE "invoice_lines" ADD CONSTRAINT "invoice_lines_id_invoice_id_unique" UNIQUE \("id", "invoice_id"\)/,
-  );
+  assert.match(migration, /SELECT 1/);
+  assert.doesNotMatch(migration, /CREATE UNIQUE INDEX/);
+  assert.doesNotMatch(migration, /ALTER TABLE "invoice_lines"/);
   assert.match(
     migrationRunner,
     /CREATE UNIQUE INDEX CONCURRENTLY "invoice_lines_id_invoice_id_unique"[\s\S]*?ON "invoice_lines" \("id", "invoice_id"\)/,
   );
+  assert.match(migrationRunner, /async function ensureInvoiceLineInvoiceForeignKey/);
   const preparePosition = migrationRunner.indexOf('await prepareInvoiceLineInvoiceIndex(client)');
   const migratePosition = migrationRunner.indexOf('await migrate(db');
+  const postMigratePreparePosition = migrationRunner.lastIndexOf(
+    'await prepareInvoiceLineInvoiceIndex(client)',
+  );
+  const foreignKeyPosition = migrationRunner.indexOf(
+    'await ensureInvoiceLineInvoiceForeignKey(client)',
+  );
   assert.ok(preparePosition >= 0, 'invoice line index preparation must run');
   assert.ok(
     preparePosition < migratePosition,
     'invoice line index preparation must run before transactional migrations',
+  );
+  assert.ok(
+    postMigratePreparePosition > migratePosition,
+    'invoice line index preparation must run after fresh-schema migrations too',
+  );
+  assert.ok(
+    foreignKeyPosition > postMigratePreparePosition,
+    'invoice line foreign key must run after the parent index is ready',
   );
 });
 
