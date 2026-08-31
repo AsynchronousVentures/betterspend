@@ -53,6 +53,7 @@ export const INVOICE_REVIEW_PROVENANCE_LINE_FIELDS = [
   'poLineId',
   'taxCodeId',
   'glAccount',
+  'taxInclusive',
 ] as const;
 
 export const invoiceReviewCaseStateSchema = z.enum(INVOICE_REVIEW_CASE_STATES);
@@ -69,7 +70,7 @@ const invoiceReviewProvenanceFieldPathSchema = z
   .min(1)
   .max(150)
   .regex(
-    /^(vendor|invoiceNumber|invoiceDate|dueDate|currency|exchangeRate|subtotal|taxAmount|totalAmount|lines\.[^.]+\.(description|quantity|unitPrice|poLineId|taxCodeId|glAccount))$/,
+    /^(vendor|invoiceNumber|invoiceDate|dueDate|currency|exchangeRate|subtotal|taxAmount|totalAmount|lines\.[^.]+\.(description|quantity|unitPrice|poLineId|taxCodeId|glAccount|taxInclusive))$/,
     'Unsupported invoice provenance field path',
   );
 

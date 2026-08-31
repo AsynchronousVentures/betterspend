@@ -274,6 +274,22 @@ test('provenance appends distinct manual corrections and isolates organizations'
   assert.equal(rows.length, 3);
 });
 
+test('provenance accepts manual corrections for tax-inclusive line fields', async () => {
+  const { db, rows } = createDb();
+  const service = new InvoiceReviewProvenanceService(db);
+
+  const [provenance] = await service.recordManualCorrectionProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    actorId,
+    fieldPaths: [`lines.${lineId}.taxInclusive`],
+    observedAt: new Date('2026-08-04T00:00:00Z'),
+  });
+
+  assert.equal(provenance?.fieldPath, `lines.${lineId}.taxInclusive`);
+  assert.equal(rows.length, 1);
+});
+
 test('provenance view rejects an unsupported persisted source type', () => {
   const { db } = createDb();
   const service = new InvoiceReviewProvenanceService(db);

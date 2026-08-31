@@ -463,6 +463,13 @@
       "when": 1788182170657,
       "tag": "20260831131610_invoice_provenance_line_fk",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1788186425521,
+      "tag": "20260831142705_invoice_provenance_tax_inclusive",
+      "breakpoints": true
     }
   ]
 }

@@ -79,6 +79,18 @@ test('invoice field provenance keeps line references on the same invoice', async
         'manual', 'manual:valid', 'valid'
       );
     `);
+    await database.exec(`
+      INSERT INTO invoice_field_provenance (
+        organization_id, invoice_id, invoice_line_id, field_path,
+        source_type, source_record_id, identity_key
+      ) VALUES (
+        '00000000-0000-4000-8000-000000000001',
+        '00000000-0000-4000-8000-000000000002',
+        '00000000-0000-4000-8000-000000000004',
+        'lines.00000000-0000-4000-8000-000000000004.taxInclusive',
+        'manual', 'manual:tax-inclusive', 'tax-inclusive'
+      );
+    `);
 
     await assert.rejects(
       database.exec(`
@@ -144,4 +156,6 @@ test('migration verification scopes provenance checks to their table', async () 
 
   assert.match(verifier, /table_name AS table/);
   assert.match(verifier, /\$\{row\.table\}\.\$\{row\.name\}/);
+  assert.match(verifier, /pg_get_constraintdef/);
+  assert.match(verifier, /requiredDefinitionFragments/);
 });

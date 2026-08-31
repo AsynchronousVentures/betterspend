@@ -138,14 +138,39 @@ const EXPECTED_CHECK_CONSTRAINTS = [
   {
     table: 'invoice_field_provenance',
     name: 'invoice_field_provenance_source_type_check',
+    requiredDefinitionFragments: [
+      'source_type',
+      'OCR',
+      'email_intake',
+      'supplier',
+      'import',
+      'PO',
+      'catalog',
+      'manual',
+    ],
   },
   {
     table: 'invoice_field_provenance',
     name: 'invoice_field_provenance_field_path_check',
+    requiredDefinitionFragments: [
+      'field_path',
+      'vendor',
+      'invoiceNumber',
+      'invoiceDate',
+      'dueDate',
+      'currency',
+      'exchangeRate',
+      'subtotal',
+      'taxAmount',
+      'totalAmount',
+      'lines\\.',
+      '(description|quantity|unitPrice|poLineId|taxCodeId|glAccount|taxInclusive)',
+    ],
   },
   {
     table: 'invoice_field_provenance',
     name: 'invoice_field_provenance_confidence_check',
+    requiredDefinitionFragments: ['confidence IS NULL', 'confidence >=', 'confidence <='],
   },
 ] as const;
 
@@ -440,6 +465,12 @@ type IndexDescription = {
   unique: boolean;
 };
 
+type CheckConstraintDescription = {
+  table: string;
+  name: string;
+  definition: string;
+};
+
 function foreignKeySignature(foreignKey: ForeignKeyDescription): string {
   return [
     foreignKey.name,
@@ -452,6 +483,10 @@ function foreignKeySignature(foreignKey: ForeignKeyDescription): string {
 
 function indexSignature(index: IndexDescription): string {
   return [index.name, index.table, index.columns.join(','), index.unique].join(':');
+}
+
+function normalizeConstraintDefinition(definition: string): string {
+  return definition.replace(/\s+/g, ' ').toLowerCase();
 }
 
 async function main(): Promise<void> {
@@ -510,12 +545,19 @@ async function main(): Promise<void> {
         AND trigger.tgenabled IN ('O', 'A')
         AND trigger.tgname IN ${client(EXPECTED_TRIGGERS)}
     `;
-    const checks = await client<{ table: string; name: string }[]>`
-      SELECT table_name AS table, constraint_name AS name
-      FROM information_schema.table_constraints
-      WHERE constraint_schema = 'public'
-        AND constraint_type = 'CHECK'
-        AND constraint_name IN ${client(EXPECTED_CHECK_CONSTRAINTS.map((item) => item.name))}
+    const checks = await client<CheckConstraintDescription[]>`
+      SELECT
+        table_definition.relname AS table,
+        check_constraint.conname AS name,
+        pg_get_constraintdef(check_constraint.oid) AS definition
+      FROM pg_constraint AS check_constraint
+      JOIN pg_class AS table_definition
+        ON table_definition.oid = check_constraint.conrelid
+      JOIN pg_namespace AS table_namespace
+        ON table_namespace.oid = table_definition.relnamespace
+      WHERE check_constraint.contype = 'c'
+        AND table_namespace.nspname = 'public'
+        AND check_constraint.conname IN ${client(EXPECTED_CHECK_CONSTRAINTS.map((item) => item.name))}
     `;
     const indexes = await client<IndexDescription[]>`
       SELECT
@@ -546,7 +588,20 @@ async function main(): Promise<void> {
     const foundConstraints = new Set(constraints.map(foreignKeySignature));
     const foundColumns = new Set(columns.map((row) => `${row.table}.${row.column}`));
     const foundTriggers = new Set(triggers.map((row) => row.name));
-    const foundChecks = new Set(checks.map((row) => `${row.table}.${row.name}`));
+    const foundChecks = new Set(
+      checks
+        .filter((row) => {
+          const expected = EXPECTED_CHECK_CONSTRAINTS.find(
+            (item) => item.table === row.table && item.name === row.name,
+          );
+          if (!expected) return false;
+          const definition = normalizeConstraintDefinition(row.definition);
+          return expected.requiredDefinitionFragments.every((fragment) =>
+            definition.includes(normalizeConstraintDefinition(fragment)),
+          );
+        })
+        .map((row) => `${row.table}.${row.name}`),
+    );
     const foundIndexes = new Set(indexes.map(indexSignature));
     const missingTables = EXPECTED_TABLES.filter((name) => !foundTables.has(name));
     const missingConstraints = EXPECTED_FOREIGN_KEYS.filter(
