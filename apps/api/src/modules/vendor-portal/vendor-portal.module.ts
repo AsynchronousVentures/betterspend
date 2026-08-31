@@ -8,7 +8,13 @@ import { CatalogModule } from '../catalog/catalog.module';
 import { MessagesModule } from '../messages/messages.module';
 
 @Module({
-  imports: [SettingsModule, InvoicesModule, VendorsModule, CatalogModule, MessagesModule],
+  imports: [
+    SettingsModule,
+    InvoicesModule,
+    VendorsModule,
+    CatalogModule,
+    MessagesModule,
+  ],
   controllers: [VendorPortalController],
   providers: [VendorPortalService],
 })

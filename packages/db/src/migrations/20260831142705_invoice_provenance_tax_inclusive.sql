@@ -1,0 +1,2 @@
+ALTER TABLE "invoice_field_provenance" DROP CONSTRAINT "invoice_field_provenance_field_path_check";--> statement-breakpoint
+ALTER TABLE "invoice_field_provenance" ADD CONSTRAINT "invoice_field_provenance_field_path_check" CHECK ("invoice_field_provenance"."field_path" IN ('vendor', 'invoiceNumber', 'invoiceDate', 'dueDate', 'currency', 'exchangeRate', 'subtotal', 'taxAmount', 'totalAmount') OR "invoice_field_provenance"."field_path" ~ '^lines\.[^.]+\.(description|quantity|unitPrice|poLineId|taxCodeId|glAccount|taxInclusive)$');

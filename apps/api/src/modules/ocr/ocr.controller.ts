@@ -56,7 +56,11 @@ export class OcrController {
   @Post('jobs/:id/link/:invoiceId')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Link a completed OCR job to an invoice' })
-  linkToInvoice(@Param('id') id: string, @Param('invoiceId') invoiceId: string) {
-    return this.ocrService.linkToInvoice(id, invoiceId);
+  linkToInvoice(
+    @Param('id') id: string,
+    @Param('invoiceId') invoiceId: string,
+    @CurrentOrgId() orgId: string,
+  ) {
+    return this.ocrService.linkToInvoice(id, invoiceId, orgId);
   }
 }

@@ -1,10 +1,12 @@
 import { sql } from 'drizzle-orm';
 import {
   check,
+  boolean,
   foreignKey,
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   text,
   timestamp,
@@ -13,6 +15,9 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core';
 import {
+  INVOICE_REVIEW_PROVENANCE_HEADER_FIELDS,
+  INVOICE_REVIEW_PROVENANCE_LINE_FIELDS,
+  INVOICE_REVIEW_PROVENANCE_SOURCE_TYPES,
   INVOICE_REVIEW_CASE_STATES,
   INVOICE_REVIEW_SIGNAL_SEVERITIES,
   INVOICE_REVIEW_SIGNAL_STATUSES,
@@ -24,7 +29,7 @@ import {
 } from '@betterspend/shared';
 import { organizations } from './organizations';
 import { users } from './users';
-import { invoices } from './invoices';
+import { invoiceLines, invoices } from './invoices';
 
 const valuesCheck = (values: readonly string[]) =>
   sql.raw(values.map((value) => `'${value}'`).join(', '));
@@ -144,6 +149,79 @@ export const invoiceReviewSignals = pgTable(
     check(
       'invoice_review_signals_status_check',
       sql`${table.status} IN (${valuesCheck(INVOICE_REVIEW_SIGNAL_STATUSES)})`,
+    ),
+  ],
+);
+
+const provenanceLineFieldPathPattern = `'^lines\\.[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}\\.(${INVOICE_REVIEW_PROVENANCE_LINE_FIELDS.join('|')})$'`;
+
+export const invoiceFieldProvenance = pgTable(
+  'invoice_field_provenance',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id),
+    invoiceId: uuid('invoice_id').notNull(),
+    invoiceLineId: uuid('invoice_line_id'),
+    fieldPath: varchar('field_path', { length: 150 }).notNull(),
+    sourceType: varchar('source_type', { length: 30 }).notNull(),
+    sourceRecordId: varchar('source_record_id', { length: 255 }).notNull(),
+    sourceTimestamp: timestamp('source_timestamp', { withTimezone: true }),
+    confidence: numeric('confidence', { precision: 5, scale: 4 }),
+    actorId: uuid('actor_id'),
+    isCurrent: boolean('is_current').notNull().default(true),
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
+    identityKey: varchar('identity_key', { length: 64 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('invoice_field_provenance_identity_key_unique').on(table.identityKey),
+    index('invoice_field_provenance_invoice_current_idx').on(
+      table.organizationId,
+      table.invoiceId,
+      table.isCurrent,
+    ),
+    index('invoice_field_provenance_source_idx').on(
+      table.organizationId,
+      table.sourceType,
+      table.sourceRecordId,
+    ),
+    foreignKey({
+      columns: [table.invoiceId, table.organizationId],
+      foreignColumns: [invoices.id, invoices.organizationId],
+      name: 'invoice_field_provenance_invoice_org_fk',
+    }),
+    foreignKey({
+      columns: [table.invoiceLineId, table.invoiceId],
+      foreignColumns: [invoiceLines.id, invoiceLines.invoiceId],
+      name: 'invoice_field_provenance_invoice_line_invoice_fk',
+    }),
+    foreignKey({
+      columns: [table.actorId, table.organizationId],
+      foreignColumns: [users.id, users.organizationId],
+      name: 'invoice_field_provenance_actor_org_fk',
+    }),
+    check(
+      'invoice_field_provenance_source_type_check',
+      sql`${table.sourceType} IN (${valuesCheck(INVOICE_REVIEW_PROVENANCE_SOURCE_TYPES)})`,
+    ),
+    check(
+      'invoice_field_provenance_field_path_check',
+      sql`(
+        (${table.fieldPath} IN (${valuesCheck(INVOICE_REVIEW_PROVENANCE_HEADER_FIELDS)}) AND ${table.invoiceLineId} IS NULL)
+        OR (
+          ${table.fieldPath} ~ ${sql.raw(provenanceLineFieldPathPattern)}
+          AND ${table.invoiceLineId} IS NOT NULL
+          AND lower(split_part(${table.fieldPath}, '.', 2)) = ${table.invoiceLineId}::text
+        )
+      )
+      `,
+    ),
+    check(
+      'invoice_field_provenance_confidence_check',
+      sql`${table.confidence} IS NULL OR (${table.confidence} >= 0 AND ${table.confidence} <= 1)`,
     ),
   ],
 );

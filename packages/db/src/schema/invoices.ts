@@ -78,27 +78,36 @@ export const invoices = pgTable(
   }),
 );
 
-export const invoiceLines = pgTable('invoice_lines', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  invoiceId: uuid('invoice_id')
-    .notNull()
-    .references(() => invoices.id),
-  poLineId: uuid('po_line_id').references(() => poLines.id),
-  lineNumber: numeric('line_number').notNull(),
-  taxCodeId: uuid('tax_code_id').references(() => taxCodes.id),
-  description: varchar('description', { length: 500 }).notNull(),
-  quantity: numeric('quantity', { precision: 10, scale: 2 }).notNull(),
-  unitPrice: numeric('unit_price', { precision: 12, scale: 2 }).notNull(),
-  taxAmount: numeric('tax_amount', { precision: 14, scale: 2 }).notNull().default('0'),
-  taxInclusive: boolean('tax_inclusive').notNull().default(false),
-  totalPrice: numeric('total_price', { precision: 14, scale: 2 }).notNull(),
-  exchangeRate: numeric('exchange_rate', { precision: 18, scale: 8 }).notNull().default('1'),
-  baseUnitPrice: numeric('base_unit_price', { precision: 12, scale: 2 }).notNull().default('0'),
-  baseTotalPrice: numeric('base_total_price', { precision: 14, scale: 2 }).notNull().default('0'),
-  glAccount: varchar('gl_account', { length: 50 }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const invoiceLines = pgTable(
+  'invoice_lines',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => invoices.id),
+    poLineId: uuid('po_line_id').references(() => poLines.id),
+    lineNumber: numeric('line_number').notNull(),
+    taxCodeId: uuid('tax_code_id').references(() => taxCodes.id),
+    description: varchar('description', { length: 500 }).notNull(),
+    quantity: numeric('quantity', { precision: 10, scale: 2 }).notNull(),
+    unitPrice: numeric('unit_price', { precision: 12, scale: 2 }).notNull(),
+    taxAmount: numeric('tax_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    taxInclusive: boolean('tax_inclusive').notNull().default(false),
+    totalPrice: numeric('total_price', { precision: 14, scale: 2 }).notNull(),
+    exchangeRate: numeric('exchange_rate', { precision: 18, scale: 8 }).notNull().default('1'),
+    baseUnitPrice: numeric('base_unit_price', { precision: 12, scale: 2 }).notNull().default('0'),
+    baseTotalPrice: numeric('base_total_price', { precision: 14, scale: 2 }).notNull().default('0'),
+    glAccount: varchar('gl_account', { length: 50 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    idInvoiceUnique: uniqueIndex('invoice_lines_id_invoice_id_unique').on(
+      table.id,
+      table.invoiceId,
+    ),
+  }),
+);
 
 export const matchResults = pgTable('match_results', {
   id: uuid('id').primaryKey().defaultRandom(),

@@ -1,11 +1,12 @@
 import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { and, desc, eq, gte, ne, sql, type SQL } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
-import type { Db } from '@betterspend/db';
-import { spendGuardAlerts } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
+import { invoices, spendGuardAlerts } from '@betterspend/db';
 import type { ResourceScope } from '@betterspend/shared';
 import { NotificationsService } from '../notifications/notifications.service';
 import { resolveOrganizationAdminId } from '../../common/demo-identity';
+import { InvoiceReviewsService } from '../invoice-reviews/invoice-reviews.service';
 
 const DUPLICATE_LOOKBACK_DAYS = 30;
 const NEAR_DUPLICATE_TOLERANCE = 0.05;
@@ -14,6 +15,11 @@ const SPLIT_REQ_THRESHOLD = 1_000;
 
 type AlertSeverity = 'low' | 'medium' | 'high';
 type AlertStatus = 'open' | 'dismissed' | 'escalated';
+
+type AlertWriteResult = {
+  alert: typeof spendGuardAlerts.$inferSelect;
+  created: boolean;
+};
 
 function alertScopePredicate(scope: ResourceScope | undefined): SQL | undefined {
   if (!scope || scope.unrestricted) return undefined;
@@ -88,14 +94,11 @@ function alertScopePredicate(scope: ResourceScope | undefined): SQL | undefined 
 export class SpendGuardService {
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
+    private readonly invoiceReviews: InvoiceReviewsService,
     @Optional() private readonly notifications?: NotificationsService,
   ) {}
 
-  async list(
-    orgId: string,
-    status: AlertStatus | 'all' = 'open',
-    scope?: ResourceScope,
-  ) {
+  async list(orgId: string, status: AlertStatus | 'all' = 'open', scope?: ResourceScope) {
     const rowScope = alertScopePredicate(scope);
 
     return this.db.query.spendGuardAlerts.findMany({
@@ -138,20 +141,28 @@ export class SpendGuardService {
         )`
       : undefined;
 
-    const [updated] = await this.db
-      .update(spendGuardAlerts)
-      .set({
-        status,
-        note: note?.trim() || null,
-        resolvedAt: new Date(),
-        resolvedBy: userId,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(spendGuardAlerts.id, id), eq(spendGuardAlerts.orgId, orgId), scopedAlertId))
-      .returning();
+    const persist = async (executor: DbTransaction) => {
+      const resolvedAt = new Date();
+      const [updated] = await executor
+        .update(spendGuardAlerts)
+        .set({
+          status,
+          note: note?.trim() || null,
+          resolvedAt,
+          resolvedBy: userId,
+          updatedAt: resolvedAt,
+        })
+        .where(and(eq(spendGuardAlerts.id, id), eq(spendGuardAlerts.orgId, orgId), scopedAlertId))
+        .returning();
 
-    if (!updated) throw new NotFoundException(`Spend guard alert ${id} not found`);
-    return updated;
+      if (!updated) throw new NotFoundException(`Spend guard alert ${id} not found`);
+      if (updated.recordType === 'invoice') {
+        await this.recordInvoiceAlertSignal(orgId, updated.recordId, updated, executor);
+      }
+      return updated;
+    };
+
+    return this.db.transaction(persist);
   }
 
   async countOpen(orgId: string) {
@@ -190,7 +201,7 @@ export class SpendGuardService {
       (candidate) => Number(candidate.totalAmount ?? 0) === Number(invoice.totalAmount ?? 0),
     );
     if (exactAmountMatch) {
-      await this.createAlert(orgId, {
+      const persisted = await this.persistInvoiceAlertWithSignal(orgId, invoice.id, {
         alertType: 'duplicate_invoice_amount',
         severity: 'high',
         recordType: 'invoice',
@@ -204,7 +215,7 @@ export class SpendGuardService {
           matchedInvoiceNumber: exactAmountMatch.invoiceNumber,
         },
       });
-      alerts.push('duplicate_invoice_amount');
+      if (persisted) alerts.push('duplicate_invoice_amount');
     }
 
     const nearDuplicate = duplicateCandidates.find((candidate) => {
@@ -214,7 +225,7 @@ export class SpendGuardService {
       return Math.abs(otherAmount - amount) / amount <= NEAR_DUPLICATE_TOLERANCE;
     });
     if (nearDuplicate) {
-      await this.createAlert(orgId, {
+      const persisted = await this.persistInvoiceAlertWithSignal(orgId, invoice.id, {
         alertType: 'near_duplicate_invoice',
         severity: 'medium',
         recordType: 'invoice',
@@ -229,12 +240,12 @@ export class SpendGuardService {
           matchedAmount: nearDuplicate.totalAmount,
         },
       });
-      alerts.push('near_duplicate_invoice');
+      if (persisted) alerts.push('near_duplicate_invoice');
     }
 
     const hour = invoiceDate.getUTCHours();
     if (hour >= 22 || hour < 5) {
-      await this.createAlert(orgId, {
+      const persisted = await this.persistInvoiceAlertWithSignal(orgId, invoice.id, {
         alertType: 'off_hours_submission',
         severity: 'low',
         recordType: 'invoice',
@@ -247,7 +258,7 @@ export class SpendGuardService {
           evaluatedTimezone: 'UTC',
         },
       });
-      alerts.push('off_hours_submission');
+      if (persisted) alerts.push('off_hours_submission');
     }
 
     return alerts;
@@ -341,8 +352,9 @@ export class SpendGuardService {
       recordId: string;
       details: Record<string, unknown>;
     },
-  ) {
-    const existing = await this.db.query.spendGuardAlerts.findFirst({
+    executor: Db | DbTransaction = this.db,
+  ): Promise<AlertWriteResult> {
+    const existing = await executor.query.spendGuardAlerts.findFirst({
       where: (record, operators) =>
         operators.and(
           operators.eq(record.orgId, orgId),
@@ -352,9 +364,28 @@ export class SpendGuardService {
           operators.eq(record.status, 'open'),
         ),
     });
-    if (existing) return existing;
+    if (existing) {
+      const observedAt = new Date();
+      const [refreshed] = await executor
+        .update(spendGuardAlerts)
+        .set({
+          severity: input.severity,
+          details: input.details,
+          updatedAt: observedAt,
+        })
+        .where(
+          and(
+            eq(spendGuardAlerts.id, existing.id),
+            eq(spendGuardAlerts.orgId, orgId),
+            eq(spendGuardAlerts.status, 'open'),
+          ),
+        )
+        .returning();
+      if (!refreshed) throw new Error('Spend guard alert could not be refreshed');
+      return { alert: refreshed, created: false };
+    }
 
-    const [created] = await this.db
+    const [created] = await executor
       .insert(spendGuardAlerts)
       .values({
         orgId,
@@ -366,25 +397,105 @@ export class SpendGuardService {
         status: 'open',
       })
       .returning();
+    if (!created) throw new Error('Spend guard alert could not be written');
 
-    if (this.notifications) {
-      const adminId = await resolveOrganizationAdminId(this.db, orgId).catch(() => null);
-      if (adminId) {
-        await this.notifications
-          .create(
-            orgId,
-            adminId,
-            'spend_guard_alert',
-            'Spend Guard Alert',
-            `${this.humanize(input.alertType)} detected on ${input.recordType}.`,
-            input.recordType,
-            input.recordId,
-          )
-          .catch(() => {});
-      }
+    if (executor === this.db && this.notifications) {
+      await this.notifyCreatedAlert(orgId, created);
     }
 
-    return created;
+    return { alert: created, created: true };
+  }
+
+  private async persistInvoiceAlertWithSignal(
+    organizationId: string,
+    invoiceId: string,
+    input: {
+      alertType: string;
+      severity: AlertSeverity;
+      recordType: 'invoice';
+      recordId: string;
+      details: Record<string, unknown>;
+    },
+  ): Promise<boolean> {
+    let result: AlertWriteResult;
+    try {
+      result = await this.db.transaction(async (tx) => {
+        const [invoice] = await tx
+          .select({ id: invoices.id })
+          .from(invoices)
+          .where(and(eq(invoices.id, invoiceId), eq(invoices.organizationId, organizationId)))
+          .for('update');
+        if (!invoice) throw new NotFoundException(`Invoice ${invoiceId} not found`);
+
+        const alert = await this.createAlert(organizationId, input, tx);
+        return alert;
+      });
+    } catch {
+      return false;
+    }
+
+    try {
+      await this.db.transaction((tx) =>
+        this.recordInvoiceAlertSignal(organizationId, invoiceId, result.alert, tx),
+      );
+    } catch {
+      // The durable source alert remains visible and a later analysis can retry normalization.
+    }
+    if (result.created) await this.notifyCreatedAlert(organizationId, result.alert);
+    return true;
+  }
+
+  private async notifyCreatedAlert(
+    organizationId: string,
+    alert: { recordType: string; recordId: string; alertType: string },
+  ): Promise<void> {
+    if (!this.notifications) return;
+    const adminId = await resolveOrganizationAdminId(this.db, organizationId).catch(() => null);
+    if (!adminId) return;
+    await this.notifications
+      .create(
+        organizationId,
+        adminId,
+        'spend_guard_alert',
+        'Spend Guard Alert',
+        `${this.humanize(alert.alertType)} detected on ${alert.recordType}.`,
+        alert.recordType,
+        alert.recordId,
+      )
+      .catch(() => {});
+  }
+
+  private async recordInvoiceAlertSignal(
+    organizationId: string,
+    invoiceId: string,
+    alert: {
+      id: string;
+      alertType: string;
+      severity: string;
+      status: string;
+      createdAt: Date;
+      updatedAt: Date;
+    },
+    executor: DbTransaction,
+  ): Promise<void> {
+    if (alert.severity !== 'low' && alert.severity !== 'medium' && alert.severity !== 'high') {
+      return;
+    }
+    if (alert.status !== 'open' && alert.status !== 'dismissed' && alert.status !== 'escalated') {
+      return;
+    }
+    await this.invoiceReviews.recordSpendGuardReviewSignal(
+      {
+        organizationId,
+        invoiceId,
+        sourceRecordId: alert.id,
+        alertType: alert.alertType,
+        severity: alert.severity,
+        status: alert.status,
+        observedAt: alert.updatedAt,
+      },
+      executor,
+    );
   }
 
   private humanize(value: string) {

@@ -10,6 +10,7 @@ import {
 } from '@betterspend/db';
 import type { AccessPolicy } from '../auth/access-policy';
 import type { PermissionKey } from '@betterspend/shared';
+import { InvoiceReviewProvenanceService } from './invoice-review-provenance.service';
 import { InvoiceReviewsService } from './invoice-reviews.service';
 
 const organizationId = '00000000-0000-4000-8000-000000000001';
@@ -38,7 +39,11 @@ function accessFor(granted: readonly PermissionKey[]): AccessPolicy {
   };
 }
 
-function createService() {
+function createReviewService(db: Db) {
+  return new InvoiceReviewsService(db, new InvoiceReviewProvenanceService(db));
+}
+
+function createService(omitProvenanceRelation = false) {
   const db = {
     query: {
       invoiceReviewCases: {
@@ -131,6 +136,7 @@ function createService() {
                 ],
               },
             ],
+            ...(omitProvenanceRelation ? {} : { fieldProvenance: [] }),
             paymentRunInvoices: [
               {
                 id: '00000000-0000-4000-8000-000000000009',
@@ -187,6 +193,7 @@ function createService() {
       },
       spendGuardAlerts: { findMany: async () => [] },
       ocrJobs: { findMany: async () => [] },
+      emailIntakeMessages: { findMany: async () => [] },
       emailIntakeItems: { findMany: async () => [] },
       documents: {
         findMany: async () => [
@@ -217,7 +224,7 @@ function createService() {
     },
   } as unknown as Db;
 
-  return new InvoiceReviewsService(db);
+  return createReviewService(db);
 }
 
 test('projection returns stable invoice summaries and explicit missing source markers', async () => {
@@ -249,8 +256,15 @@ test('projection returns stable invoice summaries and explicit missing source ma
   assert.equal(projection.signals[1]?.source.availability, 'missing');
   assert.equal(projection.documents[0]?.filename, 'invoice.pdf');
   assert.equal('storageKey' in (projection.documents[0] ?? {}), false);
-  assert.equal(projection.provenance.available, false);
+  assert.equal(projection.provenance.available, true);
   assert.deepEqual(projection.provenance.fields, []);
+});
+
+test('projection fails explicitly when the provenance relation is unavailable', async () => {
+  await assert.rejects(
+    createService(true).getProjection(invoiceId, organizationId),
+    /Invoice provenance relation is unavailable/,
+  );
 });
 
 test('projection redacts related records without their own permissions', async () => {
@@ -368,7 +382,7 @@ test('queue returns bounded invoice summaries and a stable cursor', async () => 
     select: () => builder,
   } as unknown as Db;
 
-  const result = await new InvoiceReviewsService(db).listCases(
+  const result = await createReviewService(db).listCases(
     organizationId,
     { limit: 1 },
     accessFor(['invoices:view_all']),
@@ -403,7 +417,7 @@ test('queue rejects a cursor whose case id is not a UUID before querying', async
   } as unknown as Db;
 
   await assert.rejects(
-    new InvoiceReviewsService(db).listCases(organizationId, { cursor }),
+    createReviewService(db).listCases(organizationId, { cursor }),
     /cursor is invalid/,
   );
 });
@@ -575,7 +589,7 @@ test('recordSignal preserves one signal identity across repeated observations', 
       }
     },
   } as unknown as Db;
-  const service = new InvoiceReviewsService(db);
+  const service = createReviewService(db);
   const input = {
     organizationId,
     invoiceId,

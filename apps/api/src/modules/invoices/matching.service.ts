@@ -25,6 +25,16 @@ export function overallInvoiceMatchStatus(lineResults: OverallLineMatch[]): stri
   return allMatch ? 'full_match' : hasException ? 'exception' : 'partial_match';
 }
 
+export function invoiceStatusFromMatchStatus(
+  matchStatus: string,
+): 'matched' | 'exception' | 'partial_match' {
+  return matchStatus === 'full_match'
+    ? 'matched'
+    : matchStatus === 'exception'
+      ? 'exception'
+      : 'partial_match';
+}
+
 @Injectable()
 export class MatchingService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}

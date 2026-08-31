@@ -14,6 +14,7 @@ const EXPECTED_TABLES = [
   'email_intake_addresses',
   'email_intake_messages',
   'email_intake_attachments',
+  'invoice_field_provenance',
   'invoice_review_cases',
   'invoice_review_signals',
 ] as const;
@@ -42,6 +43,7 @@ const EXPECTED_COLUMNS = [
   { table: 'external_entity_mappings', column: 'realm_id' },
   { table: 'external_entity_mappings', column: 'sync_token' },
   { table: 'external_entity_mappings', column: 'local_id' },
+  { table: 'invoice_field_provenance', column: 'superseded_at' },
 ] as const;
 
 const EXPECTED_INDEXES = [
@@ -100,12 +102,57 @@ const EXPECTED_INDEXES = [
     columns: ['case_id', 'signal_type', 'source_module', 'source_record_id'],
     unique: true,
   },
+  {
+    name: 'invoice_field_provenance_identity_key_unique',
+    table: 'invoice_field_provenance',
+    columns: ['identity_key'],
+    unique: true,
+  },
+  {
+    name: 'invoice_field_provenance_invoice_current_idx',
+    table: 'invoice_field_provenance',
+    columns: ['organization_id', 'invoice_id', 'is_current'],
+    unique: false,
+  },
+  {
+    name: 'invoice_field_provenance_source_idx',
+    table: 'invoice_field_provenance',
+    columns: ['organization_id', 'source_type', 'source_record_id'],
+    unique: false,
+  },
+  {
+    name: 'invoice_lines_id_invoice_id_unique',
+    table: 'invoice_lines',
+    columns: ['id', 'invoice_id'],
+    unique: true,
+  },
 ] as const;
 
 const EXPECTED_TRIGGERS = [
   'workflow_definition_versions_immutable',
   'workflow_definitions_published_version_owner',
   'email_intake_messages_append_only',
+] as const;
+
+const EXPECTED_CHECK_CONSTRAINTS = [
+  {
+    table: 'invoice_field_provenance',
+    name: 'invoice_field_provenance_source_type_check',
+    expectedDefinition:
+      "CHECK (((source_type)::text = ANY ((ARRAY['OCR'::character varying, 'email_intake'::character varying, 'supplier'::character varying, 'import'::character varying, 'PO'::character varying, 'catalog'::character varying, 'manual'::character varying])::text[])))",
+  },
+  {
+    table: 'invoice_field_provenance',
+    name: 'invoice_field_provenance_field_path_check',
+    expectedDefinition:
+      "CHECK (((((field_path)::text = ANY ((ARRAY['vendor'::character varying, 'invoiceNumber'::character varying, 'invoiceDate'::character varying, 'dueDate'::character varying, 'currency'::character varying, 'exchangeRate'::character varying, 'subtotal'::character varying, 'taxAmount'::character varying, 'totalAmount'::character varying])::text[])) AND (invoice_line_id IS NULL)) OR (((field_path)::text ~ '^lines\\.[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}\\.(description|quantity|unitPrice|poLineId|taxCodeId|glAccount|taxInclusive)$'::text) AND (invoice_line_id IS NOT NULL) AND (lower(split_part((field_path)::text, '.'::text, 2)) = (invoice_line_id)::text))))",
+  },
+  {
+    table: 'invoice_field_provenance',
+    name: 'invoice_field_provenance_confidence_check',
+    expectedDefinition:
+      'CHECK (((confidence IS NULL) OR ((confidence >= (0)::numeric) AND (confidence <= (1)::numeric))))',
+  },
 ] as const;
 
 const EXPECTED_FOREIGN_KEYS = [
@@ -354,6 +401,34 @@ const EXPECTED_FOREIGN_KEYS = [
     childColumns: ['resolution_actor_id', 'organization_id'],
     parentColumns: ['id', 'organization_id'],
   },
+  {
+    name: 'invoice_field_provenance_organization_id_organizations_id_fk',
+    child: 'invoice_field_provenance',
+    parent: 'organizations',
+    childColumns: ['organization_id'],
+    parentColumns: ['id'],
+  },
+  {
+    name: 'invoice_field_provenance_invoice_line_invoice_fk',
+    child: 'invoice_field_provenance',
+    parent: 'invoice_lines',
+    childColumns: ['invoice_line_id', 'invoice_id'],
+    parentColumns: ['id', 'invoice_id'],
+  },
+  {
+    name: 'invoice_field_provenance_invoice_org_fk',
+    child: 'invoice_field_provenance',
+    parent: 'invoices',
+    childColumns: ['invoice_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'invoice_field_provenance_actor_org_fk',
+    child: 'invoice_field_provenance',
+    parent: 'users',
+    childColumns: ['actor_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
 ] as const;
 
 type ForeignKeyDescription = {
@@ -371,6 +446,12 @@ type IndexDescription = {
   unique: boolean;
 };
 
+type CheckConstraintDescription = {
+  table: string;
+  name: string;
+  definition: string;
+};
+
 function foreignKeySignature(foreignKey: ForeignKeyDescription): string {
   return [
     foreignKey.name,
@@ -383,6 +464,10 @@ function foreignKeySignature(foreignKey: ForeignKeyDescription): string {
 
 function indexSignature(index: IndexDescription): string {
   return [index.name, index.table, index.columns.join(','), index.unique].join(':');
+}
+
+function normalizeConstraintDefinition(definition: string): string {
+  return definition.replace(/\s+/g, ' ');
 }
 
 async function main(): Promise<void> {
@@ -441,6 +526,20 @@ async function main(): Promise<void> {
         AND trigger.tgenabled IN ('O', 'A')
         AND trigger.tgname IN ${client(EXPECTED_TRIGGERS)}
     `;
+    const checks = await client<CheckConstraintDescription[]>`
+      SELECT
+        table_definition.relname AS table,
+        check_constraint.conname AS name,
+        pg_get_constraintdef(check_constraint.oid) AS definition
+      FROM pg_constraint AS check_constraint
+      JOIN pg_class AS table_definition
+        ON table_definition.oid = check_constraint.conrelid
+      JOIN pg_namespace AS table_namespace
+        ON table_namespace.oid = table_definition.relnamespace
+      WHERE check_constraint.contype = 'c'
+        AND table_namespace.nspname = 'public'
+        AND check_constraint.conname IN ${client(EXPECTED_CHECK_CONSTRAINTS.map((item) => item.name))}
+    `;
     const indexes = await client<IndexDescription[]>`
       SELECT
         index_class.relname AS name,
@@ -470,6 +569,20 @@ async function main(): Promise<void> {
     const foundConstraints = new Set(constraints.map(foreignKeySignature));
     const foundColumns = new Set(columns.map((row) => `${row.table}.${row.column}`));
     const foundTriggers = new Set(triggers.map((row) => row.name));
+    const foundChecks = new Set(
+      checks
+        .filter((row) => {
+          const expected = EXPECTED_CHECK_CONSTRAINTS.find(
+            (item) => item.table === row.table && item.name === row.name,
+          );
+          if (!expected) return false;
+          return (
+            normalizeConstraintDefinition(row.definition) ===
+            normalizeConstraintDefinition(expected.expectedDefinition)
+          );
+        })
+        .map((row) => `${row.table}.${row.name}`),
+    );
     const foundIndexes = new Set(indexes.map(indexSignature));
     const missingTables = EXPECTED_TABLES.filter((name) => !foundTables.has(name));
     const missingConstraints = EXPECTED_FOREIGN_KEYS.filter(
@@ -479,6 +592,9 @@ async function main(): Promise<void> {
       (item) => !foundColumns.has(`${item.table}.${item.column}`),
     ).map((item) => `${item.table}.${item.column}`);
     const missingTriggers = EXPECTED_TRIGGERS.filter((name) => !foundTriggers.has(name));
+    const missingChecks = EXPECTED_CHECK_CONSTRAINTS.filter(
+      (item) => !foundChecks.has(`${item.table}.${item.name}`),
+    ).map((item) => `${item.table}.${item.name}`);
     const missingIndexes = EXPECTED_INDEXES.filter(
       (index) => !foundIndexes.has(indexSignature(index)),
     ).map((index) => index.name);
@@ -489,6 +605,7 @@ async function main(): Promise<void> {
       missingConstraints.length ||
       missingColumns.length ||
       missingTriggers.length ||
+      missingChecks.length ||
       missingIndexes.length ||
       invalidAuthIssuer
     ) {
@@ -497,6 +614,7 @@ async function main(): Promise<void> {
           `Missing constraints: ${missingConstraints.join(', ') || 'none'}. ` +
           `Missing columns: ${missingColumns.join(', ') || 'none'}. ` +
           `Missing triggers: ${missingTriggers.join(', ') || 'none'}. ` +
+          `Missing checks: ${missingChecks.join(', ') || 'none'}. ` +
           `Missing indexes: ${missingIndexes.join(', ') || 'none'}. ` +
           `Auth issuer nullable: ${invalidAuthIssuer}.`,
       );

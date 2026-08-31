@@ -1,0 +1,454 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { InvoiceReviewProvenanceService } from './invoice-review-provenance.service';
+import type { InvoiceFieldProvenanceRow } from './invoice-review-provenance.service';
+import { invoiceFieldProvenance, invoiceLines, invoices, users, type Db } from '@betterspend/db';
+
+const organizationOne = '00000000-0000-4000-8000-000000000001';
+const organizationTwo = '00000000-0000-4000-8000-000000000002';
+const invoiceId = '00000000-0000-4000-8000-000000000010';
+const lineId = '00000000-0000-4000-8000-000000000011';
+const caseSensitiveLineId = '00000000-0000-4000-8000-0000000000aa';
+const actorId = '00000000-0000-4000-8000-000000000012';
+
+function queryParameters(condition: unknown): unknown[] {
+  if (!condition || typeof condition !== 'object') return [];
+  const object = condition as { queryChunks?: unknown[]; value?: unknown };
+  if (object.queryChunks && Array.isArray(object.queryChunks)) {
+    return object.queryChunks.flatMap((chunk) => queryParameters(chunk));
+  }
+  if (object.constructor?.name === 'Param') return [object.value];
+  return [];
+}
+
+function createDb() {
+  const rows: InvoiceFieldProvenanceRow[] = [];
+  let nextId = 20;
+  const invoiceRows = [
+    { id: invoiceId, organizationId: organizationOne },
+    { id: invoiceId, organizationId: organizationTwo },
+  ];
+  const lineRows = [
+    { id: lineId, invoiceId },
+    { id: caseSensitiveLineId, invoiceId },
+  ];
+  const actorRows = [{ id: actorId, organizationId: organizationOne }];
+
+  const updateRows = (table: unknown, values: Record<string, unknown>, condition: unknown) => {
+    if (table !== invoiceFieldProvenance) return [];
+    const parameters = queryParameters(condition).filter(
+      (parameter): parameter is string => typeof parameter === 'string',
+    );
+    const fieldPath = parameters.find(
+      (parameter) =>
+        parameter.startsWith('lines.') ||
+        [
+          'vendor',
+          'invoiceNumber',
+          'invoiceDate',
+          'dueDate',
+          'currency',
+          'exchangeRate',
+          'subtotal',
+          'taxAmount',
+          'totalAmount',
+        ].includes(parameter),
+    );
+    const identityKey = parameters.find((parameter) => parameter.length === 64);
+    const rowId = parameters.find((parameter) => rows.some((row) => row.id === parameter));
+    const organizationId = parameters.find(
+      (parameter) => parameter === organizationOne || parameter === organizationTwo,
+    );
+    const invoiceIdParameter = parameters.find((parameter) => parameter === invoiceId);
+    if (values.isCurrent === false) {
+      for (const row of rows.filter(
+        (candidate) =>
+          (!organizationId || candidate.organizationId === organizationId) &&
+          (!invoiceIdParameter || candidate.invoiceId === invoiceIdParameter) &&
+          (!fieldPath || candidate.fieldPath === fieldPath) &&
+          (!identityKey || candidate.identityKey !== identityKey) &&
+          candidate.isCurrent,
+      )) {
+        row.isCurrent = false;
+        row.supersededAt = values.supersededAt as Date;
+        row.updatedAt = values.updatedAt as Date;
+      }
+      return [];
+    }
+    const matchingRows = rows.filter(
+      (row) =>
+        (!organizationId || row.organizationId === organizationId) &&
+        (!invoiceIdParameter || row.invoiceId === invoiceIdParameter) &&
+        (!rowId || row.id === rowId) &&
+        (!fieldPath || row.fieldPath === fieldPath) &&
+        (!identityKey || row.identityKey === identityKey),
+    );
+    const row = matchingRows[0];
+    if (!row) return [];
+    Object.assign(row, values);
+    return [row];
+  };
+
+  const selectRows = (table: unknown, condition: unknown) => {
+    const parameters = queryParameters(condition);
+    if (table === invoices) {
+      return invoiceRows.filter(
+        (row) => parameters.includes(row.id) && parameters.includes(row.organizationId),
+      );
+    }
+    if (table === invoiceLines) {
+      return lineRows.filter(
+        (row) => parameters.includes(row.id) && parameters.includes(row.invoiceId),
+      );
+    }
+    if (table === users) {
+      return actorRows.filter(
+        (row) => parameters.includes(row.id) && parameters.includes(row.organizationId),
+      );
+    }
+    if (table === invoiceFieldProvenance) {
+      const stringParameters = parameters.filter(
+        (parameter): parameter is string => typeof parameter === 'string',
+      );
+      const identityKey = stringParameters.find((parameter) => parameter.length === 64);
+      if (identityKey) {
+        return rows.filter(
+          (row) => row.organizationId === stringParameters[0] && row.identityKey === identityKey,
+        );
+      }
+      const organizationId = stringParameters[0];
+      const invoiceIdParameter = stringParameters[1];
+      const fieldPath = stringParameters.find(
+        (parameter) =>
+          parameter.startsWith('lines.') ||
+          [
+            'vendor',
+            'invoiceNumber',
+            'invoiceDate',
+            'dueDate',
+            'currency',
+            'exchangeRate',
+            'subtotal',
+            'taxAmount',
+            'totalAmount',
+          ].includes(parameter),
+      );
+      const lineIdParameter = stringParameters.find((parameter) => parameter === lineId);
+      return rows.filter(
+        (row) =>
+          row.organizationId === organizationId &&
+          row.invoiceId === invoiceIdParameter &&
+          row.fieldPath === fieldPath &&
+          (lineIdParameter ? row.invoiceLineId === lineIdParameter : row.invoiceLineId === null) &&
+          row.isCurrent === true,
+      );
+    }
+    return [];
+  };
+
+  const transaction = {
+    execute: async () => [],
+    select: () => {
+      let table: unknown;
+      let condition: unknown;
+      const query = {
+        from: (nextTable: unknown) => {
+          table = nextTable;
+          return query;
+        },
+        where: (nextCondition: unknown) => {
+          condition = nextCondition;
+          return query;
+        },
+        limit: async () => selectRows(table, condition),
+        for: async () => selectRows(table, condition),
+      };
+      return query;
+    },
+    update: (table: unknown) => {
+      let values: Record<string, unknown> = {};
+      let condition: unknown;
+      const query = {
+        set: (nextValues: Record<string, unknown>) => {
+          values = nextValues;
+          return query;
+        },
+        where: (nextCondition: unknown) => {
+          condition = nextCondition;
+          const result = {
+            returning: async () => updateRows(table, values, condition),
+            then: (resolve: (value: unknown[]) => unknown, reject?: (reason: unknown) => unknown) =>
+              Promise.resolve(updateRows(table, values, condition)).then(resolve, reject),
+          };
+          return result;
+        },
+      };
+      return query;
+    },
+    insert: (table: unknown) => {
+      let values: Record<string, unknown> = {};
+      const query = {
+        values: (nextValues: Record<string, unknown>) => {
+          values = nextValues;
+          return query;
+        },
+        returning: async () => {
+          const row = {
+            id: `00000000-0000-4000-8000-${String(nextId++).padStart(12, '0')}`,
+            ...values,
+          } as InvoiceFieldProvenanceRow;
+          if (table === invoiceFieldProvenance) rows.push(row);
+          return [row];
+        },
+      };
+      return query;
+    },
+  };
+  const db = {
+    transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback(transaction),
+  };
+  return { db: db as unknown as Db, rows };
+}
+
+test('provenance applies source precedence and keeps retries idempotent', async () => {
+  const { db, rows } = createDb();
+  const service = new InvoiceReviewProvenanceService(db);
+  const ocrObservedAt = new Date('2026-08-01T00:00:00Z');
+  const manualObservedAt = new Date('2026-08-02T00:00:00Z');
+
+  const ocr = await service.recordProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    fieldPath: 'totalAmount',
+    sourceType: 'OCR',
+    sourceRecordId: 'ocr-job-1',
+    sourceTimestamp: new Date('2026-08-01T00:00:00Z'),
+    observedAt: ocrObservedAt,
+  });
+  const manual = await service.recordProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    fieldPath: 'totalAmount',
+    sourceType: 'manual',
+    sourceRecordId: 'manual-correction-1',
+    sourceTimestamp: new Date('2025-01-01T00:00:00Z'),
+    observedAt: manualObservedAt,
+  });
+  const retry = await service.recordProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    fieldPath: 'totalAmount',
+    sourceType: 'manual',
+    sourceRecordId: 'manual-correction-1',
+    sourceTimestamp: new Date('2025-01-01T00:00:00Z'),
+    observedAt: new Date('2026-08-03T00:00:00Z'),
+  });
+
+  assert.equal(ocr.isCurrent, false);
+  assert.deepEqual(ocr.supersededAt, manualObservedAt);
+  assert.equal(manual.isCurrent, true);
+  assert.equal(retry.id, manual.id);
+  assert.equal(rows.length, 2);
+});
+
+test('provenance canonicalizes line identity casing before recording', async () => {
+  const { db, rows } = createDb();
+  const service = new InvoiceReviewProvenanceService(db);
+  const sourceTimestamp = new Date('2026-08-01T00:00:00Z');
+  const lowercasePath = `lines.${caseSensitiveLineId}.description`;
+  const uppercaseLineId = caseSensitiveLineId.toUpperCase();
+
+  const first = await service.recordProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    invoiceLineId: caseSensitiveLineId,
+    fieldPath: lowercasePath,
+    sourceType: 'OCR',
+    sourceRecordId: 'ocr-job-case-identity',
+    sourceTimestamp,
+  });
+  const second = await service.recordProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    invoiceLineId: uppercaseLineId,
+    fieldPath: `lines.${uppercaseLineId}.description`,
+    sourceType: 'OCR',
+    sourceRecordId: 'ocr-job-case-identity',
+    sourceTimestamp,
+  });
+
+  assert.equal(second.id, first.id);
+  assert.equal(second.invoiceLineId, caseSensitiveLineId);
+  assert.equal(second.fieldPath, lowercasePath);
+  assert.equal(rows.length, 1);
+});
+
+test('provenance appends distinct manual corrections and isolates organizations', async () => {
+  const { db, rows } = createDb();
+  const service = new InvoiceReviewProvenanceService(db);
+  const first = await service.recordManualCorrectionProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    actorId,
+    fieldPaths: [`lines.${lineId}.description`],
+    observedAt: new Date('2026-08-01T00:00:00Z'),
+  });
+  const second = await service.recordManualCorrectionProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    actorId,
+    fieldPaths: [`lines.${lineId}.description`],
+    observedAt: new Date('2026-08-02T00:00:00Z'),
+  });
+  const organizationOneTotal = await service.recordProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    fieldPath: 'totalAmount',
+    sourceType: 'manual',
+    sourceRecordId: 'manual-correction-1',
+    observedAt: new Date('2026-08-02T00:00:00Z'),
+  });
+  const otherOrganization = await service.recordProvenance({
+    organizationId: organizationTwo,
+    invoiceId,
+    fieldPath: 'totalAmount',
+    sourceType: 'manual',
+    sourceRecordId: 'manual-correction-1',
+    observedAt: new Date('2026-08-02T00:00:00Z'),
+  });
+
+  assert.equal(first.length, 1);
+  assert.equal(second.length, 1);
+  assert.notEqual(first[0]?.id, second[0]?.id);
+  assert.equal(first[0]?.isCurrent, false);
+  assert.equal(second[0]?.isCurrent, true);
+  assert.equal(organizationOneTotal.isCurrent, true);
+  assert.equal(otherOrganization.isCurrent, true);
+  assert.notEqual(organizationOneTotal.id, otherOrganization.id);
+  assert.equal(rows.length, 4);
+});
+
+test('provenance accepts manual corrections for tax-inclusive line fields', async () => {
+  const { db, rows } = createDb();
+  const service = new InvoiceReviewProvenanceService(db);
+
+  const [provenance] = await service.recordManualCorrectionProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    actorId,
+    fieldPaths: [`lines.${lineId}.taxInclusive`],
+    observedAt: new Date('2026-08-04T00:00:00Z'),
+  });
+
+  assert.equal(provenance?.fieldPath, `lines.${lineId}.taxInclusive`);
+  assert.equal(rows.length, 1);
+});
+
+test('provenance rejects malformed line identity before opening a transaction', async () => {
+  let transactionCalled = false;
+  const db = {
+    transaction: async () => {
+      transactionCalled = true;
+      throw new Error('transaction should not start');
+    },
+  };
+  const service = new InvoiceReviewProvenanceService(db as unknown as Db);
+
+  await assert.rejects(
+    service.recordProvenance({
+      organizationId: organizationOne,
+      invoiceId,
+      invoiceLineId: lineId,
+      fieldPath: 'lines.not-a-uuid.description',
+      sourceType: 'manual',
+      sourceRecordId: 'manual:malformed-line',
+    }),
+    /Unsupported invoice provenance field path/,
+  );
+
+  assert.equal(transactionCalled, false);
+});
+
+test('OCR provenance omits extracted lines without an explicit invoice-line mapping', async () => {
+  const { db, rows } = createDb();
+  let positionalLookupCalled = false;
+  Object.assign(db, {
+    query: {
+      invoiceLines: {
+        findMany: async () => {
+          positionalLookupCalled = true;
+          return [{ id: lineId }];
+        },
+      },
+    },
+  });
+  const service = new InvoiceReviewProvenanceService(db);
+
+  await service.recordOcrProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    sourceRecordId: 'ocr-job-1',
+    extractedData: {
+      invoiceNumber: 'OCR-100',
+      lines: [{ description: 'Unmapped extracted line' }],
+    },
+    confidence: { invoiceNumber: 0.99, lines: 0.85 },
+    observedAt: new Date('2026-08-04T00:00:00Z'),
+  });
+
+  assert.equal(positionalLookupCalled, false);
+  assert.deepEqual(
+    rows.map((row) => row.fieldPath),
+    ['invoiceNumber'],
+  );
+});
+
+test('OCR provenance records extracted lines with an explicit invoice-line mapping', async () => {
+  const { db, rows } = createDb();
+  const service = new InvoiceReviewProvenanceService(db);
+
+  await service.recordOcrProvenance({
+    organizationId: organizationOne,
+    invoiceId,
+    sourceRecordId: 'ocr-job-1',
+    extractedData: { lines: [{ description: 'Mapped extracted line' }] },
+    confidence: { lines: 0.85 },
+    invoiceLineIds: [lineId],
+    observedAt: new Date('2026-08-04T00:00:00Z'),
+  });
+
+  assert.deepEqual(
+    rows.map((row) => ({ invoiceLineId: row.invoiceLineId, fieldPath: row.fieldPath })),
+    [{ invoiceLineId: lineId, fieldPath: `lines.${lineId}.description` }],
+  );
+});
+
+test('provenance view rejects an unsupported persisted source type', () => {
+  const { db } = createDb();
+  const service = new InvoiceReviewProvenanceService(db);
+
+  assert.throws(
+    () =>
+      service.toView(
+        {
+          id: '00000000-0000-0000-0000-000000000020',
+          organizationId: organizationOne,
+          invoiceId,
+          invoiceLineId: null,
+          fieldPath: 'totalAmount',
+          sourceType: 'unsupported_source',
+          sourceRecordId: 'source-1',
+          sourceTimestamp: null,
+          confidence: null,
+          actorId: null,
+          isCurrent: true,
+          supersededAt: null,
+          identityKey: 'identity-1',
+          createdAt: new Date('2026-08-01T00:00:00Z'),
+          updatedAt: new Date('2026-08-01T00:00:00Z'),
+        },
+        'missing',
+      ),
+    /Unsupported invoice provenance source type/,
+  );
+});
