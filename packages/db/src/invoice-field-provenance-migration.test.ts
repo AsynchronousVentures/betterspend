@@ -59,6 +59,15 @@ test('invoice field provenance keeps line references on the same invoice', async
         id uuid PRIMARY KEY,
         invoice_id uuid NOT NULL
       );
+      -- This fixture starts at the provenance migration rather than replaying
+      -- the earlier review-signal migration. Later forward migrations may
+      -- legitimately reference the durable review aggregate.
+      CREATE TABLE invoice_review_cases (
+        id uuid PRIMARY KEY,
+        organization_id uuid NOT NULL,
+        invoice_id uuid NOT NULL,
+        UNIQUE (id, organization_id)
+      );
       CREATE TABLE ocr_jobs (
         id uuid PRIMARY KEY,
         organization_id uuid NOT NULL,

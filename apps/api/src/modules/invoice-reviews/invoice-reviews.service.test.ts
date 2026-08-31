@@ -449,34 +449,30 @@ test('recordSignal preserves one signal identity across repeated observations', 
           return builder;
         },
         where: () => builder,
-        limit: async () => {
-          if (table === invoices) return [{ id: invoiceId }];
-          if (table === invoiceReviewSignals) return signals.slice(0, 1);
-          if (table === auditIdempotencyKeys) {
-            auditClaimLookups += 1;
-            return auditClaimLookups === 3 ? [auditClaims[1]] : [];
-          }
-          if (table === auditLog) return auditRows;
-          return [];
-        },
+        limit: () => builder,
         for: async () => {
+          if (table === invoices) return [{ id: invoiceId, status: 'pending', paidAt: null }];
           if (table === invoiceReviewCases) return cases;
           if (table === invoiceReviewSignals) {
-            return signals.map((signal) => ({
-              severity: signal.severity,
-              status: signal.status,
-            }));
+            return signals;
           }
           return [];
         },
         orderBy: () => builder,
         then: (resolve: (value: unknown) => unknown) =>
           resolve(
-            table === invoiceReviewSignals
+            table === invoices
+              ? [{ id: invoiceId, status: 'pending', paidAt: null }]
+              : table === invoiceReviewSignals
               ? signals.map((signal) => ({
                   severity: signal.severity,
                   status: signal.status,
                 }))
+              : table === auditIdempotencyKeys
+                ? (() => {
+                    auditClaimLookups += 1;
+                    return auditClaimLookups === 3 ? [auditClaims[1]] : [];
+                  })()
               : table === auditLog
                 ? auditRows
                 : [],
@@ -499,6 +495,15 @@ test('recordSignal preserves one signal identity across repeated observations', 
               };
               auditRows.push(row);
               return [row];
+            },
+          };
+        }
+        if (table === invoiceReviewSignals) {
+          return {
+            returning: async () => {
+              const signal = { ...values, id: `signal-${nextId++}` };
+              signals.push(signal);
+              return [signal];
             },
           };
         }
@@ -556,6 +561,16 @@ test('recordSignal preserves one signal identity across repeated observations', 
           if (table === auditIdempotencyKeys) {
             Object.assign(auditClaims.at(-1) ?? {}, values);
             return undefined;
+          }
+          if (table === invoiceReviewSignals) {
+            return {
+              returning: async () => {
+                const signal = signals[0];
+                if (!signal) return [];
+                Object.assign(signal, values);
+                return [signal];
+              },
+            };
           }
           return {
             returning: async () => {

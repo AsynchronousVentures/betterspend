@@ -153,6 +153,52 @@ export const invoiceReviewSignals = pgTable(
   ],
 );
 
+/**
+ * A command writes a delivery intent with its review decision. Queue delivery
+ * is deliberately outside that transaction, so a transient broker failure
+ * cannot undo an AP decision.
+ */
+export const invoiceReviewNotificationIntents = pgTable(
+  'invoice_review_notification_intents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id),
+    caseId: uuid('case_id').notNull(),
+    recipientUserId: uuid('recipient_user_id').notNull(),
+    action: varchar('action', { length: 50 }).notNull(),
+    idempotencyKey: varchar('idempotency_key', { length: 255 }).notNull(),
+    status: varchar('status', { length: 20 }).notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('invoice_review_notification_intents_idempotency_unique').on(
+      table.organizationId,
+      table.idempotencyKey,
+    ),
+    index('invoice_review_notification_intents_pending_idx').on(table.status, table.createdAt),
+    foreignKey({
+      columns: [table.caseId, table.organizationId],
+      foreignColumns: [invoiceReviewCases.id, invoiceReviewCases.organizationId],
+      name: 'invoice_review_notification_intents_case_org_fk',
+    }),
+    foreignKey({
+      columns: [table.recipientUserId, table.organizationId],
+      foreignColumns: [users.id, users.organizationId],
+      name: 'invoice_review_notification_intents_recipient_org_fk',
+    }),
+    check(
+      'invoice_review_notification_intents_status_check',
+      sql`${table.status} IN ('pending', 'delivered')`,
+    ),
+  ],
+);
+
 const provenanceLineFieldPathPattern = `'^lines\\.[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}\\.(${INVOICE_REVIEW_PROVENANCE_LINE_FIELDS.join('|')})$'`;
 
 export const invoiceFieldProvenance = pgTable(
