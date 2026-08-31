@@ -127,12 +127,12 @@ export class InvoiceReviewNotificationsService implements OnModuleInit, OnModule
   }
 
   async enqueuePending(pageSize = 100): Promise<void> {
-    let cursor: { createdAt: Date; id: string } | undefined;
+    let cursor: { createdAt: string; id: string } | undefined;
     while (true) {
       const pending = await this.db
         .select({
           id: invoiceReviewNotificationIntents.id,
-          createdAt: invoiceReviewNotificationIntents.createdAt,
+          createdAt: sql<string>`${invoiceReviewNotificationIntents.createdAt}::text`,
         })
         .from(invoiceReviewNotificationIntents)
         .where(
@@ -140,9 +140,15 @@ export class InvoiceReviewNotificationsService implements OnModuleInit, OnModule
             ? and(
                 eq(invoiceReviewNotificationIntents.status, 'pending'),
                 or(
-                  gt(invoiceReviewNotificationIntents.createdAt, cursor.createdAt),
+                  gt(
+                    invoiceReviewNotificationIntents.createdAt,
+                    sql`${cursor.createdAt}::timestamptz`,
+                  ),
                   and(
-                    eq(invoiceReviewNotificationIntents.createdAt, cursor.createdAt),
+                    eq(
+                      invoiceReviewNotificationIntents.createdAt,
+                      sql`${cursor.createdAt}::timestamptz`,
+                    ),
                     gt(invoiceReviewNotificationIntents.id, cursor.id),
                   ),
                 ),

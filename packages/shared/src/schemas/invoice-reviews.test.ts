@@ -77,4 +77,9 @@ test('invoice review commands require an aggregate version and action-specific r
       .success,
     false,
   );
+  assert.equal(
+    invoiceReviewCommandSchema.safeParse({ action: 'claim', expectedVersion: 2_147_483_648 })
+      .success,
+    false,
+  );
 });

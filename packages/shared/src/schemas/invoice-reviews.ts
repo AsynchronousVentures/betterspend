@@ -97,7 +97,7 @@ export const recordInvoiceReviewSignalSchema = z
   .strict();
 
 const reviewCommandBase = z.object({
-  expectedVersion: z.number().int().min(1),
+  expectedVersion: z.number().int().min(1).max(2_147_483_647),
 });
 
 const reviewReason = z.string().trim().min(1).max(2_000);

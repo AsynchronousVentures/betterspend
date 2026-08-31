@@ -449,6 +449,44 @@ test('notification reconciliation keysets past rows delivered from an earlier pa
   }
 });
 
+test('notification reconciliation preserves microsecond cursor precision without duplicate enqueues', async () => {
+  const { database, db } = await createDatabase();
+  try {
+    const intents = Array.from({ length: 101 }, (_, index) => {
+      const id = `00000000-0000-4000-8000-${(index + 300).toString(16).padStart(12, '0')}`;
+      const createdAt = `2026-08-01T00:00:00.${(index + 1).toString().padStart(6, '0')}Z`;
+      return `('${id}', '${organizationId}', '00000000-0000-4000-8000-000000000005', '${actorId}', 'claim', 'microsecond-${index}', 'pending', '${createdAt}', '${createdAt}')`;
+    });
+    await database.exec(`
+      INSERT INTO invoice_review_notification_intents (
+        id, organization_id, case_id, recipient_user_id, action, idempotency_key, status, created_at, updated_at
+      ) VALUES ${intents.join(',')};
+    `);
+    const queued: string[] = [];
+    const service = new InvoiceReviewNotificationsService(
+      {
+        add: async (_name: string, data: { intentId: string }) => {
+          queued.push(data.intentId);
+          if (queued.length === 200) {
+            await database.exec(
+              "UPDATE invoice_review_notification_intents SET status = 'delivered' WHERE status = 'pending'",
+            );
+          }
+        },
+      } as never,
+      db as unknown as Db,
+      { createIdempotent: async () => undefined } as never,
+    );
+
+    await service.enqueuePending(100);
+
+    assert.equal(queued.length, 101);
+    assert.equal(new Set(queued).size, 101);
+  } finally {
+    await database.close();
+  }
+});
+
 test('signal source validation checks durable producers and preserves manual or unknown sources', async () => {
   const sources: ReadonlyArray<{
     name: string;
