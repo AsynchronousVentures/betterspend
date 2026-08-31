@@ -362,6 +362,39 @@ test('supplier messages roll back when durable notification intent persistence f
   }
 });
 
+test('marking supplier information received requires a waiting case', async () => {
+  const { database, db } = await createDatabase();
+  try {
+    await database.exec(
+      `UPDATE invoice_review_cases SET owner_id = '${actorId}' WHERE invoice_id = '${invoiceId}'`,
+    );
+    const { commands } = createCommands(db as unknown as Db);
+
+    await assert.rejects(
+      commands.apply({ id: actorId, organizationId }, invoiceId, {
+        action: 'mark_info_received',
+        expectedVersion: 1,
+      }),
+      /INVALID TRANSITION/,
+    );
+
+    const reviewCase = await database.query<{ state: string; version: number }>(
+      `SELECT state, version FROM invoice_review_cases WHERE invoice_id = '${invoiceId}'`,
+    );
+    const auditCount = await database.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM audit_log',
+    );
+    const intentCount = await database.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM invoice_review_notification_intents',
+    );
+    assert.deepEqual(reviewCase.rows, [{ state: 'open', version: 1 }]);
+    assert.equal(auditCount.rows[0]?.count, '0');
+    assert.equal(intentCount.rows[0]?.count, '0');
+  } finally {
+    await database.close();
+  }
+});
+
 test('two simultaneous claims produce one success and one stale-version result', async () => {
   const { database, db } = await createDatabase();
   try {

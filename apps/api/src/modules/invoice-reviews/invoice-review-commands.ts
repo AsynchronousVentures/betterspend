@@ -180,6 +180,12 @@ export class InvoiceReviewCommands {
     ) {
       commandError('INVALID_TRANSITION', 409);
     }
+    if (
+      command.action === 'mark_info_received' &&
+      reviewCase.state !== 'waiting_on_supplier'
+    ) {
+      commandError('INVALID_TRANSITION', 409);
+    }
 
     const isAdmin = actor.access?.isGlobalBuiltInAdmin() ?? true;
     const ownsCase = reviewCase.ownerId === actor.id;
