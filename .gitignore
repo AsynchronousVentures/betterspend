@@ -13,4 +13,5 @@ coverage
 *.log
 ecosystem.config.js
 
-.claude/
+.claude/*
+!.claude/skills
