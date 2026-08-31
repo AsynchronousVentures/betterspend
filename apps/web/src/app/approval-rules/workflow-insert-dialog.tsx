@@ -21,7 +21,7 @@ export function WorkflowInsertDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-30 bg-black/75" />
+        <Dialog.Overlay className="fixed inset-0 z-30 bg-slate-950/50" />
         <Dialog.Content
           aria-modal="true"
           onCloseAutoFocus={(event) => {
@@ -29,16 +29,16 @@ export function WorkflowInsertDialog({
             event.preventDefault();
             returnFocusRef.current.focus();
           }}
-          className="fixed left-1/2 top-1/2 z-30 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 border border-white/20 bg-[#080808] text-white outline-none"
+          className="fixed left-1/2 top-1/2 z-30 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border/70 bg-card text-foreground shadow-xl outline-none"
         >
-          <div className="flex h-11 items-center border-b border-white/12 px-3 text-xs font-semibold">
+          <div className="flex h-11 items-center border-b border-border/70 px-3 text-xs font-semibold">
             <Dialog.Title>Insert step</Dialog.Title>
             <Dialog.Description className="sr-only">
               Choose a compatible step to place on this route.
             </Dialog.Description>
             <Dialog.Close
               aria-label="Close insert step dialog"
-              className="ml-auto text-zinc-600 hover:text-white"
+              className="ml-auto text-muted-foreground hover:text-foreground"
             >
               <X className="size-4" />
             </Dialog.Close>
@@ -49,10 +49,10 @@ export function WorkflowInsertDialog({
                 key={item.type}
                 type="button"
                 onClick={() => onInsert(item.type)}
-                className="border-b border-r border-white/10 p-3 text-left hover:bg-white/[0.04]"
+                className="border-b border-r border-border/60 p-3 text-left hover:bg-muted/50"
               >
-                <span className="block text-xs font-medium">{item.label}</span>
-                <span className="mt-1 block text-[10px] leading-4 text-zinc-600">
+                <span className="block text-xs font-medium text-foreground">{item.label}</span>
+                <span className="mt-1 block text-[10px] leading-4 text-muted-foreground">
                   {item.description}
                 </span>
               </button>

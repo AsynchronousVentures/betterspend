@@ -53,7 +53,7 @@ export function WorkflowEdge({
           >
             {label ? (
               <span
-                className="border border-white/15 bg-black px-1.5 py-0.5 text-[9px] text-zinc-300"
+                className="rounded-sm border border-border bg-card px-1.5 py-0.5 text-[9px] text-muted-foreground"
                 style={labelStyle}
               >
                 {label}
@@ -67,7 +67,7 @@ export function WorkflowEdge({
                   event.stopPropagation();
                   data.onInsert(id);
                 }}
-                className="grid size-5 place-items-center border border-white/30 bg-black text-zinc-300 shadow-lg hover:border-orange-300 hover:text-orange-200 focus-visible:ring-orange-300"
+                className="grid size-5 place-items-center rounded-full border border-border bg-card text-muted-foreground shadow-sm hover:border-primary hover:text-primary focus-visible:ring-ring"
                 style={{ pointerEvents: 'all' }}
               >
                 <Plus className="size-3" />

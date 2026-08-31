@@ -18,9 +18,9 @@ import {
 import { WORKFLOW_NODE_REGISTRY, type WorkflowConfigField } from './workflow-node-registry';
 
 const inputClass =
-  'h-9 w-full border border-white/15 bg-black px-2.5 text-xs text-white outline-none focus:border-orange-300';
+  'h-9 w-full rounded-md border border-input bg-white/80 px-2.5 text-xs text-foreground shadow-[inset_0_1px_2px_0_rgba(26,26,26,0.06)] outline-none focus:border-primary/40';
 const labelClass =
-  'grid gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500';
+  'grid gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground';
 
 type FormField = Extract<WorkflowNode, { type: 'collect_form' }>['config']['fields'][number];
 
@@ -78,16 +78,16 @@ function ConditionEdgeConfig({
 
   return (
     <div className="grid gap-4 p-4">
-      <div className="border border-white/10 bg-black p-3 text-[10px] leading-5 text-zinc-400">
-        <span className="text-white">{source.name}</span> to{' '}
-        <span className="text-white">{target.name}</span>
+      <div className="rounded-md border border-border/70 bg-muted/30 p-3 text-[10px] leading-5 text-muted-foreground">
+        <span className="text-foreground">{source.name}</span> to{' '}
+        <span className="text-foreground">{target.name}</span>
       </div>
-      <label className="flex items-center gap-2 text-xs text-zinc-300">
+      <label className="flex items-center gap-2 text-xs text-foreground">
         <input
           type="checkbox"
           checked={defaultRoute}
           onChange={(event) => setDefaultRoute(event.target.checked)}
-          className="accent-orange-400"
+          className="accent-primary"
         />
         Default route
       </label>
@@ -145,21 +145,21 @@ function ConditionEdgeConfig({
             />
           </label>
           {edge.condition && !leafCondition ? (
-            <p className="text-[10px] leading-4 text-amber-200">
+            <p className="text-[10px] leading-4 text-amber-700">
               This route has a compound condition. Applying replaces it with the condition above.
             </p>
           ) : null}
         </>
       ) : (
-        <p className="text-[10px] leading-4 text-zinc-500">
+        <p className="text-[10px] leading-4 text-muted-foreground">
           Used when no earlier condition matches.
         </p>
       )}
-      {error ? <p className="text-[10px] text-rose-300">{error}</p> : null}
+      {error ? <p className="text-[10px] text-destructive">{error}</p> : null}
       <button
         type="button"
         onClick={apply}
-        className="h-9 bg-white text-xs font-semibold text-black"
+        className="h-9 rounded-md bg-primary text-xs font-semibold text-primary-foreground shadow-[inset_0_1px_0_0_rgba(255,255,255,0.15)] hover:bg-primary/85"
       >
         Apply route
       </button>
@@ -215,13 +215,13 @@ function JsonConfigField({
           value={text}
           onChange={(event) => setText(event.target.value)}
           spellCheck={false}
-          className="min-h-28 w-full resize-y border border-white/15 bg-black p-2.5 font-mono text-[10px] font-normal normal-case tracking-normal text-white outline-none focus:border-orange-300"
+          className="min-h-28 w-full resize-y rounded-md border border-input bg-white/80 p-2.5 font-mono text-[10px] font-normal normal-case tracking-normal text-foreground shadow-[inset_0_1px_2px_0_rgba(26,26,26,0.06)] outline-none focus:border-primary/40"
         />
       </label>
       {field.description ? (
-        <p className="text-[10px] leading-4 text-zinc-600">{field.description}</p>
+        <p className="text-[10px] leading-4 text-muted-foreground">{field.description}</p>
       ) : null}
-      {error ? <p className="text-[10px] text-rose-300">{error}</p> : null}
+      {error ? <p className="text-[10px] text-destructive">{error}</p> : null}
       <button
         type="button"
         onClick={() => {
@@ -232,7 +232,7 @@ function JsonConfigField({
             setError('Enter valid JSON');
           }
         }}
-        className="h-8 border border-white/15 text-[10px] font-semibold text-zinc-300 hover:text-white"
+        className="h-8 rounded-md border border-border text-[10px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"
       >
         Apply {field.label.toLowerCase()}
       </button>
@@ -256,7 +256,7 @@ function FormFieldsConfig({
   return (
     <div className="grid gap-3">
       <div className="flex items-center">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
           {field.label}
         </span>
         <button
@@ -272,7 +272,7 @@ function FormFieldsConfig({
               },
             ])
           }
-          className="ml-auto flex h-7 items-center gap-1 border border-white/15 px-2 text-[9px] text-zinc-400 hover:text-white"
+          className="ml-auto flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[9px] text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <Plus className="size-3" /> Add field
         </button>
@@ -280,7 +280,7 @@ function FormFieldsConfig({
       {fields.map((formField, index) => (
         <div
           key={`${formField.key}-${index}`}
-          className="grid grid-cols-2 gap-2 border border-white/10 p-2"
+          className="grid grid-cols-2 gap-2 rounded-md border border-border/70 p-2"
         >
           <input
             aria-label={`Field ${index + 1} key`}
@@ -328,7 +328,7 @@ function FormFieldsConfig({
             <option value="date">Date</option>
           </select>
           <div className="flex items-center gap-2">
-            <label className="flex items-center gap-2 text-[10px] text-zinc-400">
+            <label className="flex items-center gap-2 text-[10px] text-muted-foreground">
               <input
                 type="checkbox"
                 checked={formField.required}
@@ -339,7 +339,7 @@ function FormFieldsConfig({
                     ),
                   )
                 }
-                className="accent-orange-400"
+                className="accent-primary"
               />
               Required
             </label>
@@ -349,18 +349,18 @@ function FormFieldsConfig({
               onClick={() =>
                 setFields((current) => current.filter((_, itemIndex) => itemIndex !== index))
               }
-              className="ml-auto text-zinc-600 hover:text-rose-300"
+              className="ml-auto text-muted-foreground hover:text-destructive"
             >
               <Trash2 className="size-3.5" />
             </button>
           </div>
         </div>
       ))}
-      {error ? <p className="text-[10px] text-rose-300">{error}</p> : null}
+      {error ? <p className="text-[10px] text-destructive">{error}</p> : null}
       <button
         type="button"
         onClick={() => setError(commitConfigValue(node, field.path, fields, onChange))}
-        className="h-8 border border-white/15 text-[10px] font-semibold text-zinc-300 hover:text-white"
+        className="h-8 rounded-md border border-border text-[10px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"
       >
         Apply fields
       </button>
@@ -388,7 +388,7 @@ function ConfigField({
     return (
       <label className={labelClass}>
         {field.label}
-        <div className="border border-white/10 bg-black px-2.5 py-2 text-xs font-normal normal-case tracking-normal text-zinc-500">
+        <div className="rounded-md border border-border/70 bg-muted/40 px-2.5 py-2 text-xs font-normal normal-case tracking-normal text-muted-foreground">
           {String(value ?? '')}
         </div>
       </label>
@@ -396,12 +396,12 @@ function ConfigField({
   }
   if (field.kind === 'boolean') {
     return (
-      <label className="flex items-center gap-2 text-xs text-zinc-300">
+      <label className="flex items-center gap-2 text-xs text-foreground">
         <input
           type="checkbox"
           checked={value === true}
           onChange={(event) => commitConfigValue(node, field.path, event.target.checked, onChange)}
-          className="accent-orange-400"
+          className="accent-primary"
         />
         {field.label}
       </label>
@@ -483,7 +483,7 @@ function ConfigField({
           key={`${node.id}-${field.path}-${defaultValue}`}
           defaultValue={defaultValue}
           onBlur={(event) => onBlur(event.target.value)}
-          className="min-h-24 w-full border border-white/15 bg-black p-2.5 text-xs font-normal normal-case tracking-normal text-white outline-none focus:border-orange-300"
+          className="min-h-24 w-full rounded-md border border-input bg-white/80 p-2.5 text-xs font-normal normal-case tracking-normal text-foreground shadow-[inset_0_1px_2px_0_rgba(26,26,26,0.06)] outline-none focus:border-primary/40"
         />
       ) : (
         <input
@@ -511,7 +511,7 @@ function SchemaConfigFields({
   const primary = fields.filter((field) => !field.advanced);
   const advanced = fields.filter((field) => field.advanced);
   if (fields.length === 0)
-    return <div className="text-xs text-zinc-500">This node has no configuration.</div>;
+    return <div className="text-xs text-muted-foreground">This node has no configuration.</div>;
 
   return (
     <>
@@ -526,7 +526,7 @@ function SchemaConfigFields({
       ))}
       {advanced.length > 0 ? (
         <details>
-          <summary className="cursor-pointer text-xs font-semibold text-zinc-400 hover:text-white">
+          <summary className="cursor-pointer text-xs font-semibold text-muted-foreground hover:text-foreground">
             Advanced configuration
           </summary>
           <div className="mt-4 grid gap-4">
@@ -581,11 +581,11 @@ export function WorkflowInspector({
     : null;
   const title = node?.name ?? (edge ? 'Route' : note ? 'Sticky note' : 'Inspector');
   return (
-    <aside className="w-[320px] shrink-0 overflow-y-auto border-l border-white/15 bg-[#080808] text-white">
-      <div className="flex min-h-12 items-center border-b border-white/12 px-4 py-2">
+    <aside className="w-[320px] shrink-0 overflow-y-auto border-l border-border/70 bg-card text-foreground">
+      <div className="flex min-h-12 items-center border-b border-border/70 px-4 py-2">
         <div className="min-w-0">
-          <div className="truncate text-xs font-semibold">{title}</div>
-          <div className="font-mono text-[9px] text-zinc-600">
+          <div className="truncate text-xs font-semibold text-foreground">{title}</div>
+          <div className="font-mono text-[9px] text-muted-foreground">
             {node?.type ?? edge?.id ?? note?.id ?? 'Nothing selected'}
           </div>
         </div>
@@ -593,20 +593,20 @@ export function WorkflowInspector({
           type="button"
           onClick={onClose}
           aria-label="Close inspector"
-          className="ml-auto text-zinc-600 hover:text-white"
+          className="ml-auto text-muted-foreground hover:text-foreground"
         >
           <X className="size-4" />
         </button>
       </div>
 
       {issues.length > 0 ? (
-        <div className="border-b border-amber-300/25 bg-amber-300/5 px-4 py-3">
+        <div className="border-b border-amber-200 bg-amber-50 px-4 py-3">
           {issues.map((issue) => (
             <div
               key={`${issue.code}-${issue.path.join('.')}`}
-              className="flex gap-2 text-[10px] leading-4 text-amber-100"
+              className="flex gap-2 text-[10px] leading-4 text-amber-800"
             >
-              <AlertTriangle className="mt-0.5 size-3 shrink-0 text-amber-300" />
+              <AlertTriangle className="mt-0.5 size-3 shrink-0 text-amber-500" />
               {issue.message}
             </div>
           ))}
@@ -628,22 +628,22 @@ export function WorkflowInspector({
               }}
             />
           </label>
-          <label className="flex items-center gap-2 text-xs text-zinc-300">
+          <label className="flex items-center gap-2 text-xs text-foreground">
             <input
               type="checkbox"
-              className="accent-orange-400"
+              className="accent-primary"
               checked={!node.disabled}
               onChange={(event) => onReplaceNode({ ...node, disabled: !event.target.checked })}
             />
             Enabled
           </label>
-          <div className="h-px bg-white/10" />
+          <div className="h-px bg-border/70" />
           <SchemaConfigFields node={node} nodes={nodes} onChange={onReplaceNode} />
           {node.type !== 'trigger' ? (
             <button
               type="button"
               onClick={() => onRemoveNode(node.id)}
-              className="mt-3 flex h-9 items-center justify-center gap-2 border border-rose-400/30 text-xs text-rose-200 hover:border-rose-300"
+              className="mt-3 flex h-9 items-center justify-center gap-2 rounded-md border border-destructive/30 text-xs text-destructive hover:border-destructive/60 hover:bg-destructive/5"
             >
               <Trash2 className="size-3.5" /> Delete node
             </button>
@@ -662,7 +662,7 @@ export function WorkflowInspector({
               onChange={onReplaceEdge}
             />
           ) : (
-            <div className="p-4 text-xs text-zinc-500">
+            <div className="p-4 text-xs text-muted-foreground">
               {sourceNode.name} to {targetNode.name}
             </div>
           )}
@@ -670,7 +670,7 @@ export function WorkflowInspector({
             <button
               type="button"
               onClick={() => onRemoveEdge(edge.id)}
-              className="flex h-9 w-full items-center justify-center gap-2 border border-rose-400/30 text-xs text-rose-200 hover:border-rose-300"
+              className="flex h-9 w-full items-center justify-center gap-2 rounded-md border border-destructive/30 text-xs text-destructive hover:border-destructive/60 hover:bg-destructive/5"
             >
               <Trash2 className="size-3.5" /> Delete route
             </button>
@@ -684,7 +684,7 @@ export function WorkflowInspector({
             Note
             <textarea
               key={note.id}
-              className="min-h-40 w-full border border-white/15 bg-black p-2.5 text-xs normal-case tracking-normal text-white outline-none focus:border-amber-300"
+              className="min-h-40 w-full rounded-md border border-input bg-white/80 p-2.5 text-xs normal-case tracking-normal text-foreground shadow-[inset_0_1px_2px_0_rgba(26,26,26,0.06)] outline-none focus:border-primary/40"
               defaultValue={note.text}
               onBlur={(event) => onUpdateNote(note.id, event.target.value)}
             />
@@ -692,7 +692,7 @@ export function WorkflowInspector({
           <button
             type="button"
             onClick={() => onRemoveNote(note.id)}
-            className="flex h-9 items-center justify-center gap-2 border border-rose-400/30 text-xs text-rose-200 hover:border-rose-300"
+            className="flex h-9 items-center justify-center gap-2 rounded-md border border-destructive/30 text-xs text-destructive hover:border-destructive/60 hover:bg-destructive/5"
           >
             <Trash2 className="size-3.5" /> Delete note
           </button>

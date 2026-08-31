@@ -47,6 +47,9 @@ import {
   type WorkflowDefinitionVersionRecord,
 } from '../../lib/api';
 import { PageHeader } from '../../components/page-header';
+import { Button } from '../../components/ui/button';
+import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
 import { WorkflowAssistant } from './workflow-assistant';
 import {
   canRestoreWorkflowDraft,
@@ -341,18 +344,18 @@ const BuilderCanvas = forwardRef<
             sourceHandle: edge.sourceHandle,
             targetHandle: edge.targetHandle,
             selected: selection?.kind === 'edge' && selection.id === edge.id,
-            markerEnd: { type: MarkerType.ArrowClosed, color: '#71717a', width: 14, height: 14 },
+            markerEnd: { type: MarkerType.ArrowClosed, color: '#9c968e', width: 14, height: 14 },
             style: {
               stroke:
                 selection?.kind === 'edge' && selection.id === edge.id
-                  ? '#fdba74'
+                  ? '#d4522e'
                   : issuesByEdge.has(edge.id)
-                    ? '#fcd34d'
-                    : '#71717a',
+                    ? '#f0a230'
+                    : '#9c968e',
               strokeWidth: selection?.kind === 'edge' && selection.id === edge.id ? 2 : 1.25,
             },
             label: workflowEdgeLabel(edge),
-            labelStyle: { fill: '#a1a1aa', fontSize: 9 },
+            labelStyle: { fill: '#6b6560', fontSize: 9 },
             data: { onInsert: openInsertDialog, canInsert: canEdit },
           }))
         : [],
@@ -826,16 +829,16 @@ const BuilderCanvas = forwardRef<
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-black text-white">
-      <div className="flex h-12 shrink-0 items-center gap-2 border-y border-white/12 bg-black px-3">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm">
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border/70 bg-muted/30 px-3">
         <div className="min-w-0">
-          <div className="truncate text-xs font-semibold">{definition.name}</div>
-          <div className="font-mono text-[9px] uppercase text-zinc-600">
+          <div className="truncate text-xs font-semibold text-foreground">{definition.name}</div>
+          <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
             {definition.domain.replace('_', ' ')}
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <span className="hidden text-[10px] text-zinc-500 sm:block">
+          <span className="hidden text-xs text-muted-foreground sm:block">
             {leaseStatus === null
               ? 'Checking edit access'
               : ownsLease
@@ -853,35 +856,40 @@ const BuilderCanvas = forwardRef<
                   : 'Edit lease unavailable'}
           </span>
           {!ownsLease ? (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={() => void takeOverEditing()}
               disabled={leaseBusy}
-              className="h-8 border border-amber-300/30 px-2.5 text-[10px] text-amber-200 hover:text-white"
+              className="border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-800"
             >
               {leaseBusy ? 'Checking access' : 'Take over editing'}
-            </button>
+            </Button>
           ) : null}
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => void runLayout()}
             disabled={!canEdit}
-            className="flex h-8 items-center gap-1.5 border border-white/15 px-2.5 text-[10px] text-zinc-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
+            className="gap-1.5"
           >
-            <LayoutGrid className="size-3" /> Layout
-          </button>
-          <button
+            <LayoutGrid className="size-3.5" /> Layout
+          </Button>
+          <Button
             type="button"
+            size="sm"
             onClick={() => void publish()}
             disabled={!validation.valid || publishing || saving || !canEdit}
-            className="flex h-8 items-center gap-1.5 bg-white px-3 text-[10px] font-bold text-black disabled:opacity-35"
+            className="gap-1.5"
           >
-            <Upload className="size-3" /> {publishing ? 'Publishing' : 'Publish'}
-          </button>
+            <Upload className="size-3.5" /> {publishing ? 'Publishing' : 'Publish'}
+          </Button>
         </div>
       </div>
       {error ? (
-        <div className="border-b border-red-300/20 bg-red-300/5 px-3 py-2 text-[10px] text-red-200">
+        <div className="border-b border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
           {error}
         </div>
       ) : null}
@@ -900,7 +908,7 @@ const BuilderCanvas = forwardRef<
               store.addNote({ x: 180, y: 340 });
           }}
         />
-        <div className="relative min-w-0 flex-1 bg-black">
+        <div className="relative min-w-0 flex-1 bg-background">
           <ReactFlow
             nodes={flowNodes}
             edges={flowEdges}
@@ -971,10 +979,10 @@ const BuilderCanvas = forwardRef<
             proOptions={{ hideAttribution: true }}
             className="workflow-canvas"
           >
-            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#27272a" />
+            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#d8d4cc" />
             <Controls
               showInteractive={false}
-              className="!rounded-none !border-white/15 !bg-black [&_button]:!rounded-none [&_button]:!border-white/10 [&_button]:!bg-black [&_button]:!fill-zinc-400"
+              className="!rounded-md !border-border !bg-card !shadow-sm [&_button]:!border-border [&_button]:!bg-card [&_button]:!fill-muted-foreground [&_button:hover]:!bg-muted"
             />
           </ReactFlow>
           <WorkflowAssistant
@@ -1045,12 +1053,12 @@ const BuilderCanvas = forwardRef<
           />
         ) : null}
       </div>
-      <div className="shrink-0 border-t border-white/15 bg-[#070707]">
+      <div className="shrink-0 border-t border-border/70 bg-muted/30">
         <div className="flex h-9 items-center px-3">
           <button
             type="button"
             onClick={() => setTray(tray === 'validation' ? null : 'validation')}
-            className={`flex h-full items-center gap-1.5 border-r border-white/10 pr-3 text-[10px] ${validation.valid ? 'text-emerald-300' : 'text-amber-200'}`}
+            className={`flex h-full items-center gap-1.5 border-r border-border/70 pr-3 text-xs ${validation.valid ? 'text-success' : 'text-amber-700'}`}
           >
             {validation.valid ? (
               <CheckCircle2 className="size-3" />
@@ -1064,27 +1072,27 @@ const BuilderCanvas = forwardRef<
           <button
             type="button"
             onClick={() => setTray(tray === 'versions' ? null : 'versions')}
-            className="flex h-full items-center gap-1.5 px-3 text-[10px] text-zinc-400 hover:text-white"
+            className="flex h-full items-center gap-1.5 px-3 text-xs text-muted-foreground hover:text-foreground"
           >
             <History className="size-3" />{' '}
             {versions.length ? `Version ${versions[0]?.version}` : 'No published version'}
           </button>
-          <span className="ml-auto flex items-center gap-1.5 font-mono text-[9px] text-zinc-600">
+          <span className="ml-auto flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
             <Save className="size-3" /> Draft {draftRevision}
           </span>
           <button
             type="button"
             onClick={() => setTray(null)}
             aria-label="Close tray"
-            className="ml-3 text-zinc-700 hover:text-white"
+            className="ml-3 text-muted-foreground hover:text-foreground"
           >
             <ChevronDown className="size-4" />
           </button>
         </div>
         {tray === 'validation' ? (
-          <div className="max-h-32 overflow-y-auto border-t border-white/10 px-3 py-2">
+          <div className="max-h-32 overflow-y-auto border-t border-border/70 px-3 py-2">
             {validation.issues.length === 0 ? (
-              <p className="text-[10px] text-zinc-500">
+              <p className="text-xs text-muted-foreground">
                 All required connections and settings are valid.
               </p>
             ) : (
@@ -1101,9 +1109,9 @@ const BuilderCanvas = forwardRef<
                     const nodeId = issue.nodeIds?.[0];
                     if (nodeId) store.select({ kind: 'node', id: nodeId });
                   }}
-                  className="flex w-full items-center gap-2 py-1 text-left text-[10px] text-amber-100 hover:text-white"
+                  className="flex w-full items-center gap-2 py-1 text-left text-xs text-amber-800 hover:text-amber-950"
                 >
-                  <span className="font-mono text-amber-300">{issue.code}</span>
+                  <span className="font-mono text-amber-600">{issue.code}</span>
                   <span>{issue.message}</span>
                 </button>
               ))
@@ -1111,23 +1119,25 @@ const BuilderCanvas = forwardRef<
           </div>
         ) : null}
         {tray === 'versions' ? (
-          <div className="max-h-40 overflow-y-auto border-t border-white/10">
+          <div className="max-h-40 overflow-y-auto border-t border-border/70">
             {versions.length === 0 ? (
-              <p className="px-3 py-3 text-[10px] text-zinc-600">
+              <p className="px-3 py-3 text-xs text-muted-foreground">
                 Publish this draft to create version 1.
               </p>
             ) : (
               versions.map((version) => (
                 <div
                   key={version.id}
-                  className="flex items-center border-b border-white/8 px-3 py-2 text-[10px]"
+                  className="flex items-center border-b border-border/60 px-3 py-2 text-xs"
                 >
-                  <span className="font-semibold text-white">Version {version.version}</span>
-                  <span className="ml-3 text-zinc-600">
+                  <span className="font-semibold text-foreground">Version {version.version}</span>
+                  <span className="ml-3 text-muted-foreground">
                     {new Date(version.publishedAt).toLocaleString()}
                   </span>
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={async () => {
                       if (leaseStatus?.state !== 'owned') return;
                       await restoreVersion(version.id);
@@ -1141,10 +1151,10 @@ const BuilderCanvas = forwardRef<
                         restoring,
                       })
                     }
-                    className="ml-auto border border-white/15 px-2 py-1 text-zinc-400 hover:text-white disabled:opacity-35"
+                    className="ml-auto"
                   >
                     Restore as draft
-                  </button>
+                  </Button>
                 </div>
               ))
             )}
@@ -1230,30 +1240,31 @@ function WorkflowBuilderInner() {
     }
   };
   return (
-    <div className="flex h-[calc(100vh-4rem)] min-h-[620px] flex-col bg-black">
+    <div className="flex h-[calc(100vh-4rem)] min-h-[620px] flex-col gap-4 p-4 md:p-6">
       <PageHeader
         title="Approval workflows"
-        description="Build and publish approval logic"
+        description="Design, validate, and publish the approval logic that routes requisitions, invoices, and PO changes."
         actions={
           active ? (
-            <div className="flex items-center gap-2">
-              <select
+            <div className="flex items-center gap-3">
+              <Select
                 value={active.id}
                 disabled={navigationBusy}
                 onChange={(event) => {
                   const next = definitions.find((item) => item.id === event.target.value);
                   if (next) void leaveActiveWorkflow(() => openDefinition(next));
                 }}
-                className="h-8 border border-white/15 bg-black px-2 text-xs text-white"
+                className="w-56"
               >
                 {definitions.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
                   </option>
                 ))}
-              </select>
-              <button
+              </Select>
+              <Button
                 type="button"
+                variant="outline"
                 disabled={navigationBusy}
                 onClick={() => {
                   void leaveActiveWorkflow(() => {
@@ -1261,16 +1272,16 @@ function WorkflowBuilderInner() {
                     setActive(null);
                   });
                 }}
-                className="flex h-8 items-center gap-1.5 border border-white/15 px-2.5 text-[10px] text-zinc-300 hover:text-white disabled:opacity-35"
+                className="gap-2"
               >
-                <Plus className="size-3" /> New
-              </button>
+                <Plus className="h-4 w-4" /> New
+              </Button>
             </div>
           ) : null
         }
       />
       {loading ? (
-        <div className="grid flex-1 place-items-center text-xs text-zinc-600">
+        <div className="grid flex-1 place-items-center text-sm text-muted-foreground">
           Loading workflows
         </div>
       ) : active ? (
@@ -1288,40 +1299,43 @@ function WorkflowBuilderInner() {
         />
       ) : (
         <div className="grid flex-1 place-items-center p-6">
-          <div className="w-full max-w-md border border-white/15 bg-[#070707] p-5 text-white">
-            <h2 className="text-sm font-semibold">New workflow</h2>
+          <div className="w-full max-w-md rounded-lg border border-border/70 bg-card p-6 shadow-sm">
+            <h2 className="text-lg font-semibold tracking-[-0.02em] text-foreground">
+              New workflow
+            </h2>
             <div className="mt-5 grid gap-4">
-              <label className="grid gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
-                Name
-                <input
+              <label className="grid gap-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Name
+                </span>
+                <Input
                   value={createName}
                   onChange={(event) => setCreateName(event.target.value)}
-                  className="h-9 border border-white/15 bg-black px-2.5 text-xs normal-case tracking-normal text-white outline-none focus:border-orange-300"
                 />
               </label>
-              <label className="grid gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
-                Domain
-                <select
+              <label className="grid gap-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Domain
+                </span>
+                <Select
                   value={createDomain}
                   onChange={(event) => setCreateDomain(event.target.value as WorkflowDomain)}
-                  className="h-9 border border-white/15 bg-black px-2.5 text-xs normal-case tracking-normal text-white"
                 >
                   {domains.map((domain) => (
                     <option key={domain.value} value={domain.value}>
                       {domain.label}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
-              {error ? <div className="text-[10px] text-red-300">{error}</div> : null}
-              <button
+              {error ? <div className="text-xs text-destructive">{error}</div> : null}
+              <Button
                 type="button"
                 onClick={() => void createDefinition()}
                 disabled={creating || !createName.trim()}
-                className="h-9 bg-white text-xs font-semibold text-black disabled:opacity-40"
               >
                 {creating ? 'Creating' : 'Create workflow'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
