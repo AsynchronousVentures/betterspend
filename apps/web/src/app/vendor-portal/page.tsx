@@ -123,23 +123,19 @@ function PortalShell({
   onSubmitInvoice?: () => void;
 }) {
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.12),_transparent_32%),linear-gradient(180deg,#f8fafc_0%,#eef4ff_100%)]">
-      <div className="border-b border-slate-900/10 bg-slate-950 text-slate-50 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.75)]">
+    <div className="min-h-screen bg-background">
+      <div className="border-b border-border/70 bg-card">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-6 md:flex-row md:items-center md:justify-between md:px-6">
           <div className="space-y-1">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-200/80">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
               Vendor Portal
             </div>
-            <div className="text-3xl font-semibold tracking-[-0.04em]">
+            <div className="text-[1.75rem] font-semibold tracking-[-0.02em] text-foreground">
               {vendorName ?? 'BetterSpend Supplier Access'}
             </div>
           </div>
           {onSubmitInvoice ? (
-            <Button
-              type="button"
-              onClick={onSubmitInvoice}
-              className="gap-2 bg-sky-500 text-white hover:bg-sky-400"
-            >
+            <Button type="button" onClick={onSubmitInvoice} className="gap-2">
               <ReceiptText className="h-4 w-4" />
               Submit Invoice
             </Button>
@@ -163,13 +159,13 @@ function EmptyPortalState({
   return (
     <PortalShell>
       <div className="flex min-h-[70vh] items-center justify-center">
-        <Card className="w-full max-w-xl rounded-[32px] border-border/70 bg-card/95 shadow-[0_32px_100px_-56px_rgba(15,23,42,0.6)]">
+        <Card className="w-full max-w-xl rounded-[28px] border-border/70 bg-card">
           <CardContent className="flex flex-col items-center gap-5 px-8 py-14 text-center">
-            <div className="flex h-20 w-20 items-center justify-center rounded-[28px] bg-sky-50 text-sky-700">
+            <div className="flex h-20 w-20 items-center justify-center rounded-[28px] bg-ember-50 text-primary">
               {icon}
             </div>
             <div className="space-y-2">
-              <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{title}</h1>
+              <h1 className="text-2xl font-semibold tracking-[-0.03em] text-foreground">{title}</h1>
               <p className="text-sm leading-6 text-muted-foreground">{description}</p>
             </div>
           </CardContent>
@@ -307,11 +303,11 @@ function SubmitInvoiceModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/55 px-4 py-10"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/50 px-4 py-10"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-5xl rounded-[32px] border border-border/70 bg-card p-6 shadow-[0_32px_100px_-56px_rgba(15,23,42,0.7)] md:p-8"
+        className="w-full max-w-5xl rounded-[30px] border border-border/70 bg-card p-6 shadow-[0_30px_90px_-48px_rgba(15,23,42,0.55)] md:p-8"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-6 flex items-start justify-between gap-4">
@@ -752,16 +748,16 @@ function VendorPortalContent() {
           </Alert>
         ) : null}
 
-        <div className="flex flex-wrap gap-2 rounded-[26px] border border-border/70 bg-card/70 p-2 shadow-[0_18px_60px_-38px_rgba(15,23,42,0.35)]">
+        <div className="flex flex-wrap gap-2 rounded-lg border border-border/70 bg-card p-2 shadow-sm">
           {tabs.map((tab) => (
             <button
               key={tab.key}
               type="button"
               onClick={() => setActiveTab(tab.key)}
               className={cn(
-                'rounded-lg px-4 py-2 text-sm font-medium transition-colors',
+                'rounded-md px-4 py-2 text-sm font-medium transition-colors',
                 activeTab === tab.key
-                  ? 'bg-slate-950 text-slate-50 shadow-sm'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
                   : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
               )}
             >
