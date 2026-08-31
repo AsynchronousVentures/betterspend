@@ -136,7 +136,7 @@ export default function PunchoutCatalogPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,#f8fafc_0%,#eef4ff_100%)] px-4">
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="flex items-center gap-3 rounded-full border border-border/70 bg-card/80 px-5 py-3 text-sm text-muted-foreground">
           <LoaderCircle className="h-4 w-4 animate-spin" />
           Loading catalog...
@@ -147,7 +147,7 @@ export default function PunchoutCatalogPage() {
 
   if (!sessionValid) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,#f8fafc_0%,#eef4ff_100%)] px-4">
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <Card className="w-full max-w-xl rounded-[30px] border-border/70 bg-card/95">
           <CardContent className="flex flex-col items-center gap-5 px-8 py-14 text-center">
             <div className="flex h-20 w-20 items-center justify-center rounded-[28px] bg-amber-50 text-amber-700">
@@ -169,7 +169,7 @@ export default function PunchoutCatalogPage() {
 
   if (checkoutResult) {
     return (
-      <div className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef4ff_100%)] px-4 py-10">
+      <div className="min-h-screen bg-background px-4 py-10">
         <div className="mx-auto max-w-3xl">
           <Card className="rounded-[30px] border-border/70 bg-card/95">
             <CardContent className="space-y-6 px-8 py-10">
@@ -208,22 +208,29 @@ export default function PunchoutCatalogPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.12),_transparent_30%),linear-gradient(180deg,#f8fafc_0%,#eef4ff_100%)]">
-      <div className="border-b border-slate-900/10 bg-slate-950 text-slate-50 shadow-[0_24px_80px_-48px_rgba(15,23,42,0.75)]">
+    <div className="min-h-screen bg-background">
+      <div className="border-b border-border/70 bg-card">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-6 md:flex-row md:items-center md:justify-between md:px-6">
           <div className="space-y-1">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-200/80">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
               Punchout Catalog
             </div>
-            <div className="text-3xl font-semibold tracking-[-0.04em]">Vendor Catalog</div>
+            <div className="text-[1.75rem] font-semibold tracking-[-0.02em] text-foreground">
+              Vendor Catalog
+            </div>
           </div>
           <div className="flex items-center gap-3">
             {cart.length > 0 ? (
-              <div className="rounded-full border border-slate-700/80 bg-slate-900/60 px-4 py-2 text-sm text-slate-200">
+              <div className="rounded-full border border-border/70 bg-muted/40 px-4 py-2 text-sm text-muted-foreground">
                 Cart: {cart.length} item{cart.length !== 1 ? 's' : ''} · {cartTotal.toFixed(2)}
               </div>
             ) : null}
-            <Button type="button" onClick={checkout} disabled={cart.length === 0 || checkingOut} className="gap-2 bg-sky-500 text-white hover:bg-sky-400">
+            <Button
+              type="button"
+              onClick={checkout}
+              disabled={cart.length === 0 || checkingOut}
+              className="gap-2"
+            >
               <ShoppingCart className="h-4 w-4" />
               {checkingOut ? 'Checking out...' : `Checkout (${cart.length})`}
             </Button>
@@ -267,7 +274,7 @@ export default function PunchoutCatalogPage() {
                       <Card
                         key={item.id}
                         className={`rounded-lg border-border/70 bg-card/95 ${
-                          inCart ? 'border-sky-300 shadow-[0_18px_52px_-36px_rgba(14,165,233,0.45)]' : ''
+                          inCart ? 'border-primary/60 shadow-md' : ''
                         }`}
                       >
                         <CardContent className="flex h-full flex-col gap-4 p-5">
@@ -286,7 +293,7 @@ export default function PunchoutCatalogPage() {
 
                           <div className="mt-auto flex items-end justify-between gap-4">
                             <div>
-                              <div className="text-lg font-semibold text-emerald-700">
+                              <div className="text-lg font-semibold text-foreground">
                                 {formatPrice(item.unitPrice, item.currency)}
                               </div>
                               <div className="text-xs text-muted-foreground">per {item.unitOfMeasure}</div>
