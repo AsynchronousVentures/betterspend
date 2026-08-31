@@ -15,6 +15,10 @@ const ocrId = '00000000-0000-4000-8000-000000000006';
 const intakeId = '00000000-0000-4000-8000-000000000007';
 const reviewRequiredInvoiceId = '00000000-0000-4000-8000-000000000008';
 const reviewRequiredAlertId = '00000000-0000-4000-8000-000000000009';
+const paidInvoiceId = '00000000-0000-4000-8000-000000000010';
+const paidAlertId = '00000000-0000-4000-8000-000000000011';
+const paidOcrId = '00000000-0000-4000-8000-000000000012';
+const paidIntakeId = '00000000-0000-4000-8000-000000000013';
 
 async function createSourceDatabase(): Promise<PGlite> {
   const database = new PGlite();
@@ -31,6 +35,7 @@ async function createSourceDatabase(): Promise<PGlite> {
       organization_id uuid NOT NULL,
       vendor_id uuid NOT NULL,
       status varchar(30) NOT NULL,
+      paid_at timestamptz,
       match_status varchar(20) NOT NULL,
       created_at timestamptz NOT NULL,
       updated_at timestamptz NOT NULL,
@@ -74,6 +79,12 @@ async function createSourceDatabase(): Promise<PGlite> {
       '${reviewRequiredInvoiceId}', '${organizationId}', '${vendorId}', 'approved', 'matched',
       '2026-08-03T00:00:00Z', '2026-08-04T00:00:00Z'
     );
+    INSERT INTO invoices (
+      id, organization_id, vendor_id, status, paid_at, match_status, created_at, updated_at
+    ) VALUES (
+      '${paidInvoiceId}', '${organizationId}', '${vendorId}', 'approved',
+      '2026-08-05T00:00:00Z', 'exception', '2026-08-05T00:00:00Z', '2026-08-06T00:00:00Z'
+    );
     INSERT INTO spend_guard_alerts (
       id, org_id, alert_type, severity, record_type, record_id, details, status
     ) VALUES (
@@ -86,11 +97,22 @@ async function createSourceDatabase(): Promise<PGlite> {
       '${reviewRequiredAlertId}', '${organizationId}', 'duplicate_invoice', 'medium', 'invoice',
       '${reviewRequiredInvoiceId}', '{}', 'open'
     );
+    INSERT INTO spend_guard_alerts (
+      id, org_id, alert_type, severity, record_type, record_id, details, status
+    ) VALUES (
+      '${paidAlertId}', '${organizationId}', 'duplicate_invoice', 'high', 'invoice',
+      '${paidInvoiceId}', '{}', 'open'
+    );
     INSERT INTO ocr_jobs (id, organization_id, invoice_id, status)
       VALUES ('${ocrId}', '${organizationId}', '${invoiceId}', 'processing');
+    INSERT INTO ocr_jobs (id, organization_id, invoice_id, status)
+      VALUES ('${paidOcrId}', '${organizationId}', '${paidInvoiceId}', 'processing');
     INSERT INTO email_intake_items (
       id, organization_id, created_draft_id, created_draft_type, status
     ) VALUES ('${intakeId}', '${organizationId}', '${invoiceId}', 'invoice', 'pending_review');
+    INSERT INTO email_intake_items (
+      id, organization_id, created_draft_id, created_draft_type, status
+    ) VALUES ('${paidIntakeId}', '${organizationId}', '${paidInvoiceId}', 'invoice', 'pending_review');
   `);
   return database;
 }
@@ -115,6 +137,32 @@ test('invoice review migration backfills active exceptions idempotently without 
     );
     assert.deepEqual(firstCounts.rows, [{ cases: '2', signals: '5' }]);
 
+    const paidCases = await database.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+       FROM invoice_review_cases
+       WHERE invoice_id = '${paidInvoiceId}'`,
+    );
+    assert.deepEqual(paidCases.rows, [{ count: '0' }]);
+
+    await database.exec(`
+      UPDATE invoice_review_cases
+      SET state = 'in_review', resolved_at = NULL, updated_at = '2026-08-09T00:00:00Z'
+      WHERE invoice_id = '${invoiceId}';
+      UPDATE invoice_review_cases
+      SET resolved_at = '2026-08-07T00:00:00Z', updated_at = '2026-08-08T00:00:00Z'
+      WHERE invoice_id = '${reviewRequiredInvoiceId}';
+    `);
+    const stateBeforeRerun = await database.query<{
+      invoiceId: string;
+      state: string;
+      resolvedAt: Date | null;
+      updatedAt: Date;
+    }>(
+      `SELECT invoice_id AS "invoiceId", state, resolved_at AS "resolvedAt", updated_at AS "updatedAt"
+       FROM invoice_review_cases
+       ORDER BY invoice_id`,
+    );
+
     await database.exec(backfill);
 
     const secondCounts = await database.query<{ cases: string; signals: string }>(
@@ -123,6 +171,17 @@ test('invoice review migration backfills active exceptions idempotently without 
          (SELECT count(*)::text FROM invoice_review_signals) AS signals`,
     );
     assert.deepEqual(secondCounts.rows, firstCounts.rows);
+    const stateAfterRerun = await database.query<{
+      invoiceId: string;
+      state: string;
+      resolvedAt: Date | null;
+      updatedAt: Date;
+    }>(
+      `SELECT invoice_id AS "invoiceId", state, resolved_at AS "resolvedAt", updated_at AS "updatedAt"
+       FROM invoice_review_cases
+       ORDER BY invoice_id`,
+    );
+    assert.deepEqual(stateAfterRerun.rows, stateBeforeRerun.rows);
     assert.deepEqual(invoiceBeforeRerun.rows, [{ status: 'approved', matchStatus: 'exception' }]);
 
     const state = await database.query<{ invoiceId: string; state: string; blocking: string }>(
@@ -137,9 +196,26 @@ test('invoice review migration backfills active exceptions idempotently without 
        ORDER BY invoice_id`,
     );
     assert.deepEqual(state.rows, [
-      { invoiceId, state: 'open', blocking: '4' },
+      { invoiceId, state: 'in_review', blocking: '4' },
       { invoiceId: reviewRequiredInvoiceId, state: 'resolved', blocking: '0' },
     ]);
+
+    await database.exec(`
+      INSERT INTO invoice_review_cases (
+        organization_id, invoice_id, state, opened_at, created_at, updated_at
+      ) VALUES (
+        '${organizationId}', '${paidInvoiceId}', 'open',
+        '2026-08-05T00:00:00Z', '2026-08-05T00:00:00Z', '2026-08-05T00:00:00Z'
+      );
+    `);
+    await database.exec(backfill);
+    const paidSignals = await database.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+       FROM invoice_review_signals AS signal
+       JOIN invoice_review_cases AS review_case ON review_case.id = signal.case_id
+       WHERE review_case.invoice_id = '${paidInvoiceId}'`,
+    );
+    assert.deepEqual(paidSignals.rows, [{ count: '0' }]);
 
     const foreignKeys = await database.query<{ name: string }>(
       `SELECT conname AS name

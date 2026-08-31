@@ -67,7 +67,8 @@ SELECT
 	now(),
 	now()
 FROM "invoices" AS i
-WHERE i."status" NOT IN ('paid', 'cancelled')
+WHERE i."paid_at" IS NULL
+	AND i."status" NOT IN ('paid', 'cancelled')
 	AND (
 		i."match_status" = 'exception'
 		OR EXISTS (
@@ -120,7 +121,9 @@ SELECT
 FROM "invoices" AS i
 JOIN "invoice_review_cases" AS c
 	ON c."organization_id" = i."organization_id" AND c."invoice_id" = i."id"
-WHERE i."status" NOT IN ('paid', 'cancelled') AND i."match_status" = 'exception'
+WHERE i."paid_at" IS NULL
+	AND i."status" NOT IN ('paid', 'cancelled')
+	AND i."match_status" = 'exception'
 ON CONFLICT ("case_id", "signal_type", "source_module", "source_record_id") DO NOTHING;
 --> statement-breakpoint
 INSERT INTO "invoice_review_signals" (
@@ -151,6 +154,7 @@ JOIN "invoices" AS i
 	ON i."organization_id" = alert."org_id" AND i."id" = alert."record_id"
 WHERE alert."record_type" = 'invoice'
 	AND alert."status" = 'open'
+	AND i."paid_at" IS NULL
 	AND i."status" NOT IN ('paid', 'cancelled')
 ON CONFLICT ("case_id", "signal_type", "source_module", "source_record_id") DO NOTHING;
 --> statement-breakpoint
@@ -182,6 +186,7 @@ JOIN "invoices" AS i
 	ON i."organization_id" = ocr."organization_id" AND i."id" = ocr."invoice_id"
 WHERE ocr."invoice_id" IS NOT NULL
 	AND ocr."status" IN ('pending', 'processing')
+	AND i."paid_at" IS NULL
 	AND i."status" NOT IN ('paid', 'cancelled')
 ON CONFLICT ("case_id", "signal_type", "source_module", "source_record_id") DO NOTHING;
 --> statement-breakpoint
@@ -214,30 +219,37 @@ JOIN "invoices" AS i
 WHERE intake."created_draft_id" IS NOT NULL
 	AND intake."created_draft_type" = 'invoice'
 	AND intake."status" NOT IN ('discarded', 'converted')
+	AND i."paid_at" IS NULL
 	AND i."status" NOT IN ('paid', 'cancelled')
 ON CONFLICT ("case_id", "signal_type", "source_module", "source_record_id") DO NOTHING;
 --> statement-breakpoint
+WITH desired_states AS (
+	SELECT
+		c."id",
+		c."organization_id",
+		CASE WHEN EXISTS (
+			SELECT 1
+			FROM "invoice_review_signals" AS signal
+			WHERE signal."case_id" = c."id"
+				AND signal."organization_id" = c."organization_id"
+				AND signal."status" = 'open'
+				AND signal."severity" = 'blocking'
+		) THEN 'open' ELSE 'resolved' END AS "state"
+	FROM "invoice_review_cases" AS c
+	WHERE c."state" IN ('open', 'resolved')
+		AND EXISTS (
+			SELECT 1
+			FROM "invoice_review_signals" AS signal
+			WHERE signal."case_id" = c."id"
+				AND signal."organization_id" = c."organization_id"
+		)
+)
 UPDATE "invoice_review_cases" AS c
 SET
-	"state" = CASE WHEN EXISTS (
-		SELECT 1
-		FROM "invoice_review_signals" AS signal
-		WHERE signal."case_id" = c."id"
-			AND signal."organization_id" = c."organization_id"
-			AND signal."status" = 'open'
-			AND signal."severity" = 'blocking'
-	) THEN 'open' ELSE 'resolved' END,
-	"resolved_at" = CASE WHEN EXISTS (
-		SELECT 1
-		FROM "invoice_review_signals" AS signal
-		WHERE signal."case_id" = c."id"
-			AND signal."organization_id" = c."organization_id"
-			AND signal."status" = 'open'
-			AND signal."severity" = 'blocking'
-	) THEN NULL ELSE now() END,
+	"state" = desired."state",
+	"resolved_at" = CASE WHEN desired."state" = 'resolved' THEN now() ELSE NULL END,
 	"updated_at" = now()
-WHERE EXISTS (
-	SELECT 1
-	FROM "invoice_review_signals" AS signal
-	WHERE signal."case_id" = c."id" AND signal."organization_id" = c."organization_id"
-);
+FROM desired_states AS desired
+WHERE c."id" = desired."id"
+	AND c."organization_id" = desired."organization_id"
+	AND c."state" <> desired."state";

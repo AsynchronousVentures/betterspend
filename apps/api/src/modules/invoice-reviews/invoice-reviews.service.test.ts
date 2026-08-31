@@ -313,6 +313,9 @@ test('queue returns bounded invoice summaries and a stable cursor', async () => 
         status: 'active',
       },
       entity: null,
+      oldestUnresolvedSignalAt: openedAt,
+      unresolvedSignalCount: 2,
+      blockingSignalCount: 1,
     },
     {
       reviewCase: {
@@ -347,6 +350,9 @@ test('queue returns bounded invoice summaries and a stable cursor', async () => 
         status: 'active',
       },
       entity: null,
+      oldestUnresolvedSignalAt: new Date('2026-08-02T00:00:00Z'),
+      unresolvedSignalCount: 1,
+      blockingSignalCount: 1,
     },
   ];
   const builder = {
@@ -359,18 +365,6 @@ test('queue returns bounded invoice summaries and a stable cursor', async () => 
   };
   const db = {
     select: () => builder,
-    query: {
-      invoiceReviewSignals: {
-        findMany: async () => [
-          {
-            caseId: rows[0].reviewCase.id,
-            severity: 'blocking',
-            status: 'open',
-            firstSeenAt: openedAt,
-          },
-        ],
-      },
-    },
   } as unknown as Db;
 
   const result = await new InvoiceReviewsService(db).listCases(organizationId, { limit: 1 });
@@ -378,8 +372,26 @@ test('queue returns bounded invoice summaries and a stable cursor', async () => 
   assert.equal(result.items.length, 1);
   assert.equal(result.items[0]?.invoice.internalNumber, 'INV-2026-0001');
   assert.equal(result.items[0]?.case.blockingSignalCount, 1);
-  assert.equal(result.items[0]?.case.unresolvedSignalCount, 1);
+  assert.equal(result.items[0]?.case.unresolvedSignalCount, 2);
+  assert.deepEqual(result.items[0]?.case.oldestUnresolvedSignalAt, openedAt);
   assert.ok(result.nextCursor);
+});
+
+test('queue rejects a cursor whose case id is not a UUID before querying', async () => {
+  const cursor = Buffer.from(
+    JSON.stringify({ sort: 'oldest_signal', value: null, id: 'not-a-uuid' }),
+    'utf8',
+  ).toString('base64url');
+  const db = {
+    select: () => {
+      throw new Error('invalid cursors must not reach the database');
+    },
+  } as unknown as Db;
+
+  await assert.rejects(
+    new InvoiceReviewsService(db).listCases(organizationId, { cursor }),
+    /cursor is invalid/,
+  );
 });
 
 test('recordSignal preserves one signal identity across repeated observations', async () => {

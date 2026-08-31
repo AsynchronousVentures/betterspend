@@ -1,5 +1,6 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, asc, eq, gt, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import { z } from 'zod';
 import {
   approvalRequests,
   appendAuditLogIfAbsent,
@@ -206,6 +207,8 @@ interface ReviewCursor {
   id: string;
 }
 
+const reviewCursorIdSchema = z.string().uuid();
+
 interface SignalAuditInput {
   organizationId: string;
   caseId: string;
@@ -271,19 +274,19 @@ function decodeCursor(value: string, expectedSort: ReviewCursor['sort']): Review
     const sort = parsed.sort;
     const cursorValue = parsed.value;
     const id = parsed.id;
+    const parsedId = reviewCursorIdSchema.safeParse(id);
     if (
       (sort !== 'oldest_signal' && sort !== 'due_date') ||
       sort !== expectedSort ||
       (cursorValue !== null && typeof cursorValue !== 'string') ||
-      typeof id !== 'string' ||
-      id.length === 0
+      !parsedId.success
     ) {
       throw new Error('cursor has an invalid shape');
     }
     if (cursorValue !== null && Number.isNaN(new Date(cursorValue).getTime())) {
       throw new Error('cursor contains an invalid date');
     }
-    return { sort, value: cursorValue, id };
+    return { sort, value: cursorValue, id: parsedId.data };
   } catch {
     throw new BadRequestException('cursor is invalid');
   }
@@ -346,6 +349,22 @@ export class InvoiceReviewsService {
         AND ${invoiceReviewSignals.caseId} = ${invoiceReviewCases.id}
         AND ${invoiceReviewSignals.status} = 'open'
         AND ${invoiceReviewSignals.severity} <> 'informational'
+    )`;
+    const unresolvedSignalCountForSummary = sql<number>`(
+      SELECT COUNT(*)::integer
+      FROM ${invoiceReviewSignals}
+      WHERE ${invoiceReviewSignals.organizationId} = ${organizationId}
+        AND ${invoiceReviewSignals.caseId} = ${invoiceReviewCases.id}
+        AND ${invoiceReviewSignals.status} = 'open'
+        AND ${invoiceReviewSignals.severity} <> 'informational'
+    )`;
+    const blockingSignalCountForSummary = sql<number>`(
+      SELECT COUNT(*)::integer
+      FROM ${invoiceReviewSignals}
+      WHERE ${invoiceReviewSignals.organizationId} = ${organizationId}
+        AND ${invoiceReviewSignals.caseId} = ${invoiceReviewCases.id}
+        AND ${invoiceReviewSignals.status} = 'open'
+        AND ${invoiceReviewSignals.severity} = 'blocking'
     )`;
     const conditions: SQL[] = [
       eq(invoiceReviewCases.organizationId, organizationId),
@@ -432,6 +451,8 @@ export class InvoiceReviewsService {
         vendor: vendors,
         entity: legalEntities,
         oldestUnresolvedSignalAt: oldestUnresolvedSignalAtForSort,
+        unresolvedSignalCount: unresolvedSignalCountForSummary,
+        blockingSignalCount: blockingSignalCountForSummary,
       })
       .from(invoiceReviewCases)
       .innerJoin(
@@ -459,56 +480,25 @@ export class InvoiceReviewsService {
       )
       .limit(query.limit + 1);
 
-    const caseIds = rows.map(({ reviewCase }) => reviewCase.id);
-    const signals =
-      caseIds.length === 0
-        ? []
-        : await this.db.query.invoiceReviewSignals.findMany({
-            where: (signal, operators) =>
-              operators.and(
-                operators.eq(signal.organizationId, organizationId),
-                operators.inArray(signal.caseId, caseIds),
-              ),
-            columns: {
-              caseId: true,
-              severity: true,
-              status: true,
-              firstSeenAt: true,
-            },
-          });
-    const signalsByCase = new Map<string, typeof signals>();
-    for (const signal of signals) {
-      const current = signalsByCase.get(signal.caseId) ?? [];
-      current.push(signal);
-      signalsByCase.set(signal.caseId, current);
-    }
-
     const hasMore = rows.length > query.limit;
     const visibleRows = hasMore ? rows.slice(0, query.limit) : rows;
     const items = visibleRows.map(
-      ({ reviewCase, invoice, vendor, entity, oldestUnresolvedSignalAt: sortedOldestSignalAt }) => {
-        const caseSignals = signalsByCase.get(reviewCase.id) ?? [];
-        const unresolvedSignals = caseSignals.filter(
-          (signal) => signal.status === 'open' && signal.severity !== 'informational',
-        );
-        const blockingSignals = caseSignals.filter(
-          (signal) => signal.status === 'open' && signal.severity === 'blocking',
-        );
-        const oldestUnresolvedSignalAt =
-          dateValue(sortedOldestSignalAt ?? null) ??
-          unresolvedSignals.reduce<Date | null>(
-            (oldest, signal) =>
-              oldest === null || signal.firstSeenAt < oldest ? signal.firstSeenAt : oldest,
-            null,
-          );
-
+      ({
+        reviewCase,
+        invoice,
+        vendor,
+        entity,
+        oldestUnresolvedSignalAt,
+        unresolvedSignalCount,
+        blockingSignalCount,
+      }) => {
         return {
           case: {
             ...this.caseView(reviewCase),
             ageDays: daysSince(reviewCase.openedAt),
-            unresolvedSignalCount: unresolvedSignals.length,
-            blockingSignalCount: blockingSignals.length,
-            oldestUnresolvedSignalAt,
+            unresolvedSignalCount,
+            blockingSignalCount,
+            oldestUnresolvedSignalAt: dateValue(oldestUnresolvedSignalAt ?? null),
           },
           invoice: {
             id: invoice.id,
