@@ -7,6 +7,7 @@ import { requisitions, requisitionLines } from './schema/requisitions';
 import { purchaseOrders, poLines, poVersions, blanketReleases } from './schema/purchase-orders';
 import { goodsReceipts, goodsReceiptLines } from './schema/receiving';
 import { invoices, invoiceLines, matchResults } from './schema/invoices';
+import { invoiceReviewCases, invoiceReviewSignals } from './schema/invoice-reviews';
 import { budgets, budgetCommitmentEvents, budgetPeriods } from './schema/budgets';
 import {
   approvalRules,
@@ -551,6 +552,38 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   lines: many(invoiceLines),
   commitmentEvents: many(budgetCommitmentEvents),
   paymentRunInvoices: many(paymentRunInvoices),
+  reviewCases: many(invoiceReviewCases),
+}));
+
+export const invoiceReviewCasesRelations = relations(invoiceReviewCases, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [invoiceReviewCases.organizationId],
+    references: [organizations.id],
+  }),
+  invoice: one(invoices, {
+    fields: [invoiceReviewCases.invoiceId, invoiceReviewCases.organizationId],
+    references: [invoices.id, invoices.organizationId],
+  }),
+  owner: one(users, {
+    fields: [invoiceReviewCases.ownerId, invoiceReviewCases.organizationId],
+    references: [users.id, users.organizationId],
+  }),
+  signals: many(invoiceReviewSignals),
+}));
+
+export const invoiceReviewSignalsRelations = relations(invoiceReviewSignals, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [invoiceReviewSignals.organizationId],
+    references: [organizations.id],
+  }),
+  reviewCase: one(invoiceReviewCases, {
+    fields: [invoiceReviewSignals.caseId, invoiceReviewSignals.organizationId],
+    references: [invoiceReviewCases.id, invoiceReviewCases.organizationId],
+  }),
+  resolutionActor: one(users, {
+    fields: [invoiceReviewSignals.resolutionActorId, invoiceReviewSignals.organizationId],
+    references: [users.id, users.organizationId],
+  }),
 }));
 
 export const invoiceLinesRelations = relations(invoiceLines, ({ one, many }) => ({
