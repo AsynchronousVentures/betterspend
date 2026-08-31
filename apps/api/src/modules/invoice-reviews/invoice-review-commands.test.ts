@@ -406,7 +406,7 @@ test('two simultaneous claims produce one success and one stale-version result',
     ]);
     assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
     const rejected = results.find((result) => result.status === 'rejected');
-    assert.match(String(rejected?.reason), /REVIEW STALE VERSION|INVALID TRANSITION/);
+    assert.match(String(rejected?.reason), /REVIEW STALE VERSION/);
   } finally {
     await database.close();
   }
@@ -442,6 +442,41 @@ test('durable notification intent retries after failure and delivers once', asyn
       `SELECT status, attempts FROM invoice_review_notification_intents WHERE id = '00000000-0000-4000-8000-000000000006'`,
     );
     assert.deepEqual(row.rows, [{ status: 'delivered', attempts: 2 }]);
+  } finally {
+    await database.close();
+  }
+});
+
+test('a failed delivery cannot modify an intent delivered by another worker', async () => {
+  const { database, db } = await createDatabase();
+  try {
+    const intentId = '00000000-0000-4000-8000-000000000006';
+    await database.exec(`
+      INSERT INTO invoice_review_notification_intents (
+        id, organization_id, case_id, recipient_user_id, action, idempotency_key, status
+      ) VALUES (
+        '${intentId}', '${organizationId}',
+        '00000000-0000-4000-8000-000000000005', '${actorId}', 'claim', 'case:3:claim:${actorId}', 'pending'
+      );
+    `);
+    const service = new InvoiceReviewNotificationsService(
+      { add: async () => undefined } as never,
+      db as unknown as Db,
+      {
+        createIdempotent: async () => {
+          await database.exec(
+            `UPDATE invoice_review_notification_intents SET status = 'delivered' WHERE id = '${intentId}'`,
+          );
+          throw new Error('delivery worker lost its lease');
+        },
+      } as never,
+    );
+
+    await assert.rejects(service.deliver(intentId), /delivery worker lost its lease/);
+    const row = await database.query<{ status: string; attempts: number; lastError: string | null }>(
+      `SELECT status, attempts, last_error AS "lastError" FROM invoice_review_notification_intents WHERE id = '${intentId}'`,
+    );
+    assert.deepEqual(row.rows, [{ status: 'delivered', attempts: 0, lastError: null }]);
   } finally {
     await database.close();
   }
@@ -500,9 +535,9 @@ test('notification reconciliation preserves microsecond cursor precision without
       {
         add: async (_name: string, data: { intentId: string }) => {
           queued.push(data.intentId);
-          if (queued.length === 200) {
+          if (queued.length === 100) {
             await database.exec(
-              "UPDATE invoice_review_notification_intents SET status = 'delivered' WHERE status = 'pending'",
+              `UPDATE invoice_review_notification_intents SET status = 'delivered' WHERE id = '${intents[100]?.match(/\('([^']+)'/)?.[1]}'`,
             );
           }
         },
@@ -513,8 +548,8 @@ test('notification reconciliation preserves microsecond cursor precision without
 
     await service.enqueuePending(100);
 
-    assert.equal(queued.length, 101);
-    assert.equal(new Set(queued).size, 101);
+    assert.equal(queued.length, 100);
+    assert.equal(new Set(queued).size, 100);
   } finally {
     await database.close();
   }

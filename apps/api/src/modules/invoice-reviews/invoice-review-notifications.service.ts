@@ -211,7 +211,12 @@ export class InvoiceReviewNotificationsService implements OnModuleInit, OnModule
           lastError: String(error).slice(0, 1_000),
           updatedAt: new Date(),
         })
-        .where(eq(invoiceReviewNotificationIntents.id, intent.id));
+        .where(
+          and(
+            eq(invoiceReviewNotificationIntents.id, intent.id),
+            eq(invoiceReviewNotificationIntents.status, 'pending'),
+          ),
+        );
       throw error;
     }
   }

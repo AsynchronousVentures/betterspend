@@ -1158,7 +1158,7 @@ export class InvoiceReviewsService {
       .update(invoiceReviewCases)
       .set({
         state: nextState,
-        resolvedAt: nextState === 'resolved' ? observedAt : null,
+        resolvedAt: nextState === 'resolved' ? (reviewCase.resolvedAt ?? observedAt) : null,
         updatedAt: observedAt,
         version: sql`${invoiceReviewCases.version} + 1`,
       })

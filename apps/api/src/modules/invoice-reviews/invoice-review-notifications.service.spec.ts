@@ -57,7 +57,7 @@ describe('InvoiceReviewNotificationsService scheduling', () => {
     await expect(service.onModuleInit()).resolves.toBeUndefined();
     expect(queue.add).toHaveBeenCalledTimes(1);
 
-    await (service as unknown as { recoverSchedule(): Promise<void> }).recoverSchedule();
+    await jest.advanceTimersByTimeAsync(60_000);
     expect(queue.add).toHaveBeenCalledTimes(2);
 
     service.onModuleDestroy();

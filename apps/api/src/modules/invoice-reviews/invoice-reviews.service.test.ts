@@ -652,6 +652,12 @@ test('recordSignal preserves one signal identity across repeated observations', 
     status: 'resolved',
     observedAt: new Date('2026-08-03T00:00:00Z'),
   });
+  const resolvedAt = cases[0]?.resolvedAt;
+  await service.recordSignal({
+    ...input,
+    status: 'resolved',
+    observedAt: new Date('2026-08-03T12:00:00Z'),
+  });
   await service.recordSignal({
     ...input,
     status: 'open',
@@ -659,10 +665,11 @@ test('recordSignal preserves one signal identity across repeated observations', 
   });
 
   assert.equal(signals[0]?.status, 'resolved');
-  assert.deepEqual(signals[0]?.lastSeenAt, new Date('2026-08-03T00:00:00Z'));
+  assert.deepEqual(signals[0]?.lastSeenAt, new Date('2026-08-03T12:00:00Z'));
   assert.equal(cases[0]?.state, 'resolved');
-  assert.equal(auditRows.length, 3);
-  assert.equal(auditClaims.length, 3);
+  assert.deepEqual(cases[0]?.resolvedAt, resolvedAt);
+  assert.equal(auditRows.length, 4);
+  assert.equal(auditClaims.length, 4);
 
   failAudit = true;
   await assert.rejects(
@@ -675,6 +682,6 @@ test('recordSignal preserves one signal identity across repeated observations', 
   );
   assert.equal(signals.length, 1);
   assert.equal(cases.length, 1);
-  assert.equal(auditRows.length, 3);
-  assert.equal(auditClaims.length, 3);
+  assert.equal(auditRows.length, 4);
+  assert.equal(auditClaims.length, 4);
 });

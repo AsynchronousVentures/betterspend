@@ -333,7 +333,7 @@ export class InvoiceReviewCommands {
       .set({
         ownerId,
         state,
-        resolvedAt: state === 'resolved' ? now : null,
+        resolvedAt: state === 'resolved' ? (reviewCase.resolvedAt ?? now) : null,
         version: sql`${invoiceReviewCases.version} + 1`,
         updatedAt: now,
       })
