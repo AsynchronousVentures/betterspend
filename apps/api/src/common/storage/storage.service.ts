@@ -13,6 +13,13 @@ import {
 import type { LifecycleRule } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
+export class StorageObjectTooLargeError extends Error {
+  constructor(readonly maxBytes: number) {
+    super(`Storage object exceeds the ${maxBytes}-byte limit`);
+    this.name = 'StorageObjectTooLargeError';
+  }
+}
+
 @Injectable()
 export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
@@ -83,19 +90,29 @@ export class StorageService implements OnModuleInit {
     return getSignedUrl(this.publicClient, command, { expiresIn });
   }
 
-  async getBuffer(key: string): Promise<Buffer> {
+  async getBuffer(key: string, maxBytes?: number): Promise<Buffer> {
     const response = await this.client.send(
       new GetObjectCommand({ Bucket: this.bucket, Key: key }),
     );
     const body = response.Body;
     if (!body) return Buffer.alloc(0);
-    if ('transformToByteArray' in body && typeof body.transformToByteArray === 'function') {
+    if (
+      maxBytes === undefined &&
+      'transformToByteArray' in body &&
+      typeof body.transformToByteArray === 'function'
+    ) {
       return Buffer.from(await body.transformToByteArray());
     }
 
     const chunks: Buffer[] = [];
+    let totalBytes = 0;
     for await (const chunk of body as AsyncIterable<Buffer | Uint8Array | string>) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const chunkBuffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += chunkBuffer.length;
+      if (maxBytes !== undefined && totalBytes > maxBytes) {
+        throw new StorageObjectTooLargeError(maxBytes);
+      }
+      chunks.push(chunkBuffer);
     }
     return Buffer.concat(chunks);
   }

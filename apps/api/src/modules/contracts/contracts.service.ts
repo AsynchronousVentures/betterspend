@@ -7,6 +7,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { eq, and, inArray, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import {
@@ -36,9 +37,39 @@ import {
   scopedVendorPredicate,
 } from '../auth/operational-access';
 import { canViewRelatedRecord } from '../auth/related-record-access';
+import {
+  CONTRACT_DOCUMENT_MAX_BYTES,
+  CONTRACT_DOCUMENT_EXTRACTOR,
+  ContractDocumentExtractionError,
+  createContractDocumentProvenance,
+  resolveDocumentSourceReference,
+  sha256DocumentContent,
+  type ContractDocumentExtractor,
+  type ContractDocumentText,
+} from './contract-document-extractor';
 
 type RiskLevel = 'low' | 'medium' | 'high';
 type ContractTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
+type SourceReferenceResolver = (candidateText: string, fallback: string) => string;
+
+const contractExtractionReviewFieldsSchema = z
+  .object({
+    paymentTerms: z.string().trim().min(1).max(100).nullable().optional(),
+    renewalNoticeDays: z.number().int().min(0).max(3_650).nullable().optional(),
+    autoRenew: z.boolean().optional(),
+    governingLaw: z.string().trim().min(1).max(500).nullable().optional(),
+    liabilityCap: z.string().trim().min(1).max(2_000).nullable().optional(),
+    priceEscalationPercent: z.number().finite().min(0).max(100_000).nullable().optional(),
+  })
+  .strict();
+
+const processContractIntelligenceSchema = z
+  .object({
+    documentId: z.string().uuid().optional(),
+    documentText: z.string().optional(),
+    sourceName: z.string().optional(),
+  })
+  .strict();
 
 interface ExtractedClause {
   clauseType: string;
@@ -69,6 +100,9 @@ export class ContractsService {
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
     private readonly documentsService: DocumentsService,
+    @Inject(CONTRACT_DOCUMENT_EXTRACTOR)
+    @Optional()
+    private readonly contractDocumentExtractor?: ContractDocumentExtractor,
     @Optional()
     private readonly contractObligationReminderService?: ContractObligationReminderService,
   ) {}
@@ -403,48 +437,92 @@ export class ContractsService {
     contractId: string,
     organizationId: string,
     userId: string,
-    input: { documentId?: string; documentText?: string; sourceName?: string },
+    rawInput: unknown,
     access?: AccessPolicy,
   ) {
+    const parsedInput = processContractIntelligenceSchema.safeParse(rawInput);
+    if (!parsedInput.success) {
+      throw new BadRequestException('Invalid contract intelligence input');
+    }
+    const input = parsedInput.data;
     const contract = await this.findOne(contractId, organizationId, access, 'contracts:manage');
+    const documentId = input.documentId?.trim();
     let sourceName = input.sourceName?.trim() || 'Contract terms';
     let sourceType = 'terms';
+    let extractedDocument: ContractDocumentText | undefined;
+    let documentContentSha256: string | undefined;
 
-    if (input.documentId) {
-      const document = await this.db.query.documents.findFirst({
-        where: (doc, { and, eq }) =>
-          and(
-            eq(doc.id, input.documentId!),
-            eq(doc.organizationId, organizationId),
-            eq(doc.entityType, 'contract'),
-            eq(doc.entityId, contractId),
-          ),
-      });
-      if (!document)
-        throw new NotFoundException(`Document ${input.documentId} not found for this contract`);
-      sourceName = document.filename;
+    if (documentId) {
+      if (input.documentText?.trim()) {
+        throw new BadRequestException('documentId and documentText cannot be used together');
+      }
+      const content = await this.documentsService.getDocumentContent(
+        organizationId,
+        documentId,
+        { entityType: 'contract', entityId: contractId },
+        CONTRACT_DOCUMENT_MAX_BYTES,
+      );
+      if (
+        content.document.organizationId !== organizationId ||
+        content.document.entityType !== 'contract' ||
+        content.document.entityId !== contractId
+      ) {
+        throw new NotFoundException(`Document ${documentId} not found for this contract`);
+      }
+      if (!this.contractDocumentExtractor) {
+        throw new BadRequestException('Selected contract document cannot be extracted');
+      }
+
+      try {
+        extractedDocument = await this.contractDocumentExtractor.extract({
+          buffer: content.buffer,
+          contentType: content.document.contentType,
+          filename: content.document.filename,
+        });
+        documentContentSha256 = sha256DocumentContent(content.buffer);
+      } catch (error: unknown) {
+        this.throwDocumentExtractionError(error);
+      }
+
+      sourceName = content.document.filename;
       sourceType = 'document';
     }
 
-    const uploadedText =
-      input.documentId && !input.documentText
-        ? await this.documentsService.getTextContent(organizationId, input.documentId)
-        : null;
-    const extractedText = (
-      input.documentText?.trim() ||
-      uploadedText ||
-      contract.terms ||
-      contract.internalNotes ||
-      contract.description ||
-      ''
-    ).trim();
+    const extractedText = documentId
+      ? (extractedDocument?.text.trim() ?? '')
+      : (
+          input.documentText?.trim() ||
+          contract.terms ||
+          contract.internalNotes ||
+          contract.description ||
+          ''
+        ).trim();
     if (!extractedText) {
       throw new BadRequestException(
-        'Provide documentText or add contract terms before running extraction',
+        documentId
+          ? 'Selected contract document contains no extractable text'
+          : 'Provide documentText or add contract terms before running extraction',
       );
     }
 
-    const extracted = this.extractContractIntelligence(extractedText, contract);
+    const extracted = this.extractContractIntelligence(
+      extractedText,
+      contract,
+      extractedDocument,
+      documentId,
+    );
+    const extractedFields = {
+      ...extracted.fields,
+      ...(documentId && extractedDocument && documentContentSha256
+        ? {
+            provenance: createContractDocumentProvenance(
+              documentId,
+              documentContentSha256,
+              extractedDocument,
+            ),
+          }
+        : {}),
+    };
     const persisted = await this.db.transaction(async (tx) => {
       const lockedContract = await this.lockManagedContract(tx, contractId, organizationId, access);
       const obligationOwnerId = lockedContract.ownerId ?? lockedContract.createdBy;
@@ -454,11 +532,11 @@ export class ContractsService {
         .values({
           organizationId,
           contractId,
-          documentId: input.documentId,
+          documentId,
           sourceType,
           sourceName,
           extractedText,
-          extractedFields: extracted.fields,
+          extractedFields,
           confidence: extracted.confidence.toFixed(4),
           status: 'pending_review',
           createdBy: userId,
@@ -552,6 +630,7 @@ export class ContractsService {
           ),
         );
       if (!extraction) throw new NotFoundException(`Contract extraction ${extractionId} not found`);
+      const reviewedFields = mergeExtractionReviewFields(extraction.extractedFields, input.fields);
 
       const reviewedAt = new Date();
       await tx
@@ -561,7 +640,7 @@ export class ContractsService {
           reviewedBy: userId,
           reviewedAt,
           updatedAt: reviewedAt,
-          extractedFields: { ...(extraction.extractedFields ?? {}), ...(input.fields ?? {}) },
+          extractedFields: reviewedFields,
         })
         .where(
           and(
@@ -582,8 +661,7 @@ export class ContractsService {
         );
 
       if (input.decision === 'approved') {
-        const fields = { ...(extraction.extractedFields ?? {}), ...(input.fields ?? {}) };
-        const authoritative = this.authoritativeContractUpdates(fields);
+        const authoritative = this.authoritativeContractUpdates(reviewedFields);
         if (Object.keys(authoritative).length > 0) {
           await tx
             .update(contracts)
@@ -766,10 +844,21 @@ export class ContractsService {
     };
   }
 
-  private extractContractIntelligence(text: string, contract: any) {
+  private extractContractIntelligence(
+    text: string,
+    contract: any,
+    document?: ContractDocumentText,
+    documentId?: string,
+  ) {
     const fields = this.extractFields(text);
-    const clauses = this.extractClauses(text, contract, fields);
-    const obligations = this.extractObligations(text, contract, fields, clauses);
+    const sourceReference: SourceReferenceResolver = (candidateText, fallback) =>
+      document && documentId
+        ? candidateText
+          ? resolveDocumentSourceReference(documentId, document, candidateText)
+          : `document:${documentId}#absent:${fallback}`
+        : fallback;
+    const clauses = this.extractClauses(text, contract, fields, sourceReference);
+    const obligations = this.extractObligations(text, contract, fields, clauses, sourceReference);
     const riskScore = clauses.reduce(
       (score, clause) =>
         score + (clause.riskLevel === 'high' ? 3 : clause.riskLevel === 'medium' ? 1 : 0),
@@ -812,6 +901,7 @@ export class ContractsService {
     text: string,
     contract: any,
     fields: Record<string, any>,
+    sourceReference: SourceReferenceResolver,
   ): ExtractedClause[] {
     const clauses: ExtractedClause[] = [];
     const autoRenewal = this.findSection(
@@ -833,7 +923,7 @@ export class ContractsService {
             ? 'Notice window is shorter than 60 days.'
             : 'Auto-renewal should be reviewed for notice obligations.',
         confidence: 0.82,
-        sourceReference: 'terms:auto_renewal',
+        sourceReference: sourceReference(autoRenewal, 'terms:auto_renewal'),
       });
     }
 
@@ -854,7 +944,7 @@ export class ContractsService {
             ? 'No clear liability cap was extracted.'
             : 'Liability cap should be confirmed.',
         confidence: 0.78,
-        sourceReference: 'terms:liability',
+        sourceReference: sourceReference(liability, 'terms:liability'),
       });
     }
 
@@ -873,7 +963,7 @@ export class ContractsService {
             ? 'Escalation exceeds 5%.'
             : 'Price increase rights should be reviewed before renewal or PO issuance.',
         confidence: 0.73,
-        sourceReference: 'terms:price_escalation',
+        sourceReference: sourceReference(priceEscalation, 'terms:price_escalation'),
       });
     }
 
@@ -892,7 +982,7 @@ export class ContractsService {
           ? undefined
           : 'Missing or unclear termination-for-convenience language.',
         confidence: 0.76,
-        sourceReference: 'terms:termination',
+        sourceReference: sourceReference(termination, 'terms:termination'),
       });
     }
 
@@ -908,7 +998,7 @@ export class ContractsService {
         normalizedSummary: 'Data security, privacy, or confidentiality terms detected.',
         riskLevel: 'low',
         confidence: 0.7,
-        sourceReference: 'terms:data_security',
+        sourceReference: sourceReference(security, 'terms:data_security'),
       });
     } else if (
       contract.type === 'software' ||
@@ -922,7 +1012,7 @@ export class ContractsService {
         riskLevel: 'high',
         riskReason: 'Software and SaaS contracts should include data/security terms.',
         confidence: 0.62,
-        sourceReference: 'terms:data_security_missing',
+        sourceReference: sourceReference('', 'terms:data_security_missing'),
       });
     }
 
@@ -939,7 +1029,7 @@ export class ContractsService {
         riskLevel: netDays && netDays > 60 ? 'medium' : 'low',
         riskReason: netDays && netDays > 60 ? 'Payment term is longer than Net 60.' : undefined,
         confidence: 0.74,
-        sourceReference: 'terms:payment_terms',
+        sourceReference: sourceReference(payment, 'terms:payment_terms'),
       });
     }
 
@@ -952,7 +1042,7 @@ export class ContractsService {
         normalizedSummary: 'Audit or records-inspection rights detected.',
         riskLevel: 'low',
         confidence: 0.69,
-        sourceReference: 'terms:audit_rights',
+        sourceReference: sourceReference(auditRights, 'terms:audit_rights'),
       });
     }
 
@@ -964,6 +1054,7 @@ export class ContractsService {
     contract: any,
     fields: Record<string, any>,
     clauses: ExtractedClause[],
+    sourceReference: SourceReferenceResolver,
   ): ExtractedObligation[] {
     const obligations: ExtractedObligation[] = [];
     const noticeDays = Number(fields.renewalNoticeDays ?? contract.renewalNoticeDays ?? 0);
@@ -979,12 +1070,20 @@ export class ContractsService {
         dueDate,
         recurrence: contract.autoRenew ? 'annual' : undefined,
         notificationLeadDays: Math.min(60, Math.max(14, noticeDays)),
-        sourceReference: 'terms:auto_renewal',
+        sourceReference: sourceReference(
+          clauses.find((clause) => clause.clauseType === 'auto_renewal')?.extractedText ??
+            'renewal notice',
+          'terms:auto_renewal',
+        ),
         sourceClauseType: 'auto_renewal',
       });
     }
 
-    if (/\binsurance certificate|certificate of insurance|coi\b/i.test(text)) {
+    const insurance = this.findSection(
+      text,
+      /insurance certificate|certificate of insurance|\bcoi\b/i,
+    );
+    if (insurance) {
       obligations.push({
         obligationType: 'insurance_certificate',
         title: 'Insurance certificate review',
@@ -992,7 +1091,7 @@ export class ContractsService {
         dueDate: endDate ?? undefined,
         recurrence: 'annual',
         notificationLeadDays: 30,
-        sourceReference: 'terms:insurance',
+        sourceReference: sourceReference(insurance, 'terms:insurance'),
       });
     }
 
@@ -1004,12 +1103,31 @@ export class ContractsService {
         dueDate: endDate ?? undefined,
         recurrence: 'annual',
         notificationLeadDays: 45,
-        sourceReference: 'terms:data_security',
+        sourceReference: sourceReference(
+          clauses.find((clause) => clause.clauseType === 'data_security')?.extractedText ??
+            'data security',
+          'terms:data_security',
+        ),
         sourceClauseType: 'data_security',
       });
     }
 
     return obligations;
+  }
+
+  private throwDocumentExtractionError(error: unknown): never {
+    const code = error instanceof ContractDocumentExtractionError ? error.code : undefined;
+    const message =
+      code === 'encrypted'
+        ? 'Selected contract document is encrypted and cannot be extracted'
+        : code === 'unsupported'
+          ? 'Selected contract document format is not supported for extraction'
+          : code === 'too_large' || code === 'limit_exceeded'
+            ? 'Selected contract document exceeds extraction limits'
+            : code === 'empty'
+              ? 'Selected contract document contains no extractable text'
+              : 'Selected contract document could not be parsed';
+    throw new BadRequestException(message);
   }
 
   private findSection(text: string, pattern: RegExp) {
@@ -1035,8 +1153,8 @@ export class ContractsService {
     if (typeof fields.autoRenew === 'boolean') {
       updates.autoRenew = fields.autoRenew;
     }
-    if (Number.isFinite(Number(fields.renewalNoticeDays))) {
-      updates.renewalNoticeDays = Number(fields.renewalNoticeDays);
+    if (typeof fields.renewalNoticeDays === 'number' && Number.isFinite(fields.renewalNoticeDays)) {
+      updates.renewalNoticeDays = fields.renewalNoticeDays;
     }
     return updates;
   }
@@ -1154,4 +1272,15 @@ export class ContractsService {
       throw new ForbiddenException('The contract vendor is outside your assigned scope');
     }
   }
+}
+
+function mergeExtractionReviewFields(
+  extractedFields: Record<string, unknown> | null | undefined,
+  reviewFields: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const parsed = contractExtractionReviewFieldsSchema.safeParse(reviewFields ?? {});
+  if (!parsed.success) {
+    throw new BadRequestException('Unsupported extraction review fields');
+  }
+  return { ...(extractedFields ?? {}), ...parsed.data };
 }
