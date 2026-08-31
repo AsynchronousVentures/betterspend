@@ -11,7 +11,6 @@ import {
   Link2,
   RefreshCw,
   Search,
-  Unlink,
 } from 'lucide-react';
 import { api, loadFailureState } from '../../lib/api';
 import { useAccess } from '../../components/access-provider';
@@ -311,21 +310,23 @@ export function QboMappingWorkbench() {
   }
 
   return (
-    <div className="border border-border/70 bg-black text-white">
-      <header className="flex flex-col gap-5 border-b border-white/10 px-5 py-5 lg:flex-row lg:items-end lg:justify-between lg:px-7">
+    <div className="overflow-hidden rounded-lg border border-border/70 bg-card text-foreground shadow-sm">
+      <header className="flex flex-col gap-5 border-b border-border/70 bg-muted/30 px-5 py-5 lg:flex-row lg:items-end lg:justify-between lg:px-7">
         <div>
-          <p className="text-xs font-semibold text-primary">QuickBooks Online</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+            QuickBooks Online
+          </p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em] text-foreground">
             {totalOpen} mapping {totalOpen === 1 ? 'issue' : 'issues'}
           </h2>
-          <div className="mt-3 flex flex-wrap items-center gap-5 text-xs text-zinc-500">
+          <div className="mt-3 flex flex-wrap items-center gap-5 text-xs text-muted-foreground">
             <span
               className={cn(
                 'inline-flex items-center gap-2',
-                data.qboConnected && 'text-emerald-400',
+                data.qboConnected && 'text-success',
               )}
             >
-              <span className="size-1.5 bg-current" />
+              <span className="size-1.5 rounded-full bg-current" />
               {data.qboConnected ? 'Connected' : 'Not connected'}
             </span>
             {data.qboRealmId ? <span>Realm {data.qboRealmId}</span> : null}
@@ -363,7 +364,7 @@ export function QboMappingWorkbench() {
         </Alert>
       ) : null}
       {!canManage ? (
-        <div className="border-b border-white/10 px-5 py-3 text-xs text-zinc-400">
+        <div className="border-b border-border/70 bg-muted/20 px-5 py-3 text-xs text-muted-foreground">
           You have read-only access. Export permission is required to change mappings.
         </div>
       ) : null}
@@ -371,7 +372,7 @@ export function QboMappingWorkbench() {
       <div className="grid min-h-[660px] xl:grid-cols-[190px_minmax(480px,1fr)_320px]">
         <nav
           aria-label="Mapping type"
-          className="border-b border-white/10 p-3 xl:border-r xl:border-b-0"
+          className="border-b border-border/70 bg-muted/20 p-3 xl:border-r xl:border-b-0"
         >
           <div className="grid grid-cols-2 gap-1 sm:grid-cols-4 xl:grid-cols-1">
             {SECTIONS.map((key) => {
@@ -390,19 +391,19 @@ export function QboMappingWorkbench() {
                     setCatalogQuery('');
                   }}
                   className={cn(
-                    'flex h-11 items-center justify-between border-l-2 px-3 text-left text-sm',
+                    'flex h-11 items-center justify-between rounded-md border-l-2 px-3 text-left text-sm transition-colors',
                     section === key
-                      ? 'border-primary bg-white/[0.06] text-white'
-                      : 'border-transparent text-zinc-400 hover:bg-white/[0.03] hover:text-white',
+                      ? 'border-primary bg-primary/5 text-foreground'
+                      : 'border-transparent text-muted-foreground hover:bg-muted hover:text-foreground',
                   )}
                 >
                   <span>{SECTION_META[key].label}</span>
                   {key === 'accounts' ? (
-                    <span className="font-mono text-[10px] text-zinc-600">CATALOG</span>
+                    <span className="font-mono text-[10px] text-muted-foreground">CATALOG</span>
                   ) : count ? (
-                    <span className="font-mono text-xs text-amber-300">{count}</span>
+                    <span className="font-mono text-xs text-amber-700">{count}</span>
                   ) : (
-                    <Check className="size-3.5 text-emerald-400" />
+                    <Check className="size-3.5 text-success" />
                   )}
                 </button>
               );
@@ -410,14 +411,14 @@ export function QboMappingWorkbench() {
           </div>
         </nav>
 
-        <main className="min-w-0 border-b border-white/10 xl:border-r xl:border-b-0">
-          <div className="border-b border-white/10 px-5 py-5">
-            <h3 className="text-lg font-semibold">
+        <main className="min-w-0 border-b border-border/70 xl:border-r xl:border-b-0">
+          <div className="border-b border-border/70 px-5 py-5">
+            <h3 className="text-lg font-semibold tracking-[-0.02em] text-foreground">
               {SECTION_META[section].localLabel}{' '}
-              <span className="font-normal text-zinc-600">to</span>{' '}
+              <span className="font-normal text-muted-foreground">to</span>{' '}
               {SECTION_META[section].externalLabel}
             </h3>
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="mt-1 text-xs text-muted-foreground">
               {sectionMappings.filter((mapping) => mapping.isActive && !mapping.isDeleted).length}{' '}
               records synced from QuickBooks
             </p>
@@ -448,10 +449,10 @@ export function QboMappingWorkbench() {
           )}
         </main>
 
-        <aside className="p-5">
+        <aside className="bg-muted/10 p-5">
           {section === 'accounts' ? (
-            <div className="text-xs leading-5 text-zinc-500">
-              <h3 className="text-sm font-semibold text-white">Catalog only</h3>
+            <div className="text-xs leading-5 text-muted-foreground">
+              <h3 className="text-sm font-semibold text-foreground">Catalog only</h3>
               <p className="mt-3">
                 BetterSpend does not yet have local GL account records to link. The synced chart of
                 accounts remains available here for review.
@@ -468,7 +469,7 @@ export function QboMappingWorkbench() {
               onLink={(mapping) => void link(mapping, selected)}
             />
           ) : (
-            <p className="text-sm text-zinc-600">
+            <p className="text-sm text-muted-foreground">
               Select a local record to browse QuickBooks matches.
             </p>
           )}
@@ -499,29 +500,31 @@ function MappingList({
 }) {
   return (
     <div>
-      <div className="flex items-center justify-between border-b border-white/10 bg-amber-400/[0.05] px-5 py-3 text-xs">
-        <span className="inline-flex items-center gap-2 text-amber-200">
+      <div className="flex items-center justify-between border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs">
+        <span className="inline-flex items-center gap-2 text-amber-800">
           <AlertTriangle className="size-4" /> {unresolved.length} need attention
         </span>
-        <span className="text-zinc-600">Review before the next export</span>
+        <span className="text-amber-700/80">Review before the next export</span>
       </div>
       <section aria-labelledby="unresolved-heading">
         <h4
           id="unresolved-heading"
-          className="px-5 py-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600"
+          className="px-5 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
         >
           Unresolved
         </h4>
-        <div className="divide-y divide-white/[0.07] border-y border-white/10">
+        <div className="divide-y divide-border/60 border-y border-border/70">
           {unresolved.length === 0 ? (
-            <p className="px-5 py-5 text-sm text-zinc-500">Everything in this section is linked.</p>
+            <p className="px-5 py-5 text-sm text-muted-foreground">
+              Everything in this section is linked.
+            </p>
           ) : (
             unresolved.map((row) => (
               <div
                 key={row.id}
                 className={cn(
                   'grid gap-3 px-5 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center',
-                  selectedId === row.id ? 'bg-white/[0.055]' : 'hover:bg-white/[0.025]',
+                  selectedId === row.id ? 'bg-primary/5' : 'hover:bg-muted/40',
                 )}
               >
                 <button
@@ -530,10 +533,10 @@ function MappingList({
                   className="grid min-w-0 gap-3 py-1 text-left md:grid-cols-2 md:items-center"
                 >
                   <LocalRecordLabel row={row} />
-                  <span className="text-xs text-zinc-500">
+                  <span className="text-xs text-muted-foreground">
                     {row.suggestion ? (
                       <>
-                        <span className="block text-zinc-300">{externalName(row.suggestion)}</span>
+                        <span className="block text-foreground">{externalName(row.suggestion)}</span>
                         <span className="mt-1 block">Suggested match</span>
                       </>
                     ) : (
@@ -554,7 +557,7 @@ function MappingList({
                   <button
                     type="button"
                     onClick={() => onSelect(row.id)}
-                    className="text-left text-xs font-semibold text-primary"
+                    className="text-left text-xs font-semibold text-primary hover:text-primary/80"
                   >
                     Choose match
                   </button>
@@ -566,17 +569,17 @@ function MappingList({
       </section>
 
       <section aria-labelledby="linked-heading" className="mt-7">
-        <div className="flex items-center justify-between px-5 py-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600">
+        <div className="flex items-center justify-between px-5 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
           <h4 id="linked-heading">Linked</h4>
           <span>{linked.length}</span>
         </div>
-        <div className="divide-y divide-white/[0.07] border-y border-white/10">
+        <div className="divide-y divide-border/60 border-y border-border/70">
           {linked.map((row) => (
             <div
               key={row.id}
               className={cn(
                 'grid gap-3 px-5 py-2 text-sm md:grid-cols-[minmax(0,1fr)_auto] md:items-center',
-                selectedId === row.id ? 'bg-white/[0.045]' : 'hover:bg-white/[0.025]',
+                selectedId === row.id ? 'bg-primary/5' : 'hover:bg-muted/40',
               )}
             >
               <button
@@ -585,15 +588,15 @@ function MappingList({
                 className="grid min-w-0 gap-3 py-1 text-left md:grid-cols-[minmax(10rem,1fr)_auto_minmax(10rem,1fr)] md:items-center"
               >
                 <LocalRecordLabel row={row} />
-                <ArrowRight className="hidden size-3.5 text-zinc-700 md:block" />
-                <span className="text-zinc-400">
+                <ArrowRight className="hidden size-3.5 text-muted-foreground md:block" />
+                <span className="text-muted-foreground">
                   {row.mapping ? externalName(row.mapping) : null}
                 </span>
               </button>
               <button
                 type="button"
                 disabled={!canManage || busyId !== null}
-                className="justify-self-start text-xs text-zinc-600 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50 md:justify-self-end"
+                className="justify-self-start text-xs text-muted-foreground hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50 md:justify-self-end"
                 onClick={() => onUnlink(row)}
               >
                 {busyId === row.id ? 'Unlinking...' : 'Unlink'}
@@ -609,8 +612,8 @@ function MappingList({
 function LocalRecordLabel({ row }: { row: LocalMappingRecord }) {
   return (
     <span>
-      <span className="block text-sm font-medium text-white">{row.name}</span>
-      <span className="mt-1 block font-mono text-xs text-zinc-600">
+      <span className="block text-sm font-medium text-foreground">{row.name}</span>
+      <span className="mt-1 block font-mono text-xs text-muted-foreground">
         {row.code ?? 'No code'}
         {row.active ? '' : ' · inactive'}
       </span>
@@ -640,14 +643,14 @@ function CatalogPicker({
   if (row.mapping) {
     return (
       <div>
-        <h3 className="text-sm font-semibold">Current QBO link</h3>
-        <div className="mt-4 border-y border-white/10 py-4">
-          <p className="text-sm font-medium">{externalName(row.mapping)}</p>
-          <p className="mt-1 font-mono text-xs text-zinc-600">
+        <h3 className="text-sm font-semibold text-foreground">Current QBO link</h3>
+        <div className="mt-4 border-y border-border/70 py-4">
+          <p className="text-sm font-medium text-foreground">{externalName(row.mapping)}</p>
+          <p className="mt-1 font-mono text-xs text-muted-foreground">
             {mappingCode(row.mapping) ?? `QBO ID ${row.mapping.externalId}`}
           </p>
         </div>
-        <p className="mt-4 text-xs leading-5 text-zinc-500">
+        <p className="mt-4 text-xs leading-5 text-muted-foreground">
           Unlink this record before choosing a different QuickBooks match.
         </p>
       </div>
@@ -656,14 +659,14 @@ function CatalogPicker({
 
   return (
     <div>
-      <h3 className="text-sm font-semibold">Choose a QBO record</h3>
-      <div className="mt-4 border-y border-white/10 py-4">
-        <p className="text-xs text-zinc-500">BetterSpend</p>
-        <p className="mt-1 text-sm font-medium">{row.name}</p>
-        <p className="mt-1 font-mono text-xs text-zinc-600">{row.code ?? 'No code'}</p>
+      <h3 className="text-sm font-semibold text-foreground">Choose a QBO record</h3>
+      <div className="mt-4 border-y border-border/70 py-4">
+        <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">BetterSpend</p>
+        <p className="mt-1 text-sm font-medium text-foreground">{row.name}</p>
+        <p className="mt-1 font-mono text-xs text-muted-foreground">{row.code ?? 'No code'}</p>
       </div>
       <label className="relative mt-5 block">
-        <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-zinc-600" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
           aria-label="Search synced QBO records"
           value={query}
@@ -672,12 +675,12 @@ function CatalogPicker({
             onQuery(event.target.value);
           }}
           placeholder="Search synced QBO records"
-          className="border-white/15 bg-black pl-9 text-white"
+          className="pl-9"
         />
       </label>
-      <div className="mt-3 divide-y divide-white/[0.07] border-y border-white/10">
+      <div className="mt-3 divide-y divide-border/60 border-y border-border/70">
         {mappings.length === 0 ? (
-          <p className="py-5 text-xs text-zinc-600">No available QuickBooks records.</p>
+          <p className="py-5 text-xs text-muted-foreground">No available QuickBooks records.</p>
         ) : (
           mappings.slice(0, visibleCount).map((mapping) => (
             <button
@@ -685,13 +688,13 @@ function CatalogPicker({
               type="button"
               disabled={!canManage || busy || mapping.id === row.mapping?.id}
               onClick={() => onLink(mapping)}
-              className="flex w-full items-center justify-between gap-3 py-3 text-left disabled:cursor-default disabled:opacity-50"
+              className="flex w-full items-center justify-between gap-3 py-3 text-left transition-colors hover:bg-muted/40 disabled:cursor-default disabled:opacity-50"
             >
               <span className="min-w-0">
-                <span className="block truncate text-xs font-medium text-zinc-200">
+                <span className="block truncate text-xs font-medium text-foreground">
                   {externalName(mapping)}
                 </span>
-                <span className="mt-1 block font-mono text-[10px] text-zinc-600">
+                <span className="mt-1 block font-mono text-[10px] text-muted-foreground">
                   {mappingCode(mapping) ?? `QBO ID ${mapping.externalId}`}
                 </span>
               </span>
@@ -726,37 +729,39 @@ function AccountCatalog({ mappings }: { mappings: QboExternalEntityMapping[] }) 
   );
   return (
     <div>
-      <div className="border-b border-white/10 p-4">
+      <div className="border-b border-border/70 p-4">
         <label className="relative block max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-zinc-600" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             aria-label="Search the synced chart of accounts"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search the synced chart of accounts"
-            className="border-white/15 bg-black pl-9 text-white"
+            className="pl-9"
           />
         </label>
       </div>
-      <div className="divide-y divide-white/[0.07]">
+      <div className="divide-y divide-border/60">
         {visible.map((mapping) => (
           <div
             key={mapping.id}
             className="grid gap-2 px-5 py-3 text-sm sm:grid-cols-[8rem_1fr_auto] sm:items-center"
           >
-            <span className="font-mono text-xs text-zinc-500">
+            <span className="font-mono text-xs text-muted-foreground">
               {mappingCode(mapping) ?? 'No number'}
             </span>
-            <span>{externalName(mapping)}</span>
+            <span className="text-foreground">{externalName(mapping)}</span>
             <span
-              className={cn('text-xs', mapping.isActive ? 'text-emerald-400' : 'text-zinc-600')}
+              className={cn('text-xs', mapping.isActive ? 'text-success' : 'text-muted-foreground')}
             >
               {mapping.isActive ? 'Active' : 'Inactive'}
             </span>
           </div>
         ))}
         {visible.length === 0 ? (
-          <p className="px-5 py-8 text-sm text-zinc-500">No synced accounts match this search.</p>
+          <p className="px-5 py-8 text-sm text-muted-foreground">
+            No synced accounts match this search.
+          </p>
         ) : null}
       </div>
     </div>

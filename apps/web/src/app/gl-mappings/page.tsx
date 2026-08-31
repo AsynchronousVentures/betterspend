@@ -142,12 +142,11 @@ function GlMappingsContent() {
         title="Accounting Integration"
         description="Link BetterSpend records to synced accounting catalogs and monitor approved invoice exports."
         actions={
-          <div className="flex border-b border-border/70">
+          <div className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-muted/40 p-1">
             <Button
               type="button"
               size="sm"
               variant={activeTab === 'qbo' ? 'default' : 'ghost'}
-              className="rounded-none"
               onClick={() => selectView('qbo')}
             >
               QBO Mappings
@@ -156,7 +155,6 @@ function GlMappingsContent() {
               type="button"
               size="sm"
               variant={activeTab === 'xero' ? 'default' : 'ghost'}
-              className="rounded-none"
               onClick={() => selectView('xero')}
             >
               Xero Accounts
@@ -165,7 +163,6 @@ function GlMappingsContent() {
               type="button"
               size="sm"
               variant={activeTab === 'jobs' ? 'default' : 'ghost'}
-              className="rounded-none"
               onClick={() => selectView('jobs')}
             >
               Export History
