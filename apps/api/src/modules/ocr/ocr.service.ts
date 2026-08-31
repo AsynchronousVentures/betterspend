@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Inject, NotFoundException, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { invoices, ocrJobs } from '@betterspend/db';
@@ -194,26 +194,28 @@ export class OcrService {
     });
     if (!initialJob) throw new NotFoundException(`OCR job ${jobId} not found`);
     const startedAt = new Date();
-    await this.db
+    const [job] = await this.db
       .update(ocrJobs)
       .set({ status: 'processing', updatedAt: startedAt })
-      .where(and(eq(ocrJobs.id, jobId), eq(ocrJobs.organizationId, initialJob.organizationId)));
+      .where(
+        and(
+          eq(ocrJobs.id, jobId),
+          eq(ocrJobs.organizationId, initialJob.organizationId),
+          inArray(ocrJobs.status, ['pending', 'failed']),
+        ),
+      )
+      .returning();
+    if (!job) return;
 
     try {
-      // Retrieve the job to get stored base64 data
-      const job = await this.db.query.ocrJobs.findFirst({
-        where: (j, { and, eq }) =>
-          and(eq(j.id, jobId), eq(j.organizationId, initialJob.organizationId)),
-      });
-
-      const storedData = job?.extractedData as any;
+      const storedData = job.extractedData as any;
       const rawBase64: string | undefined = storedData?._rawBase64;
       const contentType: string = storedData?._contentType ?? 'image/jpeg';
 
       let extracted: OcrExtractedData;
       let confidence: OcrConfidence;
 
-      if (job && rawBase64) {
+      if (rawBase64) {
         const result = await this.runAiExtraction(job.organizationId, rawBase64, contentType);
         if (result) {
           extracted = result.extracted;

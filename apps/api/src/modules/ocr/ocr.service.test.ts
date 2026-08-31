@@ -11,13 +11,57 @@ const organizationId = '00000000-0000-4000-8000-000000000001';
 const invoiceId = '00000000-0000-4000-8000-000000000002';
 const jobId = '00000000-0000-4000-8000-000000000003';
 
-function updateDb() {
+function updateDb(claimedJob: Record<string, unknown>) {
   return {
     update: () => ({
-      set: () => ({
-        where: async () => undefined,
+      set: (values: Record<string, unknown>) => ({
+        where: () => ({
+          returning: async () => (values.status === 'processing' ? [claimedJob] : []),
+        }),
       }),
     }),
+  };
+}
+
+function extractionStateDb(initialJob: Record<string, unknown>) {
+  let currentJob = { ...initialJob };
+  let claims = 0;
+  let completions = 0;
+  const db = {
+    query: {
+      ocrJobs: {
+        findFirst: async () => ({ ...currentJob }),
+      },
+    },
+    update: () => ({
+      set: (values: Record<string, unknown>) => ({
+        where: () => {
+          if (values.status !== 'processing') {
+            currentJob = { ...currentJob, ...values };
+            if (values.status === 'done') completions += 1;
+          }
+          return {
+            returning: async () => {
+              if (
+                values.status !== 'processing' ||
+                (currentJob.status !== 'pending' && currentJob.status !== 'failed')
+              ) {
+                return [];
+              }
+              currentJob = { ...currentJob, ...values };
+              claims += 1;
+              return [{ ...currentJob }];
+            },
+          };
+        },
+      }),
+    }),
+  };
+  return {
+    db,
+    job: () => ({ ...currentJob }),
+    claimCount: () => claims,
+    completionCount: () => completions,
   };
 }
 
@@ -42,7 +86,7 @@ test('OCR keeps the normalized review signal when provenance persistence fails',
     },
   ];
   const db = {
-    ...updateDb(),
+    ...updateDb(jobs[1]!),
     query: { ocrJobs: { findFirst: async () => jobs.shift() ?? null } },
   };
   const provenance = {
@@ -91,7 +135,7 @@ test('OCR publishes provenance at the completed extraction boundary', async () =
     },
   ];
   const db = {
-    ...updateDb(),
+    ...updateDb(jobs[1]!),
     query: { ocrJobs: { findFirst: async () => jobs.shift() ?? null } },
   };
   const provenance = {
@@ -140,12 +184,17 @@ test('OCR stores extraction completion separately from mutable link timestamps',
       confidence: null,
     },
   ];
+  const claimedJob = jobs[1]!;
   const db = {
     query: { ocrJobs: { findFirst: async () => jobs.shift() ?? null } },
     update: () => ({
       set: (values: Record<string, unknown>) => {
         updates.push(values);
-        return { where: async () => undefined };
+        return {
+          where: () => ({
+            returning: async () => (values.status === 'processing' ? [claimedJob] : []),
+          }),
+        };
       },
     }),
   };
@@ -188,8 +237,7 @@ test('OCR keeps a completed job done when post-completion observation fails', as
         findFirst: async () => {
           lookups += 1;
           if (lookups === 1) return { ...currentJob, status: 'pending' };
-          if (lookups === 2) return currentJob;
-          if (lookups === 3) throw new Error('post-completion lookup unavailable');
+          if (lookups === 2) throw new Error('post-completion lookup unavailable');
           return currentJob;
         },
       },
@@ -197,7 +245,12 @@ test('OCR keeps a completed job done when post-completion observation fails', as
     update: () => ({
       set: (values: Record<string, unknown>) => {
         updates.push(values);
-        return { where: async () => undefined };
+        return {
+          where: () => ({
+            returning: async () =>
+              values.status === 'processing' ? [{ ...currentJob }] : [],
+          }),
+        };
       },
     }),
   };
@@ -215,22 +268,143 @@ test('OCR keeps a completed job done when post-completion observation fails', as
   assert.ok(!updates.some((values) => values.status === 'failed'));
 });
 
+test('OCR stale workers do not overwrite a completed extraction', async () => {
+  const extractionCompletedAt = new Date('2026-08-30T10:00:00Z');
+  const extractedData = {
+    vendorName: 'Acme',
+    invoiceNumber: 'INV-42',
+    totalAmount: 125,
+    lines: [],
+  };
+  const confidence = { overall: 0.97 };
+  const state = extractionStateDb({
+    id: jobId,
+    organizationId,
+    invoiceId,
+    status: 'done',
+    extractedData,
+    confidence,
+    extractionCompletedAt,
+    updatedAt: extractionCompletedAt,
+  });
+  const provenanceInputs: unknown[] = [];
+  const reviewInputs: unknown[] = [];
+  const service = new OcrService(
+    state.db as never,
+    {} as Queue,
+    {} as AiRuntimeService,
+    {
+      recordOcrReviewSignal: async (input: unknown) => {
+        reviewInputs.push(input);
+      },
+    } as never,
+    {
+      recordOcrProvenance: async (input: unknown) => {
+        provenanceInputs.push(input);
+      },
+    } as never,
+  );
+
+  await service.runExtractionById(jobId);
+
+  assert.equal(state.job().status, 'done');
+  assert.deepEqual(state.job().extractedData, extractedData);
+  assert.deepEqual(state.job().confidence, confidence);
+  assert.equal(state.job().extractionCompletedAt, extractionCompletedAt);
+  assert.equal(state.job().updatedAt, extractionCompletedAt);
+  assert.equal(provenanceInputs.length, 0);
+  assert.equal(reviewInputs.length, 0);
+});
+
+test('OCR concurrent workers allow only one extraction claim', async () => {
+  const state = extractionStateDb({
+    id: jobId,
+    organizationId,
+    invoiceId: null,
+    status: 'pending',
+    extractedData: { _rawBase64: 'raw-invoice', _contentType: 'image/png' },
+    confidence: null,
+  });
+  let aiCalls = 0;
+  const aiRuntime = {
+    generateVision: async () => {
+      aiCalls += 1;
+      return JSON.stringify({
+        vendorName: 'Acme',
+        invoiceNumber: 'INV-42',
+        totalAmount: 125,
+        lines: [],
+        confidence: { overall: 0.97 },
+      });
+    },
+  } as unknown as AiRuntimeService;
+  const service = new OcrService(
+    state.db as never,
+    {} as Queue,
+    aiRuntime,
+    { recordOcrReviewSignal: async () => undefined } as never,
+    { recordOcrProvenance: async () => undefined } as never,
+  );
+
+  await Promise.all([service.runExtractionById(jobId), service.runExtractionById(jobId)]);
+
+  assert.equal(state.claimCount(), 1);
+  assert.equal(aiCalls, 1);
+  assert.equal(state.completionCount(), 1);
+  assert.deepEqual(state.job().extractedData, {
+    vendorName: 'Acme',
+    invoiceNumber: 'INV-42',
+    invoiceDate: null,
+    dueDate: null,
+    currency: 'USD',
+    subtotal: null,
+    taxAmount: null,
+    totalAmount: 125,
+    lines: [],
+  });
+});
+
+test('OCR retries can claim a failed extraction', async () => {
+  const state = extractionStateDb({
+    id: jobId,
+    organizationId,
+    invoiceId: null,
+    status: 'failed',
+    extractedData: null,
+    confidence: null,
+    errorMessage: 'provider unavailable',
+  });
+  const service = new OcrService(
+    state.db as never,
+    {} as Queue,
+    {} as AiRuntimeService,
+    { recordOcrReviewSignal: async () => undefined } as never,
+    { recordOcrProvenance: async () => undefined } as never,
+  );
+
+  await service.runExtractionById(jobId);
+
+  assert.equal(state.claimCount(), 1);
+  assert.equal(state.completionCount(), 1);
+  assert.equal(state.job().status, 'done');
+});
+
 test('OCR links completed extraction observations when linking races completion', async () => {
   const observations: unknown[] = [];
+  const claimedJob = {
+    id: jobId,
+    organizationId,
+    invoiceId: null,
+    status: 'processing',
+    extractedData: null,
+    confidence: null,
+  };
   const jobs = [
     {
       id: jobId,
       organizationId,
       invoiceId: null,
       status: 'pending',
-      extractedData: null,
-      confidence: null,
-    },
-    {
-      id: jobId,
-      organizationId,
-      invoiceId: null,
-      status: 'processing',
       extractedData: null,
       confidence: null,
     },
@@ -244,7 +418,7 @@ test('OCR links completed extraction observations when linking races completion'
     },
   ];
   const db = {
-    ...updateDb(),
+    ...updateDb(claimedJob),
     query: { ocrJobs: { findFirst: async () => jobs.shift() ?? null } },
   };
   const reviews = {
