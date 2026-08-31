@@ -7,7 +7,11 @@ import { requisitions, requisitionLines } from './schema/requisitions';
 import { purchaseOrders, poLines, poVersions, blanketReleases } from './schema/purchase-orders';
 import { goodsReceipts, goodsReceiptLines } from './schema/receiving';
 import { invoices, invoiceLines, matchResults } from './schema/invoices';
-import { invoiceReviewCases, invoiceReviewSignals } from './schema/invoice-reviews';
+import {
+  invoiceFieldProvenance,
+  invoiceReviewCases,
+  invoiceReviewSignals,
+} from './schema/invoice-reviews';
 import { budgets, budgetCommitmentEvents, budgetPeriods } from './schema/budgets';
 import {
   approvalRules,
@@ -553,6 +557,7 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   commitmentEvents: many(budgetCommitmentEvents),
   paymentRunInvoices: many(paymentRunInvoices),
   reviewCases: many(invoiceReviewCases),
+  fieldProvenance: many(invoiceFieldProvenance),
 }));
 
 export const invoiceReviewCasesRelations = relations(invoiceReviewCases, ({ one, many }) => ({
@@ -582,6 +587,25 @@ export const invoiceReviewSignalsRelations = relations(invoiceReviewSignals, ({ 
   }),
   resolutionActor: one(users, {
     fields: [invoiceReviewSignals.resolutionActorId, invoiceReviewSignals.organizationId],
+    references: [users.id, users.organizationId],
+  }),
+}));
+
+export const invoiceFieldProvenanceRelations = relations(invoiceFieldProvenance, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [invoiceFieldProvenance.organizationId],
+    references: [organizations.id],
+  }),
+  invoice: one(invoices, {
+    fields: [invoiceFieldProvenance.invoiceId, invoiceFieldProvenance.organizationId],
+    references: [invoices.id, invoices.organizationId],
+  }),
+  invoiceLine: one(invoiceLines, {
+    fields: [invoiceFieldProvenance.invoiceLineId],
+    references: [invoiceLines.id],
+  }),
+  actor: one(users, {
+    fields: [invoiceFieldProvenance.actorId, invoiceFieldProvenance.organizationId],
     references: [users.id, users.organizationId],
   }),
 }));

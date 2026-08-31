@@ -24,10 +24,54 @@ export const INVOICE_REVIEW_SIGNAL_TYPES = [
   'manual_review',
 ] as const;
 
+export const INVOICE_REVIEW_PROVENANCE_SOURCE_TYPES = [
+  'OCR',
+  'email_intake',
+  'supplier',
+  'import',
+  'PO',
+  'catalog',
+  'manual',
+] as const;
+
+export const INVOICE_REVIEW_PROVENANCE_HEADER_FIELDS = [
+  'vendor',
+  'invoiceNumber',
+  'invoiceDate',
+  'dueDate',
+  'currency',
+  'exchangeRate',
+  'subtotal',
+  'taxAmount',
+  'totalAmount',
+] as const;
+
+export const INVOICE_REVIEW_PROVENANCE_LINE_FIELDS = [
+  'description',
+  'quantity',
+  'unitPrice',
+  'poLineId',
+  'taxCodeId',
+  'glAccount',
+] as const;
+
 export const invoiceReviewCaseStateSchema = z.enum(INVOICE_REVIEW_CASE_STATES);
 export const invoiceReviewSignalSeveritySchema = z.enum(INVOICE_REVIEW_SIGNAL_SEVERITIES);
 export const invoiceReviewSignalStatusSchema = z.enum(INVOICE_REVIEW_SIGNAL_STATUSES);
 export const invoiceReviewSignalTypeSchema = z.enum(INVOICE_REVIEW_SIGNAL_TYPES);
+export const invoiceReviewProvenanceSourceTypeSchema = z.enum(
+  INVOICE_REVIEW_PROVENANCE_SOURCE_TYPES,
+);
+
+const invoiceReviewProvenanceFieldPathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(150)
+  .regex(
+    /^(vendor|invoiceNumber|invoiceDate|dueDate|currency|exchangeRate|subtotal|taxAmount|totalAmount|lines\.[^.]+\.(description|quantity|unitPrice|poLineId|taxCodeId|glAccount))$/,
+    'Unsupported invoice provenance field path',
+  );
 
 export const recordInvoiceReviewSignalSchema = z
   .object({
@@ -40,6 +84,21 @@ export const recordInvoiceReviewSignalSchema = z
     status: z.enum(['open', 'resolved']).default('open'),
     summary: z.string().trim().min(1).max(2_000),
     details: z.record(z.string(), z.unknown()).default({}),
+    observedAt: z.coerce.date().optional(),
+  })
+  .strict();
+
+export const recordInvoiceReviewProvenanceSchema = z
+  .object({
+    organizationId: z.string().uuid(),
+    invoiceId: z.string().uuid(),
+    invoiceLineId: z.string().uuid().nullable().default(null),
+    fieldPath: invoiceReviewProvenanceFieldPathSchema,
+    sourceType: invoiceReviewProvenanceSourceTypeSchema,
+    sourceRecordId: z.string().trim().min(1).max(255),
+    sourceTimestamp: z.coerce.date().nullable().default(null),
+    confidence: z.number().finite().min(0).max(1).nullable().default(null),
+    actorId: z.string().uuid().nullable().default(null),
     observedAt: z.coerce.date().optional(),
   })
   .strict();
@@ -63,3 +122,9 @@ export type InvoiceReviewSignalStatus = z.infer<typeof invoiceReviewSignalStatus
 export type InvoiceReviewSignalType = z.infer<typeof invoiceReviewSignalTypeSchema>;
 export type InvoiceReviewListQuery = z.infer<typeof invoiceReviewListQuerySchema>;
 export type RecordInvoiceReviewSignalInput = z.input<typeof recordInvoiceReviewSignalSchema>;
+export type InvoiceReviewProvenanceSourceType = z.infer<
+  typeof invoiceReviewProvenanceSourceTypeSchema
+>;
+export type RecordInvoiceReviewProvenanceInput = z.input<
+  typeof recordInvoiceReviewProvenanceSchema
+>;

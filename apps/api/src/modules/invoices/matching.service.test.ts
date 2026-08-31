@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { overallInvoiceMatchStatus } from './matching.service';
+import { invoiceStatusFromMatchStatus, overallInvoiceMatchStatus } from './matching.service';
 
 describe('overallInvoiceMatchStatus', () => {
   it('requires at least one invoice line', () => {
@@ -27,5 +27,14 @@ describe('overallInvoiceMatchStatus', () => {
       ]),
       'full_match',
     );
+  });
+});
+
+describe('invoiceStatusFromMatchStatus', () => {
+  it('maps match outcomes to invoice lifecycle statuses', () => {
+    assert.equal(invoiceStatusFromMatchStatus('full_match'), 'matched');
+    assert.equal(invoiceStatusFromMatchStatus('exception'), 'exception');
+    assert.equal(invoiceStatusFromMatchStatus('partial_match'), 'partial_match');
+    assert.equal(invoiceStatusFromMatchStatus('unmatched'), 'partial_match');
   });
 });

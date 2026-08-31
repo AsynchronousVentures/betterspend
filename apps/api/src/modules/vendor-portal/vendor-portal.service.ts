@@ -9,7 +9,7 @@ import {
 import { eq, and, gt, sql } from 'drizzle-orm';
 import { randomBytes } from 'crypto';
 import { DB_TOKEN } from '../../database/database.module';
-import type { Db } from '@betterspend/db';
+import type { Db, DbTransaction } from '@betterspend/db';
 import {
   vendorPortalTokens,
   vendorPortalSessions,
@@ -23,7 +23,7 @@ import {
 import { MailService } from '../../common/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
 import { SequenceService } from '../../common/services/sequence.service';
-import { MatchingService } from '../invoices/matching.service';
+import { InvoicesService } from '../invoices/invoices.service';
 import { VendorsService } from '../vendors/vendors.service';
 import { CatalogService } from '../catalog/catalog.service';
 import type { AccessPolicy } from '../auth/access-policy';
@@ -68,7 +68,7 @@ export class VendorPortalService {
     private readonly mailService: MailService,
     private readonly settingsService: SettingsService,
     private readonly sequenceService: SequenceService,
-    private readonly matchingService: MatchingService,
+    private readonly invoicesService: InvoicesService,
     private readonly vendorsService: VendorsService,
     private readonly catalogService: CatalogService,
   ) {}
@@ -336,18 +336,10 @@ export class VendorPortalService {
       return inv.id;
     });
 
-    // Auto-run 3-way match
-    const matchResult = await this.matchingService.runMatch(invoiceId);
-    const newStatus =
-      matchResult.matchStatus === 'full_match'
-        ? 'matched'
-        : matchResult.matchStatus === 'exception'
-          ? 'exception'
-          : 'partial_match';
-    await this.db
-      .update(invoices)
-      .set({ status: newStatus, updatedAt: new Date() })
-      .where(eq(invoices.id, invoiceId));
+    // Auto-run 3-way match and publish its review signal in the same transaction.
+    await this.db.transaction(async (tx: DbTransaction) =>
+      this.invoicesService.runMatchAndRecordReview(invoiceId, orgId, tx),
+    );
 
     return this.db.query.invoices.findFirst({
       where: (i, { eq }) => eq(i.id, invoiceId),

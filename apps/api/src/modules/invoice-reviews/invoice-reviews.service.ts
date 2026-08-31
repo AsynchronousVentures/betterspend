@@ -6,6 +6,7 @@ import {
   appendAuditLogIfAbsent,
   documents,
   emailIntakeItems,
+  emailIntakeMessages,
   invoiceReviewCases,
   invoiceReviewSignals,
   invoices,
@@ -34,8 +35,23 @@ import type { AccessPolicy } from '../auth/access-policy';
 import { permissionScopePredicate } from '../auth/access-scope';
 import { canViewRelatedRecord } from '../auth/related-record-access';
 import { initialReviewCaseState, nextReviewCaseState } from './invoice-review-state';
+import {
+  InvoiceReviewProvenanceService,
+  type InvoiceFieldProvenanceRow,
+  type InvoiceReviewProvenanceView,
+  type ProvenanceSourceAvailability,
+} from './invoice-review-provenance.service';
+import {
+  normalizeMatchReviewSignal,
+  normalizeOcrReviewSignal,
+  normalizeSpendGuardReviewSignal,
+  type MatchReviewSignalInput,
+  type OcrReviewSignalInput,
+  type SpendGuardReviewSignalInput,
+} from './invoice-review-adapters';
 
-type SourceAvailability = 'present' | 'missing' | 'unknown';
+type SourceAvailability = ProvenanceSourceAvailability;
+export type { InvoiceReviewProvenanceView } from './invoice-review-provenance.service';
 
 export interface InvoiceReviewSourceView {
   module: string;
@@ -197,7 +213,7 @@ export interface InvoiceReviewProjection {
       runDate: string;
     } | null;
   }>;
-  provenance: { available: false; fields: [] };
+  provenance: { available: true; fields: InvoiceReviewProvenanceView[] };
   history: { available: false; entries: [] };
 }
 
@@ -330,9 +346,54 @@ function signalKey(module: string, recordId: string): string {
   return `${module}\u0000${recordId}`;
 }
 
+type SourceReferenceKind =
+  'matching' | 'spend_guard' | 'ocr' | 'email_intake' | 'manual' | 'unknown';
+
+type SourceReferenceCollections = {
+  alertIds: Set<string>;
+  ocrIds: Set<string>;
+  intakeIds: Set<string>;
+};
+
+const SOURCE_REFERENCE_KINDS: Record<string, SourceReferenceKind> = {
+  matching: 'matching',
+  spend_guard: 'spend_guard',
+  ocr: 'ocr',
+  OCR: 'ocr',
+  email_intake: 'email_intake',
+  manual: 'manual',
+};
+
+function collectSourceReference(
+  sourceType: string,
+  sourceRecordId: string,
+  invoiceId: string,
+  availability: Map<string, SourceAvailability>,
+  collections: SourceReferenceCollections,
+): void {
+  const kind = SOURCE_REFERENCE_KINDS[sourceType] ?? 'unknown';
+  const sourceAvailability: SourceAvailability =
+    kind === 'manual'
+      ? 'present'
+      : kind === 'matching'
+        ? sourceRecordId === invoiceId
+          ? 'present'
+          : 'missing'
+        : kind === 'spend_guard' || kind === 'ocr' || kind === 'email_intake'
+          ? 'missing'
+          : 'unknown';
+  availability.set(`${sourceType}\u0000${sourceRecordId}`, sourceAvailability);
+  if (kind === 'spend_guard') collections.alertIds.add(sourceRecordId);
+  if (kind === 'ocr') collections.ocrIds.add(sourceRecordId);
+  if (kind === 'email_intake') collections.intakeIds.add(sourceRecordId);
+}
+
 @Injectable()
 export class InvoiceReviewsService {
-  constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
+  constructor(
+    @Inject(DB_TOKEN) private readonly db: Db,
+    private readonly provenance: InvoiceReviewProvenanceService,
+  ) {}
 
   /**
    * Read the queue through the invoice visibility predicate already used by
@@ -657,6 +718,31 @@ export class InvoiceReviewsService {
                 },
               },
             },
+            fieldProvenance: {
+              columns: {
+                id: true,
+                organizationId: true,
+                invoiceId: true,
+                invoiceLineId: true,
+                fieldPath: true,
+                sourceType: true,
+                sourceRecordId: true,
+                sourceTimestamp: true,
+                confidence: true,
+                actorId: true,
+                isCurrent: true,
+                supersededAt: true,
+                identityKey: true,
+                createdAt: true,
+                updatedAt: true,
+              },
+              orderBy: (provenance, operators) => [
+                operators.asc(provenance.fieldPath),
+                operators.desc(provenance.isCurrent),
+                operators.asc(provenance.createdAt),
+                operators.asc(provenance.id),
+              ],
+            },
           },
         },
         signals: {
@@ -728,44 +814,50 @@ export class InvoiceReviewsService {
       relatedRecordScope,
     );
 
-    const [documentRows, messageRows, sourceAvailability] = await Promise.all([
-      this.db.query.documents.findMany({
-        where: (document, operators) =>
-          operators.and(
-            operators.eq(document.organizationId, organizationId),
-            operators.eq(document.entityType, 'invoice'),
-            operators.eq(document.entityId, invoiceId),
-          ),
-        columns: {
-          id: true,
-          filename: true,
-          contentType: true,
-          sizeBytes: true,
-          entityType: true,
-          entityId: true,
-          createdAt: true,
-        },
-        orderBy: (document, operators) => operators.asc(document.createdAt),
-      }),
-      this.db.query.messages.findMany({
-        where: (message, operators) =>
-          operators.and(
-            operators.eq(message.organizationId, organizationId),
-            operators.eq(message.threadType, 'invoice'),
-            operators.eq(message.threadId, invoiceId),
-          ),
-        columns: {
-          id: true,
-          senderType: true,
-          authorName: true,
-          body: true,
-          attachments: true,
-          createdAt: true,
-        },
-        orderBy: (message, operators) => operators.asc(message.createdAt),
-      }),
-      this.resolveSourceAvailability(organizationId, invoiceId, reviewCase.signals),
-    ]);
+    const provenanceRows = invoice.fieldProvenance;
+    if (!Array.isArray(provenanceRows)) {
+      throw new Error('Invoice provenance relation is unavailable');
+    }
+    const [documentRows, messageRows, sourceAvailability, provenanceAvailability] =
+      await Promise.all([
+        this.db.query.documents.findMany({
+          where: (document, operators) =>
+            operators.and(
+              operators.eq(document.organizationId, organizationId),
+              operators.eq(document.entityType, 'invoice'),
+              operators.eq(document.entityId, invoiceId),
+            ),
+          columns: {
+            id: true,
+            filename: true,
+            contentType: true,
+            sizeBytes: true,
+            entityType: true,
+            entityId: true,
+            createdAt: true,
+          },
+          orderBy: (document, operators) => operators.asc(document.createdAt),
+        }),
+        this.db.query.messages.findMany({
+          where: (message, operators) =>
+            operators.and(
+              operators.eq(message.organizationId, organizationId),
+              operators.eq(message.threadType, 'invoice'),
+              operators.eq(message.threadId, invoiceId),
+            ),
+          columns: {
+            id: true,
+            senderType: true,
+            authorName: true,
+            body: true,
+            attachments: true,
+            createdAt: true,
+          },
+          orderBy: (message, operators) => operators.asc(message.createdAt),
+        }),
+        this.resolveSourceAvailability(organizationId, invoiceId, reviewCase.signals),
+        this.resolveProvenanceAvailability(organizationId, invoiceId, provenanceRows),
+      ]);
 
     const approvalRows = canViewApprovals
       ? await this.db.query.approvalRequests.findMany({
@@ -890,167 +982,192 @@ export class InvoiceReviewsService {
         }
         return [{ ...payment, paymentRun: payment.paymentRun }];
       }),
-      provenance: { available: false, fields: [] },
+      provenance: {
+        available: true,
+        fields: provenanceRows.map((row) =>
+          this.provenance.toView(
+            row,
+            provenanceAvailability.get(`${row.sourceType}\u0000${row.sourceRecordId}`) ?? 'unknown',
+          ),
+        ),
+      },
       history: { available: false, entries: [] },
     };
+  }
+
+  async recordOcrReviewSignal(input: OcrReviewSignalInput, executor?: DbTransaction) {
+    return this.recordSignal(normalizeOcrReviewSignal(input), executor);
+  }
+
+  async recordSpendGuardReviewSignal(input: SpendGuardReviewSignalInput, executor?: DbTransaction) {
+    return this.recordSignal(normalizeSpendGuardReviewSignal(input), executor);
+  }
+
+  async recordMatchReviewSignal(input: MatchReviewSignalInput, executor?: DbTransaction) {
+    return this.recordSignal(normalizeMatchReviewSignal(input), executor);
   }
 
   /**
    * Internal producer seam. Repeated observations update one signal identity,
    * preserve its first-seen time, and derive case state in one transaction.
    */
-  async recordSignal(rawInput: RecordInvoiceReviewSignalInput) {
+  async recordSignal(rawInput: RecordInvoiceReviewSignalInput, executor?: DbTransaction) {
     const input = recordInvoiceReviewSignalSchema.parse(rawInput);
+    if (executor) return this.recordSignalInTransaction(executor, input);
+    return this.db.transaction((tx) => this.recordSignalInTransaction(tx, input));
+  }
+
+  private async recordSignalInTransaction(
+    tx: DbTransaction,
+    input: z.output<typeof recordInvoiceReviewSignalSchema>,
+  ) {
     const observedAt = input.observedAt ?? new Date();
+    const [invoice] = await tx
+      .select({ id: invoices.id })
+      .from(invoices)
+      .where(
+        and(eq(invoices.id, input.invoiceId), eq(invoices.organizationId, input.organizationId)),
+      )
+      .limit(1);
+    if (!invoice) throw new NotFoundException(`Invoice ${input.invoiceId} not found`);
 
-    return this.db.transaction(async (tx) => {
-      const [invoice] = await tx
-        .select({ id: invoices.id })
-        .from(invoices)
-        .where(
-          and(eq(invoices.id, input.invoiceId), eq(invoices.organizationId, input.organizationId)),
-        )
-        .limit(1);
-      if (!invoice) throw new NotFoundException(`Invoice ${input.invoiceId} not found`);
+    let [reviewCase] = await tx
+      .select()
+      .from(invoiceReviewCases)
+      .where(
+        and(
+          eq(invoiceReviewCases.organizationId, input.organizationId),
+          eq(invoiceReviewCases.invoiceId, input.invoiceId),
+        ),
+      )
+      .for('update');
 
-      let [reviewCase] = await tx
-        .select()
-        .from(invoiceReviewCases)
-        .where(
-          and(
-            eq(invoiceReviewCases.organizationId, input.organizationId),
-            eq(invoiceReviewCases.invoiceId, input.invoiceId),
-          ),
-        )
-        .for('update');
+    if (!reviewCase) {
+      [reviewCase] = await tx
+        .insert(invoiceReviewCases)
+        .values({
+          organizationId: input.organizationId,
+          invoiceId: input.invoiceId,
+          state: initialReviewCaseState(input),
+          openedAt: observedAt,
+          createdAt: observedAt,
+          updatedAt: observedAt,
+        })
+        .onConflictDoNothing({
+          target: [invoiceReviewCases.organizationId, invoiceReviewCases.invoiceId],
+        })
+        .returning();
 
       if (!reviewCase) {
         [reviewCase] = await tx
-          .insert(invoiceReviewCases)
-          .values({
-            organizationId: input.organizationId,
-            invoiceId: input.invoiceId,
-            state: initialReviewCaseState(input),
-            openedAt: observedAt,
-            createdAt: observedAt,
-            updatedAt: observedAt,
-          })
-          .onConflictDoNothing({
-            target: [invoiceReviewCases.organizationId, invoiceReviewCases.invoiceId],
-          })
-          .returning();
-
-        if (!reviewCase) {
-          [reviewCase] = await tx
-            .select()
-            .from(invoiceReviewCases)
-            .where(
-              and(
-                eq(invoiceReviewCases.organizationId, input.organizationId),
-                eq(invoiceReviewCases.invoiceId, input.invoiceId),
-              ),
-            )
-            .for('update');
-        }
+          .select()
+          .from(invoiceReviewCases)
+          .where(
+            and(
+              eq(invoiceReviewCases.organizationId, input.organizationId),
+              eq(invoiceReviewCases.invoiceId, input.invoiceId),
+            ),
+          )
+          .for('update');
       }
-      if (!reviewCase) throw new Error('Invoice review case could not be created');
+    }
+    if (!reviewCase) throw new Error('Invoice review case could not be created');
 
-      const [signal] = await tx
-        .insert(invoiceReviewSignals)
-        .values({
-          organizationId: input.organizationId,
-          caseId: reviewCase.id,
-          signalType: input.signalType,
-          sourceModule: input.sourceModule,
-          sourceRecordId: input.sourceRecordId,
+    const [signal] = await tx
+      .insert(invoiceReviewSignals)
+      .values({
+        organizationId: input.organizationId,
+        caseId: reviewCase.id,
+        signalType: input.signalType,
+        sourceModule: input.sourceModule,
+        sourceRecordId: input.sourceRecordId,
+        severity: input.severity,
+        status: input.status,
+        summary: input.summary,
+        details: input.details,
+        firstSeenAt: observedAt,
+        lastSeenAt: observedAt,
+        resolvedAt: input.status === 'resolved' ? observedAt : null,
+        updatedAt: observedAt,
+      })
+      .onConflictDoUpdate({
+        target: [
+          invoiceReviewSignals.caseId,
+          invoiceReviewSignals.signalType,
+          invoiceReviewSignals.sourceModule,
+          invoiceReviewSignals.sourceRecordId,
+        ],
+        set: {
           severity: input.severity,
           status: input.status,
           summary: input.summary,
           details: input.details,
-          firstSeenAt: observedAt,
           lastSeenAt: observedAt,
           resolvedAt: input.status === 'resolved' ? observedAt : null,
           updatedAt: observedAt,
-        })
-        .onConflictDoUpdate({
-          target: [
-            invoiceReviewSignals.caseId,
-            invoiceReviewSignals.signalType,
-            invoiceReviewSignals.sourceModule,
-            invoiceReviewSignals.sourceRecordId,
-          ],
-          set: {
-            severity: input.severity,
-            status: input.status,
-            summary: input.summary,
-            details: input.details,
-            lastSeenAt: observedAt,
-            resolvedAt: input.status === 'resolved' ? observedAt : null,
-            updatedAt: observedAt,
-          },
-          setWhere: lte(invoiceReviewSignals.lastSeenAt, observedAt),
-        })
-        .returning();
-      if (!signal) {
-        const [currentSignal] = await tx
-          .select()
-          .from(invoiceReviewSignals)
-          .where(
-            and(
-              eq(invoiceReviewSignals.organizationId, input.organizationId),
-              eq(invoiceReviewSignals.caseId, reviewCase.id),
-              eq(invoiceReviewSignals.signalType, input.signalType),
-              eq(invoiceReviewSignals.sourceModule, input.sourceModule),
-              eq(invoiceReviewSignals.sourceRecordId, input.sourceRecordId),
-            ),
-          )
-          .limit(1);
-        if (!currentSignal) throw new Error('Invoice review signal could not be written');
-        return { case: reviewCase, signal: currentSignal };
-      }
-
-      const currentSignals = await tx
-        .select({ severity: invoiceReviewSignals.severity, status: invoiceReviewSignals.status })
+        },
+        setWhere: lte(invoiceReviewSignals.lastSeenAt, observedAt),
+      })
+      .returning();
+    if (!signal) {
+      const [currentSignal] = await tx
+        .select()
         .from(invoiceReviewSignals)
         .where(
           and(
-            eq(invoiceReviewSignals.caseId, reviewCase.id),
             eq(invoiceReviewSignals.organizationId, input.organizationId),
-          ),
-        );
-      const nextState = nextReviewCaseState(reviewCase.state, currentSignals);
-      const [updatedCase] = await tx
-        .update(invoiceReviewCases)
-        .set({
-          state: nextState,
-          resolvedAt: nextState === 'resolved' ? observedAt : null,
-          updatedAt: observedAt,
-          version: sql`${invoiceReviewCases.version} + 1`,
-        })
-        .where(
-          and(
-            eq(invoiceReviewCases.id, reviewCase.id),
-            eq(invoiceReviewCases.organizationId, input.organizationId),
+            eq(invoiceReviewSignals.caseId, reviewCase.id),
+            eq(invoiceReviewSignals.signalType, input.signalType),
+            eq(invoiceReviewSignals.sourceModule, input.sourceModule),
+            eq(invoiceReviewSignals.sourceRecordId, input.sourceRecordId),
           ),
         )
-        .returning();
+        .limit(1);
+      if (!currentSignal) throw new Error('Invoice review signal could not be written');
+      return { case: reviewCase, signal: currentSignal };
+    }
 
-      await appendSignalAudit(tx, {
-        organizationId: input.organizationId,
-        caseId: reviewCase.id,
-        signalId: signal.id,
-        signalType: signal.signalType,
-        sourceModule: signal.sourceModule,
-        sourceRecordId: signal.sourceRecordId,
-        severity: signal.severity,
-        status: signal.status,
-        observedAt,
-        previousCaseState: reviewCase.state,
-        nextCaseState: nextState,
-      });
+    const currentSignals = await tx
+      .select({ severity: invoiceReviewSignals.severity, status: invoiceReviewSignals.status })
+      .from(invoiceReviewSignals)
+      .where(
+        and(
+          eq(invoiceReviewSignals.caseId, reviewCase.id),
+          eq(invoiceReviewSignals.organizationId, input.organizationId),
+        ),
+      );
+    const nextState = nextReviewCaseState(reviewCase.state, currentSignals);
+    const [updatedCase] = await tx
+      .update(invoiceReviewCases)
+      .set({
+        state: nextState,
+        resolvedAt: nextState === 'resolved' ? observedAt : null,
+        updatedAt: observedAt,
+        version: sql`${invoiceReviewCases.version} + 1`,
+      })
+      .where(
+        and(
+          eq(invoiceReviewCases.id, reviewCase.id),
+          eq(invoiceReviewCases.organizationId, input.organizationId),
+        ),
+      )
+      .returning();
 
-      return { case: updatedCase ?? reviewCase, signal };
+    await appendSignalAudit(tx, {
+      organizationId: input.organizationId,
+      caseId: reviewCase.id,
+      signalId: signal.id,
+      signalType: signal.signalType,
+      sourceModule: signal.sourceModule,
+      sourceRecordId: signal.sourceRecordId,
+      severity: signal.severity,
+      status: signal.status,
+      observedAt,
+      previousCaseState: reviewCase.state,
+      nextCaseState: nextState,
     });
+
+    return { case: updatedCase ?? reviewCase, signal };
   }
 
   private caseView(reviewCase: typeof invoiceReviewCases.$inferSelect): InvoiceReviewCaseView {
@@ -1094,68 +1211,132 @@ export class InvoiceReviewsService {
     };
   }
 
+  private async resolveProvenanceAvailability(
+    organizationId: string,
+    invoiceId: string,
+    rows: readonly InvoiceFieldProvenanceRow[],
+  ): Promise<Map<string, SourceAvailability>> {
+    const availability = new Map<string, SourceAvailability>();
+    const collections: SourceReferenceCollections = {
+      alertIds: new Set(),
+      ocrIds: new Set(),
+      intakeIds: new Set(),
+    };
+    for (const row of rows) {
+      collectSourceReference(
+        row.sourceType,
+        row.sourceRecordId,
+        invoiceId,
+        availability,
+        collections,
+      );
+    }
+
+    await this.resolveOcrAndEmailAvailability(
+      organizationId,
+      invoiceId,
+      collections,
+      availability,
+      'OCR',
+    );
+    return availability;
+  }
+
   private async resolveSourceAvailability(
     organizationId: string,
     invoiceId: string,
     signals: readonly (typeof invoiceReviewSignals.$inferSelect)[],
   ): Promise<Map<string, SourceAvailability>> {
     const availability = new Map<string, SourceAvailability>();
-    const alertIds = new Set<string>();
-    const ocrIds = new Set<string>();
-    const intakeIds = new Set<string>();
+    const collections: SourceReferenceCollections = {
+      alertIds: new Set(),
+      ocrIds: new Set(),
+      intakeIds: new Set(),
+    };
     for (const signal of signals) {
-      const key = signalKey(signal.sourceModule, signal.sourceRecordId);
-      if (signal.sourceModule === 'matching') {
-        availability.set(key, signal.sourceRecordId === invoiceId ? 'present' : 'missing');
-      } else if (signal.sourceModule === 'spend_guard') {
-        availability.set(key, 'missing');
-        alertIds.add(signal.sourceRecordId);
-      } else if (signal.sourceModule === 'ocr') {
-        availability.set(key, 'missing');
-        ocrIds.add(signal.sourceRecordId);
-      } else if (signal.sourceModule === 'email_intake') {
-        availability.set(key, 'missing');
-        intakeIds.add(signal.sourceRecordId);
-      } else {
-        availability.set(key, 'unknown');
-      }
+      collectSourceReference(
+        signal.sourceModule,
+        signal.sourceRecordId,
+        invoiceId,
+        availability,
+        collections,
+      );
     }
 
-    const [alerts, ocr, intake] = await Promise.all([
-      alertIds.size === 0
-        ? []
-        : this.db.query.spendGuardAlerts.findMany({
-            where: (record, operators) =>
-              operators.and(
-                operators.eq(record.orgId, organizationId),
-                operators.inArray(record.id, [...alertIds]),
-              ),
-            columns: { id: true },
-          }),
-      ocrIds.size === 0
+    const alerts = await (collections.alertIds.size === 0
+      ? []
+      : this.db.query.spendGuardAlerts.findMany({
+          where: (record, operators) =>
+            operators.and(
+              operators.eq(record.orgId, organizationId),
+              operators.inArray(record.id, [...collections.alertIds]),
+              operators.eq(record.recordType, 'invoice'),
+              operators.eq(record.recordId, invoiceId),
+            ),
+          columns: { id: true },
+        }));
+    for (const record of alerts) availability.set(signalKey('spend_guard', record.id), 'present');
+    await this.resolveOcrAndEmailAvailability(
+      organizationId,
+      invoiceId,
+      collections,
+      availability,
+      'ocr',
+    );
+    return availability;
+  }
+
+  private async resolveOcrAndEmailAvailability(
+    organizationId: string,
+    invoiceId: string,
+    collections: SourceReferenceCollections,
+    availability: Map<string, SourceAvailability>,
+    ocrSourceType: 'OCR' | 'ocr',
+  ): Promise<void> {
+    const [ocrRows, messageRows, itemRows] = await Promise.all([
+      collections.ocrIds.size === 0
         ? []
         : this.db.query.ocrJobs.findMany({
-            where: (record, operators) =>
+            where: (
+              record: typeof ocrJobs,
+              operators: { and: typeof and; eq: typeof eq; inArray: typeof inArray },
+            ) =>
               operators.and(
                 operators.eq(record.organizationId, organizationId),
-                operators.inArray(record.id, [...ocrIds]),
+                operators.inArray(record.id, [...collections.ocrIds]),
+                operators.eq(record.invoiceId, invoiceId),
               ),
             columns: { id: true },
           }),
-      intakeIds.size === 0
+      collections.intakeIds.size === 0
         ? []
-        : this.db.query.emailIntakeItems.findMany({
-            where: (record, operators) =>
+        : this.db.query.emailIntakeMessages.findMany({
+            where: (
+              record: typeof emailIntakeMessages,
+              operators: { and: typeof and; eq: typeof eq; inArray: typeof inArray },
+            ) =>
               operators.and(
                 operators.eq(record.organizationId, organizationId),
-                operators.inArray(record.id, [...intakeIds]),
+                operators.inArray(record.id, [...collections.intakeIds]),
+              ),
+            columns: { id: true },
+          }),
+      collections.intakeIds.size === 0
+        ? []
+        : this.db.query.emailIntakeItems.findMany({
+            where: (
+              record: typeof emailIntakeItems,
+              operators: { and: typeof and; eq: typeof eq; inArray: typeof inArray },
+            ) =>
+              operators.and(
+                operators.eq(record.organizationId, organizationId),
+                operators.inArray(record.id, [...collections.intakeIds]),
               ),
             columns: { id: true },
           }),
     ]);
-    for (const record of alerts) availability.set(signalKey('spend_guard', record.id), 'present');
-    for (const record of ocr) availability.set(signalKey('ocr', record.id), 'present');
-    for (const record of intake) availability.set(signalKey('email_intake', record.id), 'present');
-    return availability;
+    for (const row of ocrRows) availability.set(signalKey(ocrSourceType, row.id), 'present');
+    for (const row of messageRows) availability.set(signalKey('email_intake', row.id), 'present');
+    for (const row of itemRows) availability.set(signalKey('email_intake', row.id), 'present');
   }
 }

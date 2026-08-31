@@ -7,6 +7,7 @@ import {
   ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { eq, and, ne, isNull, lte, gte, or, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
@@ -22,7 +23,7 @@ import {
   vendorPaymentAccounts,
 } from '@betterspend/db';
 import { SequenceService } from '../../common/services/sequence.service';
-import { MatchingService } from './matching.service';
+import { invoiceStatusFromMatchStatus, MatchingService } from './matching.service';
 import { WebhookEventService } from '../webhooks/webhook-event.service';
 import { GlExportService } from '../gl/gl-export.service';
 import { BudgetsService } from '../budgets/budgets.service';
@@ -41,6 +42,8 @@ import { SpendGuardService } from '../spend-guard/spend-guard.service';
 import { SettingsService } from '../settings/settings.service';
 import { resolveIndependentInvoiceApprover } from './invoice-approval-policy';
 import { WorkflowExecutionService } from '../workflow-execution/workflow-execution.service';
+import { InvoiceReviewsService } from '../invoice-reviews/invoice-reviews.service';
+import { InvoiceReviewProvenanceService } from '../invoice-reviews/invoice-review-provenance.service';
 import { changedMaterialInvoiceFields, type MaterialInvoiceState } from './invoice-material-edit';
 import { calculateInvoiceLineAmounts } from './invoice-money';
 import type { AccessPolicy } from '../auth/access-policy';
@@ -136,6 +139,48 @@ function invoiceReportScopePredicate(access: AccessPolicy | undefined, organizat
 
 export type { UpdateInvoiceInput } from '@betterspend/shared';
 
+const manualHeaderProvenanceFields: Partial<
+  Record<
+    keyof UpdateInvoiceInput,
+    'vendor' | 'invoiceDate' | 'dueDate' | 'currency' | 'exchangeRate'
+  >
+> = {
+  vendorId: 'vendor',
+  invoiceDate: 'invoiceDate',
+  dueDate: 'dueDate',
+  currency: 'currency',
+  exchangeRate: 'exchangeRate',
+};
+
+const manualLineProvenanceFields = [
+  'description',
+  'quantity',
+  'unitPrice',
+  'poLineId',
+  'taxCodeId',
+  'glAccount',
+] as const;
+
+function manualCorrectionFieldPaths(input: UpdateInvoiceInput): string[] {
+  const paths: string[] = Object.entries(manualHeaderProvenanceFields).flatMap(
+    ([inputField, fieldPath]) =>
+      input[inputField as keyof UpdateInvoiceInput] === undefined ? [] : [fieldPath],
+  );
+  let lineAmountChanged = false;
+  for (const line of input.lines ?? []) {
+    for (const field of manualLineProvenanceFields) {
+      if (line[field] !== undefined) {
+        paths.push(`lines.${line.id}.${field}`);
+        lineAmountChanged ||=
+          field === 'quantity' || field === 'unitPrice' || field === 'taxCodeId';
+      }
+    }
+    if (line.taxInclusive !== undefined) lineAmountChanged = true;
+  }
+  if (lineAmountChanged) paths.push('subtotal', 'taxAmount', 'totalAmount');
+  return [...new Set(paths)];
+}
+
 export interface CreateInvoiceInput {
   entityId?: string;
   purchaseOrderId?: string;
@@ -204,6 +249,8 @@ export class InvoicesService {
     private readonly spendGuard: SpendGuardService,
     private readonly settingsService: SettingsService,
     private readonly workflowExecution: WorkflowExecutionService,
+    private readonly invoiceReviews: InvoiceReviewsService,
+    private readonly invoiceProvenance: InvoiceReviewProvenanceService,
   ) {}
 
   private calculateLineTax(
@@ -524,6 +571,37 @@ export class InvoicesService {
     return invoice;
   }
 
+  /**
+   * Run an invoice match and persist its invoice status and review signal on
+   * the caller's transaction. Callers use this when the match belongs to a
+   * larger invoice write that must commit as one unit.
+   */
+  async runMatchAndRecordReview(
+    invoiceId: string,
+    organizationId: string,
+    executor: DbTransaction,
+    observedAt = new Date(),
+  ) {
+    const result = await this.matchingService.runMatch(invoiceId, executor);
+    await executor
+      .update(invoices)
+      .set({
+        status: invoiceStatusFromMatchStatus(result.matchStatus),
+        updatedAt: observedAt,
+      })
+      .where(and(eq(invoices.id, invoiceId), eq(invoices.organizationId, organizationId)));
+    await this.invoiceReviews.recordMatchReviewSignal(
+      {
+        organizationId,
+        invoiceId,
+        matchStatus: result.matchStatus,
+        observedAt,
+      },
+      executor,
+    );
+    return result;
+  }
+
   async update(
     id: string,
     organizationId: string,
@@ -532,6 +610,8 @@ export class InvoicesService {
     access?: AccessPolicy,
   ) {
     const input = updateInvoiceSchema.parse(rawInput);
+    const manualFields = manualCorrectionFieldPaths(input);
+    const correctionId = manualFields.length > 0 ? randomUUID() : undefined;
     if (access) {
       const { authorizationScope } = await this.findOneWithAuthorizationScope(
         id,
@@ -832,19 +912,23 @@ export class InvoicesService {
 
       let approvalEligible =
         lockedInvoice.purchaseOrderId !== null && lockedInvoice.matchStatus === 'full_match';
+      let matchStatus: string | null = null;
       if (material && lockedInvoice.purchaseOrderId) {
-        const match = await this.matchingService.runMatch(id, tx);
+        const match = await this.runMatchAndRecordReview(id, organizationId, tx, editedAt);
         approvalEligible = match.matchStatus === 'full_match';
-        const status =
-          match.matchStatus === 'full_match'
-            ? 'matched'
-            : match.matchStatus === 'exception'
-              ? 'exception'
-              : 'partial_match';
-        await tx
-          .update(invoices)
-          .set({ status, updatedAt: editedAt })
-          .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
+        matchStatus = match.matchStatus;
+      }
+
+      if (manualFields.length > 0) {
+        await this.invoiceProvenance.recordManualCorrectionProvenance({
+          organizationId,
+          invoiceId: id,
+          actorId,
+          fieldPaths: manualFields,
+          correctionId,
+          observedAt: editedAt,
+          executor: tx,
+        });
       }
 
       let publishRequestId: string | null = null;
@@ -1111,17 +1195,9 @@ export class InvoicesService {
 
     // Auto-run 3-way match if PO is linked
     if (input.purchaseOrderId) {
-      const matchResult = await this.matchingService.runMatch(invoiceId);
-      const newStatus =
-        matchResult.matchStatus === 'full_match'
-          ? 'matched'
-          : matchResult.matchStatus === 'exception'
-            ? 'exception'
-            : 'partial_match';
-      await this.db
-        .update(invoices)
-        .set({ status: newStatus, updatedAt: new Date() })
-        .where(eq(invoices.id, invoiceId));
+      await this.db.transaction(async (tx) =>
+        this.runMatchAndRecordReview(invoiceId, organizationId, tx),
+      );
     }
 
     const created = await this.findOne(invoiceId, organizationId);
@@ -1254,7 +1330,7 @@ export class InvoicesService {
             .where(and(eq(invoices.id, id), eq(invoices.organizationId, organizationId)));
         }
       } else if (match.matchStatus !== 'full_match') {
-        const rematchStatus = match.matchStatus === 'exception' ? 'exception' : 'partial_match';
+        const rematchStatus = invoiceStatusFromMatchStatus(match.matchStatus);
         if (['approved', 'ready_for_release'].includes(lockedInvoice.status)) {
           await this.budgets.reopenInvoice(tx, organizationId, id, new Date());
         }
@@ -1291,6 +1367,14 @@ export class InvoicesService {
           workflowRequestId: publishRequestId,
         },
       });
+      await this.invoiceReviews.recordMatchReviewSignal(
+        {
+          organizationId,
+          invoiceId: id,
+          matchStatus: match.matchStatus,
+        },
+        tx,
+      );
       return { match, publishRequestId };
     });
     if (outcome.publishRequestId) {

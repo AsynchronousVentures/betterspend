@@ -20,15 +20,26 @@ import type { SpendGuardService } from '../spend-guard/spend-guard.service';
 import type { SettingsService } from '../settings/settings.service';
 import type { WebhookEventService } from '../webhooks/webhook-event.service';
 import type { WorkflowExecutionService } from '../workflow-execution/workflow-execution.service';
+import type { InvoiceReviewsService } from '../invoice-reviews/invoice-reviews.service';
+import type { InvoiceReviewProvenanceService } from '../invoice-reviews/invoice-review-provenance.service';
 import type { AccessPolicy } from '../auth/access-policy';
 import type { MatchingService } from './matching.service';
 import { InvoicesService } from './invoices.service';
+
+const defaultInvoiceReviews = {
+  recordMatchReviewSignal: async () => undefined,
+} as unknown as InvoiceReviewsService;
+const defaultInvoiceProvenance = {
+  recordManualCorrectionProvenance: async () => [],
+} as unknown as InvoiceReviewProvenanceService;
 
 const auditProjection = [
   {
     changesJson: '{}',
     metadataJson: '{}',
     createdAtText: '2026-08-29T00:00:00.000000Z',
+    entryHash: 'existing-audit-hash',
+    createdAt: new Date('2026-08-29T00:00:00.000Z'),
   },
 ];
 
@@ -184,6 +195,8 @@ function createService(
       undefined as unknown as SpendGuardService,
       settings,
       undefined as unknown as WorkflowExecutionService,
+      defaultInvoiceReviews,
+      defaultInvoiceProvenance,
     ),
     transaction: transaction as unknown as DbTransaction,
     auditActions,
@@ -488,6 +501,8 @@ describe('InvoicesService creation audit', () => {
       { analyzeInvoice: async () => {} } as unknown as SpendGuardService,
       undefined as unknown as SettingsService,
       undefined as unknown as WorkflowExecutionService,
+      defaultInvoiceReviews,
+      defaultInvoiceProvenance,
     );
 
     await service.create('00000000-0000-4000-8000-000000000001', 'maker-1', {
@@ -526,6 +541,140 @@ describe('InvoicesService creation audit', () => {
     );
     assert.equal(typeof auditValues.entryHash, 'string');
   });
+
+  it('persists created match status and review signal in one transaction', async () => {
+    const organizationId = '00000000-0000-0000-0000-000000000001';
+    const invoiceId = '00000000-0000-0000-0000-000000000002';
+    const createdInvoice = {
+      id: invoiceId,
+      organizationId,
+      invoiceNumber: 'VENDOR-100',
+      internalNumber: 'INV-2026-0001',
+      matchStatus: 'exception',
+      status: 'exception',
+    };
+    let reviewExecutor: unknown;
+    let matchingExecutor: unknown;
+    let invoiceLookup = 0;
+    const updates: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+    const transaction = {
+      execute: async () => auditProjection,
+      select() {
+        return {
+          from() {
+            return {
+              where() {
+                return {
+                  orderBy() {
+                    return { limit: async () => auditProjection };
+                  },
+                  limit: async () => auditProjection,
+                };
+              },
+            };
+          },
+        };
+      },
+      insert(table: unknown) {
+        return {
+          values(values: Record<string, unknown> | readonly Record<string, unknown>[]) {
+            return {
+              returning: async () =>
+                table === invoices
+                  ? [{ ...createdInvoice, ...values }]
+                  : Array.isArray(values)
+                    ? values
+                    : [values],
+            };
+          },
+        };
+      },
+      update(table: unknown) {
+        return {
+          set(values: Record<string, unknown>) {
+            updates.push({ table, values });
+            return { where: async () => undefined };
+          },
+        };
+      },
+    };
+    const db = {
+      query: {
+        purchaseOrders: {
+          findFirst: async () => ({
+            id: 'po-1',
+            entityId: 'entity-1',
+            currency: 'USD',
+            exchangeRate: '1',
+            requisition: null,
+          }),
+        },
+        invoices: {
+          findFirst: async () => {
+            invoiceLookup += 1;
+            return invoiceLookup === 1 ? null : createdInvoice;
+          },
+        },
+        taxCodes: { findMany: async () => [] },
+      },
+      transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) =>
+        callback(transaction),
+    } as unknown as Db;
+    const invoiceReviews = {
+      recordMatchReviewSignal: async (_input: unknown, executor: unknown) => {
+        reviewExecutor = executor;
+      },
+    } as unknown as InvoiceReviewsService;
+    const service = new InvoicesService(
+      db,
+      { next: async () => 'INV-2026-0001' } as unknown as SequenceService,
+      {
+        runMatch: async (_invoiceId: string, executor: unknown) => {
+          matchingExecutor = executor;
+          return { matchStatus: 'exception', lineResults: [] };
+        },
+      } as unknown as MatchingService,
+      { emit() {} } as unknown as WebhookEventService,
+      { enqueue: async () => undefined } as unknown as GlExportService,
+      undefined as unknown as BudgetsService,
+      {
+        log: async () => undefined,
+      } as unknown as AuditService,
+      undefined as unknown as NotificationsService,
+      { assertBelongsToOrg: async () => undefined } as unknown as EntitiesService,
+      {
+        convertToBase: async () => ({ baseCurrency: 'USD', exchangeRate: 1, baseAmount: 100 }),
+        roundMoney: (value: number) => value,
+      } as unknown as ExchangeRatesService,
+      { analyzeInvoice: async () => undefined } as unknown as SpendGuardService,
+      undefined as unknown as SettingsService,
+      undefined as unknown as WorkflowExecutionService,
+      invoiceReviews,
+      defaultInvoiceProvenance,
+    );
+
+    await service.create(organizationId, 'maker-1', {
+      purchaseOrderId: 'po-1',
+      vendorId: 'vendor-1',
+      invoiceNumber: 'VENDOR-100',
+      invoiceDate: '2026-08-30',
+      lines: [
+        {
+          lineNumber: 1,
+          description: 'Services',
+          quantity: 1,
+          unitPrice: 100,
+          poLineId: 'po-line-1',
+        },
+      ],
+    });
+
+    assert.equal(matchingExecutor, transaction);
+    assert.equal(reviewExecutor, transaction);
+    assert.ok(
+      updates.some((update) => update.table === invoices && update.values.status === 'exception'),
+    );
+  });
 });
 
 describe('InvoicesService material edits', () => {
@@ -542,6 +691,8 @@ describe('InvoicesService material edits', () => {
     duplicateInvoice = false,
     poVendorId = 'vendor-1',
     workflowConfigured = true,
+    invoiceReviews?: InvoiceReviewsService,
+    invoiceProvenance?: InvoiceReviewProvenanceService,
   ) => {
     const invoice = {
       id: 'invoice-1',
@@ -727,12 +878,15 @@ describe('InvoicesService material edits', () => {
       undefined as unknown as SpendGuardService,
       undefined as unknown as SettingsService,
       workflow,
+      invoiceReviews ?? defaultInvoiceReviews,
+      invoiceProvenance ?? defaultInvoiceProvenance,
     );
     return {
       service,
       invoiceUpdates,
       lineUpdates,
       auditActions,
+      transaction,
       state: () => ({ reopened, restarted, cancelled, initiated, published }),
       workflowStartedFromStatus: () => workflowStartedFromStatus,
     };
@@ -781,6 +935,41 @@ describe('InvoicesService material edits', () => {
     assert.ok(!fixture.invoiceUpdates.some((update) => update.approvedBy === null));
     assert.ok(fixture.lineUpdates.some((update) => update.description === 'Consulting service'));
     assert.deepEqual(fixture.auditActions, ['updated']);
+  });
+
+  it('records manual correction provenance in the invoice edit transaction', async () => {
+    const calls: Array<{ executor?: unknown; correctionId?: string }> = [];
+    const invoiceProvenance = {
+      recordManualCorrectionProvenance: async (input: {
+        executor?: unknown;
+        correctionId?: string;
+      }) => {
+        calls.push(input);
+        return [];
+      },
+    } as unknown as InvoiceReviewProvenanceService;
+    const fixture = createEditService(
+      'approved',
+      'full_match',
+      false,
+      'vendor-1',
+      true,
+      undefined,
+      invoiceProvenance,
+    );
+
+    await fixture.service.update('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1', {
+      lines: [
+        {
+          id: '00000000-0000-4000-8000-000000000101',
+          description: 'Corrected consulting service',
+        },
+      ],
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.executor, fixture.transaction);
+    assert.equal(typeof calls[0]?.correctionId, 'string');
   });
 
   it('cancels approval without restarting when the edited invoice no longer fully matches', async () => {
@@ -850,6 +1039,29 @@ describe('InvoicesService material edits', () => {
     assert.equal(fixture.state().initiated, true);
     assert.equal(fixture.workflowStartedFromStatus(), 'pending_approval');
     assert.equal(fixture.state().published, true);
+  });
+
+  it('records rematch review state before the match transaction commits', async () => {
+    const calls: Array<{ executor?: unknown; matchStatus?: string }> = [];
+    const invoiceReviews = {
+      recordMatchReviewSignal: async (input: { matchStatus?: string }, executor?: unknown) => {
+        calls.push({ executor, matchStatus: input.matchStatus });
+      },
+    } as unknown as InvoiceReviewsService;
+    const fixture = createEditService(
+      'partial_match',
+      'full_match',
+      false,
+      'vendor-1',
+      true,
+      invoiceReviews,
+    );
+
+    await fixture.service.runMatch('invoice-1', '00000000-0000-4000-8000-000000000001', 'editor-1');
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.executor, fixture.transaction);
+    assert.equal(calls[0]?.matchStatus, 'full_match');
   });
 
   it('reopens approval after a successful rematch of an approved or released invoice', async () => {
@@ -1100,6 +1312,8 @@ describe('InvoicesService external payments', () => {
       {} as SpendGuardService,
       {} as SettingsService,
       {} as WorkflowExecutionService,
+      defaultInvoiceReviews,
+      defaultInvoiceProvenance,
     );
     (service as unknown as { findOne: () => Promise<typeof invoice> }).findOne = async () =>
       invoice;

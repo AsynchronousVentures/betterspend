@@ -3,13 +3,18 @@ import type { Db } from '@betterspend/db';
 import { VendorPortalService } from './vendor-portal.service';
 import { hashPortalSessionToken, PORTAL_SESSION_TTL_MS } from './vendor-portal-session';
 
-function createService(db: unknown, settingsService: unknown = {}, vendorsService: unknown = {}) {
+function createService(
+  db: unknown,
+  settingsService: unknown = {},
+  vendorsService: unknown = {},
+  invoicesService: unknown = { runMatchAndRecordReview: async () => undefined },
+) {
   return new VendorPortalService(
     db as Db,
     {} as never,
     settingsService as never,
     {} as never,
-    {} as never,
+    invoicesService as never,
     vendorsService as never,
     {} as never,
   );
@@ -214,5 +219,81 @@ describe('VendorPortalService sessions', () => {
       service.sendAccessLink(vendorId, organizationId, {} as never),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(insert).not.toHaveBeenCalled();
+  });
+
+  it('persists vendor match status and review signal in one transaction', async () => {
+    const invoiceId = '00000000-0000-0000-0000-000000000004';
+    const invoice = { id: invoiceId, organizationId, lines: [] };
+    let matchExecutor: unknown;
+    let signalExecutor: unknown;
+    const update = jest.fn(() => ({
+      set: jest.fn(() => ({
+        where: jest.fn(async () => undefined),
+      })),
+    }));
+    const insert = jest
+      .fn()
+      .mockImplementationOnce(() => ({
+        values: jest.fn(() => ({ returning: jest.fn(async () => [invoice]) })),
+      }))
+      .mockImplementationOnce(() => ({ values: jest.fn(async () => undefined) }));
+    const transactions = [{ insert, update }, { update }];
+    const db = {
+      query: {
+        purchaseOrders: {
+          findFirst: jest.fn(async () => ({ id: 'po-1' })),
+        },
+        invoices: {
+          findFirst: jest.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(invoice),
+        },
+      },
+      transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) => {
+        const tx = transactions.shift();
+        if (!tx) throw new Error('unexpected transaction');
+        return callback(tx);
+      }),
+    };
+    const recordMatchReviewSignal = jest.fn(async (_input: unknown, executor: unknown) => {
+      signalExecutor = executor;
+    });
+    const invoicesService = {
+      runMatchAndRecordReview: jest.fn(
+        async (invoiceId: string, organizationId: string, executor: unknown) => {
+          matchExecutor = executor;
+          await recordMatchReviewSignal(
+            { organizationId, invoiceId, matchStatus: 'exception' },
+            executor,
+          );
+          return { matchStatus: 'exception', lineResults: [] };
+        },
+      ),
+    };
+    const service = new VendorPortalService(
+      db as unknown as Db,
+      {} as never,
+      {} as never,
+      { next: jest.fn(async () => 'INV-2026-0001') } as never,
+      invoicesService as never,
+      {} as never,
+      {} as never,
+    );
+
+    await service.submitInvoice(vendorId, organizationId, {
+      purchaseOrderId: 'po-1',
+      invoiceNumber: 'V-1',
+      invoiceDate: '2026-08-30',
+      lines: [],
+    });
+
+    expect(invoicesService.runMatchAndRecordReview).toHaveBeenCalledWith(
+      invoiceId,
+      organizationId,
+      matchExecutor,
+    );
+    expect(recordMatchReviewSignal).toHaveBeenCalledWith(
+      { organizationId, invoiceId, matchStatus: 'exception' },
+      signalExecutor,
+    );
+    expect(matchExecutor).toBe(signalExecutor);
   });
 });

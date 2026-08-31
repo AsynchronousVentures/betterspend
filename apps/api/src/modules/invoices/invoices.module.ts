@@ -8,6 +8,7 @@ import { ExchangeRatesModule } from '../exchange-rates/exchange-rates.module';
 import { SpendGuardModule } from '../spend-guard/spend-guard.module';
 import { SettingsModule } from '../settings/settings.module';
 import { WorkflowExecutionModule } from '../workflow-execution/workflow-execution.module';
+import { InvoiceReviewsModule } from '../invoice-reviews/invoice-reviews.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { WorkflowExecutionModule } from '../workflow-execution/workflow-executio
     SpendGuardModule,
     SettingsModule,
     WorkflowExecutionModule,
+    InvoiceReviewsModule,
   ],
   controllers: [InvoicesController],
   providers: [InvoicesService, MatchingService],
