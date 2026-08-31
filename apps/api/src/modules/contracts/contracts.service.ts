@@ -853,7 +853,9 @@ export class ContractsService {
     const fields = this.extractFields(text);
     const sourceReference: SourceReferenceResolver = (candidateText, fallback) =>
       document && documentId
-        ? resolveDocumentSourceReference(documentId, document, candidateText)
+        ? candidateText
+          ? resolveDocumentSourceReference(documentId, document, candidateText)
+          : `document:${documentId}#absent:${fallback}`
         : fallback;
     const clauses = this.extractClauses(text, contract, fields, sourceReference);
     const obligations = this.extractObligations(text, contract, fields, clauses, sourceReference);
@@ -1010,10 +1012,7 @@ export class ContractsService {
         riskLevel: 'high',
         riskReason: 'Software and SaaS contracts should include data/security terms.',
         confidence: 0.62,
-        sourceReference: sourceReference(
-          'No data security or privacy language was detected in the provided text.',
-          'terms:data_security_missing',
-        ),
+        sourceReference: sourceReference('', 'terms:data_security_missing'),
       });
     }
 
@@ -1121,11 +1120,13 @@ export class ContractsService {
     const message =
       code === 'encrypted'
         ? 'Selected contract document is encrypted and cannot be extracted'
-        : code === 'too_large' || code === 'limit_exceeded'
-          ? 'Selected contract document exceeds extraction limits'
-          : code === 'empty'
-            ? 'Selected contract document contains no extractable text'
-            : 'Selected contract document could not be parsed';
+        : code === 'unsupported'
+          ? 'Selected contract document format is not supported for extraction'
+          : code === 'too_large' || code === 'limit_exceeded'
+            ? 'Selected contract document exceeds extraction limits'
+            : code === 'empty'
+              ? 'Selected contract document contains no extractable text'
+              : 'Selected contract document could not be parsed';
     throw new BadRequestException(message);
   }
 
@@ -1152,8 +1153,8 @@ export class ContractsService {
     if (typeof fields.autoRenew === 'boolean') {
       updates.autoRenew = fields.autoRenew;
     }
-    if (Number.isFinite(Number(fields.renewalNoticeDays))) {
-      updates.renewalNoticeDays = Number(fields.renewalNoticeDays);
+    if (typeof fields.renewalNoticeDays === 'number' && Number.isFinite(fields.renewalNoticeDays)) {
+      updates.renewalNoticeDays = fields.renewalNoticeDays;
     }
     return updates;
   }

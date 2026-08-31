@@ -30,6 +30,7 @@ const MAX_XML_REFERENCES = 100_000;
 const DOCX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const WORDPROCESSINGML_MAIN_NAMESPACE =
   'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+const WORDPROCESSINGML_WORD_NAMESPACE = 'http://schemas.microsoft.com/office/word/2006/wordml';
 const MARKUP_COMPATIBILITY_NAMESPACE =
   'http://schemas.openxmlformats.org/markup-compatibility/2006';
 const PACKAGE_CONTENT_TYPES_NAMESPACE =
@@ -43,6 +44,7 @@ const INTERPRETED_WORD_ELEMENT_NAMES = new Map([
   ['del', 'del'],
   ['deltext', 'delText'],
   ['document', 'document'],
+  ['movefrom', 'moveFrom'],
   ['p', 'p'],
   ['ppr', 'pPr'],
   ['pstyle', 'pStyle'],
@@ -55,6 +57,7 @@ const INTERPRETED_WORD_ELEMENT_NAMES = new Map([
 const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
 const ZIP_LOCAL_FILE_SIGNATURE = 0x04034b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
+const ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIGNATURE = 0x07064b50;
 const ZIP64_EXTRA_FIELD_ID = 0x0001;
 const ZIP_ENCRYPTED_FLAG = 0x1;
 const ZIP_DATA_DESCRIPTOR_FLAG = 0x8;
@@ -234,6 +237,9 @@ function detectKind(contentType: string, filename: string): ContractDocumentKind
 
 async function extractDocxArchive(buffer: Buffer): Promise<ContractDocumentText> {
   const archive = readZipEndOfCentralDirectory(buffer);
+  if (!archive.entries.some((entry) => entry.name === '[Content_Types].xml')) {
+    throw new ContractDocumentExtractionError('malformed');
+  }
   if (!archive.entries.some((entry) => entry.normalizedName === 'word/document.xml')) {
     throw new ContractDocumentExtractionError('malformed');
   }
@@ -357,7 +363,7 @@ async function processZipEntry(
     const parser = new DocxStylesParser(headingStyles);
     setStylesParser(parser);
     scanner = createXmlScanner(normalizedName, xmlBudget, parser);
-  } else if (normalizedName === '[content_types].xml') {
+  } else if (expected.name === '[Content_Types].xml') {
     scanner = createXmlScanner(normalizedName, xmlBudget, new ContentTypesParser(packageState));
   } else if (normalizedName === '_rels/.rels') {
     scanner = createXmlScanner(
@@ -840,7 +846,10 @@ class DocxDocumentParser implements XmlHandler {
       validateWordElementNamespace(token, this.wordPrefix);
     }
     const localName = token.localName.toLowerCase();
-    if (localName === 'del' || localName === 'deltext' || localName === 'movefrom') {
+    if (
+      (localName === 'del' || localName === 'deltext' || localName === 'movefrom') &&
+      token.namespaceUri === WORDPROCESSINGML_MAIN_NAMESPACE
+    ) {
       this.deletedDepth += 1;
     }
     if (localName === 't') this.textDepth += 1;
@@ -1064,10 +1073,10 @@ function validateWordDocumentRoot(token: XmlStartToken): string | undefined {
 function validateWordElementNamespace(token: XmlStartToken, wordPrefix: string | undefined): void {
   const { localName } = splitXmlQualifiedName(token.name);
   const interpretedName = INTERPRETED_WORD_ELEMENT_NAMES.get(localName.toLowerCase());
-  if (
-    interpretedName &&
-    (localName !== interpretedName || token.namespaceUri !== WORDPROCESSINGML_MAIN_NAMESPACE)
-  ) {
+  const supportedNamespace =
+    token.namespaceUri === WORDPROCESSINGML_MAIN_NAMESPACE ||
+    (localName === 'txbxContent' && token.namespaceUri === WORDPROCESSINGML_WORD_NAMESPACE);
+  if (interpretedName && (localName !== interpretedName || !supportedNamespace)) {
     throw new ContractDocumentExtractionError('malformed');
   }
 
@@ -1101,7 +1110,44 @@ function splitXmlQualifiedName(name: string): { prefix: string | undefined; loca
 }
 
 function isSupportedXmlNcName(value: string): boolean {
-  return /^[\p{L}_][\p{L}\p{M}\p{N}._-]*$/u.test(value);
+  const codePoints = [...value].map((character) => character.codePointAt(0)!);
+  return (
+    codePoints.length > 0 &&
+    isXmlNameStartCodePoint(codePoints[0]!) &&
+    codePoints.slice(1).every(isXmlNameCodePoint)
+  );
+}
+
+function isXmlNameStartCodePoint(codePoint: number): boolean {
+  return (
+    codePoint === 0x5f ||
+    (codePoint >= 0x41 && codePoint <= 0x5a) ||
+    (codePoint >= 0x61 && codePoint <= 0x7a) ||
+    (codePoint >= 0xc0 && codePoint <= 0xd6) ||
+    (codePoint >= 0xd8 && codePoint <= 0xf6) ||
+    (codePoint >= 0xf8 && codePoint <= 0x2ff) ||
+    (codePoint >= 0x370 && codePoint <= 0x37d) ||
+    (codePoint >= 0x37f && codePoint <= 0x1fff) ||
+    (codePoint >= 0x200c && codePoint <= 0x200d) ||
+    (codePoint >= 0x2070 && codePoint <= 0x218f) ||
+    (codePoint >= 0x2c00 && codePoint <= 0x2fef) ||
+    (codePoint >= 0x3001 && codePoint <= 0xd7ff) ||
+    (codePoint >= 0xf900 && codePoint <= 0xfdcf) ||
+    (codePoint >= 0xfdf0 && codePoint <= 0xfffd) ||
+    (codePoint >= 0x10000 && codePoint <= 0xeffff)
+  );
+}
+
+function isXmlNameCodePoint(codePoint: number): boolean {
+  return (
+    isXmlNameStartCodePoint(codePoint) ||
+    codePoint === 0x2d ||
+    codePoint === 0x2e ||
+    (codePoint >= 0x30 && codePoint <= 0x39) ||
+    codePoint === 0xb7 ||
+    (codePoint >= 0x300 && codePoint <= 0x36f) ||
+    (codePoint >= 0x203f && codePoint <= 0x2040)
+  );
 }
 
 function validateNamespaceBindings(
@@ -1336,10 +1382,15 @@ function parseXmlEndTag(token: string): string {
 }
 
 function readXmlName(value: string, start: number): string {
-  const match = /^[\p{L}_][\p{L}\p{M}\p{N}._:-]*/u.exec(value.slice(start));
-  if (!match?.[0]) throw new ContractDocumentExtractionError('malformed');
-  splitXmlQualifiedName(match[0]);
-  return match[0];
+  let name = '';
+  for (const character of value.slice(start)) {
+    const codePoint = character.codePointAt(0)!;
+    if (character !== ':' && !isXmlNameCodePoint(codePoint)) break;
+    name += character;
+  }
+  if (!name) throw new ContractDocumentExtractionError('malformed');
+  splitXmlQualifiedName(name);
+  return name;
 }
 
 function isXmlWhitespace(value: string): boolean {
@@ -1427,6 +1478,12 @@ function readZipEndOfCentralDirectory(buffer: Buffer): ZipArchiveMetadata {
   if (eocdOffsets.length !== 1) throw new ContractDocumentExtractionError('malformed');
 
   const eocdOffset = eocdOffsets[0]!;
+  if (
+    eocdOffset >= 20 &&
+    buffer.readUInt32LE(eocdOffset - 20) === ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR_SIGNATURE
+  ) {
+    throw new ContractDocumentExtractionError('malformed');
+  }
   const diskNumber = buffer.readUInt16LE(eocdOffset + 4);
   const centralDirectoryDisk = buffer.readUInt16LE(eocdOffset + 6);
   const entriesOnDisk = buffer.readUInt16LE(eocdOffset + 8);
@@ -1751,29 +1808,45 @@ function readLocalDataRange(
   }
   let rangeEnd = dataEnd;
   if (entry.generalPurposeBitFlag & ZIP_DATA_DESCRIPTOR_FLAG) {
-    ensureBufferRange(buffer, dataEnd, 12);
-    const descriptorHasSignature =
-      buffer.readUInt32LE(dataEnd) === ZIP_DATA_DESCRIPTOR_SIGNATURE &&
-      entry.crc32 !== ZIP_DATA_DESCRIPTOR_SIGNATURE;
-    const descriptorStart = descriptorHasSignature ? dataEnd + 4 : dataEnd;
-    const descriptorLength = descriptorHasSignature ? 16 : 12;
-    ensureBufferRange(buffer, dataEnd, descriptorLength);
-    if (dataEnd + descriptorLength > centralDirectoryOffset) {
-      throw new ContractDocumentExtractionError('malformed');
-    }
-    const descriptorCrc32 = buffer.readUInt32LE(descriptorStart);
-    const descriptorCompressedSize = buffer.readUInt32LE(descriptorStart + 4);
-    const descriptorUncompressedSize = buffer.readUInt32LE(descriptorStart + 8);
-    if (
-      descriptorCrc32 !== entry.crc32 ||
-      descriptorCompressedSize !== entry.compressedSize ||
-      descriptorUncompressedSize !== entry.uncompressedSize
-    ) {
+    const descriptorLength = selectZipDataDescriptorLength(
+      buffer,
+      dataEnd,
+      centralDirectoryOffset,
+      {
+        crc32: entry.crc32,
+        compressedSize: entry.compressedSize,
+        uncompressedSize: entry.uncompressedSize,
+      },
+    );
+    if (!descriptorLength) {
       throw new ContractDocumentExtractionError('malformed');
     }
     rangeEnd = dataEnd + descriptorLength;
   }
   return { start: localHeaderOffset, end: rangeEnd, dataStart, dataEnd };
+}
+
+export function selectZipDataDescriptorLength(
+  buffer: Buffer,
+  dataEnd: number,
+  centralDirectoryOffset: number,
+  expected: { crc32: number; compressedSize: number; uncompressedSize: number },
+): 12 | 16 | undefined {
+  const matches = (start: number, length: 12 | 16): boolean => {
+    if (dataEnd + length > centralDirectoryOffset || dataEnd + length > buffer.length) return false;
+    return (
+      buffer.readUInt32LE(start) === expected.crc32 &&
+      buffer.readUInt32LE(start + 4) === expected.compressedSize &&
+      buffer.readUInt32LE(start + 8) === expected.uncompressedSize
+    );
+  };
+  const signedMatches =
+    dataEnd + 16 <= centralDirectoryOffset &&
+    dataEnd + 16 <= buffer.length &&
+    buffer.readUInt32LE(dataEnd) === ZIP_DATA_DESCRIPTOR_SIGNATURE &&
+    matches(dataEnd + 4, 16);
+  if (signedMatches) return 16;
+  return matches(dataEnd, 12) ? 12 : undefined;
 }
 
 async function validateCompressedPayload(buffer: Buffer, entry: ZipEntryMetadata): Promise<void> {

@@ -171,7 +171,7 @@ it('fails closed for a selected binary document without falling back to contract
     softwareLicenses: [],
   };
   const documentExtractor = {
-    extract: jest.fn().mockRejectedValue(new ContractDocumentExtractionError('malformed')),
+    extract: jest.fn().mockRejectedValue(new ContractDocumentExtractionError('unsupported')),
   };
   const documentsService = {
     getDocumentContent: jest.fn().mockResolvedValue({
@@ -203,7 +203,7 @@ it('fails closed for a selected binary document without falling back to contract
 
   await expect(
     service.processIntelligence(contractId, organizationId, ownerId, { documentId }),
-  ).rejects.toThrow('Selected contract document could not be parsed');
+  ).rejects.toThrow('Selected contract document format is not supported for extraction');
 
   expect(documentsService.getDocumentContent).toHaveBeenCalledWith(
     organizationId,
@@ -557,6 +557,81 @@ it('merges reviewable fields without changing persisted document provenance', as
     liabilityCap: null,
     provenance,
   });
+});
+
+it('does not convert a cleared renewal notice review value to zero', () => {
+  const service = new ContractsService({} as never, {} as never, {} as never, {} as never);
+  const updates = (
+    service as unknown as {
+      authoritativeContractUpdates(fields: Record<string, unknown>): Record<string, unknown>;
+    }
+  ).authoritativeContractUpdates({ renewalNoticeDays: null, autoRenew: true });
+
+  expect(updates).toEqual({ autoRenew: true });
+});
+
+it('marks a document-backed missing security clause as absent from the document', () => {
+  const documentId = '00000000-0000-4000-8000-000000000006';
+  const service = new ContractsService({} as never, {} as never, {} as never, {} as never);
+  const result = (
+    service as unknown as {
+      extractContractIntelligence(
+        text: string,
+        contract: Record<string, unknown>,
+        document: {
+          kind: 'docx';
+          text: string;
+          segments: Array<{
+            text: string;
+            sourceReference: string;
+            startOffset: number;
+            endOffset: number;
+          }>;
+        },
+        documentId: string,
+      ): { clauses: Array<{ sourceReference: string }> };
+    }
+  ).extractContractIntelligence(
+    'Payment terms: Net 30.',
+    { type: 'software', title: 'SaaS agreement', description: null },
+    {
+      kind: 'docx',
+      text: 'Payment terms: Net 30.',
+      segments: [
+        {
+          text: 'Payment terms: Net 30.',
+          sourceReference: 'docx:section:unheaded:1',
+          startOffset: 0,
+          endOffset: 22,
+        },
+      ],
+    },
+    documentId,
+  );
+
+  expect(result.clauses).toContainEqual(
+    expect.objectContaining({
+      sourceReference: `document:${documentId}#absent:terms:data_security_missing`,
+    }),
+  );
+});
+
+it('detects standalone COI without matching coincidental substrings', () => {
+  const service = new ContractsService({} as never, {} as never, {} as never, {} as never);
+  const extract = (text: string) =>
+    (
+      service as unknown as {
+        extractContractIntelligence(
+          text: string,
+          contract: Record<string, unknown>,
+        ): { obligations: Array<{ obligationType: string }> };
+      }
+    ).extractContractIntelligence(text, { type: 'service', title: 'Agreement', endDate: null });
+
+  expect(extract('The timing is coincidental.').obligations).toEqual([]);
+  expect(extract('A current COI is required.').obligations).toContainEqual(
+    expect.objectContaining({ obligationType: 'insurance_certificate' }),
+  );
 });
 
 async function makeDocxBuffer(text: string): Promise<Buffer> {

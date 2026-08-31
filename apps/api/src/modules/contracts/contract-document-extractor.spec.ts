@@ -5,6 +5,7 @@ import {
   CONTRACT_DOCUMENT_MAX_TEXT_BYTES,
   ContractDocumentExtractorService,
   resolveDocumentSourceReference,
+  selectZipDataDescriptorLength,
   type ContractDocumentExtractionFailure,
 } from './contract-document-extractor';
 
@@ -164,6 +165,25 @@ describe('ContractDocumentExtractorService', () => {
     });
   });
 
+  it('rejects a structurally placed ZIP64 locator', async () => {
+    const buffer = await makeDocx([{ text: 'Content' }]);
+    const eocdOffset = getEndOfCentralDirectoryOffset(buffer);
+    const locator = Buffer.alloc(20);
+    locator.writeUInt32LE(0x07064b50, 0);
+    const mutated = insertBytes(buffer, eocdOffset, locator);
+    await expect(extractor.extract(asDocxInput(mutated))).rejects.toMatchObject({
+      code: 'malformed',
+    });
+  });
+
+  it('requires the exact OPC content-types item filename', async () => {
+    const buffer = await makeDocx([{ text: 'Content' }]);
+    setZipEntryName(buffer, '[Content_Types].xml', '[content_types].xml');
+    await expect(extractor.extract(asDocxInput(buffer))).rejects.toMatchObject({
+      code: 'malformed',
+    });
+  });
+
   it('rejects legacy non-ASCII ZIP names instead of decoding them inconsistently', async () => {
     const buffer = await makeDocx([{ text: 'Content' }]);
     setZipEntryNameBytes(buffer, 'word/styles.xml', Buffer.from('word/styl\x82s.xml', 'binary'));
@@ -316,6 +336,18 @@ describe('ContractDocumentExtractorService', () => {
     });
   });
 
+  it('rejects AlternateContent instead of combining distinct choice and fallback text', async () => {
+    const buffer = await makeDocx([{ text: 'unused' }], {
+      documentXml:
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">' +
+        '<w:body><w:p><mc:AlternateContent><mc:Choice Requires="w"><w:r><w:t>Choice</w:t></w:r></mc:Choice>' +
+        '<mc:Fallback><w:r><w:t>Fallback</w:t></w:r></mc:Fallback></mc:AlternateContent></w:p></w:body></w:document>',
+    });
+    await expect(extractor.extract(asDocxInput(buffer))).rejects.toMatchObject({
+      code: 'malformed',
+    });
+  });
+
   it('rejects a completed XML token over the token byte limit', async () => {
     const buffer = await makeDocx([{ text: 'unused' }], {
       documentXml:
@@ -340,6 +372,36 @@ describe('ContractDocumentExtractorService', () => {
     });
   });
 
+  it('accepts the legacy Word textbox namespace and rejects foreign aliases', async () => {
+    const makeTextbox = (namespace: string) =>
+      makeDocx([{ text: 'unused' }], {
+        documentXml:
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ' +
+          `xmlns:wne="${namespace}"><w:body><w:p><w:r><wne:txbxContent>` +
+          '<w:p><w:r><w:t>Legacy text box</w:t></w:r></w:p>' +
+          '</wne:txbxContent></w:r></w:p></w:body></w:document>',
+      });
+    await expect(
+      extractor.extract(
+        asDocxInput(await makeTextbox('http://schemas.microsoft.com/office/word/2006/wordml')),
+      ),
+    ).resolves.toMatchObject({ text: 'Legacy text box' });
+    await expect(
+      extractor.extract(asDocxInput(await makeTextbox('urn:evil'))),
+    ).rejects.toMatchObject({ code: 'malformed' });
+  });
+
+  it('does not let a foreign moveFrom alias suppress document text', async () => {
+    const buffer = await makeDocx([{ text: 'unused' }], {
+      documentXml:
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:e="urn:evil">' +
+        '<w:body><w:p><e:moveFrom><w:r><w:t>Visible</w:t></w:r></e:moveFrom></w:p></w:body></w:document>',
+    });
+    await expect(extractor.extract(asDocxInput(buffer))).rejects.toMatchObject({
+      code: 'malformed',
+    });
+  });
+
   it('accepts supported Unicode NCNames and rejects duplicate expanded attributes', async () => {
     const valid = await makeDocx([{ text: 'unused' }], {
       documentXml:
@@ -357,6 +419,33 @@ describe('ContractDocumentExtractorService', () => {
       code: 'malformed',
     });
   });
+
+  it('accepts XML 1.0 NCName boundary characters and distinct expanded attributes', async () => {
+    const buffer = await makeDocx([{ text: 'unused' }], {
+      documentXml:
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:a="urn:a" xmlns:b="urn:b">' +
+        '<w:body a:value="one" b:value="two" Case="upper" case="lower">' +
+        '<\u200Cname middle\u00B7\u203F\u2040="ok"/><w:p><w:r><w:t>Content</w:t></w:r></w:p>' +
+        '</w:body></w:document>',
+    });
+    await expect(extractor.extract(asDocxInput(buffer))).resolves.toMatchObject({
+      text: 'Content',
+    });
+  });
+
+  it.each(['\u037Ebad', '\uFDD0bad'])(
+    'rejects an XML name outside NameStartChar: %s',
+    async (name) => {
+      const buffer = await makeDocx([{ text: 'unused' }], {
+        documentXml:
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+          `<w:body><${name}/><w:p><w:r><w:t>Content</w:t></w:r></w:p></w:body></w:document>`,
+      });
+      await expect(extractor.extract(asDocxInput(buffer))).rejects.toMatchObject({
+        code: 'malformed',
+      });
+    },
+  );
 
   it.each([
     [
@@ -747,6 +836,28 @@ describe('ContractDocumentExtractorService', () => {
         'Net 30',
       ),
     ).toBe('document:document-id#docx:section:specific:2');
+  });
+});
+
+describe('ZIP data descriptors', () => {
+  const crc32 = 0x08074b50;
+  const expected = { crc32, compressedSize: 7, uncompressedSize: 11 };
+
+  it('accepts an unsigned descriptor whose CRC equals the descriptor signature', () => {
+    const descriptor = Buffer.alloc(12);
+    descriptor.writeUInt32LE(crc32, 0);
+    descriptor.writeUInt32LE(7, 4);
+    descriptor.writeUInt32LE(11, 8);
+    expect(selectZipDataDescriptorLength(descriptor, 0, descriptor.length, expected)).toBe(12);
+  });
+
+  it('accepts a signed descriptor whose CRC also equals the descriptor signature', () => {
+    const descriptor = Buffer.alloc(16);
+    descriptor.writeUInt32LE(0x08074b50, 0);
+    descriptor.writeUInt32LE(crc32, 4);
+    descriptor.writeUInt32LE(7, 8);
+    descriptor.writeUInt32LE(11, 12);
+    expect(selectZipDataDescriptorLength(descriptor, 0, descriptor.length, expected)).toBe(16);
   });
 });
 
