@@ -467,7 +467,7 @@ function indexSignature(index: IndexDescription): string {
 }
 
 function normalizeConstraintDefinition(definition: string): string {
-  return definition.replace(/\s+/g, ' ').toLowerCase();
+  return definition.replace(/\s+/g, ' ');
 }
 
 async function main(): Promise<void> {

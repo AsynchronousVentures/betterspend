@@ -205,3 +205,9 @@ test('migration verification scopes provenance checks to their table', async () 
   assert.match(verifier, /normalizeConstraintDefinition\(row\.definition\)[\s\S]*===/);
   assert.doesNotMatch(verifier, /requiredDefinitionFragments/);
 });
+
+test('migration verification preserves case-sensitive provenance literals', async () => {
+  const verifier = await readFile(verifierPath, 'utf8');
+
+  assert.doesNotMatch(verifier, /return definition\.replace\([^\n]+\)\.toLowerCase\(\)/);
+});
