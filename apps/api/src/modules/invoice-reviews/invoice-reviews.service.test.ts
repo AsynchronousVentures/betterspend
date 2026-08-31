@@ -279,6 +279,7 @@ test('projection keeps the purchase order while independently redacting its requ
 
 test('queue returns bounded invoice summaries and a stable cursor', async () => {
   const openedAt = new Date('2026-08-01T00:00:00Z');
+  const oldestSignalSortKey = '2026-08-01T00:00:00.123456Z';
   const rows = [
     {
       reviewCase: {
@@ -313,7 +314,7 @@ test('queue returns bounded invoice summaries and a stable cursor', async () => 
         status: 'active',
       },
       entity: null,
-      oldestUnresolvedSignalAt: openedAt,
+      oldestUnresolvedSignalAt: oldestSignalSortKey,
       unresolvedSignalCount: 2,
       blockingSignalCount: 1,
     },
@@ -350,7 +351,7 @@ test('queue returns bounded invoice summaries and a stable cursor', async () => 
         status: 'active',
       },
       entity: null,
-      oldestUnresolvedSignalAt: new Date('2026-08-02T00:00:00Z'),
+      oldestUnresolvedSignalAt: '2026-08-02T00:00:00.654321Z',
       unresolvedSignalCount: 1,
       blockingSignalCount: 1,
     },
@@ -373,8 +374,16 @@ test('queue returns bounded invoice summaries and a stable cursor', async () => 
   assert.equal(result.items[0]?.invoice.internalNumber, 'INV-2026-0001');
   assert.equal(result.items[0]?.case.blockingSignalCount, 1);
   assert.equal(result.items[0]?.case.unresolvedSignalCount, 2);
-  assert.deepEqual(result.items[0]?.case.oldestUnresolvedSignalAt, openedAt);
+  assert.deepEqual(
+    result.items[0]?.case.oldestUnresolvedSignalAt,
+    new Date('2026-08-01T00:00:00.123Z'),
+  );
   assert.ok(result.nextCursor);
+  const cursor = JSON.parse(Buffer.from(result.nextCursor, 'base64url').toString('utf8')) as Record<
+    string,
+    unknown
+  >;
+  assert.equal(cursor.value, oldestSignalSortKey);
 });
 
 test('queue rejects a cursor whose case id is not a UUID before querying', async () => {

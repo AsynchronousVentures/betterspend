@@ -342,8 +342,11 @@ export class InvoiceReviewsService {
     access?: AccessPolicy,
   ): Promise<InvoiceReviewListResult> {
     const query = invoiceReviewListQuerySchema.parse(rawQuery);
-    const oldestUnresolvedSignalAtForSort = sql<Date | null>`(
-      SELECT MIN(${invoiceReviewSignals.firstSeenAt})
+    const oldestUnresolvedSignalAtForSort = sql<string | null>`(
+      SELECT to_char(
+        MIN(${invoiceReviewSignals.firstSeenAt}) AT TIME ZONE 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+      )
       FROM ${invoiceReviewSignals}
       WHERE ${invoiceReviewSignals.organizationId} = ${organizationId}
         AND ${invoiceReviewSignals.caseId} = ${invoiceReviewCases.id}
@@ -414,15 +417,14 @@ export class InvoiceReviewsService {
       const cursor = decodeCursor(query.cursor, query.sort);
       const cursorId = cursor.id;
       if (query.sort === 'oldest_signal') {
-        const cursorDate = cursor.value === null ? null : new Date(cursor.value);
         conditions.push(
-          cursorDate === null
+          cursor.value === null
             ? (and(isNull(oldestUnresolvedSignalAtForSort), gt(invoiceReviewCases.id, cursorId)) ??
                 sql`false`)
             : (or(
-                gt(oldestUnresolvedSignalAtForSort, cursorDate),
+                gt(oldestUnresolvedSignalAtForSort, cursor.value),
                 and(
-                  eq(oldestUnresolvedSignalAtForSort, cursorDate),
+                  eq(oldestUnresolvedSignalAtForSort, cursor.value),
                   gt(invoiceReviewCases.id, cursorId),
                 ),
                 isNull(oldestUnresolvedSignalAtForSort),
@@ -529,7 +531,7 @@ export class InvoiceReviewsService {
               value:
                 query.sort === 'due_date'
                   ? (lastRow.invoice.dueDate?.toISOString() ?? null)
-                  : (dateValue(lastRow.oldestUnresolvedSignalAt ?? null)?.toISOString() ?? null),
+                  : (lastRow.oldestUnresolvedSignalAt ?? null),
               id: lastRow.reviewCase.id,
             })
           : null,
