@@ -164,6 +164,18 @@ const EXPECTED_CHECK_CONSTRAINTS = [
     expectedDefinition:
       'CHECK (((confidence IS NULL) OR ((confidence >= (0)::numeric) AND (confidence <= (1)::numeric))))',
   },
+  {
+    table: 'invoice_review_notification_intents',
+    name: 'invoice_review_notification_intents_kind_check',
+    expectedDefinition:
+      "CHECK (((intent_kind)::text = ANY ((ARRAY['internal_notification'::character varying, 'supplier_message_email'::character varying])::text[])))",
+  },
+  {
+    table: 'invoice_review_notification_intents',
+    name: 'invoice_review_notification_intents_delivery_shape_check',
+    expectedDefinition:
+      "CHECK (((((intent_kind)::text = 'internal_notification'::text) AND (recipient_user_id IS NOT NULL) AND (message_id IS NULL)) OR (((intent_kind)::text = 'supplier_message_email'::text) AND (recipient_user_id IS NULL) AND (message_id IS NOT NULL))))",
+  },
 ] as const;
 
 const EXPECTED_FOREIGN_KEYS = [

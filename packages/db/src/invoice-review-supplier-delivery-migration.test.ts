@@ -130,6 +130,7 @@ test('supplier delivery migration gives invoice review intents a valid delivery 
       SELECT conname AS name
       FROM pg_constraint
       WHERE conname IN (
+        'invoice_review_notification_intents_kind_check',
         'invoice_review_notification_intents_delivery_shape_check',
         'invoice_review_notification_intents_message_org_fk'
       )
@@ -137,6 +138,7 @@ test('supplier delivery migration gives invoice review intents a valid delivery 
     `);
     assert.deepEqual(constraints.rows, [
       { name: 'invoice_review_notification_intents_delivery_shape_check' },
+      { name: 'invoice_review_notification_intents_kind_check' },
       { name: 'invoice_review_notification_intents_message_org_fk' },
     ]);
 
@@ -180,18 +182,50 @@ test('supplier delivery migration gives invoice review intents a valid delivery 
     `);
     assert.deepEqual(legacyIntent.rows, [{ kind: 'internal_notification' }]);
 
-    await assert.rejects(
-      database.exec(`
+    for (const [id, kind, recipientUserId, messageId, key] of [
+      [
+        '00000000-0000-4000-8000-000000000006',
+        'supplier_message_email',
+        null,
+        null,
+        'invalid-supplier-shape',
+      ],
+      [
+        '00000000-0000-4000-8000-000000000007',
+        'internal_notification',
+        null,
+        null,
+        'invalid-internal-missing-recipient',
+      ],
+      [
+        '00000000-0000-4000-8000-000000000008',
+        'internal_notification',
+        '00000000-0000-4000-8000-000000000004',
+        '00000000-0000-4000-8000-000000000005',
+        'invalid-internal-message',
+      ],
+      [
+        '00000000-0000-4000-8000-000000000009',
+        'invalid_kind',
+        '00000000-0000-4000-8000-000000000004',
+        null,
+        'invalid-kind',
+      ],
+    ] as const) {
+      await assert.rejects(
+        database.exec(`
         INSERT INTO invoice_review_notification_intents (
-          id, organization_id, case_id, intent_kind, action, idempotency_key
+          id, organization_id, case_id, intent_kind, recipient_user_id, message_id, action, idempotency_key
         ) VALUES (
-          '00000000-0000-4000-8000-000000000001',
+          '${id}',
           '00000000-0000-4000-8000-000000000002',
           '00000000-0000-4000-8000-000000000003',
-          'supplier_message_email', 'request_supplier_info', 'invalid-shape'
+          '${kind}', ${recipientUserId ? `'${recipientUserId}'` : 'NULL'}, ${messageId ? `'${messageId}'` : 'NULL'},
+          'request_supplier_info', '${key}'
         )
       `),
-    );
+      );
+    }
 
     const indexes = await database.query<{ name: string; definition: string }>(`
       SELECT indexname AS name, indexdef AS definition
@@ -225,7 +259,7 @@ test('supplier delivery migration metadata retains the legacy intent kind defaul
   );
 });
 
-test('migration verification covers supplier delivery columns, parent index, and message ownership', async () => {
+test('migration verification covers supplier delivery columns, constraints, parent index, and message ownership', async () => {
   const verifier = await readFile(migrationVerifierPath, 'utf8');
 
   for (const column of ['intent_kind', 'message_id', 'lease_token', 'lease_expires_at']) {
@@ -233,6 +267,12 @@ test('migration verification covers supplier delivery columns, parent index, and
       verifier,
       new RegExp(`table: 'invoice_review_notification_intents', column: '${column}'`),
     );
+  }
+  for (const constraint of [
+    'invoice_review_notification_intents_kind_check',
+    'invoice_review_notification_intents_delivery_shape_check',
+  ]) {
+    assert.match(verifier, new RegExp(`name: '${constraint}'`));
   }
   assert.match(
     verifier,

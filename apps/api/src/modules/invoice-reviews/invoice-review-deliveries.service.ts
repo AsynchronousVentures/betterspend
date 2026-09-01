@@ -272,7 +272,7 @@ export class InvoiceReviewDeliveries implements OnModuleInit, OnModuleDestroy {
           intent.caseId,
         );
       } else {
-        await this.deliverSupplierMessage(intent);
+        await this.deliverSupplierMessage(intent, leaseToken);
       }
       const [completed] = await this.db
         .update(invoiceReviewNotificationIntents)
@@ -325,6 +325,7 @@ export class InvoiceReviewDeliveries implements OnModuleInit, OnModuleDestroy {
 
   private async deliverSupplierMessage(
     intent: typeof invoiceReviewNotificationIntents.$inferSelect,
+    leaseToken: string,
   ): Promise<void> {
     if (!intent.messageId) throw new DeliveryError('SUPPLIER_MESSAGE_MISSING');
     const [message] = await this.db
@@ -370,6 +371,21 @@ export class InvoiceReviewDeliveries implements OnModuleInit, OnModuleDestroy {
     const authorName = escapeHtml(message.authorName);
     const vendorName = escapeHtml(vendor.name);
     const body = escapeHtml(message.body);
+    const [renewed] = await this.db
+      .update(invoiceReviewNotificationIntents)
+      .set({
+        leaseExpiresAt: new Date(Date.now() + LEASE_DURATION_MS),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(invoiceReviewNotificationIntents.id, intent.id),
+          eq(invoiceReviewNotificationIntents.status, 'pending'),
+          eq(invoiceReviewNotificationIntents.leaseToken, leaseToken),
+        ),
+      )
+      .returning({ id: invoiceReviewNotificationIntents.id });
+    if (!renewed) throw new DeliveryError('DELIVERY_LEASE_LOST');
     const sent = await this.mail.sendMail(
       {
         host,

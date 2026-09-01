@@ -54,6 +54,7 @@ function createDeliveries(
   db: Db,
   options: {
     settings?: Record<string, string>;
+    getSettings?: () => Promise<Record<string, string>>;
     sendMail?: (
       options: { messageId?: string; html: string; subject: string },
       smtpConfig: SmtpConfig,
@@ -70,16 +71,17 @@ function createDeliveries(
     db,
     { createIdempotent: async () => options.createNotification?.() } as never,
     {
-      getAll: async () => ({
-        smtp_host: 'smtp.example.test',
-        smtp_port: '587',
-        smtp_secure: 'false',
-        smtp_user: '',
-        smtp_pass: '',
-        smtp_from: 'noreply@example.test',
-        app_name: 'BetterSpend',
-        ...options.settings,
-      }),
+      getAll: async () =>
+        options.getSettings?.() ?? {
+          smtp_host: 'smtp.example.test',
+          smtp_port: '587',
+          smtp_secure: 'false',
+          smtp_user: '',
+          smtp_pass: '',
+          smtp_from: 'noreply@example.test',
+          app_name: 'BetterSpend',
+          ...options.settings,
+        },
     } as never,
     options.mailService ??
       ({
@@ -109,6 +111,31 @@ test('supplier delivery opts tenant SMTP settings into the public-only target po
 
     assert.equal(smtpConfigs.length, 1);
     assert.equal(smtpConfigs[0]?.targetPolicy, 'public-only');
+    const intent = await database.query<{
+      status: string;
+      attempts: number;
+      lastError: string | null;
+      leaseToken: string | null;
+      leaseExpiresAt: string | null;
+      deliveredAt: string | null;
+    }>(`
+      SELECT status, attempts, last_error AS "lastError", lease_token AS "leaseToken",
+        lease_expires_at AS "leaseExpiresAt", delivered_at AS "deliveredAt"
+      FROM invoice_review_notification_intents WHERE id = '${supplierIntentId}'
+    `);
+    assert.deepEqual(
+      intent.rows.map(({ deliveredAt: _deliveredAt, ...delivery }) => delivery),
+      [
+        {
+          status: 'delivered',
+          attempts: 1,
+          lastError: null,
+          leaseToken: null,
+          leaseExpiresAt: null,
+        },
+      ],
+    );
+    assert.ok(intent.rows[0]?.deliveredAt);
   } finally {
     await database.close();
   }
@@ -146,13 +173,25 @@ test('a supplier SMTP deadline closes the transport and leaves the intent pendin
     assert.equal(transportOptions[0]?.requireTLS, true);
     assert.equal(transportOptions[0]?.socketTimeout, 5);
     assert.equal(transportOptions[0]?.socket?.destroyed, true);
-    const intent = await database.query<{ status: string; lastError: string; attempts: number }>(`
-      SELECT status, last_error AS "lastError", attempts
+    const intent = await database.query<{
+      status: string;
+      lastError: string;
+      attempts: number;
+      leaseToken: string | null;
+      leaseExpiresAt: string | null;
+    }>(`
+      SELECT status, last_error AS "lastError", attempts, lease_token AS "leaseToken", lease_expires_at AS "leaseExpiresAt"
       FROM invoice_review_notification_intents
       WHERE id = '${supplierIntentId}'
     `);
     assert.deepEqual(intent.rows, [
-      { status: 'pending', lastError: 'SMTP_DELIVERY_FAILED', attempts: 1 },
+      {
+        status: 'pending',
+        lastError: 'SMTP_DELIVERY_FAILED',
+        attempts: 1,
+        leaseToken: null,
+        leaseExpiresAt: null,
+      },
     ]);
   } finally {
     await database.close();
@@ -321,7 +360,28 @@ test('one delivery lease permits a single active SMTP send and delivered intents
 
     const first = deliveries.deliver(supplierIntentId);
     while (sends === 0) await new Promise((resolve) => setImmediate(resolve));
-    await deliveries.deliver(supplierIntentId);
+    const beforeRejectedClaim = await database.query<{
+      status: string;
+      attempts: number;
+      lastError: string | null;
+      leaseToken: string | null;
+      leaseExpiresAt: string | null;
+    }>(`
+      SELECT status, attempts, last_error AS "lastError", lease_token AS "leaseToken", lease_expires_at AS "leaseExpiresAt"
+      FROM invoice_review_notification_intents WHERE id = '${supplierIntentId}'
+    `);
+    assert.equal(await deliveries.deliver(supplierIntentId), undefined);
+    const afterRejectedClaim = await database.query<{
+      status: string;
+      attempts: number;
+      lastError: string | null;
+      leaseToken: string | null;
+      leaseExpiresAt: string | null;
+    }>(`
+      SELECT status, attempts, last_error AS "lastError", lease_token AS "leaseToken", lease_expires_at AS "leaseExpiresAt"
+      FROM invoice_review_notification_intents WHERE id = '${supplierIntentId}'
+    `);
+    assert.deepEqual(afterRejectedClaim.rows, beforeRejectedClaim.rows);
     releaseMail?.();
     await first;
     await deliveries.deliver(supplierIntentId);
@@ -329,6 +389,108 @@ test('one delivery lease permits a single active SMTP send and delivered intents
     assert.equal(sends, 1);
   } finally {
     await database.close();
+  }
+});
+
+test('supplier delivery renews an exhausted lease before SMTP so another worker cannot start a duplicate send', async () => {
+  const { database, db } = await createDatabase();
+  try {
+    await database.exec(`UPDATE vendors SET contact_info = '{"email":"supplier@example.test"}'`);
+    let releaseMail: (() => void) | undefined;
+    const enteredMail = new Promise<void>((resolve) => {
+      releaseMail = resolve;
+    });
+    let sends = 0;
+    const deliveries = createDeliveries(db as unknown as Db, {
+      getSettings: async () => {
+        // Simulate slow pre-send work consuming the original five-minute lease.
+        await database.exec(
+          `UPDATE invoice_review_notification_intents SET lease_expires_at = now() - interval '1 second' WHERE id = '${supplierIntentId}'`,
+        );
+        return {
+          smtp_host: 'smtp.example.test',
+          smtp_port: '587',
+          smtp_secure: 'false',
+          smtp_user: '',
+          smtp_pass: '',
+          smtp_from: 'noreply@example.test',
+          app_name: 'BetterSpend',
+        };
+      },
+      sendMail: async () => {
+        sends += 1;
+        if (sends === 1) await enteredMail;
+        return true;
+      },
+    });
+
+    const first = deliveries.deliver(supplierIntentId);
+    while (sends === 0) await new Promise((resolve) => setImmediate(resolve));
+    await deliveries.deliver(supplierIntentId);
+    releaseMail?.();
+    await first;
+
+    assert.equal(sends, 1);
+  } finally {
+    await database.close();
+  }
+});
+
+test('supplier delivery rejects cross-organization message, invoice, and vendor records without sending SMTP', async (t) => {
+  for (const [name, statement, code] of [
+    [
+      'message',
+      `UPDATE messages SET organization_id = '00000000-0000-4000-8000-000000000099' WHERE id = '${messageId}'`,
+      'SUPPLIER_MESSAGE_MISSING',
+    ],
+    [
+      'invoice',
+      `UPDATE invoices SET organization_id = '00000000-0000-4000-8000-000000000099' WHERE id = '${invoiceId}'`,
+      'INVOICE_VENDOR_MISSING',
+    ],
+    [
+      'vendor',
+      `UPDATE vendors SET organization_id = '00000000-0000-4000-8000-000000000099' WHERE id = '${vendorId}'`,
+      'INVOICE_VENDOR_MISSING',
+    ],
+  ] as const) {
+    await t.test(`cross-organization ${name}`, async () => {
+      const { database, db } = await createDatabase();
+      try {
+        await database.exec(statement);
+        let sends = 0;
+        const deliveries = createDeliveries(db as unknown as Db, {
+          sendMail: async () => {
+            sends += 1;
+            return true;
+          },
+        });
+
+        await assert.rejects(deliveries.deliver(supplierIntentId), new RegExp(code));
+        assert.equal(sends, 0);
+        const intent = await database.query<{
+          status: string;
+          attempts: number;
+          lastError: string;
+          leaseToken: string | null;
+          leaseExpiresAt: string | null;
+        }>(`
+          SELECT status, attempts, last_error AS "lastError", lease_token AS "leaseToken", lease_expires_at AS "leaseExpiresAt"
+          FROM invoice_review_notification_intents WHERE id = '${supplierIntentId}'
+        `);
+        assert.deepEqual(intent.rows, [
+          {
+            status: 'pending',
+            attempts: 1,
+            lastError: code,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          },
+        ]);
+      } finally {
+        await database.close();
+      }
+    });
   }
 });
 
