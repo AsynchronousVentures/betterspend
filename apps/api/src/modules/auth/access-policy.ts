@@ -86,6 +86,7 @@ export const PERMISSION_RESOURCES = {
   'invoices:approve': 'invoice',
   'invoices:view_all': 'invoice',
   'invoices:manage': 'invoice',
+  'invoices:review_exceptions': 'invoice',
   'payments:view': 'payment',
   'payments:manage': 'payment',
   'payments:release': 'payment',

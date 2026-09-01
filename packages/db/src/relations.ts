@@ -10,6 +10,7 @@ import { invoices, invoiceLines, matchResults } from './schema/invoices';
 import {
   invoiceFieldProvenance,
   invoiceReviewCases,
+  invoiceReviewNotificationIntents,
   invoiceReviewSignals,
 } from './schema/invoice-reviews';
 import { budgets, budgetCommitmentEvents, budgetPeriods } from './schema/budgets';
@@ -574,7 +575,32 @@ export const invoiceReviewCasesRelations = relations(invoiceReviewCases, ({ one,
     references: [users.id, users.organizationId],
   }),
   signals: many(invoiceReviewSignals),
+  notificationIntents: many(invoiceReviewNotificationIntents),
 }));
+
+export const invoiceReviewNotificationIntentsRelations = relations(
+  invoiceReviewNotificationIntents,
+  ({ one }) => ({
+    organization: one(organizations, {
+      fields: [invoiceReviewNotificationIntents.organizationId],
+      references: [organizations.id],
+    }),
+    reviewCase: one(invoiceReviewCases, {
+      fields: [
+        invoiceReviewNotificationIntents.caseId,
+        invoiceReviewNotificationIntents.organizationId,
+      ],
+      references: [invoiceReviewCases.id, invoiceReviewCases.organizationId],
+    }),
+    recipient: one(users, {
+      fields: [
+        invoiceReviewNotificationIntents.recipientUserId,
+        invoiceReviewNotificationIntents.organizationId,
+      ],
+      references: [users.id, users.organizationId],
+    }),
+  }),
+);
 
 export const invoiceReviewSignalsRelations = relations(invoiceReviewSignals, ({ one }) => ({
   organization: one(organizations, {

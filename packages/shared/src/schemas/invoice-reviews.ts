@@ -96,6 +96,56 @@ export const recordInvoiceReviewSignalSchema = z
   })
   .strict();
 
+const reviewCommandBase = z.object({
+  expectedVersion: z.number().int().min(1).max(2_147_483_647),
+});
+
+const reviewReason = z.string().trim().min(1).max(2_000);
+
+/**
+ * The only public write shape for the invoice-review aggregate. The command
+ * module owns validation and lifecycle rules so callers cannot compose a
+ * partial review transition from several endpoints.
+ */
+export const invoiceReviewCommandSchema = z.discriminatedUnion('action', [
+  reviewCommandBase.extend({ action: z.literal('claim') }).strict(),
+  reviewCommandBase.extend({ action: z.literal('release') }).strict(),
+  reviewCommandBase
+    .extend({
+      action: z.literal('reassign'),
+      assigneeId: z.string().uuid(),
+      reason: reviewReason,
+    })
+    .strict(),
+  reviewCommandBase
+    .extend({
+      action: z.literal('request_supplier_info'),
+      message: z.string().trim().min(1).max(10_000),
+      overrideReason: reviewReason.optional(),
+    })
+    .strict(),
+  reviewCommandBase
+    .extend({
+      action: z.literal('mark_info_received'),
+      overrideReason: reviewReason.optional(),
+    })
+    .strict(),
+  reviewCommandBase
+    .extend({
+      action: z.literal('resolve_signal'),
+      signalId: z.string().uuid(),
+      overrideReason: reviewReason.optional(),
+    })
+    .strict(),
+  reviewCommandBase
+    .extend({
+      action: z.literal('waive_signal'),
+      signalId: z.string().uuid(),
+      reason: reviewReason,
+    })
+    .strict(),
+]);
+
 export const recordInvoiceReviewProvenanceSchema = z
   .object({
     organizationId: z.string().uuid(),
@@ -150,6 +200,8 @@ export type InvoiceReviewSignalStatus = z.infer<typeof invoiceReviewSignalStatus
 export type InvoiceReviewSignalType = z.infer<typeof invoiceReviewSignalTypeSchema>;
 export type InvoiceReviewListQuery = z.infer<typeof invoiceReviewListQuerySchema>;
 export type RecordInvoiceReviewSignalInput = z.input<typeof recordInvoiceReviewSignalSchema>;
+export type InvoiceReviewCommandInput = z.input<typeof invoiceReviewCommandSchema>;
+export type InvoiceReviewCommand = z.output<typeof invoiceReviewCommandSchema>;
 export type InvoiceReviewProvenanceSourceType = z.infer<
   typeof invoiceReviewProvenanceSourceTypeSchema
 >;

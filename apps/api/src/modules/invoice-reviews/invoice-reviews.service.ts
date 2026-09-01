@@ -1023,12 +1023,13 @@ export class InvoiceReviewsService {
   ) {
     const observedAt = input.observedAt ?? new Date();
     const [invoice] = await tx
-      .select({ id: invoices.id })
+      .select({ id: invoices.id, status: invoices.status, paidAt: invoices.paidAt })
       .from(invoices)
       .where(
         and(eq(invoices.id, input.invoiceId), eq(invoices.organizationId, input.organizationId)),
       )
-      .limit(1);
+      .limit(1)
+      .for('update');
     if (!invoice) throw new NotFoundException(`Invoice ${input.invoiceId} not found`);
 
     let [reviewCase] = await tx
@@ -1048,7 +1049,10 @@ export class InvoiceReviewsService {
         .values({
           organizationId: input.organizationId,
           invoiceId: input.invoiceId,
-          state: initialReviewCaseState(input),
+          state:
+            invoice.paidAt || ['paid', 'cancelled'].includes(invoice.status)
+              ? 'resolved'
+              : initialReviewCaseState(input),
           openedAt: observedAt,
           createdAt: observedAt,
           updatedAt: observedAt,
@@ -1073,59 +1077,69 @@ export class InvoiceReviewsService {
     }
     if (!reviewCase) throw new Error('Invoice review case could not be created');
 
-    const [signal] = await tx
-      .insert(invoiceReviewSignals)
-      .values({
-        organizationId: input.organizationId,
-        caseId: reviewCase.id,
-        signalType: input.signalType,
-        sourceModule: input.sourceModule,
-        sourceRecordId: input.sourceRecordId,
-        severity: input.severity,
-        status: input.status,
-        summary: input.summary,
-        details: input.details,
-        firstSeenAt: observedAt,
-        lastSeenAt: observedAt,
-        resolvedAt: input.status === 'resolved' ? observedAt : null,
-        updatedAt: observedAt,
-      })
-      .onConflictDoUpdate({
-        target: [
-          invoiceReviewSignals.caseId,
-          invoiceReviewSignals.signalType,
-          invoiceReviewSignals.sourceModule,
-          invoiceReviewSignals.sourceRecordId,
-        ],
-        set: {
+    let [signal] = await tx
+      .select()
+      .from(invoiceReviewSignals)
+      .where(
+        and(
+          eq(invoiceReviewSignals.organizationId, input.organizationId),
+          eq(invoiceReviewSignals.caseId, reviewCase.id),
+          eq(invoiceReviewSignals.signalType, input.signalType),
+          eq(invoiceReviewSignals.sourceModule, input.sourceModule),
+          eq(invoiceReviewSignals.sourceRecordId, input.sourceRecordId),
+        ),
+      )
+      .for('update');
+
+    if (signal && signal.lastSeenAt > observedAt) {
+      // Older observations must not rewrite a newer producer state or bump
+      // the aggregate token. This is a real no-op, not a successful write.
+      return { case: reviewCase, signal };
+    }
+
+    if (!signal) {
+      [signal] = await tx
+        .insert(invoiceReviewSignals)
+        .values({
+          organizationId: input.organizationId,
+          caseId: reviewCase.id,
+          signalType: input.signalType,
+          sourceModule: input.sourceModule,
+          sourceRecordId: input.sourceRecordId,
           severity: input.severity,
           status: input.status,
           summary: input.summary,
           details: input.details,
+          firstSeenAt: observedAt,
           lastSeenAt: observedAt,
           resolvedAt: input.status === 'resolved' ? observedAt : null,
           updatedAt: observedAt,
-        },
-        setWhere: lte(invoiceReviewSignals.lastSeenAt, observedAt),
-      })
-      .returning();
-    if (!signal) {
-      const [currentSignal] = await tx
-        .select()
-        .from(invoiceReviewSignals)
-        .where(
-          and(
-            eq(invoiceReviewSignals.organizationId, input.organizationId),
-            eq(invoiceReviewSignals.caseId, reviewCase.id),
-            eq(invoiceReviewSignals.signalType, input.signalType),
-            eq(invoiceReviewSignals.sourceModule, input.sourceModule),
-            eq(invoiceReviewSignals.sourceRecordId, input.sourceRecordId),
-          ),
-        )
-        .limit(1);
-      if (!currentSignal) throw new Error('Invoice review signal could not be written');
-      return { case: reviewCase, signal: currentSignal };
+        })
+        .returning();
+    } else {
+      const humanDecision =
+        (signal.status === 'resolved' || signal.status === 'waived') &&
+        (signal.resolutionCommand === 'resolve_signal' ||
+          signal.resolutionCommand === 'waive_signal');
+      [signal] = await tx
+        .update(invoiceReviewSignals)
+        .set({
+          severity: input.severity,
+          status: humanDecision ? signal.status : input.status,
+          summary: input.summary,
+          details: input.details,
+          lastSeenAt: observedAt,
+          resolvedAt: humanDecision
+            ? signal.resolvedAt
+            : input.status === 'resolved'
+              ? observedAt
+              : null,
+          updatedAt: observedAt,
+        })
+        .where(eq(invoiceReviewSignals.id, signal.id))
+        .returning();
     }
+    if (!signal) throw new Error('Invoice review signal could not be written');
 
     const currentSignals = await tx
       .select({ severity: invoiceReviewSignals.severity, status: invoiceReviewSignals.status })
@@ -1136,12 +1150,15 @@ export class InvoiceReviewsService {
           eq(invoiceReviewSignals.organizationId, input.organizationId),
         ),
       );
-    const nextState = nextReviewCaseState(reviewCase.state, currentSignals);
+    const nextState =
+      invoice.paidAt || ['paid', 'cancelled'].includes(invoice.status)
+        ? 'resolved'
+        : nextReviewCaseState(reviewCase.state, currentSignals);
     const [updatedCase] = await tx
       .update(invoiceReviewCases)
       .set({
         state: nextState,
-        resolvedAt: nextState === 'resolved' ? observedAt : null,
+        resolvedAt: nextState === 'resolved' ? (reviewCase.resolvedAt ?? observedAt) : null,
         updatedAt: observedAt,
         version: sql`${invoiceReviewCases.version} + 1`,
       })
