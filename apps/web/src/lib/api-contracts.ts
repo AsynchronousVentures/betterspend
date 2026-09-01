@@ -1,4 +1,241 @@
-import type { CreateRequisitionInput } from '@betterspend/shared';
+import type {
+  CreateRequisitionInput,
+  InvoiceReviewCaseState,
+  InvoiceReviewCommandInput,
+  InvoiceReviewProvenanceSourceType,
+  InvoiceReviewSignalSeverity,
+  InvoiceReviewSignalStatus,
+  InvoiceReviewSignalType,
+} from '@betterspend/shared';
+
+export interface InvoiceReviewListQuery {
+  state?: InvoiceReviewCaseState;
+  signalType?: InvoiceReviewSignalType;
+  severity?: InvoiceReviewSignalSeverity;
+  ownerId?: string;
+  vendorId?: string;
+  entityId?: string;
+  minAgeDays?: number;
+  sort?: 'oldest_signal' | 'due_date';
+  cursor?: string;
+  limit?: number;
+}
+
+interface InvoiceReviewCase {
+  id: string;
+  invoiceId: string;
+  state: InvoiceReviewCaseState;
+  ownerId: string | null;
+  version: number;
+  openedAt: string;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InvoiceReviewListResult {
+  items: Array<{
+    case: InvoiceReviewCase & {
+      ageDays: number;
+      unresolvedSignalCount: number;
+      blockingSignalCount: number;
+      oldestUnresolvedSignalAt: string | null;
+    };
+    invoice: {
+      id: string;
+      internalNumber: string;
+      invoiceNumber: string;
+      status: string;
+      dueDate: string | null;
+      totalAmount: string;
+      currency: string;
+      vendor: { id: string; name: string; code: string | null; status: string } | null;
+      entity: { id: string; name: string; code: string; currency: string } | null;
+    };
+  }>;
+  nextCursor: string | null;
+}
+
+export type InvoiceReviewHistoryAction =
+  | 'invoice_review.claim'
+  | 'invoice_review.release'
+  | 'invoice_review.reassign'
+  | 'invoice_review.request_supplier_info'
+  | 'invoice_review.mark_info_received'
+  | 'invoice_review.resolve_signal'
+  | 'invoice_review.waive_signal'
+  | 'invoice_review_signal.resolve_signal'
+  | 'invoice_review_signal.waive_signal'
+  | 'review_signal_recorded';
+
+export interface InvoiceReviewProjection {
+  case: InvoiceReviewCase & {
+    owner: { id: string; name: string; email: string } | null;
+  };
+  invoice: {
+    id: string;
+    internalNumber: string;
+    invoiceNumber: string;
+    status: string;
+    invoiceDate: string;
+    dueDate: string | null;
+    subtotal: string;
+    taxAmount: string;
+    totalAmount: string;
+    currency: string;
+    baseCurrency: string;
+    baseTotalAmount: string;
+    documentId: string | null;
+    vendor: { id: string; name: string; code: string | null; status: string } | null;
+    entity: { id: string; name: string; code: string; currency: string } | null;
+    purchaseOrder: {
+      id: string;
+      number: string;
+      status: string;
+      entityId: string | null;
+      vendorId: string;
+      requisition: {
+        id: string;
+        number: string;
+        status: string;
+        requesterId: string;
+        departmentId: string | null;
+        projectId: string | null;
+      } | null;
+    } | null;
+    lines: Array<{
+      id: string;
+      lineNumber: string;
+      description: string;
+      quantity: string;
+      unitPrice: string;
+      taxAmount: string;
+      totalPrice: string;
+      matchResults: Array<{
+        id: string;
+        status: string;
+        priceMatch: boolean;
+        quantityMatch: boolean;
+        priceVariance: string;
+        quantityVariance: string;
+        variancePct: string;
+      }>;
+    }>;
+  };
+  signals: Array<{
+    id: string;
+    type: InvoiceReviewSignalType;
+    source: {
+      module: string;
+      recordId: string;
+      availability: 'present' | 'missing' | 'unknown';
+    };
+    severity: InvoiceReviewSignalSeverity;
+    status: InvoiceReviewSignalStatus;
+    summary: string;
+    details: Record<string, unknown>;
+    firstSeenAt: string;
+    lastSeenAt: string;
+    resolution: {
+      actorId: string | null;
+      command: string | null;
+      reason: string | null;
+      resolvedAt: string | null;
+    };
+  }>;
+  documents: Array<{
+    id: string;
+    filename: string;
+    contentType: string;
+    sizeBytes: number;
+    entityType: string;
+    entityId: string;
+    createdAt: string;
+  }>;
+  messages: Array<{
+    id: string;
+    senderType: string;
+    authorName: string;
+    body: string;
+    attachments: unknown;
+    createdAt: string;
+  }>;
+  match: {
+    status: string;
+    details: Record<string, unknown>;
+    exceptions: InvoiceReviewProjection['invoice']['lines'][number]['matchResults'];
+  };
+  approvals: Array<{
+    id: string;
+    status: string;
+    currentStep: number;
+    currentNodeId: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  payments: Array<{
+    id: string;
+    paymentRunId: string;
+    amount: string;
+    currency: string;
+    status: string;
+    paymentReference: string | null;
+    paymentRun: {
+      id: string;
+      status: string;
+      entityId: string | null;
+      runDate: string;
+    } | null;
+  }>;
+  provenance: {
+    available: true;
+    fields: Array<{
+      id: string;
+      invoiceLineId: string | null;
+      fieldPath: string;
+      sourceType: InvoiceReviewProvenanceSourceType;
+      sourceRecordId: string;
+      source: {
+        type: InvoiceReviewProvenanceSourceType;
+        recordId: string;
+        availability: 'present' | 'missing' | 'unknown';
+      };
+      sourceTimestamp: string | null;
+      confidence: number | null;
+      actorId: string | null;
+      isCurrent: boolean;
+      supersededAt: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+  };
+  history: {
+    available: true;
+    entries: Array<{
+      id: string;
+      action: InvoiceReviewHistoryAction;
+      target: { type: 'case' | 'signal'; id: string };
+      actor: { id: string | null; name: string };
+      timestamp: string;
+    }>;
+  };
+}
+
+export interface InvoiceReviewCommandResult {
+  case: Pick<
+    InvoiceReviewCase,
+    'id' | 'invoiceId' | 'state' | 'ownerId' | 'version' | 'resolvedAt'
+  >;
+}
+
+export interface InvoiceReviewsApi {
+  list(query?: InvoiceReviewListQuery): Promise<InvoiceReviewListResult>;
+  get(invoiceId: string): Promise<InvoiceReviewProjection>;
+  command(
+    invoiceId: string,
+    command: InvoiceReviewCommandInput,
+  ): Promise<InvoiceReviewCommandResult>;
+}
 
 interface ApprovalSummary {
   id: string;

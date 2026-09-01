@@ -86,6 +86,7 @@ const NAV_ICONS: Record<ProductRouteIcon, LucideIcon> = {
   Receiving: PackageCheck,
   Inventory: Boxes,
   Invoices: Receipt,
+  InvoiceReviews: ShieldAlert,
   Intake: Inbox,
   Ocr: ScanLine,
   Approvals: CheckSquare,
@@ -209,7 +210,7 @@ export default function SidebarNav({
 
   function getBadge(href: string): number | undefined {
     if (href === '/approvals' && pendingApprovalsCount > 0) return pendingApprovalsCount;
-    if (href === '/invoices' && invoiceExceptionCount > 0) return invoiceExceptionCount;
+    if (href === '/invoice-reviews' && invoiceExceptionCount > 0) return invoiceExceptionCount;
     if (href === '/spend-guard' && spendGuardCount > 0) return spendGuardCount;
     if (href === '/software-licenses' && softwareRenewalCount > 0) return softwareRenewalCount;
     return undefined;

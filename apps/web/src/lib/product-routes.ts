@@ -27,6 +27,7 @@ export type ProductRouteIcon =
   | 'Receiving'
   | 'Inventory'
   | 'Invoices'
+  | 'InvoiceReviews'
   | 'Intake'
   | 'Ocr'
   | 'Approvals'
@@ -257,6 +258,16 @@ export const PRODUCT_ROUTES: readonly ProductRoute[] = [
         requiredPermissions: ['invoices:create'],
       },
     ],
+  },
+  {
+    key: 'invoice-reviews',
+    label: 'AP Exceptions',
+    href: '/invoice-reviews',
+    section: 'operations',
+    icon: 'InvoiceReviews',
+    aliases: ['AP exceptions', 'invoice exceptions', 'invoice review queue'],
+    requiredPermissions: ['invoices:view_all'],
+    placements: ['primary', 'search'],
   },
   {
     key: 'intake-queue',

@@ -120,6 +120,18 @@ test('AP aging uses the permissions required by its backing invoice APIs', () =>
   );
 });
 
+test('AP exception queue is discoverable only with invoice review visibility', () => {
+  const route = PRODUCT_ROUTES.find((candidate) => candidate.key === 'invoice-reviews');
+  assert.ok(route);
+  assert.equal(route.href, '/invoice-reviews');
+  assert.equal(canAccessProductRoute(route, ['invoices:view_all']), true);
+  assert.equal(canAccessProductRoute(route, ['invoices:manage']), false);
+  assert.equal(
+    productSearchResults('AP exceptions', ['invoices:view_all'])[0]?.key,
+    'route:invoice-reviews',
+  );
+});
+
 test('exact action aliases rank ahead of matching destinations', () => {
   assert.equal(
     productSearchResults('receive PO', BUILT_IN_ROLE_PERMISSIONS.receiver)[0]?.key,

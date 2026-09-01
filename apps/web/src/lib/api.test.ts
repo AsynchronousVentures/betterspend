@@ -233,6 +233,85 @@ test('shared API methods omit authorization when no token cookie exists', async 
   assert.equal(headers.has('x-org-id'), false);
 });
 
+test('invoice review queue sends every supported filter through the shared request boundary', async () => {
+  const response = { items: [], nextCursor: 'next-page' };
+  const { result, request } = await runWithMockedRequest(jsonResponse(response), () =>
+    api.invoiceReviews.list({
+      state: 'in_review',
+      signalType: 'duplicate_risk',
+      severity: 'blocking',
+      ownerId: '11111111-1111-4111-8111-111111111111',
+      vendorId: '22222222-2222-4222-8222-222222222222',
+      entityId: '33333333-3333-4333-8333-333333333333',
+      minAgeDays: 14,
+      sort: 'due_date',
+      cursor: 'stable cursor',
+      limit: 25,
+    }),
+  );
+
+  assert.deepEqual(result, response);
+  assert.equal(
+    request.input,
+    apiUrl(
+      '/api/v1/invoice-reviews?state=in_review&signalType=duplicate_risk&severity=blocking&ownerId=11111111-1111-4111-8111-111111111111&vendorId=22222222-2222-4222-8222-222222222222&entityId=33333333-3333-4333-8333-333333333333&minAgeDays=14&sort=due_date&cursor=stable+cursor&limit=25',
+    ),
+  );
+  assert.equal(request.init?.method ?? 'GET', 'GET');
+});
+
+test('invoice review commands send the aggregate version and preserve server conflicts', async () => {
+  const command = {
+    action: 'waive_signal' as const,
+    expectedVersion: 7,
+    signalId: '11111111-1111-4111-8111-111111111111',
+    reason: 'Reviewed against the original invoice.',
+  };
+  const success = await runWithMockedRequest(
+    jsonResponse({
+      case: {
+        id: 'case-1',
+        invoiceId: 'invoice-1',
+        state: 'resolved',
+        ownerId: 'owner-1',
+        version: 8,
+        resolvedAt: '2026-08-31T00:00:00.000Z',
+      },
+    }),
+    () => api.invoiceReviews.command('invoice-1', command),
+  );
+
+  assert.equal(success.request.input, apiUrl('/api/v1/invoice-reviews/invoice-1/commands'));
+  assert.equal(success.request.init?.method, 'POST');
+  assert.deepEqual(JSON.parse(String(success.request.init?.body)), command);
+
+  await assert.rejects(
+    runWithMockedRequest(
+      jsonResponse({ message: 'REVIEW STALE VERSION', code: 'REVIEW_STALE_VERSION' }, 409),
+      () => api.invoiceReviews.command('invoice-1', command),
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.status, 409);
+      assert.equal(error.message, 'REVIEW STALE VERSION');
+      return true;
+    },
+  );
+});
+
+test('invoice review authorization errors map to the denied queue state', async () => {
+  await assert.rejects(
+    runWithMockedRequest(jsonResponse({ message: 'Not permitted' }, 403), () =>
+      api.invoiceReviews.list(),
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(loadFailureState(error), 'denied');
+      return true;
+    },
+  );
+});
+
 test('workflow definition responses are parsed at the API boundary', async () => {
   const graph = {
     schemaVersion: 1,
