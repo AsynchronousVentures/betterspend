@@ -36,7 +36,7 @@
     "release:push": "git push origin main --follow-tags"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.4.0",
     "eslint": "^9.39.5",
     "eslint-config-next": "16.3.3",
     "husky": "^9.1.7",
