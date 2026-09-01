@@ -259,6 +259,23 @@ test('supplier delivery migration metadata retains the legacy intent kind defaul
   );
 });
 
+test('migration verification pins every invoice review intent check constraint', async () => {
+  const migrationVerifier = await readFile(migrationVerifierPath, 'utf8');
+
+  for (const constraint of [
+    'invoice_review_notification_intents_status_check',
+    'invoice_review_notification_intents_kind_check',
+    'invoice_review_notification_intents_delivery_shape_check',
+  ]) {
+    assert.match(migrationVerifier, new RegExp(`name: '${constraint}'`));
+  }
+
+  assert.match(
+    migrationVerifier,
+    /CHECK \(\(\(status\)::text = ANY \(\(ARRAY\['pending'::character varying, 'delivered'::character varying\]\)::text\[\]\)\)\)/,
+  );
+});
+
 test('migration verification covers supplier delivery columns, constraints, parent index, and message ownership', async () => {
   const verifier = await readFile(migrationVerifierPath, 'utf8');
 

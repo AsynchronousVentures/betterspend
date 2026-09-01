@@ -166,6 +166,12 @@ const EXPECTED_CHECK_CONSTRAINTS = [
   },
   {
     table: 'invoice_review_notification_intents',
+    name: 'invoice_review_notification_intents_status_check',
+    expectedDefinition:
+      "CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'delivered'::character varying])::text[])))",
+  },
+  {
+    table: 'invoice_review_notification_intents',
     name: 'invoice_review_notification_intents_kind_check',
     expectedDefinition:
       "CHECK (((intent_kind)::text = ANY ((ARRAY['internal_notification'::character varying, 'supplier_message_email'::character varying])::text[])))",
