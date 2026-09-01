@@ -1,9 +1,10 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, eq, gt, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   approvalRequests,
   appendAuditLogIfAbsent,
+  auditLog,
   documents,
   emailIntakeItems,
   emailIntakeMessages,
@@ -19,6 +20,7 @@ import {
   type Db,
   type DbTransaction,
   vendors,
+  users,
 } from '@betterspend/db';
 import {
   invoiceReviewListQuerySchema,
@@ -112,6 +114,68 @@ export interface InvoiceReviewListItem {
 export interface InvoiceReviewListResult {
   items: InvoiceReviewListItem[];
   nextCursor: string | null;
+}
+
+const INVOICE_REVIEW_CASE_HISTORY_ACTIONS = [
+  'invoice_review.claim',
+  'invoice_review.release',
+  'invoice_review.reassign',
+  'invoice_review.request_supplier_info',
+  'invoice_review.mark_info_received',
+  'invoice_review.resolve_signal',
+  'invoice_review.waive_signal',
+] as const;
+const INVOICE_REVIEW_SIGNAL_HISTORY_ACTIONS = [
+  'invoice_review_signal.resolve_signal',
+  'invoice_review_signal.waive_signal',
+] as const;
+const INVOICE_REVIEW_SIGNAL_RECORDED_ACTION = 'review_signal_recorded' as const;
+const INVOICE_REVIEW_HISTORY_ACTIONS = [
+  ...INVOICE_REVIEW_CASE_HISTORY_ACTIONS,
+  ...INVOICE_REVIEW_SIGNAL_HISTORY_ACTIONS,
+  INVOICE_REVIEW_SIGNAL_RECORDED_ACTION,
+] as const;
+
+export const INVOICE_REVIEW_HISTORY_LIMIT = 100;
+export type InvoiceReviewHistoryAction = (typeof INVOICE_REVIEW_HISTORY_ACTIONS)[number];
+
+export interface InvoiceReviewHistoryEntry {
+  id: string;
+  action: InvoiceReviewHistoryAction;
+  target: { type: 'case' | 'signal'; id: string };
+  actor: { id: string | null; name: string };
+  timestamp: Date;
+}
+
+export interface InvoiceReviewHistoryView {
+  available: true;
+  entries: InvoiceReviewHistoryEntry[];
+}
+
+function isHistoryAction(value: string): value is InvoiceReviewHistoryAction {
+  return (INVOICE_REVIEW_HISTORY_ACTIONS as readonly string[]).includes(value);
+}
+
+function isCaseHistoryAction(
+  value: InvoiceReviewHistoryAction,
+): value is (typeof INVOICE_REVIEW_CASE_HISTORY_ACTIONS)[number] {
+  return (INVOICE_REVIEW_CASE_HISTORY_ACTIONS as readonly string[]).includes(value);
+}
+
+function isSignalHistoryAction(
+  value: InvoiceReviewHistoryAction,
+): value is (typeof INVOICE_REVIEW_SIGNAL_HISTORY_ACTIONS)[number] {
+  return (INVOICE_REVIEW_SIGNAL_HISTORY_ACTIONS as readonly string[]).includes(value);
+}
+
+function compareHistoryEntries(
+  first: InvoiceReviewHistoryEntry,
+  second: InvoiceReviewHistoryEntry,
+): number {
+  const timestampDelta = second.timestamp.getTime() - first.timestamp.getTime();
+  if (timestampDelta !== 0) return timestampDelta;
+  if (first.id === second.id) return 0;
+  return first.id < second.id ? 1 : -1;
 }
 
 export interface InvoiceReviewProjection {
@@ -214,7 +278,7 @@ export interface InvoiceReviewProjection {
     } | null;
   }>;
   provenance: { available: true; fields: InvoiceReviewProvenanceView[] };
-  history: { available: false; entries: [] };
+  history: InvoiceReviewHistoryView;
 }
 
 interface ReviewCursor {
@@ -818,7 +882,7 @@ export class InvoiceReviewsService {
     if (!Array.isArray(provenanceRows)) {
       throw new Error('Invoice provenance relation is unavailable');
     }
-    const [documentRows, messageRows, sourceAvailability, provenanceAvailability] =
+    const [documentRows, messageRows, sourceAvailability, provenanceAvailability, history] =
       await Promise.all([
         this.db.query.documents.findMany({
           where: (document, operators) =>
@@ -857,6 +921,7 @@ export class InvoiceReviewsService {
         }),
         this.resolveSourceAvailability(organizationId, invoiceId, reviewCase.signals),
         this.resolveProvenanceAvailability(organizationId, invoiceId, provenanceRows),
+        this.loadHistory(organizationId, reviewCase.id, reviewCase.signals),
       ]);
 
     const approvalRows = canViewApprovals
@@ -991,7 +1056,7 @@ export class InvoiceReviewsService {
           ),
         ),
       },
-      history: { available: false, entries: [] },
+      history,
     };
   }
 
@@ -1005,6 +1070,128 @@ export class InvoiceReviewsService {
 
   async recordMatchReviewSignal(input: MatchReviewSignalInput, executor?: DbTransaction) {
     return this.recordSignal(normalizeMatchReviewSignal(input), executor);
+  }
+
+  private async loadHistory(
+    organizationId: string,
+    caseId: string,
+    signals: readonly (typeof invoiceReviewSignals.$inferSelect)[],
+  ): Promise<InvoiceReviewHistoryView> {
+    const signalIds = signals.map((signal) => signal.id);
+
+    const historySelection = {
+      audit: {
+        id: auditLog.id,
+        organizationId: auditLog.organizationId,
+        userId: auditLog.userId,
+        entityType: auditLog.entityType,
+        entityId: auditLog.entityId,
+        action: auditLog.action,
+        signalId: sql<string | null>`CASE
+          WHEN ${auditLog.action} = ${INVOICE_REVIEW_SIGNAL_RECORDED_ACTION}
+          THEN ${auditLog.changes}->>'signalId'
+          ELSE NULL
+        END`,
+        createdAt: auditLog.createdAt,
+      },
+      actor: {
+        id: users.id,
+        organizationId: users.organizationId,
+        name: users.name,
+      },
+    };
+    const loadRows = (target: SQL | undefined) =>
+      this.db
+        .select(historySelection)
+        .from(auditLog)
+        .leftJoin(
+          users,
+          and(eq(auditLog.userId, users.id), eq(users.organizationId, organizationId)),
+        )
+        .where(and(eq(auditLog.organizationId, organizationId), target))
+        .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
+        .limit(INVOICE_REVIEW_HISTORY_LIMIT);
+
+    const caseAction = inArray(auditLog.action, [
+      ...INVOICE_REVIEW_CASE_HISTORY_ACTIONS,
+      INVOICE_REVIEW_SIGNAL_RECORDED_ACTION,
+    ]);
+    const caseRows = await loadRows(
+      and(
+        eq(auditLog.entityType, 'invoice_review_case'),
+        eq(auditLog.entityId, caseId),
+        caseAction,
+      ),
+    );
+    const signalRows =
+      signalIds.length > 0
+        ? await loadRows(
+            and(
+              eq(auditLog.entityType, 'invoice_review_signal'),
+              inArray(auditLog.entityId, signalIds),
+              inArray(auditLog.action, INVOICE_REVIEW_SIGNAL_HISTORY_ACTIONS),
+            ),
+          )
+        : [];
+    const rows = [...caseRows, ...signalRows];
+
+    const visibleSignalIds = new Set(signalIds);
+    const entries = rows
+      .flatMap((row) => this.historyEntry(row, organizationId, caseId, visibleSignalIds))
+      .filter((entry): entry is InvoiceReviewHistoryEntry => entry !== null)
+      .sort(compareHistoryEntries)
+      .slice(0, INVOICE_REVIEW_HISTORY_LIMIT);
+    return { available: true, entries };
+  }
+
+  private historyEntry(
+    row: {
+      audit: {
+        id: string;
+        organizationId: string;
+        userId: string | null;
+        entityType: string;
+        entityId: string;
+        action: string;
+        signalId: string | null;
+        createdAt: Date;
+      };
+      actor: { id: string; organizationId: string; name: string } | null;
+    },
+    organizationId: string,
+    caseId: string,
+    visibleSignalIds: ReadonlySet<string>,
+  ): InvoiceReviewHistoryEntry | null {
+    const audit = row.audit;
+    if (audit.organizationId !== organizationId || !isHistoryAction(audit.action)) return null;
+
+    let target: InvoiceReviewHistoryEntry['target'];
+    if (isCaseHistoryAction(audit.action)) {
+      if (audit.entityType !== 'invoice_review_case' || audit.entityId !== caseId) return null;
+      target = { type: 'case', id: caseId };
+    } else if (isSignalHistoryAction(audit.action)) {
+      if (audit.entityType !== 'invoice_review_signal' || !visibleSignalIds.has(audit.entityId)) {
+        return null;
+      }
+      target = { type: 'signal', id: audit.entityId };
+    } else {
+      if (audit.entityType !== 'invoice_review_case' || audit.entityId !== caseId) return null;
+      const signalId = audit.signalId;
+      if (typeof signalId !== 'string' || !visibleSignalIds.has(signalId)) return null;
+      target = { type: 'signal', id: signalId };
+    }
+
+    const actor =
+      row.actor?.organizationId === organizationId && row.actor.id === audit.userId
+        ? { id: row.actor.id, name: row.actor.name.trim() || 'Unknown user' }
+        : { id: audit.userId, name: audit.userId ? 'Unknown user' : 'System' };
+    return {
+      id: audit.id,
+      action: audit.action,
+      target,
+      actor,
+      timestamp: audit.createdAt,
+    };
   }
 
   /**

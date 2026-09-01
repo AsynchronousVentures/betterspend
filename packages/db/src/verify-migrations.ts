@@ -59,6 +59,18 @@ const EXPECTED_INDEXES = [
     unique: false,
   },
   {
+    name: 'audit_log_invoice_review_history_idx',
+    table: 'audit_log',
+    columns: [
+      'organization_id',
+      'entity_type',
+      'entity_id',
+      'created_at DESC NULLS LAST',
+      'id DESC NULLS LAST',
+    ],
+    unique: false,
+  },
+  {
     name: 'auth_accounts_user_id_idx',
     table: 'auth_accounts',
     columns: ['user_id'],
@@ -603,9 +615,14 @@ async function main(): Promise<void> {
         table_class.relname AS table,
         index_data.indisunique AS "unique",
         ARRAY(
-          SELECT pg_get_indexdef(index_data.indexrelid, position, true)
-          FROM generate_series(1, index_data.indnkeyatts) AS position
-          ORDER BY position
+          SELECT CASE (indexed.option::integer & 3)
+            WHEN 0 THEN pg_get_indexdef(index_data.indexrelid, indexed.position::integer, true)
+            WHEN 1 THEN pg_get_indexdef(index_data.indexrelid, indexed.position::integer, true) || ' DESC NULLS LAST'
+            WHEN 2 THEN pg_get_indexdef(index_data.indexrelid, indexed.position::integer, true) || ' NULLS FIRST'
+            ELSE pg_get_indexdef(index_data.indexrelid, indexed.position::integer, true) || ' DESC NULLS FIRST'
+          END
+          FROM unnest(index_data.indoption) WITH ORDINALITY AS indexed(option, position)
+          ORDER BY indexed.position
         ) AS columns
       FROM pg_index AS index_data
       JOIN pg_class AS index_class ON index_class.oid = index_data.indexrelid
@@ -613,6 +630,11 @@ async function main(): Promise<void> {
       JOIN pg_namespace AS table_namespace ON table_namespace.oid = table_class.relnamespace
       WHERE table_namespace.nspname = 'public'
         AND index_data.indisvalid
+        AND (
+          -- The linked-local identity index is intentionally partial; all other expected indexes are not.
+          index_data.indpred IS NULL
+          OR index_class.relname = 'external_entity_mappings_linked_local_identity_unique'
+        )
         AND index_class.relname IN ${client(EXPECTED_INDEXES.map((index) => index.name))}
     `;
     const [issuerColumn] = await client<{ nullable: string }[]>`
