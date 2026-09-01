@@ -64,7 +64,10 @@ export function InvoiceReviewQueue({
   return (
     <div className="space-y-4">
       <Card>
-        <form action="/invoice-reviews">
+        <form
+          key={invoiceReviewListPath({ ...query, cursor: undefined })}
+          action="/invoice-reviews"
+        >
           <CardContent className="grid gap-4 p-5 md:grid-cols-4 xl:grid-cols-8">
             <FilterSelect name="state" label="Case state" value={query.state}>
               <option value="">All states</option>
@@ -561,7 +564,10 @@ export function InvoiceReviewDetail({
                     : ''}
                 </p>
               ) : null}
-              {!terminal && signal.status === 'open' ? (
+              {!terminal &&
+              signal.status === 'open' &&
+              signal.source.availability !== 'missing' &&
+              signal.type !== 'match_exception' ? (
                 <div className="flex flex-wrap gap-2">
                   <Button
                     size="sm"

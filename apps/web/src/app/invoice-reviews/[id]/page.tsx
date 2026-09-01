@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { use, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { InvoiceReviewCommandInput } from '@betterspend/shared';
 import type { InvoiceReviewProjection } from '../../../lib/api-contracts';
 import { api, loadFailureState } from '../../../lib/api';
@@ -12,11 +12,16 @@ import { InvoiceReviewDetail, namedOptions, type NamedOption } from '../review-v
 
 export default function InvoiceReviewPage(props: { params: Promise<{ id: string }> }) {
   const { id } = use(props.params);
+  const activeInvoiceId = useRef(id);
   const [projection, setProjection] = useState<InvoiceReviewProjection | null>(null);
   const [assignees, setAssignees] = useState<NamedOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [retry, setRetry] = useState(0);
+
+  useLayoutEffect(() => {
+    activeInvoiceId.current = id;
+  }, [id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,9 +46,42 @@ export default function InvoiceReviewPage(props: { params: Promise<{ id: string 
   }, [id, retry]);
 
   async function command(input: InvoiceReviewCommandInput) {
-    await api.invoiceReviews.command(id, input);
-    const refreshed = await api.invoiceReviews.get(id);
-    setProjection(refreshed);
+    const result = await api.invoiceReviews.command(id, input);
+    setProjection((current) => {
+      if (
+        activeInvoiceId.current !== id ||
+        !current ||
+        current.invoice.id !== result.case.invoiceId
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        case: {
+          ...current.case,
+          ...result.case,
+          owner: current.case.owner?.id === result.case.ownerId ? current.case.owner : null,
+        },
+      };
+    });
+
+    try {
+      const refreshed = await api.invoiceReviews.get(id);
+      setProjection((current) => {
+        if (
+          activeInvoiceId.current !== id ||
+          refreshed.invoice.id !== id ||
+          !current ||
+          current.invoice.id !== id ||
+          refreshed.case.version < current.case.version
+        ) {
+          return current;
+        }
+        return refreshed;
+      });
+    } catch {
+      // The command result is authoritative enough to keep issuing versioned commands.
+    }
   }
 
   if (loading || loadError || !projection) {

@@ -27,6 +27,7 @@ function QueueContent() {
   const [entities, setEntities] = useState<NamedOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<unknown>(null);
+  const [settledQuery, setSettledQuery] = useState<InvoiceReviewListQuery | null>(null);
   const [retry, setRetry] = useState(0);
 
   useEffect(() => {
@@ -40,6 +41,7 @@ function QueueContent() {
       .then(([queue, ownerRows, vendorRows, entityRows]) => {
         if (cancelled) return;
         setLoadError(null);
+        setSettledQuery(query);
         setResult(queue);
         setOwners(namedOptions(ownerRows));
         setVendors(namedOptions(vendorRows));
@@ -48,6 +50,7 @@ function QueueContent() {
       .catch((error: unknown) => {
         if (cancelled) return;
         setLoadError(error);
+        setSettledQuery(query);
         setResult(null);
       })
       .finally(() => {
@@ -58,10 +61,11 @@ function QueueContent() {
     };
   }, [query, retry]);
 
-  if (loading || loadError || !result) {
+  const queryLoading = loading || settledQuery !== query;
+  if (queryLoading || loadError || !result) {
     return (
       <ListState
-        state={loading ? 'loading' : loadError ? loadFailureState(loadError) : 'empty'}
+        state={queryLoading ? 'loading' : loadError ? loadFailureState(loadError) : 'empty'}
         loadingLabel="Loading AP exception queue..."
         emptyTitle="No review cases"
         emptyDescription="Invoice review cases will appear here when a signal needs attention."

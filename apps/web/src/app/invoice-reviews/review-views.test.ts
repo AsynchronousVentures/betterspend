@@ -98,6 +98,82 @@ test('queue keeps owner filtering and ownership visible when user lookup is unav
   assert.match(html, />owner-1</);
 });
 
+test('queue resets visible filter values when the query is cleared', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  const options = {
+    owners: [{ id: 'owner-1', name: 'Ada Reviewer' }],
+    vendors: [{ id: 'vendor-1', name: 'Northwind Parts' }],
+    entities: [{ id: 'entity-1', name: 'US Operations' }],
+  };
+
+  try {
+    await act(async () => {
+      root.render(
+        React.createElement(InvoiceReviewQueue, {
+          result: queueResult,
+          query: {
+            state: 'in_review',
+            signalType: 'duplicate_risk',
+            severity: 'blocking',
+            ownerId: 'owner-1',
+            vendorId: 'vendor-1',
+            entityId: 'entity-1',
+            minAgeDays: 14,
+            sort: 'due_date',
+          },
+          ...options,
+        }),
+      );
+    });
+
+    for (const [name, value] of Object.entries({
+      state: 'in_review',
+      signalType: 'duplicate_risk',
+      severity: 'blocking',
+      ownerId: 'owner-1',
+      vendorId: 'vendor-1',
+      entityId: 'entity-1',
+      minAgeDays: '14',
+      sort: 'due_date',
+    })) {
+      const field = container.querySelector<HTMLInputElement | HTMLSelectElement>(
+        `[name="${name}"]`,
+      );
+      assert.ok(field);
+      assert.equal(field.value, value);
+    }
+
+    await act(async () => {
+      root.render(
+        React.createElement(InvoiceReviewQueue, {
+          result: queueResult,
+          query: {},
+          ...options,
+        }),
+      );
+    });
+
+    for (const name of ['state', 'signalType', 'severity', 'ownerId', 'vendorId', 'entityId']) {
+      const field = container.querySelector<HTMLInputElement | HTMLSelectElement>(
+        `[name="${name}"]`,
+      );
+      assert.ok(field);
+      assert.equal(field.value, '');
+    }
+    const minimumAge = container.querySelector<HTMLInputElement>('[name="minAgeDays"]');
+    const sort = container.querySelector<HTMLSelectElement>('[name="sort"]');
+    assert.ok(minimumAge);
+    assert.ok(sort);
+    assert.equal(minimumAge.value, '');
+    assert.equal(sort.value, 'oldest_signal');
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+  }
+});
+
 const projection: InvoiceReviewProjection = {
   case: {
     id: 'case-1',
@@ -304,8 +380,8 @@ test('detail composes the review projection and makes missing blocking sources e
     assert.match(html, new RegExp(value));
 
   assert.match(html, /href="\/invoices\/invoice-1"/);
-  assert.match(html, /Resolve signal/);
-  assert.match(html, /Waive signal/);
+  assert.doesNotMatch(html, /Resolve signal/);
+  assert.doesNotMatch(html, /Waive signal/);
 });
 
 test('detail shows an explicit empty state when case history has no events', () => {
@@ -318,6 +394,53 @@ test('detail shows an explicit empty state when case history has no events', () 
   );
 
   assert.match(html, /No case history events/);
+});
+
+test('detail does not offer signal commands for match exceptions', () => {
+  const signal = projection.signals[0];
+  assert.ok(signal);
+  const html = renderToStaticMarkup(
+    React.createElement(InvoiceReviewDetail, {
+      projection: {
+        ...projection,
+        signals: [
+          {
+            ...signal,
+            type: 'match_exception',
+            source: { ...signal.source, availability: 'present' },
+          },
+        ],
+      },
+      assignees: [],
+      onCommand: async () => undefined,
+    }),
+  );
+
+  assert.doesNotMatch(html, /Resolve signal/);
+  assert.doesNotMatch(html, /Waive signal/);
+});
+
+test('detail keeps open non-match signals with unknown sources actionable', () => {
+  const signal = projection.signals[0];
+  assert.ok(signal);
+  const html = renderToStaticMarkup(
+    React.createElement(InvoiceReviewDetail, {
+      projection: {
+        ...projection,
+        signals: [
+          {
+            ...signal,
+            source: { ...signal.source, availability: 'unknown' },
+          },
+        ],
+      },
+      assignees: [],
+      onCommand: async () => undefined,
+    }),
+  );
+
+  assert.match(html, /Resolve signal/);
+  assert.match(html, /Waive signal/);
 });
 
 test('paid and cancelled review cases are visibly read-only', () => {
@@ -336,6 +459,8 @@ test('paid and cancelled review cases are visibly read-only', () => {
 });
 
 test('stale command errors are shown without hiding or resolving the server-owned signal', async () => {
+  const signal = projection.signals[0];
+  assert.ok(signal);
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -345,7 +470,15 @@ test('stale command errors are shown without hiding or resolving the server-owne
     await act(async () => {
       root.render(
         React.createElement(InvoiceReviewDetail, {
-          projection,
+          projection: {
+            ...projection,
+            signals: [
+              {
+                ...signal,
+                source: { ...signal.source, availability: 'present' },
+              },
+            ],
+          },
           assignees: [],
           onCommand: async (command) => {
             commands.push(command);
