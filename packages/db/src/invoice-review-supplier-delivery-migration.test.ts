@@ -274,6 +274,13 @@ test('migration verification covers supplier delivery columns, constraints, pare
   ]) {
     assert.match(verifier, new RegExp(`name: '${constraint}'`));
   }
+  for (const constraint of [
+    'invoice_review_notification_intents_organization_id_organizations_id_fk',
+    'invoice_review_notification_intents_case_org_fk',
+    'invoice_review_notification_intents_recipient_org_fk',
+  ]) {
+    assert.match(verifier, new RegExp(`name: '${constraint}'`));
+  }
   assert.match(
     verifier,
     /name: 'messages_id_organization_id_unique',[\s\S]*?table: 'messages',[\s\S]*?columns: \['id', 'organization_id'\],[\s\S]*?unique: true/,

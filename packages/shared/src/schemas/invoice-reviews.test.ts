@@ -3,9 +3,11 @@ import test from 'node:test';
 
 import {
   INVOICE_REVIEW_NOTIFICATION_INTENT_KINDS,
+  INVOICE_REVIEW_NOTIFICATION_INTENT_STATUSES,
   invoiceReviewCommandSchema,
   recordInvoiceReviewProvenanceSchema,
   type InvoiceReviewNotificationIntentKind,
+  type InvoiceReviewNotificationIntentStatus,
 } from './invoice-reviews';
 
 const organizationId = '00000000-0000-4000-8000-000000000001';
@@ -19,6 +21,12 @@ test('invoice review delivery intent kinds have one exported typed catalog', () 
   ];
 
   assert.deepEqual(INVOICE_REVIEW_NOTIFICATION_INTENT_KINDS, expected);
+});
+
+test('invoice review delivery intent statuses have one exported typed catalog', () => {
+  const expected: readonly InvoiceReviewNotificationIntentStatus[] = ['pending', 'delivered'];
+
+  assert.deepEqual(INVOICE_REVIEW_NOTIFICATION_INTENT_STATUSES, expected);
 });
 
 function provenanceInput(fieldPath: string, lineId?: string | null) {

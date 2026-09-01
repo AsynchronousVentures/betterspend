@@ -20,11 +20,13 @@ import {
   INVOICE_REVIEW_PROVENANCE_SOURCE_TYPES,
   INVOICE_REVIEW_CASE_STATES,
   INVOICE_REVIEW_NOTIFICATION_INTENT_KINDS,
+  INVOICE_REVIEW_NOTIFICATION_INTENT_STATUSES,
   INVOICE_REVIEW_SIGNAL_SEVERITIES,
   INVOICE_REVIEW_SIGNAL_STATUSES,
   INVOICE_REVIEW_SIGNAL_TYPES,
   type InvoiceReviewCaseState,
   type InvoiceReviewNotificationIntentKind,
+  type InvoiceReviewNotificationIntentStatus,
   type InvoiceReviewSignalSeverity,
   type InvoiceReviewSignalStatus,
   type InvoiceReviewSignalType,
@@ -177,7 +179,10 @@ export const invoiceReviewNotificationIntents = pgTable(
     messageId: uuid('message_id'),
     action: varchar('action', { length: 50 }).notNull(),
     idempotencyKey: varchar('idempotency_key', { length: 255 }).notNull(),
-    status: varchar('status', { length: 20 }).notNull().default('pending'),
+    status: varchar('status', { length: 20 })
+      .$type<InvoiceReviewNotificationIntentStatus>()
+      .notNull()
+      .default('pending'),
     attempts: integer('attempts').notNull().default(0),
     lastError: text('last_error'),
     leaseToken: uuid('lease_token'),
@@ -209,7 +214,7 @@ export const invoiceReviewNotificationIntents = pgTable(
     }),
     check(
       'invoice_review_notification_intents_status_check',
-      sql`${table.status} IN ('pending', 'delivered')`,
+      sql`${table.status} IN (${valuesCheck(INVOICE_REVIEW_NOTIFICATION_INTENT_STATUSES)})`,
     ),
     check(
       'invoice_review_notification_intents_kind_check',

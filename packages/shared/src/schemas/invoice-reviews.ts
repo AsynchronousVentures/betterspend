@@ -32,6 +32,11 @@ export const INVOICE_REVIEW_NOTIFICATION_INTENT_KINDS = [
 export type InvoiceReviewNotificationIntentKind =
   (typeof INVOICE_REVIEW_NOTIFICATION_INTENT_KINDS)[number];
 
+export const INVOICE_REVIEW_NOTIFICATION_INTENT_STATUSES = ['pending', 'delivered'] as const;
+
+export type InvoiceReviewNotificationIntentStatus =
+  (typeof INVOICE_REVIEW_NOTIFICATION_INTENT_STATUSES)[number];
+
 export const INVOICE_REVIEW_PROVENANCE_SOURCE_TYPES = [
   'OCR',
   'email_intake',
