@@ -8,6 +8,7 @@ import type { InvoiceReviewProjection } from '../../lib/api-contracts';
 import { invoiceReviewListPath } from '../../lib/api';
 import { formatDateOnly } from '../../lib/date-only';
 import { ListState } from '../../components/resource-state';
+import { StatusBadge } from '../../components/status-badge';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
@@ -185,7 +186,7 @@ export function InvoiceReviewQueue({
                     <TableCell>{selectedName(owners, item.case.ownerId)}</TableCell>
                     <TableCell>{item.case.ageDays} days</TableCell>
                     <TableCell>
-                      <span className="capitalize">{item.case.state.replaceAll('_', ' ')}</span>
+                      <CaseStateBadge value={item.case.state} />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -369,8 +370,8 @@ export function InvoiceReviewDetail({
             label="Purchase order"
             value={projection.invoice.purchaseOrder?.number ?? 'No purchase order'}
           />
-          <Fact label="Invoice status" value={humanize(projection.invoice.status)} />
-          <Fact label="Case state" value={humanize(projection.case.state)} />
+          <Fact label="Invoice status" value={<StatusBadge value={projection.invoice.status} />} />
+          <Fact label="Case state" value={<CaseStateBadge value={projection.case.state} />} />
           <Fact label="Owner" value={projection.case.owner?.name ?? 'Unassigned'} />
           <Fact label="Opened" value={new Date(projection.case.openedAt).toLocaleString()} />
           <Fact label="Version" value={String(projection.case.version)} />
@@ -415,64 +416,82 @@ export function InvoiceReviewDetail({
                 </Button>
               ) : null}
             </div>
-            <div className="grid gap-2 md:grid-cols-[minmax(12rem,1fr)_minmax(16rem,2fr)_auto]">
-              <Input
-                aria-label="Reassign owner"
-                list="invoice-review-assignees"
-                value={assigneeId}
-                onChange={(event) => setAssigneeId(event.target.value)}
-                placeholder="Reviewer ID"
-              />
-              <datalist id="invoice-review-assignees">
-                {assignees.map((assignee) => (
-                  <option key={assignee.id} value={assignee.id}>
-                    {assignee.name}
-                  </option>
-                ))}
-              </datalist>
-              <Input
-                aria-label="Reassignment reason"
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                placeholder="Reason for reassignment, waiver, or owner override"
-              />
-              <Button
-                variant="outline"
-                disabled={busy || !assigneeId || !reason.trim()}
-                onClick={() =>
-                  void submit({
-                    action: 'reassign',
-                    expectedVersion: projection.case.version,
-                    assigneeId,
-                    reason,
-                  })
-                }
-              >
-                Reassign
-              </Button>
-            </div>
-            <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-              <Textarea
-                aria-label="Supplier information request"
-                value={message}
-                onChange={(event) => setMessage(event.target.value)}
-                placeholder="Information needed from the supplier"
-              />
-              <Button
-                variant="outline"
-                disabled={busy || !message.trim()}
-                onClick={() =>
-                  void submit({
-                    action: 'request_supplier_info',
-                    expectedVersion: projection.case.version,
-                    message,
-                    ...(reason.trim() ? { overrideReason: reason.trim() } : {}),
-                  })
-                }
-              >
-                Request info
-              </Button>
-            </div>
+            <Card>
+              <CardContent className="grid gap-4 p-5">
+                <div className="grid gap-4 md:grid-cols-[minmax(12rem,1fr)_minmax(16rem,2fr)_auto]">
+                  <label className="grid gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      Reassign owner
+                    </span>
+                    <Input
+                      list="invoice-review-assignees"
+                      value={assigneeId}
+                      onChange={(event) => setAssigneeId(event.target.value)}
+                      placeholder="Reviewer ID"
+                    />
+                  </label>
+                  <datalist id="invoice-review-assignees">
+                    {assignees.map((assignee) => (
+                      <option key={assignee.id} value={assignee.id}>
+                        {assignee.name}
+                      </option>
+                    ))}
+                  </datalist>
+                  <label className="grid gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      Reason
+                    </span>
+                    <Input
+                      value={reason}
+                      onChange={(event) => setReason(event.target.value)}
+                      placeholder="Reason for reassignment, waiver, or owner override"
+                    />
+                  </label>
+                  <Button
+                    className="md:self-end"
+                    variant="outline"
+                    disabled={busy || !assigneeId || !reason.trim()}
+                    onClick={() =>
+                      void submit({
+                        action: 'reassign',
+                        expectedVersion: projection.case.version,
+                        assigneeId,
+                        reason,
+                      })
+                    }
+                  >
+                    Reassign
+                  </Button>
+                </div>
+                <div className="grid gap-4 md:grid-cols-[1fr_auto]">
+                  <label className="grid gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      Supplier information request
+                    </span>
+                    <Textarea
+                      value={message}
+                      onChange={(event) => setMessage(event.target.value)}
+                      placeholder="Information needed from the supplier"
+                    />
+                  </label>
+                  <Button
+                    className="md:self-end"
+                    variant="outline"
+                    disabled={busy || !message.trim()}
+                    onClick={() =>
+                      void submit({
+                        action: 'request_supplier_info',
+                        expectedVersion: projection.case.version,
+                        message,
+                        ...(reason.trim() ? { overrideReason: reason.trim() } : {}),
+                      })
+                    }
+                  >
+                    Request info
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         ) : null}
       </section>
@@ -516,17 +535,12 @@ export function InvoiceReviewDetail({
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="font-semibold">{signal.summary}</h3>
-                  <p className="text-xs text-muted-foreground">
-                    {humanize(signal.type)} · {humanize(signal.status)}
-                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-muted-foreground">{humanize(signal.type)}</span>
+                    <SignalStatusBadge value={signal.status} />
+                  </div>
                 </div>
-                <span
-                  className={
-                    signal.severity === 'blocking' ? 'font-semibold text-destructive' : 'text-sm'
-                  }
-                >
-                  {humanize(signal.severity)}
-                </span>
+                <SignalSeverityBadge value={signal.severity} />
               </div>
               <SourceReference
                 module={signal.source.module}
@@ -629,7 +643,7 @@ export function InvoiceReviewDetail({
 
       <div className="grid gap-6 lg:grid-cols-3">
         <ReviewSection id="review-match" title="Match summary">
-          <Fact label="Status" value={humanize(projection.match.status)} />
+          <Fact label="Status" value={<StatusBadge value={projection.match.status} />} />
           <Fact label="Exceptions" value={String(projection.match.exceptions.length)} />
           {projection.match.exceptions.map((exception) => (
             <div key={exception.id} className="border-t border-border/70 pt-2 text-xs">
@@ -657,7 +671,9 @@ export function InvoiceReviewDetail({
                 >
                   Step {approval.currentStep}
                 </Link>
-                <span className="text-muted-foreground"> · {humanize(approval.status)}</span>
+                <span className="ml-2 inline-flex">
+                  <StatusBadge value={approval.status} />
+                </span>
               </div>
             ))
           )}
@@ -669,9 +685,12 @@ export function InvoiceReviewDetail({
             projection.payments.map((payment) => (
               <div key={payment.id} className="text-sm">
                 <span className="font-medium">{payment.paymentRunId}</span>
+                <span className="ml-2 inline-flex">
+                  <StatusBadge value={payment.status} />
+                </span>
                 <span className="text-muted-foreground">
                   {' '}
-                  · {humanize(payment.status)} · {formatCurrency(payment.amount, payment.currency)}
+                  · {formatCurrency(payment.amount, payment.currency)}
                 </span>
               </div>
             ))
@@ -757,13 +776,66 @@ function ReviewSection({
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+      <dt className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </dt>
       <dd className="mt-1 text-foreground">{value}</dd>
     </div>
   );
+}
+
+const CASE_STATE_BADGES: Record<
+  InvoiceReviewProjection['case']['state'],
+  { value: string; label: string }
+> = {
+  open: { value: 'pending', label: 'Open' },
+  in_review: { value: 'manually_reviewed', label: 'In review' },
+  waiting_on_supplier: { value: 'pending_approval', label: 'Waiting on supplier' },
+  resolved: { value: 'approved', label: 'Resolved' },
+};
+
+function CaseStateBadge({ value }: { value: InvoiceReviewProjection['case']['state'] }) {
+  const badge = CASE_STATE_BADGES[value];
+  return <StatusBadge value={badge.value} label={badge.label} />;
+}
+
+const SIGNAL_STATUS_BADGES: Record<
+  InvoiceReviewProjection['signals'][number]['status'],
+  { value: string; label: string }
+> = {
+  open: { value: 'pending', label: 'Open' },
+  resolved: { value: 'approved', label: 'Resolved' },
+  waived: { value: 'cancelled', label: 'Waived' },
+};
+
+function SignalStatusBadge({
+  value,
+}: {
+  value: InvoiceReviewProjection['signals'][number]['status'];
+}) {
+  const badge = SIGNAL_STATUS_BADGES[value];
+  return <StatusBadge value={badge.value} label={badge.label} />;
+}
+
+const SIGNAL_SEVERITY_BADGES: Record<
+  InvoiceReviewProjection['signals'][number]['severity'],
+  { value: string; label: string }
+> = {
+  informational: { value: 'informational', label: 'Informational' },
+  review_required: { value: 'pending_approval', label: 'Review required' },
+  blocking: { value: 'blocked', label: 'Blocking' },
+};
+
+function SignalSeverityBadge({
+  value,
+}: {
+  value: InvoiceReviewProjection['signals'][number]['severity'];
+}) {
+  const badge = SIGNAL_SEVERITY_BADGES[value];
+  return <StatusBadge value={badge.value} label={badge.label} />;
 }
 
 function EmptyValue({ children }: { children: React.ReactNode }) {

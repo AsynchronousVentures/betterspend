@@ -9,6 +9,7 @@ import type { InvoiceReviewListResult, InvoiceReviewProjection } from '../../lib
 import { InvoiceReviewDetail, InvoiceReviewQueue } from './review-views';
 
 Object.defineProperty(globalThis, 'self', { configurable: true, value: window });
+Object.defineProperty(globalThis, 'React', { configurable: true, value: React });
 
 const queueResult: InvoiceReviewListResult = {
   items: [
