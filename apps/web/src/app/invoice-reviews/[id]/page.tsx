@@ -19,8 +19,14 @@ export default function InvoiceReviewPage(props: { params: Promise<{ id: string 
   const [loadError, setLoadError] = useState<unknown>(null);
   const [retry, setRetry] = useState(0);
 
+  // Clear the previous case before the new route renders so actionable controls
+  // never submit a stale `expectedVersion` against a different invoice.
   useLayoutEffect(() => {
+    if (activeInvoiceId.current === id) return;
     activeInvoiceId.current = id;
+    setProjection(null);
+    setLoadError(null);
+    setLoading(true);
   }, [id]);
 
   useEffect(() => {

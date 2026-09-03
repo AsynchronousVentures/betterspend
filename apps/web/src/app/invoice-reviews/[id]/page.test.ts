@@ -266,6 +266,54 @@ test('does not regress a command result when its successful refresh has an older
   }
 });
 
+test('clears the previous case before the next route finishes loading', async () => {
+  document.body.replaceChildren();
+  const invoiceBLoad = deferred<InvoiceReviewProjection>();
+  const get = mock.method(api.invoiceReviews, 'get', (invoiceId: string) =>
+    invoiceId === 'invoice-b'
+      ? invoiceBLoad.promise
+      : Promise.resolve(projectionFor('invoice-a', 'INVOICE-A')),
+  );
+  const command = mock.method(api.invoiceReviews, 'command', async () => {
+    throw new Error('no command should be reachable while the next case is loading');
+  });
+  const users = mock.method(api.users, 'list', async () => []);
+  const messages = mock.method(api.messages, 'list', async () => []);
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+
+  try {
+    act(() =>
+      root.render(
+        React.createElement(InvoiceReviewPage, { params: fulfilledParams('invoice-a') }),
+      ),
+    );
+    await flush();
+    assert.match(container.textContent ?? '', /INVOICE-A/);
+
+    act(() =>
+      root.render(
+        React.createElement(InvoiceReviewPage, { params: fulfilledParams('invoice-b') }),
+      ),
+    );
+
+    // The previous case must not stay actionable once `id` points at another invoice.
+    assert.doesNotMatch(container.textContent ?? '', /INVOICE-A/);
+    assert.match(container.textContent ?? '', /Loading invoice review/);
+    assert.equal(command.mock.calls.length, 0);
+  } finally {
+    invoiceBLoad.resolve(projectionFor('invoice-b', 'INVOICE-B'));
+    await flush();
+    act(() => root.unmount());
+    container.remove();
+    get.mock.restore();
+    command.mock.restore();
+    users.mock.restore();
+    messages.mock.restore();
+  }
+});
+
 test('does not apply a delayed command refresh after the mounted route changes', async () => {
   document.body.replaceChildren();
   const delayedInvoiceARefresh = deferred<InvoiceReviewProjection>();

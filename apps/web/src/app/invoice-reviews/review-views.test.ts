@@ -73,7 +73,7 @@ test('queue shows review facts and carries active filters into stable pagination
     'Ada Reviewer',
     '30 days',
   ]) {
-    assert.match(html, new RegExp(value.replace('$', '\\$')));
+    assert.ok(html.includes(value), `expected rendered queue to include ${value}`);
   }
   assert.match(
     html,
@@ -456,6 +456,29 @@ test('paid and cancelled review cases are visibly read-only', () => {
     assert.doesNotMatch(html, /Resolve signal/);
     assert.doesNotMatch(html, /Waive signal/);
   }
+});
+
+test('resolved review cases hide case commands the API always rejects', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(InvoiceReviewDetail, {
+      projection: {
+        ...projection,
+        case: { ...projection.case, state: 'resolved' as const },
+        signals: projection.signals.map((signal) => ({
+          ...signal,
+          source: { ...signal.source, availability: 'unknown' as const },
+        })),
+      },
+      assignees: [],
+      onCommand: async () => undefined,
+    }),
+  );
+
+  assert.doesNotMatch(html, /Case commands/);
+  assert.doesNotMatch(html, /Reassign owner/);
+  assert.doesNotMatch(html, /Supplier information request/);
+  // Per-signal actions stay available because the API still accepts them for a resolved case.
+  assert.match(html, /Resolve signal/);
 });
 
 test('stale command errors are shown without hiding or resolving the server-owned signal', async () => {

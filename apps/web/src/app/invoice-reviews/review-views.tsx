@@ -281,6 +281,9 @@ export function InvoiceReviewDetail({
   const [reason, setReason] = useState('');
   const [message, setMessage] = useState('');
   const terminal = ['paid', 'cancelled'].includes(projection.invoice.status);
+  // A resolved case rejects every case command with INVALID_TRANSITION, so only the
+  // per-signal actions stay available for it.
+  const caseCommandsAvailable = !terminal && projection.case.state !== 'resolved';
   const blockers = projection.signals.filter(
     (signal) => signal.status === 'open' && signal.severity === 'blocking',
   );
@@ -380,7 +383,7 @@ export function InvoiceReviewDetail({
           <Fact label="Version" value={String(projection.case.version)} />
         </dl>
 
-        {!terminal ? (
+        {caseCommandsAvailable ? (
           <div aria-label="Case commands" className="space-y-3 border-t border-border/70 pt-4">
             <div className="flex flex-wrap gap-2">
               {!projection.case.ownerId ? (
