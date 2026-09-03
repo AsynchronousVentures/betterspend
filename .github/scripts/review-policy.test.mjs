@@ -9,7 +9,7 @@ const approvabilityConfig = readFileSync(
   'utf8',
 );
 const reviewPolicy = readFileSync(
-  new URL('../../docs/agents/pr-review-policy.md', import.meta.url),
+  new URL('../../docs/agents/pr-reviews.md', import.meta.url),
   'utf8',
 );
 
