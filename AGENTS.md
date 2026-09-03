@@ -156,6 +156,10 @@ Uses `sequences` table with `SELECT ... FOR UPDATE` for gap-free generation.
 
 ## Agent skills
 
+### Engineering
+
+- Follow `docs/agents/pr-reviews.md` when evaluating, monitoring, or merging pull requests.
+
 ### Issue tracker
 
 Issues live in this repo's GitHub Issues (AsynchronousVentures/betterspend), driven via the `gh` CLI. See `docs/agents/issue-tracker.md`.
@@ -167,13 +171,3 @@ Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `
 ### Domain docs
 
 Single-context: one root `CONTEXT.md` plus `docs/adr/`. See `docs/agents/domain.md`.
-
-## PR review etiquette
-
-- Follow `docs/agents/pr-review-policy.md`. Open agent-authored pull requests as drafts. After Fast CI passes on the latest head, run `gh pr ready <PR URL>` to start Macroscope. Approvability handles routine approvals, while a human reviews changes Macroscope will not approve.
-- Run `pnpm ci:preflight` before the first push. Use `pnpm ci:preflight:docker` to check production images explicitly. The pre-push hook automatically selects the Docker tier when packaging inputs changed.
-- CodeRabbit is manual and advisory. Request it only for security, migration, approval, or organization-boundary changes after Macroscope findings are triaged. Request a follow-up only when one of its valid findings caused a material code change.
-- After verifying each Macroscope finding, react with 👍 when it was useful or 👎 when it was not. Teach CodeRabbit lasting preferences through a direct `@coderabbitai` reply that explains why; do not turn one-off exceptions into learnings.
-- Every review comment on a PR you opened must receive a reply before merge. Each reply either states the commit that addressed it, or states that it is being ignored and why.
-- Never merge a PR while a required Macroscope review has `CHANGES_REQUESTED` outstanding, even if other required checks are green. Resolve or explicitly dismiss each thread first, and surface unresolved feedback to Tyler before merging rather than after.
-- Use `@coderabbitai resolve` (or resolve threads via the API) once a CodeRabbit comment has been addressed.
