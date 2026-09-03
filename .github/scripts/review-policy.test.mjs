@@ -13,13 +13,25 @@ const reviewPolicy = readFileSync(
   'utf8',
 );
 
-test('uses native approvals instead of a polling review gate', () => {
+test('documents the enforced GitHub gates without requiring native approval', () => {
   assert.doesNotMatch(workflow, /review-gate|Review Gate|wait-for-review-gate/);
   assert.match(
     reviewPolicy,
-    /Require the stable `Validate` check, one approving review, and resolved review threads\./,
+    /The enforced GitHub gates are the stable `Validate` check, resolved review threads, and the merge queue\./,
   );
-  assert.match(reviewPolicy, /approval from Macroscope Approvability or a human reviewer/);
+  assert.match(reviewPolicy, /GitHub requires zero approving reviews and has no bypass actors\./);
+  assert.match(reviewPolicy, /Merge BetterSpend PRs through the merge queue as squash merges, never by bypassing it\./);
+  assert.doesNotMatch(reviewPolicy, /one approving review/);
+  assert.doesNotMatch(reviewPolicy, /Approvability supplies the required approval/);
+});
+
+test('preserves advisory review triage and author-specific review requirements', () => {
+  assert.match(reviewPolicy, /Approvability is useful evidence for low-risk PRs, but it is not a required merge gate\./);
+  assert.match(reviewPolicy, /`Eligibility: Not approved` alone does not block merge/);
+  assert.match(reviewPolicy, /a Macroscope correctness or security finding, a `CHANGES_REQUESTED` review, or another verified must-fix finding/);
+  assert.match(reviewPolicy, /External-contributor PRs require human maintainer review before merge\./);
+  assert.match(reviewPolicy, /Maintainer- and agent-authored PRs may proceed without a native GitHub approval/);
+  assert.match(reviewPolicy, /Do not manufacture self-approval on maintainer-authored PRs\./);
 });
 
 test('leaves ready-for-review promotion to the watching agent', () => {
