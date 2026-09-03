@@ -289,8 +289,25 @@ export function InvoiceReviewDetail({
   );
   const missingSources = [
     ...projection.signals.filter((signal) => signal.source.availability === 'missing'),
-    ...projection.provenance.fields.filter((field) => field.source.availability === 'missing'),
+    ...projection.provenance.fields.filter(
+      (field) => field.isCurrent && field.source.availability === 'missing',
+    ),
   ];
+
+  // Reassignment, signal waivers, and admin overrides all read this one editor, so it
+  // has to stay mounted whenever any command is reachable, not just case commands.
+  const reasonField = (
+    <label className="grid gap-2">
+      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        Reason
+      </span>
+      <Input
+        value={reason}
+        onChange={(event) => setReason(event.target.value)}
+        placeholder="Reason for reassignment, waiver, or owner override"
+      />
+    </label>
+  );
 
   async function submit(command: InvoiceReviewCommandInput) {
     if (busy || terminal) return;
@@ -443,16 +460,7 @@ export function InvoiceReviewDetail({
                       </option>
                     ))}
                   </datalist>
-                  <label className="grid gap-2">
-                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                      Reason
-                    </span>
-                    <Input
-                      value={reason}
-                      onChange={(event) => setReason(event.target.value)}
-                      placeholder="Reason for reassignment, waiver, or owner override"
-                    />
-                  </label>
+                  {reasonField}
                   <Button
                     className="md:self-end"
                     variant="outline"
@@ -497,6 +505,12 @@ export function InvoiceReviewDetail({
                   </Button>
                 </div>
               </CardContent>
+            </Card>
+          </div>
+        ) : !terminal ? (
+          <div className="space-y-3 border-t border-border/70 pt-4">
+            <Card>
+              <CardContent className="p-5">{reasonField}</CardContent>
             </Card>
           </div>
         ) : null}

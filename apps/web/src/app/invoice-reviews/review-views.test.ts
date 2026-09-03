@@ -477,8 +477,32 @@ test('resolved review cases hide case commands the API always rejects', () => {
   assert.doesNotMatch(html, /Case commands/);
   assert.doesNotMatch(html, /Reassign owner/);
   assert.doesNotMatch(html, /Supplier information request/);
-  // Per-signal actions stay available because the API still accepts them for a resolved case.
+  // Per-signal actions stay available because the API still accepts them for a resolved case,
+  // and they need the reason editor for waivers and non-owner admin overrides.
   assert.match(html, /Resolve signal/);
+  assert.match(html, /Waive signal/);
+  assert.match(html, /Reason for reassignment, waiver, or owner override/);
+});
+
+test('superseded provenance does not report approval and payment as blocked', () => {
+  const field = projection.provenance.fields[0];
+  assert.ok(field);
+  const html = renderToStaticMarkup(
+    React.createElement(InvoiceReviewDetail, {
+      projection: {
+        ...projection,
+        signals: [],
+        provenance: {
+          available: true,
+          fields: [{ ...field, isCurrent: false, supersededAt: '2026-08-02T00:00:00.000Z' }],
+        },
+      },
+      assignees: [],
+      onCommand: async () => undefined,
+    }),
+  );
+
+  assert.doesNotMatch(html, /missing source/i);
 });
 
 test('stale command errors are shown without hiding or resolving the server-owned signal', async () => {
