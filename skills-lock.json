@@ -5,19 +5,19 @@
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/to-spec/SKILL.md",
-      "computedHash": "3fa1a0695d4ea242fae9e569e4d22aa1788623197abb33bfadafae7315789bbf"
+      "computedHash": "06f92fcc12684d8c797ac92245f1a705b0ad6ec46641b2d5d38473898b6c1b5a"
     },
     "to-tickets": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/to-tickets/SKILL.md",
-      "computedHash": "bf5e6ebcb4f1272de0c188d5b3901f265a03d1fa9935a21a7a56938e21e2e761"
+      "computedHash": "e6c5defe217ae16f48fb301cbfdcaa129f995bdf229006b8696ea14ff6d6fe2f"
     },
     "triage": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/triage/SKILL.md",
-      "computedHash": "b954d74c219c805bf353d6642251a713c9b2e9cfdb11babfe588bcfe7dfd16d5"
+      "computedHash": "06601f0ccf6f33183d2fcffe589d692f57f4ebdf78937662bead30a3a8ff4e4c"
     }
   }
 }
