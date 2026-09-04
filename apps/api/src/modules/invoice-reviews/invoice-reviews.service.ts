@@ -17,6 +17,7 @@ import {
   purchaseOrders,
   requisitions,
   spendGuardAlerts,
+  AUDIT_HASH_TIMESTAMP_FORMAT,
   type Db,
   type DbTransaction,
   vendors,
@@ -168,15 +169,22 @@ function isSignalHistoryAction(
   return (INVOICE_REVIEW_SIGNAL_HISTORY_ACTIONS as readonly string[]).includes(value);
 }
 
-function compareHistoryEntries(
-  first: InvoiceReviewHistoryEntry,
-  second: InvoiceReviewHistoryEntry,
-): number {
-  const timestampDelta = second.timestamp.getTime() - first.timestamp.getTime();
-  if (timestampDelta !== 0) return timestampDelta;
-  if (first.id === second.id) return 0;
-  return first.id < second.id ? 1 : -1;
+/**
+ * `audit_log.created_at` defaults to Postgres `now()`, so it carries microseconds
+ * that a JS `Date` truncates. Ordering on the full-precision UTC text keeps events
+ * recorded in the same millisecond chronological; the format is fixed width, so a
+ * lexicographic comparison is a chronological one. The id only breaks exact ties,
+ * matching the `created_at DESC, id DESC` ordering the queries already use.
+ */
+function compareHistoryRows(first: HistoryRowOrder, second: HistoryRowOrder): number {
+  if (first.audit.createdAtText !== second.audit.createdAtText) {
+    return first.audit.createdAtText < second.audit.createdAtText ? 1 : -1;
+  }
+  if (first.audit.id === second.audit.id) return 0;
+  return first.audit.id < second.audit.id ? 1 : -1;
 }
+
+type HistoryRowOrder = { audit: { id: string; createdAtText: string } };
 
 export interface InvoiceReviewProjection {
   case: InvoiceReviewCaseView & {
@@ -1093,6 +1101,10 @@ export class InvoiceReviewsService {
           ELSE NULL
         END`,
         createdAt: auditLog.createdAt,
+        createdAtText: sql<string>`to_char(
+          ${auditLog.createdAt} AT TIME ZONE 'UTC',
+          ${AUDIT_HASH_TIMESTAMP_FORMAT}
+        )`,
       },
       actor: {
         id: users.id,
@@ -1133,13 +1145,12 @@ export class InvoiceReviewsService {
             ),
           )
         : [];
-    const rows = [...caseRows, ...signalRows];
+    const rows = [...caseRows, ...signalRows].sort(compareHistoryRows);
 
     const visibleSignalIds = new Set(signalIds);
     const entries = rows
       .flatMap((row) => this.historyEntry(row, organizationId, caseId, visibleSignalIds))
       .filter((entry): entry is InvoiceReviewHistoryEntry => entry !== null)
-      .sort(compareHistoryEntries)
       .slice(0, INVOICE_REVIEW_HISTORY_LIMIT);
     return { available: true, entries };
   }
