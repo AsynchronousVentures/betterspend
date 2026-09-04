@@ -184,6 +184,13 @@ const EXPECTED_CHECK_CONSTRAINTS = [
   },
 ] as const;
 
+// Postgres truncates identifiers to 63 bytes (NAMEDATALEN - 1). Drizzle's generated
+// foreign key names can be longer than that, so expectations have to match the
+// truncated name the database actually stores.
+function storedIdentifier(name: string): string {
+  return Buffer.from(name).subarray(0, 63).toString();
+}
+
 const EXPECTED_FOREIGN_KEYS = [
   {
     name: 'vendor_portal_tokens_vendor_id_vendors_id_fk',
@@ -486,7 +493,7 @@ const EXPECTED_FOREIGN_KEYS = [
     childColumns: ['actor_id', 'organization_id'],
     parentColumns: ['id', 'organization_id'],
   },
-] as const;
+].map((foreignKey) => ({ ...foreignKey, name: storedIdentifier(foreignKey.name) }));
 
 type ForeignKeyDescription = {
   name: string;
