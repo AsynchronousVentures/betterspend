@@ -38,6 +38,11 @@ import type {
   InvoiceInput,
   InvoiceListItem,
   InvoiceMatchResponse,
+  InvoiceReviewCommandResult,
+  InvoiceReviewListQuery,
+  InvoiceReviewListResult,
+  InvoiceReviewProjection,
+  InvoiceReviewsApi,
   InvoiceRecord,
   PurchaseOrderComplianceReport,
   PurchaseOrderComplianceResult,
@@ -168,6 +173,22 @@ function appendEntityId(path: string, entityId?: string): string {
   params.set('entityId', selectedEntityId);
   const nextQuery = params.toString();
   return nextQuery ? `${pathname}?${nextQuery}` : pathname;
+}
+
+export function invoiceReviewListPath(query: InvoiceReviewListQuery = {}): string {
+  const params = new URLSearchParams();
+  if (query.state) params.set('state', query.state);
+  if (query.signalType) params.set('signalType', query.signalType);
+  if (query.severity) params.set('severity', query.severity);
+  if (query.ownerId) params.set('ownerId', query.ownerId);
+  if (query.vendorId) params.set('vendorId', query.vendorId);
+  if (query.entityId) params.set('entityId', query.entityId);
+  if (query.minAgeDays !== undefined) params.set('minAgeDays', String(query.minAgeDays));
+  if (query.sort) params.set('sort', query.sort);
+  if (query.cursor) params.set('cursor', query.cursor);
+  if (query.limit !== undefined) params.set('limit', String(query.limit));
+  const search = params.toString();
+  return `/invoice-reviews${search ? `?${search}` : ''}`;
 }
 
 function withEntityBody(data: unknown): unknown {
@@ -921,6 +942,15 @@ export const api = {
   },
   purchaseOrders: purchaseOrdersApi,
   invoices: invoicesApi,
+  invoiceReviews: {
+    list: (query = {}) => apiFetch<InvoiceReviewListResult>(invoiceReviewListPath(query)),
+    get: (invoiceId) => apiFetch<InvoiceReviewProjection>(`/invoice-reviews/${invoiceId}`),
+    command: (invoiceId, command) =>
+      apiFetch<InvoiceReviewCommandResult>(`/invoice-reviews/${invoiceId}/commands`, {
+        method: 'POST',
+        body: JSON.stringify(command),
+      }),
+  } satisfies InvoiceReviewsApi,
   paymentRuns: {
     list: (params?: { status?: string }) =>
       apiFetch<any[]>(
