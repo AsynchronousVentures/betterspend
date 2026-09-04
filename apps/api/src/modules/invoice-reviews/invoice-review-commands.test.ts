@@ -4,8 +4,9 @@ import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import * as schema from '@betterspend/db';
 import type { Db } from '@betterspend/db';
+import { INVOICE_REVIEW_NOTIFICATION_INTENT_KINDS } from '@betterspend/shared';
 import { InvoiceReviewCommands } from './invoice-review-commands';
-import { InvoiceReviewNotificationsService } from './invoice-review-notifications.service';
+import { InvoiceReviewDeliveries } from './invoice-review-deliveries.service';
 
 const organizationId = '00000000-0000-4000-8000-000000000001';
 const invoiceId = '00000000-0000-4000-8000-000000000002';
@@ -18,7 +19,7 @@ async function createDatabase(status = 'approved') {
     CREATE TABLE organizations (id uuid PRIMARY KEY);
     CREATE TABLE users (id uuid PRIMARY KEY, organization_id uuid NOT NULL, name varchar(255) NOT NULL, is_active boolean NOT NULL DEFAULT true);
     CREATE TABLE invoices (
-      id uuid PRIMARY KEY, organization_id uuid NOT NULL, entity_id uuid, purchase_order_id uuid,
+      id uuid PRIMARY KEY, organization_id uuid NOT NULL, entity_id uuid, purchase_order_id uuid, vendor_id uuid,
       status varchar(30) NOT NULL, paid_at timestamptz, created_by uuid
     );
     CREATE TABLE purchase_orders (id uuid PRIMARY KEY, requisition_id uuid);
@@ -43,7 +44,9 @@ async function createDatabase(status = 'approved') {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL, thread_type varchar(20) NOT NULL,
       thread_id uuid NOT NULL, sender_type varchar(10) NOT NULL, sender_id uuid, vendor_id uuid,
       recipient_vendor_id uuid, author_name varchar(255) NOT NULL, body text NOT NULL, attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
-      created_at timestamptz NOT NULL DEFAULT now(), idempotency_key varchar(255)
+      created_at timestamptz NOT NULL DEFAULT now(), idempotency_key varchar(255),
+      UNIQUE (id, organization_id),
+      UNIQUE (organization_id, idempotency_key)
     );
     CREATE TABLE audit_log (
       id uuid PRIMARY KEY, organization_id uuid NOT NULL, user_id uuid, entity_type varchar(50) NOT NULL,
@@ -57,10 +60,19 @@ async function createDatabase(status = 'approved') {
     );
     CREATE TABLE invoice_review_notification_intents (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL, case_id uuid NOT NULL,
-      recipient_user_id uuid NOT NULL, action varchar(50) NOT NULL, idempotency_key varchar(255) NOT NULL,
-      status varchar(20) NOT NULL DEFAULT 'pending', attempts integer NOT NULL DEFAULT 0, last_error text,
+      intent_kind varchar(50) NOT NULL DEFAULT 'internal_notification', recipient_user_id uuid, message_id uuid, action varchar(50) NOT NULL, idempotency_key varchar(255) NOT NULL,
+      status varchar(20) NOT NULL DEFAULT 'pending', attempts integer NOT NULL DEFAULT 0, last_error text, lease_token uuid, lease_expires_at timestamptz,
       delivered_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-      UNIQUE (organization_id, idempotency_key)
+      UNIQUE (organization_id, idempotency_key),
+      CONSTRAINT invoice_review_notification_intents_kind_check
+        CHECK (intent_kind IN ('internal_notification', 'supplier_message_email')),
+      CONSTRAINT invoice_review_notification_intents_delivery_shape_check CHECK (
+        (intent_kind = 'internal_notification' AND recipient_user_id IS NOT NULL AND message_id IS NULL)
+        OR
+        (intent_kind = 'supplier_message_email' AND recipient_user_id IS NULL AND message_id IS NOT NULL)
+      ),
+      CONSTRAINT invoice_review_notification_intents_message_org_fk
+        FOREIGN KEY (message_id, organization_id) REFERENCES messages (id, organization_id)
     );
     INSERT INTO organizations VALUES ('${organizationId}');
     INSERT INTO users (id, organization_id, name) VALUES ('${actorId}', '${organizationId}', 'AP reviewer');
@@ -76,15 +88,21 @@ async function createDatabase(status = 'approved') {
 function createCommands(
   db: Db,
   options: {
-    createIntent?: () => Promise<string>;
+    deliveries?: InvoiceReviewDeliveries;
+    record?: (transaction: unknown, input: unknown) => Promise<string[]>;
+    enqueue?: (ids: string[]) => Promise<void>;
     resolvePolicy?: () => Promise<{ policy: unknown }>;
   } = {},
 ) {
   const scheduled: string[][] = [];
-  const notifications = {
-    createIntent: options.createIntent ?? (async () => '00000000-0000-4000-8000-000000000006'),
-    enqueue: async (ids: string[]) => scheduled.push(ids),
-  };
+  const notifications =
+    options.deliveries ??
+    ({
+      record:
+        options.record ??
+        (async () => ['00000000-0000-4000-8000-000000000006']),
+      enqueue: options.enqueue ?? (async (ids: string[]) => scheduled.push(ids)),
+    } as never);
   const policies = {
     resolve:
       options.resolvePolicy ??
@@ -108,6 +126,77 @@ function createCommands(
     scheduled,
   };
 }
+
+test('the command fixture applies the production internal intent-kind default', async () => {
+  const { database } = await createDatabase();
+  try {
+    await database.exec(`
+      INSERT INTO invoice_review_notification_intents (
+        id, organization_id, case_id, recipient_user_id, action, idempotency_key
+      ) VALUES (
+        '00000000-0000-4000-8000-000000000090', '${organizationId}',
+        '00000000-0000-4000-8000-000000000005', '${actorId}', 'claim', 'fixture-default'
+      )
+    `);
+
+    const result = await database.query<{ kind: string }>(`
+      SELECT intent_kind AS kind
+      FROM invoice_review_notification_intents
+      WHERE id = '00000000-0000-4000-8000-000000000090'
+    `);
+    assert.deepEqual(result.rows, [{ kind: 'internal_notification' }]);
+  } finally {
+    await database.close();
+  }
+});
+
+test('the command fixture enforces production intent-kind and delivery-shape checks', async () => {
+  const { database } = await createDatabase();
+  try {
+    await assert.rejects(
+      database.exec(`
+        INSERT INTO invoice_review_notification_intents (
+          id, organization_id, case_id, intent_kind, recipient_user_id, action, idempotency_key
+        ) VALUES (
+          '00000000-0000-4000-8000-000000000091', '${organizationId}',
+          '00000000-0000-4000-8000-000000000005', 'unclassified', '${actorId}', 'claim', 'fixture-kind-check'
+        )
+      `),
+    );
+    await assert.rejects(
+      database.exec(`
+        INSERT INTO invoice_review_notification_intents (
+          id, organization_id, case_id, intent_kind, recipient_user_id, action, idempotency_key
+        ) VALUES (
+          '00000000-0000-4000-8000-000000000092', '${organizationId}',
+          '00000000-0000-4000-8000-000000000005', 'supplier_message_email', '${actorId}',
+          'request_supplier_info', 'fixture-shape-check'
+        )
+      `),
+    );
+  } finally {
+    await database.close();
+  }
+});
+
+test('the command fixture enforces the production organization-scoped message reference', async () => {
+  const { database } = await createDatabase();
+  try {
+    await assert.rejects(
+      database.exec(`
+        INSERT INTO invoice_review_notification_intents (
+          id, organization_id, case_id, intent_kind, message_id, action, idempotency_key
+        ) VALUES (
+          '00000000-0000-4000-8000-000000000093', '${organizationId}',
+          '00000000-0000-4000-8000-000000000005', 'supplier_message_email',
+          '00000000-0000-4000-8000-000000000094', 'request_supplier_info', 'fixture-message-fk'
+        )
+      `),
+    );
+  } finally {
+    await database.close();
+  }
+});
 
 test('claim is a serialized command that advances the aggregate version once', async () => {
   const { database, db } = await createDatabase();
@@ -334,14 +423,92 @@ test('stale, hidden, and ineligible commands return stable contract errors', asy
   }
 });
 
-test('supplier messages roll back when durable notification intent persistence fails', async () => {
+test('requesting supplier information records independent internal and supplier delivery intents', async () => {
+  const { database, db } = await createDatabase();
+  try {
+    await database.exec(
+      `UPDATE invoice_review_cases SET owner_id = '${actorId}' WHERE invoice_id = '${invoiceId}'`,
+    );
+    const queued: string[] = [];
+    const deliveries = new InvoiceReviewDeliveries(
+      { add: async (_name: string, data: { intentId: string }) => queued.push(data.intentId) } as never,
+      db as unknown as Db,
+      { createIdempotent: async () => undefined } as never,
+      undefined as never,
+      undefined as never,
+    );
+    const { commands } = createCommands(db as unknown as Db, {
+      deliveries,
+    });
+
+    await commands.apply({ id: actorId, organizationId }, invoiceId, {
+      action: 'request_supplier_info',
+      expectedVersion: 1,
+      message: 'Please send the remittance reference.',
+    });
+
+    const messages = await database.query<{ idempotencyKey: string }>(
+      'SELECT idempotency_key AS "idempotencyKey" FROM messages',
+    );
+    const audits = await database.query<{ entityType: string; action: string }>(
+      'SELECT entity_type AS "entityType", action FROM audit_log ORDER BY created_at',
+    );
+    const intents = await database.query<{
+      kind: string;
+      recipientUserId: string | null;
+      messageId: string | null;
+    }>(`
+      SELECT intent_kind AS kind, recipient_user_id AS "recipientUserId", message_id AS "messageId"
+      FROM invoice_review_notification_intents
+      ORDER BY intent_kind
+    `);
+    const reviewCase = await database.query<{ state: string; version: number }>(
+      'SELECT state, version FROM invoice_review_cases',
+    );
+    assert.deepEqual(reviewCase.rows, [{ state: 'waiting_on_supplier', version: 2 }]);
+    assert.deepEqual(messages.rows, [
+      { idempotencyKey: 'invoice-review-supplier:00000000-0000-4000-8000-000000000005:1' },
+    ]);
+    assert.deepEqual(audits.rows, [
+      { entityType: 'message', action: 'created' },
+      { entityType: 'invoice_review_case', action: 'invoice_review.request_supplier_info' },
+    ]);
+    assert.deepEqual(
+      intents.rows.map((intent) => intent.kind),
+      INVOICE_REVIEW_NOTIFICATION_INTENT_KINDS,
+    );
+    assert.equal(intents.rows[0]?.recipientUserId, actorId);
+    assert.equal(intents.rows[0]?.messageId, null);
+    assert.equal(intents.rows[1]?.recipientUserId, null);
+    assert.ok(intents.rows[1]?.messageId);
+    assert.equal(queued.length, 2);
+    await assert.rejects(
+      commands.apply({ id: actorId, organizationId }, invoiceId, {
+        action: 'request_supplier_info',
+        expectedVersion: 1,
+        message: 'Please send the remittance reference.',
+      }),
+      /REVIEW STALE VERSION/,
+    );
+    const repeatedCounts = await database.query<{ messages: string; intents: string }>(`
+      SELECT
+        (SELECT count(*)::text FROM messages) AS messages,
+        (SELECT count(*)::text FROM invoice_review_notification_intents) AS intents
+    `);
+    assert.deepEqual(repeatedCounts.rows, [{ messages: '1', intents: '2' }]);
+  } finally {
+    await database.close();
+  }
+});
+
+test('supplier messages roll back when durable delivery intent persistence fails', async () => {
   const { database, db } = await createDatabase();
   try {
     await database.exec(
       `UPDATE invoice_review_cases SET owner_id = '${actorId}' WHERE invoice_id = '${invoiceId}'`,
     );
     const { commands } = createCommands(db as unknown as Db, {
-      createIntent: async () => {
+      record: async () => {
         throw new Error('intent persistence unavailable');
       },
     });
@@ -353,10 +520,53 @@ test('supplier messages roll back when durable notification intent persistence f
       }),
       /intent persistence unavailable/,
     );
-    const rows = await database.query<{ count: string }>(
-      'SELECT count(*)::text AS count FROM messages',
+    const rows = await database.query<{
+      messages: string;
+      audits: string;
+      intents: string;
+      version: number;
+    }>(`
+      SELECT
+        (SELECT count(*)::text FROM messages) AS messages,
+        (SELECT count(*)::text FROM audit_log) AS audits,
+        (SELECT count(*)::text FROM invoice_review_notification_intents) AS intents,
+        (SELECT version FROM invoice_review_cases) AS version
+    `,
     );
-    assert.equal(rows.rows[0]?.count, '0');
+    assert.deepEqual(rows.rows, [{ messages: '0', audits: '0', intents: '0', version: 1 }]);
+  } finally {
+    await database.close();
+  }
+});
+
+test('queue failure after commit leaves supplier artifacts durable and returns the command result', async () => {
+  const { database, db } = await createDatabase();
+  try {
+    await database.exec(
+      `UPDATE invoice_review_cases SET owner_id = '${actorId}' WHERE invoice_id = '${invoiceId}'`,
+    );
+    const deliveries = new InvoiceReviewDeliveries(
+      { add: async () => Promise.reject(new Error('queue unavailable')) } as never,
+      db as unknown as Db,
+      { createIdempotent: async () => undefined } as never,
+      undefined as never,
+      undefined as never,
+    );
+    const { commands } = createCommands(db as unknown as Db, { deliveries });
+
+    const result = await commands.apply({ id: actorId, organizationId }, invoiceId, {
+      action: 'request_supplier_info',
+      expectedVersion: 1,
+      message: 'Please send the remittance reference.',
+    });
+
+    assert.equal(result.case.version, 2);
+    const counts = await database.query<{ messages: string; intents: string }>(`
+      SELECT
+        (SELECT count(*)::text FROM messages) AS messages,
+        (SELECT count(*)::text FROM invoice_review_notification_intents) AS intents
+    `);
+    assert.deepEqual(counts.rows, [{ messages: '1', intents: '2' }]);
   } finally {
     await database.close();
   }
@@ -417,14 +627,14 @@ test('durable notification intent retries after failure and delivers once', asyn
   try {
     await database.exec(`
       INSERT INTO invoice_review_notification_intents (
-        id, organization_id, case_id, recipient_user_id, action, idempotency_key, status
+        id, organization_id, case_id, intent_kind, recipient_user_id, action, idempotency_key, status
       ) VALUES (
         '00000000-0000-4000-8000-000000000006', '${organizationId}',
-        '00000000-0000-4000-8000-000000000005', '${actorId}', 'claim', 'case:2:claim:${actorId}', 'pending'
+        '00000000-0000-4000-8000-000000000005', 'internal_notification', '${actorId}', 'claim', 'case:2:claim:${actorId}', 'pending'
       );
     `);
     let calls = 0;
-    const service = new InvoiceReviewNotificationsService(
+    const service = new InvoiceReviewDeliveries(
       { add: async () => undefined } as never,
       db as unknown as Db,
       {
@@ -433,6 +643,8 @@ test('durable notification intent retries after failure and delivers once', asyn
           if (calls === 1) throw new Error('notification store unavailable');
         },
       } as never,
+      undefined as never,
+      undefined as never,
     );
     await assert.rejects(service.deliver('00000000-0000-4000-8000-000000000006'));
     await service.deliver('00000000-0000-4000-8000-000000000006');
@@ -453,13 +665,13 @@ test('a failed delivery cannot modify an intent delivered by another worker', as
     const intentId = '00000000-0000-4000-8000-000000000006';
     await database.exec(`
       INSERT INTO invoice_review_notification_intents (
-        id, organization_id, case_id, recipient_user_id, action, idempotency_key, status
+        id, organization_id, case_id, intent_kind, recipient_user_id, action, idempotency_key, status
       ) VALUES (
         '${intentId}', '${organizationId}',
-        '00000000-0000-4000-8000-000000000005', '${actorId}', 'claim', 'case:3:claim:${actorId}', 'pending'
+        '00000000-0000-4000-8000-000000000005', 'internal_notification', '${actorId}', 'claim', 'case:3:claim:${actorId}', 'pending'
       );
     `);
-    const service = new InvoiceReviewNotificationsService(
+    const service = new InvoiceReviewDeliveries(
       { add: async () => undefined } as never,
       db as unknown as Db,
       {
@@ -470,9 +682,11 @@ test('a failed delivery cannot modify an intent delivered by another worker', as
           throw new Error('delivery worker lost its lease');
         },
       } as never,
+      undefined as never,
+      undefined as never,
     );
 
-    await assert.rejects(service.deliver(intentId), /delivery worker lost its lease/);
+    await assert.rejects(service.deliver(intentId), /DELIVERY_LEASE_LOST/);
     const row = await database.query<{ status: string; attempts: number; lastError: string | null }>(
       `SELECT status, attempts, last_error AS "lastError" FROM invoice_review_notification_intents WHERE id = '${intentId}'`,
     );
@@ -487,15 +701,15 @@ test('notification reconciliation keysets past rows delivered from an earlier pa
   try {
     const intents = Array.from({ length: 101 }, (_, index) => {
       const id = `00000000-0000-4000-8000-${(index + 100).toString(16).padStart(12, '0')}`;
-      return `('${id}', '${organizationId}', '00000000-0000-4000-8000-000000000005', '${actorId}', 'claim', 'reconcile-${index}', 'pending', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')`;
+      return `('${id}', '${organizationId}', '00000000-0000-4000-8000-000000000005', 'internal_notification', '${actorId}', 'claim', 'reconcile-${index}', 'pending', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')`;
     });
     await database.exec(`
       INSERT INTO invoice_review_notification_intents (
-        id, organization_id, case_id, recipient_user_id, action, idempotency_key, status, created_at, updated_at
+        id, organization_id, case_id, intent_kind, recipient_user_id, action, idempotency_key, status, created_at, updated_at
       ) VALUES ${intents.join(',')};
     `);
     const queued: string[] = [];
-    const service = new InvoiceReviewNotificationsService(
+    const service = new InvoiceReviewDeliveries(
       {
         add: async (_name: string, data: { intentId: string }) => {
           queued.push(data.intentId);
@@ -506,6 +720,8 @@ test('notification reconciliation keysets past rows delivered from an earlier pa
       } as never,
       db as unknown as Db,
       { createIdempotent: async () => undefined } as never,
+      undefined as never,
+      undefined as never,
     );
 
     await service.enqueuePending(100);
@@ -523,15 +739,15 @@ test('notification reconciliation preserves microsecond cursor precision without
     const intents = Array.from({ length: 101 }, (_, index) => {
       const id = `00000000-0000-4000-8000-${(index + 300).toString(16).padStart(12, '0')}`;
       const createdAt = `2026-08-01T00:00:00.${(index + 1).toString().padStart(6, '0')}Z`;
-      return `('${id}', '${organizationId}', '00000000-0000-4000-8000-000000000005', '${actorId}', 'claim', 'microsecond-${index}', 'pending', '${createdAt}', '${createdAt}')`;
+      return `('${id}', '${organizationId}', '00000000-0000-4000-8000-000000000005', 'internal_notification', '${actorId}', 'claim', 'microsecond-${index}', 'pending', '${createdAt}', '${createdAt}')`;
     });
     await database.exec(`
       INSERT INTO invoice_review_notification_intents (
-        id, organization_id, case_id, recipient_user_id, action, idempotency_key, status, created_at, updated_at
+        id, organization_id, case_id, intent_kind, recipient_user_id, action, idempotency_key, status, created_at, updated_at
       ) VALUES ${intents.join(',')};
     `);
     const queued: string[] = [];
-    const service = new InvoiceReviewNotificationsService(
+    const service = new InvoiceReviewDeliveries(
       {
         add: async (_name: string, data: { intentId: string }) => {
           queued.push(data.intentId);
@@ -544,6 +760,8 @@ test('notification reconciliation preserves microsecond cursor precision without
       } as never,
       db as unknown as Db,
       { createIdempotent: async () => undefined } as never,
+      undefined as never,
+      undefined as never,
     );
 
     await service.enqueuePending(100);

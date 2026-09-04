@@ -46,6 +46,7 @@ export const messages = pgTable(
   },
   (table) => [
     index('messages_thread_idx').on(table.threadType, table.threadId, table.createdAt),
+    uniqueIndex('messages_id_organization_id_unique').on(table.id, table.organizationId),
     uniqueIndex('messages_org_idempotency_key_unique').on(
       table.organizationId,
       table.idempotencyKey,

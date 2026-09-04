@@ -58,6 +58,7 @@ export class PasswordResetService {
           user: settings['smtp_user'] || '',
           pass: settings['smtp_pass'] || '',
           from: settings['smtp_from'] || `noreply@${smtpHost}`,
+          targetPolicy: 'public-only' as const,
         };
 
         this.mailService

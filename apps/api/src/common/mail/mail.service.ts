@@ -1,6 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import { Socket } from 'node:net';
 import { formatMoney, type MoneyAmount } from '../utils/money';
+import { resolveSafeSmtpTarget, type SmtpDnsLookup } from './smtp-target-policy';
 
 export interface MailOptions {
   to: string | string[];
@@ -21,42 +23,177 @@ export interface SmtpConfig {
   user: string;
   pass: string;
   from: string;
+  /** Tenant-controlled targets use public-only; operator-controlled targets use trusted. */
+  targetPolicy: 'trusted' | 'public-only';
 }
+
+export interface SmtpTransportOptions {
+  host: string;
+  port: number;
+  secure: boolean;
+  tls?: { servername: string };
+  requireTLS?: boolean;
+  connectionTimeout?: number;
+  greetingTimeout?: number;
+  socketTimeout?: number;
+  socket?: Socket;
+  auth?: { user: string; pass: string };
+}
+
+interface SmtpTransportMessage {
+  from: string;
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+  messageId?: string;
+}
+
+export interface SmtpTransport {
+  sendMail(message: SmtpTransportMessage): Promise<unknown>;
+  close(): void;
+}
+
+export type SmtpTransportFactory = (options: SmtpTransportOptions) => SmtpTransport;
+
+export interface MailServiceDependencies {
+  lookup?: SmtpDnsLookup;
+  createTransport?: SmtpTransportFactory;
+  publicOnlySendDeadlineMs?: number;
+}
+
+const PUBLIC_ONLY_SMTP_SEND_DEADLINE_MS = 4 * 60_000;
+const PUBLIC_ONLY_SMTP_CONNECTION_TIMEOUT_MS = 60_000;
+const PUBLIC_ONLY_SMTP_GREETING_TIMEOUT_MS = 30_000;
+
+const defaultCreateTransport: SmtpTransportFactory = (options) => {
+  const transporter = nodemailer.createTransport(options);
+  return {
+    sendMail: (message) => transporter.sendMail(message),
+    close: () => transporter.close(),
+  };
+};
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
+  private readonly lookup: SmtpDnsLookup | undefined;
+  private readonly createTransport: SmtpTransportFactory;
+  private readonly publicOnlySendDeadlineMs: number;
+
+  constructor(@Optional() dependencies?: MailServiceDependencies) {
+    this.lookup = dependencies?.lookup;
+    this.createTransport = dependencies?.createTransport ?? defaultCreateTransport;
+    this.publicOnlySendDeadlineMs = Math.max(
+      1,
+      dependencies?.publicOnlySendDeadlineMs ?? PUBLIC_ONLY_SMTP_SEND_DEADLINE_MS,
+    );
+  }
 
   async sendMail(smtpConfig: SmtpConfig, options: MailOptions): Promise<boolean> {
     if (!smtpConfig.host) {
       this.logger.warn('SMTP not configured — skipping email send');
       return false;
     }
+    if (smtpConfig.targetPolicy !== 'trusted' && smtpConfig.targetPolicy !== 'public-only') {
+      this.logger.error('Failed to send email');
+      return false;
+    }
 
     try {
-      const transporter = nodemailer.createTransport({
-        host: smtpConfig.host,
-        port: smtpConfig.port,
-        secure: smtpConfig.secure,
-        auth: smtpConfig.user ? { user: smtpConfig.user, pass: smtpConfig.pass } : undefined,
-      });
-
-      await transporter.sendMail({
+      const publicOnly = smtpConfig.targetPolicy === 'public-only';
+      const message = {
         from: smtpConfig.from,
         to: Array.isArray(options.to) ? options.to.join(', ') : options.to,
         subject: options.subject,
         html: options.html,
         text: options.text,
         messageId: options.messageId ? `<${options.messageId.replace(/^<|>$/g, '')}>` : undefined,
-      });
+      };
+      if (publicOnly) {
+        await this.sendPublicOnly(smtpConfig, message);
+      } else {
+        const transporter = this.createTransport({
+          host: smtpConfig.host,
+          port: smtpConfig.port,
+          secure: smtpConfig.secure,
+          tls: undefined,
+          requireTLS: undefined,
+          connectionTimeout: undefined,
+          greetingTimeout: undefined,
+          socketTimeout: undefined,
+          socket: undefined,
+          auth: smtpConfig.user ? { user: smtpConfig.user, pass: smtpConfig.pass } : undefined,
+        });
+        await transporter.sendMail(message);
+      }
 
       this.logger.log(`Email sent to ${options.to}: ${options.subject}`);
       return true;
-    } catch (err) {
-      this.logger.error(
-        `Failed to send email: ${err instanceof Error ? err.message : String(err)}`,
-      );
+    } catch {
+      this.logger.error('Failed to send email');
       return false;
+    }
+  }
+
+  private async sendPublicOnly(
+    smtpConfig: SmtpConfig,
+    message: SmtpTransportMessage,
+  ): Promise<void> {
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    let expired = false;
+    let socket: Socket | undefined;
+    let transporter: SmtpTransport | undefined;
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      socket?.destroy();
+      try {
+        transporter?.close();
+      } catch {
+        // The send result is authoritative even if transport cleanup also fails.
+      }
+    };
+    const deadlineError = new Error('SMTP send deadline exceeded');
+    const deadline = new Promise<never>((_resolve, reject) => {
+      deadlineTimer = setTimeout(() => {
+        expired = true;
+        close();
+        reject(deadlineError);
+      }, this.publicOnlySendDeadlineMs);
+    });
+    const send = (async () => {
+      const target = await resolveSafeSmtpTarget(smtpConfig.host, smtpConfig.port, this.lookup);
+      if (expired) throw deadlineError;
+
+      socket = new Socket();
+      transporter = this.createTransport({
+        host: target.address,
+        port: target.port,
+        secure: smtpConfig.secure,
+        tls: target.hostname === target.address ? undefined : { servername: target.hostname },
+        requireTLS: !smtpConfig.secure ? true : undefined,
+        connectionTimeout: Math.min(
+          PUBLIC_ONLY_SMTP_CONNECTION_TIMEOUT_MS,
+          this.publicOnlySendDeadlineMs,
+        ),
+        greetingTimeout: Math.min(
+          PUBLIC_ONLY_SMTP_GREETING_TIMEOUT_MS,
+          this.publicOnlySendDeadlineMs,
+        ),
+        socketTimeout: this.publicOnlySendDeadlineMs,
+        socket,
+        auth: smtpConfig.user ? { user: smtpConfig.user, pass: smtpConfig.pass } : undefined,
+      });
+      await transporter.sendMail(message);
+    })();
+    try {
+      await Promise.race([send, deadline]);
+    } finally {
+      expired = true;
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+      close();
     }
   }
 

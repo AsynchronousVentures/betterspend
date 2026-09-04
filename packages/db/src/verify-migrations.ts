@@ -17,6 +17,7 @@ const EXPECTED_TABLES = [
   'invoice_field_provenance',
   'invoice_review_cases',
   'invoice_review_signals',
+  'invoice_review_notification_intents',
 ] as const;
 
 const EXPECTED_COLUMNS = [
@@ -44,6 +45,10 @@ const EXPECTED_COLUMNS = [
   { table: 'external_entity_mappings', column: 'sync_token' },
   { table: 'external_entity_mappings', column: 'local_id' },
   { table: 'invoice_field_provenance', column: 'superseded_at' },
+  { table: 'invoice_review_notification_intents', column: 'intent_kind' },
+  { table: 'invoice_review_notification_intents', column: 'message_id' },
+  { table: 'invoice_review_notification_intents', column: 'lease_token' },
+  { table: 'invoice_review_notification_intents', column: 'lease_expires_at' },
 ] as const;
 
 const EXPECTED_INDEXES = [
@@ -126,6 +131,12 @@ const EXPECTED_INDEXES = [
     columns: ['id', 'invoice_id'],
     unique: true,
   },
+  {
+    name: 'messages_id_organization_id_unique',
+    table: 'messages',
+    columns: ['id', 'organization_id'],
+    unique: true,
+  },
 ] as const;
 
 const EXPECTED_TRIGGERS = [
@@ -153,7 +164,32 @@ const EXPECTED_CHECK_CONSTRAINTS = [
     expectedDefinition:
       'CHECK (((confidence IS NULL) OR ((confidence >= (0)::numeric) AND (confidence <= (1)::numeric))))',
   },
+  {
+    table: 'invoice_review_notification_intents',
+    name: 'invoice_review_notification_intents_status_check',
+    expectedDefinition:
+      "CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'delivered'::character varying])::text[])))",
+  },
+  {
+    table: 'invoice_review_notification_intents',
+    name: 'invoice_review_notification_intents_kind_check',
+    expectedDefinition:
+      "CHECK (((intent_kind)::text = ANY ((ARRAY['internal_notification'::character varying, 'supplier_message_email'::character varying])::text[])))",
+  },
+  {
+    table: 'invoice_review_notification_intents',
+    name: 'invoice_review_notification_intents_delivery_shape_check',
+    expectedDefinition:
+      "CHECK (((((intent_kind)::text = 'internal_notification'::text) AND (recipient_user_id IS NOT NULL) AND (message_id IS NULL)) OR (((intent_kind)::text = 'supplier_message_email'::text) AND (recipient_user_id IS NULL) AND (message_id IS NOT NULL))))",
+  },
 ] as const;
+
+// Postgres truncates identifiers to 63 bytes (NAMEDATALEN - 1). Drizzle's generated
+// foreign key names can be longer than that, so expectations have to match the
+// truncated name the database actually stores.
+function storedIdentifier(name: string): string {
+  return Buffer.from(name).subarray(0, 63).toString();
+}
 
 const EXPECTED_FOREIGN_KEYS = [
   {
@@ -402,6 +438,34 @@ const EXPECTED_FOREIGN_KEYS = [
     parentColumns: ['id', 'organization_id'],
   },
   {
+    name: 'invoice_review_notification_intents_organization_id_organizations_id_fk',
+    child: 'invoice_review_notification_intents',
+    parent: 'organizations',
+    childColumns: ['organization_id'],
+    parentColumns: ['id'],
+  },
+  {
+    name: 'invoice_review_notification_intents_case_org_fk',
+    child: 'invoice_review_notification_intents',
+    parent: 'invoice_review_cases',
+    childColumns: ['case_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'invoice_review_notification_intents_recipient_org_fk',
+    child: 'invoice_review_notification_intents',
+    parent: 'users',
+    childColumns: ['recipient_user_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'invoice_review_notification_intents_message_org_fk',
+    child: 'invoice_review_notification_intents',
+    parent: 'messages',
+    childColumns: ['message_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
     name: 'invoice_field_provenance_organization_id_organizations_id_fk',
     child: 'invoice_field_provenance',
     parent: 'organizations',
@@ -429,7 +493,7 @@ const EXPECTED_FOREIGN_KEYS = [
     childColumns: ['actor_id', 'organization_id'],
     parentColumns: ['id', 'organization_id'],
   },
-] as const;
+].map((foreignKey) => ({ ...foreignKey, name: storedIdentifier(foreignKey.name) }));
 
 type ForeignKeyDescription = {
   name: string;

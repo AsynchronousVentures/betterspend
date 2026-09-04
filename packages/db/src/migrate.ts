@@ -47,6 +47,14 @@ type InvoiceLineInvoiceIndexState = {
   indexIsValid: boolean;
 };
 
+type InvoiceReviewMessageParentIndexState = {
+  tableExists: boolean;
+  columnsExist: boolean;
+  indexExists: boolean;
+  indexIsValid: boolean;
+  indexIsCanonical: boolean;
+};
+
 type LegalEntityIndexState = {
   legalEntitiesTableExists: boolean;
   indexExists: boolean;
@@ -428,6 +436,63 @@ async function prepareInvoiceLineInvoiceIndex(client: postgres.Sql): Promise<voi
     await client`
       CREATE UNIQUE INDEX CONCURRENTLY "invoice_lines_id_invoice_id_unique"
       ON "invoice_lines" ("id", "invoice_id")
+    `;
+  } finally {
+    await client`RESET statement_timeout`;
+    await client`RESET lock_timeout`;
+  }
+}
+
+/** Build the message parent key before the supplier-delivery migration adds its FK. */
+async function prepareInvoiceReviewMessageParentIndex(client: postgres.Sql): Promise<void> {
+  await client`SET lock_timeout = '5s'`;
+  await client`SET statement_timeout = '5min'`;
+  try {
+    const [state] = await client<InvoiceReviewMessageParentIndexState[]>`
+      SELECT
+        to_regclass('public.messages') IS NOT NULL AS "tableExists",
+        (
+          SELECT count(*) = 2
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'messages'
+            AND column_name IN ('id', 'organization_id')
+        ) AS "columnsExist",
+        index_class.oid IS NOT NULL AS "indexExists",
+        COALESCE(index_state.indisvalid, false) AS "indexIsValid",
+        COALESCE(
+          index_state.indisunique
+          AND index_state.indrelid = to_regclass('public.messages')
+          AND index_method.amname = 'btree'
+          AND COALESCE(index_state.indnkeyatts, 0) = 2
+          AND COALESCE(index_state.indnatts, 0) = 2
+          AND index_state.indexprs IS NULL
+          AND index_state.indpred IS NULL
+          AND COALESCE((
+            SELECT array_agg(attribute.attname::text ORDER BY indexed.ordinality)
+            FROM unnest(index_state.indkey) WITH ORDINALITY AS indexed(attnum, ordinality)
+            JOIN pg_attribute AS attribute
+              ON attribute.attrelid = index_state.indrelid
+              AND attribute.attnum = indexed.attnum
+          ) = ARRAY['id', 'organization_id']::text[], false),
+          false
+        ) AS "indexIsCanonical"
+      FROM (VALUES (1)) AS singleton(value)
+      LEFT JOIN pg_class AS index_class
+        ON index_class.oid = to_regclass('public.messages_id_organization_id_unique')
+      LEFT JOIN pg_am AS index_method ON index_method.oid = index_class.relam
+      LEFT JOIN pg_index AS index_state ON index_state.indexrelid = index_class.oid
+    `;
+
+    if (!state?.tableExists || !state.columnsExist) return;
+    if (state.indexIsValid && state.indexIsCanonical) return;
+
+    if (state.indexExists) {
+      await client`DROP INDEX CONCURRENTLY "messages_id_organization_id_unique"`;
+    }
+    await client`
+      CREATE UNIQUE INDEX CONCURRENTLY "messages_id_organization_id_unique"
+      ON "messages" ("id", "organization_id")
     `;
   } finally {
     await client`RESET statement_timeout`;
@@ -1025,6 +1090,7 @@ async function main(): Promise<void> {
   try {
     await client`SELECT pg_advisory_lock(${MIGRATION_LOCK_NAMESPACE}, ${MIGRATION_LOCK_ID})`;
     migrationLockAcquired = true;
+    await prepareInvoiceReviewMessageParentIndex(client);
     await prepareInvoiceLineInvoiceIndex(client);
     await prepareVendorOrganizationIndex(client);
     await prepareLegalEntityOrganizationIndex(client);

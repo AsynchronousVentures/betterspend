@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
@@ -29,7 +30,10 @@ import {
 } from '@betterspend/shared';
 import { DB_TOKEN } from '../../database/database.module';
 import { AccessPolicyService, type AccessPolicy } from '../auth/access-policy';
-import { InvoiceReviewNotificationsService } from './invoice-review-notifications.service';
+import {
+  InvoiceReviewDeliveries,
+  type InvoiceReviewDeliveryRecord,
+} from './invoice-review-deliveries.service';
 
 type CommandCode =
   | 'REVIEW_NOT_FOUND'
@@ -102,9 +106,11 @@ function overrideReason(command: InvoiceReviewCommand): string | undefined {
 
 @Injectable()
 export class InvoiceReviewCommands {
+  private readonly logger = new Logger(InvoiceReviewCommands.name);
+
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
-    private readonly notifications: InvoiceReviewNotificationsService,
+    private readonly deliveries: InvoiceReviewDeliveries,
     private readonly accessPolicies: AccessPolicyService,
   ) {}
 
@@ -120,7 +126,11 @@ export class InvoiceReviewCommands {
     const outcome = await this.db.transaction((tx) =>
       this.applyInTransaction(tx, resolvedActor, invoiceId, command),
     );
-    await this.notifications.enqueue(outcome.intentIds);
+    try {
+      await this.deliveries.enqueue(outcome.intentIds);
+    } catch (error: unknown) {
+      this.logger.error(`Could not enqueue invoice review deliveries: ${String(error)}`);
+    }
     return outcome.result;
   }
 
@@ -261,6 +271,7 @@ export class InvoiceReviewCommands {
       ownerId = assignee.id;
     }
 
+    let supplierMessageId: string | null = null;
     if (command.action === 'request_supplier_info') {
       const [author] = await tx
         .select({ name: users.name })
@@ -268,17 +279,48 @@ export class InvoiceReviewCommands {
         .where(and(eq(users.id, actor.id), eq(users.organizationId, actor.organizationId)))
         .limit(1);
       if (!author) commandError('REVIEW_NOT_FOUND', 404);
-      await tx.insert(messages).values({
-        organizationId: actor.organizationId,
-        threadType: 'invoice',
-        threadId: invoice.id,
-        senderType: 'user',
-        senderId: actor.id,
-        vendorId: null,
-        authorName: author.name,
-        body: command.message,
-        attachments: [],
-      });
+      const messageIdempotencyKey = `invoice-review-supplier:${reviewCase.id}:${command.expectedVersion}`;
+      const [createdMessage] = await tx
+        .insert(messages)
+        .values({
+          organizationId: actor.organizationId,
+          threadType: 'invoice',
+          threadId: invoice.id,
+          senderType: 'user',
+          senderId: actor.id,
+          vendorId: null,
+          authorName: author.name,
+          body: command.message,
+          attachments: [],
+          idempotencyKey: messageIdempotencyKey,
+        })
+        .onConflictDoNothing({ target: [messages.organizationId, messages.idempotencyKey] })
+        .returning({ id: messages.id });
+      supplierMessageId = createdMessage?.id ?? null;
+      if (!supplierMessageId) {
+        const [existingMessage] = await tx
+          .select({ id: messages.id })
+          .from(messages)
+          .where(
+            and(
+              eq(messages.organizationId, actor.organizationId),
+              eq(messages.idempotencyKey, messageIdempotencyKey),
+            ),
+          )
+          .limit(1);
+        supplierMessageId = existingMessage?.id ?? null;
+      }
+      if (!supplierMessageId) throw new Error('Supplier message was not returned after insert');
+      if (createdMessage) {
+        await appendAuditLog(tx, {
+          organizationId: actor.organizationId,
+          userId: actor.id,
+          entityType: 'message',
+          entityId: createdMessage.id,
+          action: 'created',
+          changes: { threadType: 'invoice', threadId: invoice.id },
+        });
+      }
     }
 
     if (signal) {
@@ -377,16 +419,30 @@ export class InvoiceReviewCommands {
     });
 
     const recipientUserId = updatedCase.ownerId ?? actor.id;
-    const intentId = await this.notifications.createIntent(tx, {
-      organizationId: actor.organizationId,
-      caseId: updatedCase.id,
-      recipientUserId,
-      action: command.action,
-      version: updatedCase.version,
-    });
+    const deliveries: InvoiceReviewDeliveryRecord[] = [
+      {
+        intentKind: 'internal_notification',
+        organizationId: actor.organizationId,
+        caseId: updatedCase.id,
+        recipientUserId,
+        action: command.action,
+        version: updatedCase.version,
+      },
+    ];
+    if (supplierMessageId) {
+      deliveries.push({
+        intentKind: 'supplier_message_email',
+        organizationId: actor.organizationId,
+        caseId: updatedCase.id,
+        messageId: supplierMessageId,
+        action: 'request_supplier_info',
+        version: updatedCase.version,
+      });
+    }
+    const intentIds = await this.deliveries.record(tx, deliveries);
 
     return {
-      intentIds: intentId ? [intentId] : [],
+      intentIds,
       result: {
         case: {
           id: updatedCase.id,

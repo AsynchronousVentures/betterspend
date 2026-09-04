@@ -632,6 +632,7 @@ export class CatalogService {
           user: settings['smtp_user'] || '',
           pass: settings['smtp_pass'] || '',
           from: settings['smtp_from'] || `noreply@${smtpHost}`,
+          targetPolicy: 'public-only',
         },
         {
           to: email,
