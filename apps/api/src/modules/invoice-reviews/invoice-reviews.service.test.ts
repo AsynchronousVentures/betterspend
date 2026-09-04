@@ -46,6 +46,22 @@ function createReviewService(db: Db) {
   return new InvoiceReviewsService(db, new InvoiceReviewProvenanceService(db));
 }
 
+/**
+ * The history query selects `created_at` twice: as a `Date` for the response and as
+ * full-precision UTC text for ordering. Fixtures only declare the `Date`, so derive
+ * the text the way Postgres would unless a test sets it explicitly.
+ */
+function withCreatedAtText(row: unknown): unknown {
+  const audit = (row as { audit?: Record<string, unknown> }).audit;
+  if (!audit || 'createdAtText' in audit) return row;
+  const createdAt = audit.createdAt;
+  if (!(createdAt instanceof Date)) return row;
+  return {
+    ...(row as object),
+    audit: { ...audit, createdAtText: createdAt.toISOString().replace('Z', '000Z') },
+  };
+}
+
 function createService(
   omitProvenanceRelation = false,
   historyRows: readonly unknown[] = [],
@@ -249,7 +265,7 @@ function createService(
             if (table !== auditLog) return [];
             const rows = historyQueryCount === 0 ? historyRows : [];
             historyQueryCount += 1;
-            return rows;
+            return rows.map(withCreatedAtText);
           },
         };
         return builder;
@@ -334,6 +350,46 @@ test('projection exposes a safe, typed history for review decisions', async () =
   ]);
   assert.equal('changes' in (projection.history.entries[0] ?? {}), false);
   assert.equal('metadata' in (projection.history.entries[0] ?? {}), false);
+});
+
+test('history orders same-millisecond events by microsecond, not by id', async () => {
+  const caseId = '00000000-0000-4000-8000-000000000003';
+  // Both events land in the same millisecond, so a JS Date cannot separate them.
+  // The id tie-breaker would order them the other way round, which is the bug.
+  const projection = await createService(false, [
+    {
+      audit: {
+        id: '00000000-0000-4000-8000-0000000000ff',
+        organizationId,
+        userId: null,
+        entityType: 'invoice_review_case',
+        entityId: caseId,
+        action: 'invoice_review.claim',
+        createdAt: new Date('2026-08-03T00:00:00.500Z'),
+        createdAtText: '2026-08-03T00:00:00.500100Z',
+      },
+      actor: null,
+    },
+    {
+      audit: {
+        id: '00000000-0000-4000-8000-000000000001',
+        organizationId,
+        userId: null,
+        entityType: 'invoice_review_case',
+        entityId: caseId,
+        action: 'invoice_review.release',
+        createdAt: new Date('2026-08-03T00:00:00.500Z'),
+        createdAtText: '2026-08-03T00:00:00.500900Z',
+      },
+      actor: null,
+    },
+  ]).getProjection(invoiceId, organizationId);
+
+  assert.equal(projection.history.available, true);
+  assert.deepEqual(
+    projection.history.entries.map((entry) => entry.action),
+    ['invoice_review.release', 'invoice_review.claim'],
+  );
 });
 
 test('projection keeps case history when a case has no current signals', async () => {
