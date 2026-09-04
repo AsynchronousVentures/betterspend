@@ -21,6 +21,13 @@ export const auditLog = pgTable(
       table.createdAt,
       table.id,
     ),
+    invoiceReviewHistory: index('audit_log_invoice_review_history_idx').on(
+      table.organizationId,
+      table.entityType,
+      table.entityId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
   }),
 );
 

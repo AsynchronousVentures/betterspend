@@ -498,6 +498,13 @@
       "when": 1788218855644,
       "tag": "20260831232735_invoice_review_supplier_delivery",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1788225092833,
+      "tag": "20260901011132_lovely_skreet",
+      "breakpoints": true
     }
   ]
 }

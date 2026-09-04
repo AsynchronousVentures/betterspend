@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { PGlite } from '@electric-sql/pglite';
+import { drizzle } from 'drizzle-orm/pglite';
 import {
   auditIdempotencyKeys,
   auditLog,
@@ -8,10 +10,11 @@ import {
   invoices,
   type Db,
 } from '@betterspend/db';
+import * as schema from '@betterspend/db';
 import type { AccessPolicy } from '../auth/access-policy';
 import type { PermissionKey } from '@betterspend/shared';
 import { InvoiceReviewProvenanceService } from './invoice-review-provenance.service';
-import { InvoiceReviewsService } from './invoice-reviews.service';
+import { INVOICE_REVIEW_HISTORY_LIMIT, InvoiceReviewsService } from './invoice-reviews.service';
 
 const organizationId = '00000000-0000-4000-8000-000000000001';
 const invoiceId = '00000000-0000-4000-8000-000000000002';
@@ -43,7 +46,29 @@ function createReviewService(db: Db) {
   return new InvoiceReviewsService(db, new InvoiceReviewProvenanceService(db));
 }
 
-function createService(omitProvenanceRelation = false) {
+/**
+ * The history query selects `created_at` twice: as a `Date` for the response and as
+ * full-precision UTC text for ordering. Fixtures only declare the `Date`, so derive
+ * the text the way Postgres would unless a test sets it explicitly.
+ */
+function withCreatedAtText(row: unknown): unknown {
+  const audit = (row as { audit?: Record<string, unknown> }).audit;
+  if (!audit || 'createdAtText' in audit) return row;
+  const createdAt = audit.createdAt;
+  if (!(createdAt instanceof Date)) return row;
+  return {
+    ...(row as object),
+    audit: { ...audit, createdAtText: createdAt.toISOString().replace('Z', '000Z') },
+  };
+}
+
+function createService(
+  omitProvenanceRelation = false,
+  historyRows: readonly unknown[] = [],
+  emptySignals = false,
+  realSelect?: (selection?: unknown) => unknown,
+) {
+  let historyQueryCount = 0;
   const db = {
     query: {
       invoiceReviewCases: {
@@ -155,40 +180,42 @@ function createService(omitProvenanceRelation = false) {
               },
             ],
           },
-          signals: [
-            {
-              id: '00000000-0000-4000-8000-000000000011',
-              signalType: 'match_exception',
-              sourceModule: 'matching',
-              sourceRecordId: invoiceId,
-              severity: 'blocking',
-              status: 'open',
-              summary: 'Invoice has an active match exception.',
-              details: { reason: 'quantity variance' },
-              firstSeenAt: new Date('2026-08-01T00:00:00Z'),
-              lastSeenAt: new Date('2026-08-02T00:00:00Z'),
-              resolutionActorId: null,
-              resolutionCommand: null,
-              resolutionReason: null,
-              resolvedAt: null,
-            },
-            {
-              id: '00000000-0000-4000-8000-000000000012',
-              signalType: 'duplicate_risk',
-              sourceModule: 'spend_guard',
-              sourceRecordId: '00000000-0000-4000-8000-000000000013',
-              severity: 'review_required',
-              status: 'open',
-              summary: 'Invoice has an active spend-risk alert.',
-              details: {},
-              firstSeenAt: new Date('2026-08-01T00:00:00Z'),
-              lastSeenAt: new Date('2026-08-01T00:00:00Z'),
-              resolutionActorId: null,
-              resolutionCommand: null,
-              resolutionReason: null,
-              resolvedAt: null,
-            },
-          ],
+          signals: emptySignals
+            ? []
+            : [
+                {
+                  id: '00000000-0000-4000-8000-000000000011',
+                  signalType: 'match_exception',
+                  sourceModule: 'matching',
+                  sourceRecordId: invoiceId,
+                  severity: 'blocking',
+                  status: 'open',
+                  summary: 'Invoice has an active match exception.',
+                  details: { reason: 'quantity variance' },
+                  firstSeenAt: new Date('2026-08-01T00:00:00Z'),
+                  lastSeenAt: new Date('2026-08-02T00:00:00Z'),
+                  resolutionActorId: null,
+                  resolutionCommand: null,
+                  resolutionReason: null,
+                  resolvedAt: null,
+                },
+                {
+                  id: '00000000-0000-4000-8000-000000000012',
+                  signalType: 'duplicate_risk',
+                  sourceModule: 'spend_guard',
+                  sourceRecordId: '00000000-0000-4000-8000-000000000013',
+                  severity: 'review_required',
+                  status: 'open',
+                  summary: 'Invoice has an active spend-risk alert.',
+                  details: {},
+                  firstSeenAt: new Date('2026-08-01T00:00:00Z'),
+                  lastSeenAt: new Date('2026-08-01T00:00:00Z'),
+                  resolutionActorId: null,
+                  resolutionCommand: null,
+                  resolutionReason: null,
+                  resolvedAt: null,
+                },
+              ],
         }),
       },
       spendGuardAlerts: { findMany: async () => [] },
@@ -222,10 +249,399 @@ function createService(omitProvenanceRelation = false) {
         ],
       },
     },
+    select:
+      realSelect ??
+      (() => {
+        let table: unknown;
+        const builder = {
+          from: (selectedTable: unknown) => {
+            table = selectedTable;
+            return builder;
+          },
+          leftJoin: () => builder,
+          where: () => builder,
+          orderBy: () => builder,
+          limit: async () => {
+            if (table !== auditLog) return [];
+            const rows = historyQueryCount === 0 ? historyRows : [];
+            historyQueryCount += 1;
+            return rows.map(withCreatedAtText);
+          },
+        };
+        return builder;
+      }),
   } as unknown as Db;
 
   return createReviewService(db);
 }
+
+test('projection exposes a safe, typed history for review decisions', async () => {
+  const caseId = '00000000-0000-4000-8000-000000000003';
+  const signalId = '00000000-0000-4000-8000-000000000011';
+  const projection = await createService(false, [
+    {
+      audit: {
+        id: '00000000-0000-4000-8000-000000000030',
+        organizationId,
+        userId: requesterId,
+        entityType: 'invoice_review_case',
+        entityId: caseId,
+        action: 'invoice_review.claim',
+        changes: { secretReason: 'bank account 1234' },
+        metadata: { secretReason: 'bank account 1234' },
+        createdAt: new Date('2026-08-03T00:00:00Z'),
+      },
+      actor: { id: requesterId, organizationId, name: 'AP reviewer' },
+    },
+    {
+      audit: {
+        id: '00000000-0000-4000-8000-000000000031',
+        organizationId,
+        userId: null,
+        entityType: 'invoice_review_signal',
+        entityId: signalId,
+        action: 'invoice_review_signal.resolve_signal',
+        changes: { reason: 'private decision reason' },
+        metadata: { reason: 'private decision reason' },
+        createdAt: new Date('2026-08-04T00:00:00Z'),
+      },
+      actor: null,
+    },
+    {
+      audit: {
+        id: '00000000-0000-4000-8000-000000000033',
+        organizationId,
+        userId: null,
+        entityType: 'invoice_review_case',
+        entityId: caseId,
+        action: 'review_signal_recorded',
+        signalId,
+        changes: { signalId, reason: 'not returned' },
+        metadata: { secret: 'not returned' },
+        createdAt: new Date('2026-08-02T00:00:00Z'),
+      },
+      actor: null,
+    },
+  ]).getProjection(invoiceId, organizationId);
+
+  assert.equal(projection.history.available, true);
+  assert.deepEqual(projection.history.entries, [
+    {
+      id: '00000000-0000-4000-8000-000000000031',
+      action: 'invoice_review_signal.resolve_signal',
+      target: { type: 'signal', id: signalId },
+      actor: { id: null, name: 'System' },
+      timestamp: new Date('2026-08-04T00:00:00Z'),
+    },
+    {
+      id: '00000000-0000-4000-8000-000000000030',
+      action: 'invoice_review.claim',
+      target: { type: 'case', id: caseId },
+      actor: { id: requesterId, name: 'AP reviewer' },
+      timestamp: new Date('2026-08-03T00:00:00Z'),
+    },
+    {
+      id: '00000000-0000-4000-8000-000000000033',
+      action: 'review_signal_recorded',
+      target: { type: 'signal', id: signalId },
+      actor: { id: null, name: 'System' },
+      timestamp: new Date('2026-08-02T00:00:00Z'),
+    },
+  ]);
+  assert.equal('changes' in (projection.history.entries[0] ?? {}), false);
+  assert.equal('metadata' in (projection.history.entries[0] ?? {}), false);
+});
+
+test('history orders same-millisecond events by microsecond, not by id', async () => {
+  const caseId = '00000000-0000-4000-8000-000000000003';
+  // Both events land in the same millisecond, so a JS Date cannot separate them.
+  // The id tie-breaker would order them the other way round, which is the bug.
+  const projection = await createService(false, [
+    {
+      audit: {
+        id: '00000000-0000-4000-8000-0000000000ff',
+        organizationId,
+        userId: null,
+        entityType: 'invoice_review_case',
+        entityId: caseId,
+        action: 'invoice_review.claim',
+        createdAt: new Date('2026-08-03T00:00:00.500Z'),
+        createdAtText: '2026-08-03T00:00:00.500100Z',
+      },
+      actor: null,
+    },
+    {
+      audit: {
+        id: '00000000-0000-4000-8000-000000000001',
+        organizationId,
+        userId: null,
+        entityType: 'invoice_review_case',
+        entityId: caseId,
+        action: 'invoice_review.release',
+        createdAt: new Date('2026-08-03T00:00:00.500Z'),
+        createdAtText: '2026-08-03T00:00:00.500900Z',
+      },
+      actor: null,
+    },
+  ]).getProjection(invoiceId, organizationId);
+
+  assert.equal(projection.history.available, true);
+  assert.deepEqual(
+    projection.history.entries.map((entry) => entry.action),
+    ['invoice_review.release', 'invoice_review.claim'],
+  );
+});
+
+test('projection keeps case history when a case has no current signals', async () => {
+  const caseId = '00000000-0000-4000-8000-000000000003';
+  const projection = await createService(
+    false,
+    [
+      {
+        audit: {
+          id: '00000000-0000-4000-8000-000000000032',
+          organizationId,
+          userId: requesterId,
+          entityType: 'invoice_review_case',
+          entityId: caseId,
+          action: 'invoice_review.claim',
+          changes: {},
+          createdAt: new Date('2026-08-03T00:00:00Z'),
+        },
+        actor: { id: requesterId, organizationId, name: 'AP reviewer' },
+      },
+    ],
+    true,
+  ).getProjection(invoiceId, organizationId);
+
+  assert.deepEqual(
+    projection.history.entries.map((entry) => entry.id),
+    ['00000000-0000-4000-8000-000000000032'],
+  );
+});
+
+test('projection returns available empty history', async () => {
+  const projection = await createService().getProjection(invoiceId, organizationId);
+
+  assert.deepEqual(projection.history, { available: true, entries: [] });
+});
+
+test('projection excludes other organizations and cases and keeps a missing actor stable', async () => {
+  const caseId = '00000000-0000-4000-8000-000000000003';
+  const signalId = '00000000-0000-4000-8000-000000000011';
+  const missingActorId = '00000000-0000-4000-8000-000000000040';
+  const otherOrganizationId = '00000000-0000-4000-8000-000000000041';
+  const projection = await createService(false, [
+    {
+      audit: {
+        id: '00000000-0000-4000-8000-000000000042',
+        organizationId,
+        userId: missingActorId,
+        entityType: 'invoice_review_signal',
+        entityId: signalId,
+        action: 'invoice_review_signal.waive_signal',
+        changes: { reason: 'sensitive reason' },
+        createdAt: new Date('2026-08-05T00:00:00Z'),
+      },
+      actor: { id: missingActorId, organizationId: otherOrganizationId, name: 'Other tenant' },
+    },
+    {
+      audit: {
+        id: '00000000-0000-4000-8000-000000000043',
+        organizationId: otherOrganizationId,
+        userId: missingActorId,
+        entityType: 'invoice_review_signal',
+        entityId: signalId,
+        action: 'invoice_review_signal.resolve_signal',
+        changes: {},
+        createdAt: new Date('2026-08-06T00:00:00Z'),
+      },
+      actor: { id: missingActorId, organizationId: otherOrganizationId, name: 'Other tenant' },
+    },
+    {
+      audit: {
+        id: '00000000-0000-4000-8000-000000000044',
+        organizationId,
+        userId: requesterId,
+        entityType: 'invoice_review_case',
+        entityId: '00000000-0000-4000-8000-000000000045',
+        action: 'invoice_review.claim',
+        changes: {},
+        createdAt: new Date('2026-08-07T00:00:00Z'),
+      },
+      actor: { id: requesterId, organizationId, name: 'Wrong case actor' },
+    },
+  ]).getProjection(invoiceId, organizationId);
+
+  assert.deepEqual(projection.history.entries, [
+    {
+      id: '00000000-0000-4000-8000-000000000042',
+      action: 'invoice_review_signal.waive_signal',
+      target: { type: 'signal', id: signalId },
+      actor: { id: missingActorId, name: 'Unknown user' },
+      timestamp: new Date('2026-08-05T00:00:00Z'),
+    },
+  ]);
+});
+
+test('projection orders history by timestamp and id and applies the hard bound', async () => {
+  const caseId = '00000000-0000-4000-8000-000000000003';
+  const rows = Array.from({ length: INVOICE_REVIEW_HISTORY_LIMIT + 5 }, (_, index) => ({
+    audit: {
+      id: `00000000-0000-4000-8000-${String(1000 + index).padStart(12, '0')}`,
+      organizationId,
+      userId: null,
+      entityType: 'invoice_review_case',
+      entityId: caseId,
+      action: 'invoice_review.claim',
+      changes: {},
+      createdAt: new Date('2026-08-08T00:00:00Z'),
+    },
+    actor: null,
+  }));
+  const projection = await createService(false, rows).getProjection(invoiceId, organizationId);
+
+  assert.equal(projection.history.entries.length, INVOICE_REVIEW_HISTORY_LIMIT);
+  assert.deepEqual(
+    projection.history.entries.slice(0, 2).map((entry) => entry.id),
+    ['00000000-0000-4000-8000-000000001104', '00000000-0000-4000-8000-000000001103'],
+  );
+  assert.equal(projection.history.entries.at(-1)?.id, '00000000-0000-4000-8000-000000001005');
+});
+
+test('projection uses the database history seam for scoped ordering, limits, and actor fallback', async () => {
+  const caseId = '00000000-0000-4000-8000-000000000003';
+  const signalId = '00000000-0000-4000-8000-000000000011';
+  const otherOrganizationId = '00000000-0000-4000-8000-000000000041';
+  const missingActorId = '00000000-0000-4000-8000-000000000040';
+  const signalDecisionId = '00000000-0000-4000-8000-000000000047';
+  const missingActorEventId = '00000000-0000-4000-8000-000000000046';
+  const signalRecordedId = '00000000-0000-4000-8000-000000000045';
+  const wrongCaseEventId = '00000000-0000-4000-8000-000000000044';
+  const otherOrganizationEventId = '00000000-0000-4000-8000-000000000043';
+  const unsupportedActionId = '00000000-0000-4000-8000-000000000042';
+  const matchingCaseRows = Array.from({ length: INVOICE_REVIEW_HISTORY_LIMIT + 5 }, (_, index) => {
+    const id = `00000000-0000-4000-8000-${String(1000 + index).padStart(12, '0')}`;
+    const userId = index === INVOICE_REVIEW_HISTORY_LIMIT + 4 ? requesterId : null;
+    return `('${id}', '${organizationId}', ${userId ? `'${userId}'` : 'NULL'}, 'invoice_review_case', '${caseId}', 'invoice_review.claim', '{"privateReason":"do not return"}', '{}', '2026-08-08T00:00:00Z')`;
+  }).join(',\n');
+
+  const database = new PGlite();
+  try {
+    await database.exec(`
+      CREATE TABLE users (
+        id uuid PRIMARY KEY,
+        organization_id uuid NOT NULL,
+        name varchar(255) NOT NULL
+      );
+      CREATE TABLE audit_log (
+        id uuid PRIMARY KEY,
+        organization_id uuid NOT NULL,
+        user_id uuid,
+        entity_type varchar(50) NOT NULL,
+        entity_id uuid NOT NULL,
+        action varchar(50) NOT NULL,
+        changes jsonb,
+        metadata jsonb,
+        created_at timestamptz NOT NULL
+      );
+      INSERT INTO users (id, organization_id, name) VALUES
+        ('${requesterId}', '${organizationId}', 'AP reviewer'),
+        ('${missingActorId}', '${otherOrganizationId}', 'Other tenant');
+      INSERT INTO audit_log (
+        id, organization_id, user_id, entity_type, entity_id, action, changes, metadata, created_at
+      ) VALUES
+        ('${signalDecisionId}', '${organizationId}', NULL, 'invoice_review_signal', '${signalId}', 'invoice_review_signal.resolve_signal', '{"reason":"private"}', '{"secret":"private"}', '2026-08-09T00:00:00Z'),
+        ('${missingActorEventId}', '${organizationId}', '${missingActorId}', 'invoice_review_signal', '${signalId}', 'invoice_review_signal.waive_signal', '{"reason":"private"}', '{}', '2026-08-09T00:00:00Z'),
+        ('${signalRecordedId}', '${organizationId}', NULL, 'invoice_review_case', '${caseId}', 'review_signal_recorded', '{"signalId":"${signalId}","reason":"private"}', '{"secret":"private"}', '2026-08-09T00:00:00Z'),
+        ('${unsupportedActionId}', '${organizationId}', NULL, 'invoice_review_case', '${caseId}', 'audit.private', '{}', '{}', '2026-08-09T00:00:00Z'),
+        ('${otherOrganizationEventId}', '${otherOrganizationId}', NULL, 'invoice_review_signal', '${signalId}', 'invoice_review_signal.resolve_signal', '{}', '{}', '2026-08-09T00:00:00Z'),
+        ('${wrongCaseEventId}', '${organizationId}', NULL, 'invoice_review_case', '00000000-0000-4000-8000-000000000099', 'invoice_review.claim', '{}', '{}', '2026-08-09T00:00:00Z'),
+        ${matchingCaseRows};
+    `);
+
+    const historyQueries: string[] = [];
+    const realDb = drizzle(database, {
+      schema,
+      logger: {
+        logQuery: (query) => {
+          if (query.includes('"audit_log"')) historyQueries.push(query);
+        },
+      },
+    });
+    let selectedFullChanges = false;
+    const realSelect = (selection?: unknown) => {
+      if (typeof selection === 'object' && selection !== null && 'audit' in selection) {
+        const auditSelection = (selection as { audit?: unknown }).audit;
+        if (typeof auditSelection === 'object' && auditSelection !== null) {
+          selectedFullChanges = 'changes' in auditSelection;
+        }
+      }
+      return realDb.select(selection as never);
+    };
+    const projection = await createService(false, [], false, realSelect).getProjection(
+      invoiceId,
+      organizationId,
+    );
+
+    assert.equal(selectedFullChanges, false);
+    assert.equal(historyQueries.length, 2);
+    assert.equal(
+      historyQueries.every((query) => /\bLIMIT\b/i.test(query)),
+      true,
+    );
+    assert.equal(
+      historyQueries.some((query) => /\bOR\b/i.test(query)),
+      false,
+    );
+    assert.equal(
+      historyQueries.every(
+        (query) =>
+          /"audit_log"\."organization_id"/.test(query) &&
+          /"audit_log"\."entity_type"/.test(query) &&
+          /"audit_log"\."entity_id"/.test(query) &&
+          /"audit_log"\."action"/.test(query) &&
+          /\bORDER BY\b/i.test(query) &&
+          /"audit_log"\."created_at"/.test(query) &&
+          /"audit_log"\."id"/.test(query),
+      ),
+      true,
+    );
+    assert.equal(projection.history.entries.length, INVOICE_REVIEW_HISTORY_LIMIT);
+    assert.deepEqual(
+      projection.history.entries.slice(0, 5).map((entry) => entry.id),
+      [
+        signalDecisionId,
+        missingActorEventId,
+        signalRecordedId,
+        '00000000-0000-4000-8000-000000001104',
+        '00000000-0000-4000-8000-000000001103',
+      ],
+    );
+    assert.equal(projection.history.entries.at(-1)?.id, '00000000-0000-4000-8000-000000001008');
+    assert.deepEqual(
+      projection.history.entries.find((entry) => entry.id === missingActorEventId)?.actor,
+      { id: missingActorId, name: 'Unknown user' },
+    );
+    assert.deepEqual(
+      projection.history.entries.find((entry) => entry.id === signalRecordedId)?.target,
+      { type: 'signal', id: signalId },
+    );
+    assert.equal(
+      projection.history.entries.some(
+        (entry) =>
+          entry.id === otherOrganizationEventId ||
+          entry.id === wrongCaseEventId ||
+          entry.id === unsupportedActionId,
+      ),
+      false,
+    );
+    assert.equal('changes' in (projection.history.entries[0] ?? {}), false);
+    assert.equal('metadata' in (projection.history.entries[0] ?? {}), false);
+  } finally {
+    await database.close();
+  }
+});
 
 test('projection returns stable invoice summaries and explicit missing source markers', async () => {
   const projection = await createService().getProjection(invoiceId, organizationId);
@@ -464,18 +880,18 @@ test('recordSignal preserves one signal identity across repeated observations', 
             table === invoices
               ? [{ id: invoiceId, status: 'pending', paidAt: null }]
               : table === invoiceReviewSignals
-              ? signals.map((signal) => ({
-                  severity: signal.severity,
-                  status: signal.status,
-                }))
-              : table === auditIdempotencyKeys
-                ? (() => {
-                    auditClaimLookups += 1;
-                    return auditClaimLookups === 3 ? [auditClaims[1]] : [];
-                  })()
-              : table === auditLog
-                ? auditRows
-                : [],
+                ? signals.map((signal) => ({
+                    severity: signal.severity,
+                    status: signal.status,
+                  }))
+                : table === auditIdempotencyKeys
+                  ? (() => {
+                      auditClaimLookups += 1;
+                      return auditClaimLookups === 3 ? [auditClaims[1]] : [];
+                    })()
+                  : table === auditLog
+                    ? auditRows
+                    : [],
           ),
       };
       return builder;
