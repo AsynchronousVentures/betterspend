@@ -127,7 +127,7 @@ Stop the application with Ctrl+C. Stop local infrastructure with `docker compose
 
 ### Run application containers locally
 
-Use this path to test production builds locally. It still uses the development credentials and exposed infrastructure ports from `compose.override.yaml`.
+Use this path to test production builds locally. It still uses the development infrastructure credentials and exposed ports from `compose.override.yaml`. Set `BETTER_AUTH_SECRET` in `.env` to a random value generated with `openssl rand -hex 32`, and keep that value across container restarts. Production mode rejects the checked-in example secrets.
 
 ```bash
 docker compose --profile tools run --rm migrator
