@@ -29,6 +29,7 @@ const access: AccessPolicy = {
 
 test('validates bounded invoice page parameters', () => {
   assert.equal(invoiceListQuerySchema.parse({}).limit, 50);
+  assert.equal(invoiceListQuerySchema.safeParse({ status: 'pending_approval' }).success, true);
   for (const query of [
     { limit: 0 },
     { limit: 101 },

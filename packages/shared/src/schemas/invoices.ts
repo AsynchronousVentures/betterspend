@@ -65,6 +65,7 @@ export const invoiceListQuerySchema = z.object({
     .enum([
       'draft',
       'pending_match',
+      'pending_approval',
       'matched',
       'partial_match',
       'exception',

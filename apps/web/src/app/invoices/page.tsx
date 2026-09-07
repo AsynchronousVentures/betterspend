@@ -222,6 +222,7 @@ export default function InvoicesPage() {
               <option value="matched">Matched</option>
               <option value="partial_match">Partial Match</option>
               <option value="exception">Exception</option>
+              <option value="pending_approval">Pending Approval</option>
               <option value="approved">Approved</option>
               <option value="paid">Paid</option>
             </Select>
