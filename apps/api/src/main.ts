@@ -1,3 +1,4 @@
+import { configureHttpProxy } from './common/http-proxy';
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
@@ -10,6 +11,8 @@ import { assertDemoModeIsSafe } from './common/demo-mode';
 async function bootstrap() {
   assertDemoModeIsSafe();
   const app = await NestFactory.create(AppModule, { rawBody: true });
+
+  configureHttpProxy(app);
 
   // Security headers (CSP disabled — Swagger UI needs inline scripts)
   app.use(helmet({ contentSecurityPolicy: false }));

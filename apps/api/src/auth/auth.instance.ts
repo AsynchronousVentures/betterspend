@@ -1,3 +1,4 @@
+import { resolveAuthSecret } from './auth-secret';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { randomUUID } from 'crypto';
@@ -47,7 +48,7 @@ export async function createAuthForDatabase(db: Db): Promise<AuthInstance> {
   return betterAuth({
     baseURL: process.env.API_URL || `http://localhost:${process.env.API_PORT || 4001}`,
     basePath: '/api/auth',
-    secret: process.env.BETTER_AUTH_SECRET || 'betterspend-dev-secret-change-in-prod',
+    secret: resolveAuthSecret(),
     trustedOrigins: [process.env.WEB_URL || 'http://localhost:3100'],
     advanced: {
       // Our DB columns are typed uuid — generate proper UUIDs instead of better-auth's default random strings
