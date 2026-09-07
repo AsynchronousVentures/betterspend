@@ -874,8 +874,8 @@ export class ApprovalEngineService {
           r.department_id AS "departmentId", r.project_id AS "projectId"
         FROM invoices i
         LEFT JOIN vendors v ON v.id = i.vendor_id
-        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
-        LEFT JOIN requisitions r ON r.id = po.requisition_id
+        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id AND po.organization_id = i.organization_id
+        LEFT JOIN requisitions r ON r.id = po.requisition_id AND r.organization_id = i.organization_id
         WHERE i.id = ANY(${uuidArray(invoiceIds)})
       `,
             )
