@@ -1609,7 +1609,7 @@ export class InvoicesService {
     in7Days.setDate(today.getDate() + 7);
     for (const inv of unpaidInvoices) {
       const amount = inv.totalAmount || '0';
-      const dueDate = inv.dueDate ? new Date(`${inv.dueDate}T00:00:00`) : null;
+      const dueDate = inv.dueDate ? new Date(inv.dueDate) : null;
 
       if (!dueDate) {
         addToBucket(result.current, amount);

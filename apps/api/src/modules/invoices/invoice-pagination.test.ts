@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
+import { drizzle } from 'drizzle-orm/pglite';
+import * as schema from '@betterspend/db';
 import { and, eq, ne, isNull, desc, sql, type SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { invoices } from '@betterspend/db';
@@ -114,35 +116,55 @@ test('paginates real scoped SQL across matching timestamps and server filters', 
   }
 });
 
-test('aging summary counts the complete scoped history independently of invoice pages', async () => {
-  const now = new Date();
-  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const db = {
-    query: {
-      invoices: {
-        findMany: async (config: {
-          where: (
-            table: typeof invoices,
-            operators: { and: typeof and; eq: typeof eq; ne: typeof ne; isNull: typeof isNull },
-          ) => SQL;
-          columns: Record<string, boolean>;
-        }) => {
-          const predicate = new PgDialect().sqlToQuery(
-            config.where(invoices, { and, eq, ne, isNull }),
-          );
-          assert.ok(predicate.params.includes(org));
-          assert.ok(predicate.params.includes(entity));
-          assert.deepEqual(config.columns, { dueDate: true, totalAmount: true });
-          return Array.from({ length: 125 }, () => ({ dueDate: date, totalAmount: '10.00' }));
-        },
-      },
-    },
-  };
-  const service = Object.assign(Object.create(InvoicesService.prototype), {
-    db,
-  }) as InvoicesService;
-  const report = await service.getAgingReport(org, access, entity);
-  assert.equal(report.openCount, 125);
-  assert.deepEqual(report.dueIn7Days, { count: 125, totalAmount: '1250.00' });
-  assert.deepEqual(report.current, { count: 125, totalAmount: '1250.00' });
+test('aging summary uses real database timestamps across the complete scoped history', async () => {
+  const database = new PGlite();
+  try {
+    await database.exec(`CREATE TABLE invoices (
+      organization_id uuid, entity_id uuid, status text, paid_at timestamptz,
+      due_date timestamptz, total_amount numeric(18, 2)
+    )`);
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    async function insert(
+      days: number | null,
+      organizationId = org,
+      entityId = entity,
+      status = 'matched',
+    ) {
+      const due = new Date(today);
+      if (days !== null) due.setDate(due.getDate() + days);
+      await database.query('INSERT INTO invoices VALUES ($1, $2, $3, NULL, $4, 10.00)', [
+        organizationId,
+        entityId,
+        status,
+        days === null ? null : due.toISOString(),
+      ]);
+    }
+    for (let index = 0; index < 125; index++) await insert(0);
+    for (const days of [5, null, -15, -45, -75, -100]) await insert(days);
+    await insert(0, other);
+    await insert(0, org, other);
+    await insert(0, org, entity, 'paid');
+
+    const db = drizzle(database, { schema });
+    const row = await db.query.invoices.findFirst({ columns: { dueDate: true } });
+    assert.ok(row?.dueDate instanceof Date);
+    const service = Object.assign(Object.create(InvoicesService.prototype), {
+      db,
+    }) as InvoicesService;
+    const report = await service.getAgingReport(org, access, entity);
+    assert.equal(report.openCount, 131);
+    assert.deepEqual(report.dueIn7Days, { count: 126, totalAmount: '1260.00' });
+    assert.deepEqual(report.current, { count: 127, totalAmount: '1270.00' });
+    for (const bucket of [
+      report.days_1_30,
+      report.days_31_60,
+      report.days_61_90,
+      report.days_90_plus,
+    ]) {
+      assert.deepEqual(bucket, { count: 1, totalAmount: '10.00' });
+    }
+  } finally {
+    await database.close();
+  }
 });
