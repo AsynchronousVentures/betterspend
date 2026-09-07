@@ -53,6 +53,12 @@ const EXPECTED_COLUMNS = [
 
 const EXPECTED_INDEXES = [
   {
+    name: 'invoices_org_vendor_number_unique',
+    table: 'invoices',
+    columns: ['organization_id', 'vendor_id', 'invoice_number'],
+    unique: true,
+  },
+  {
     name: 'audit_log_organization_created_at_id_idx',
     table: 'audit_log',
     columns: ['organization_id', 'created_at', 'id'],

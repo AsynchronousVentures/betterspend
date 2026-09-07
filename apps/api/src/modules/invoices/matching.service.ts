@@ -189,7 +189,9 @@ export class MatchingService {
         priceMatch: r.priceMatch,
         quantityMatch: r.quantityMatch,
         priceVariance: String(r.priceVariance),
-        quantityVariance: String(r.quantityVariance),
+        // Cumulative quantities can exceed a single line's numeric(10,2) range.
+        // Cap only the legacy diagnostic; matching uses the full integer sum.
+        quantityVariance: String(Math.min(r.quantityVariance, 99_999_999.99)),
         // The legacy numeric(5,2) diagnostic cannot store ratios >= 1000%.
         // Match decisions above use uncapped integer inputs.
         variancePct: String(Math.min(r.variancePct, 999.99).toFixed(2)),

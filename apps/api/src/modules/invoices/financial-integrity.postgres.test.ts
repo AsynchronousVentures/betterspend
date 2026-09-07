@@ -186,6 +186,19 @@ test(
         totalPrice: '50',
       });
       assert.equal((await matching.runMatch(first)).matchStatus, 'exception');
+      await insertInvoice(db, '99999999.99');
+      await insertInvoice(db, '99999999.99');
+      const overflow = await matching.runMatch(first);
+      assert.equal(overflow.matchStatus, 'exception');
+      const diagnostics = await client`SELECT quantity_variance, quantity_match
+        FROM match_results mr JOIN invoice_lines il ON il.id = mr.invoice_line_id
+        WHERE il.invoice_id = ${first}`;
+      assert.ok(diagnostics.length > 0);
+      assert.ok(
+        diagnostics.every(
+          (row) => row.quantity_variance === '99999999.99' && row.quantity_match === false,
+        ),
+      );
       await client`UPDATE goods_receipts SET status = 'cancelled' WHERE id = ${receiptIds.get('confirmed')!}`;
       const withoutReceipt = await matching.runMatch(first);
       assert.equal(withoutReceipt.matchStatus, 'exception');

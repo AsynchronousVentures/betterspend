@@ -12,6 +12,7 @@ import { encryptCredential } from './credential-crypto';
 import { migrateBetterAuthAccounts } from './better-auth-migration';
 import { ensureInvoiceLineInvoiceForeignKey } from './invoice-line-provenance-migration';
 import { prepareInvoiceReviewHistoryIndex } from './invoice-review-history-migration';
+import { prepareInvoiceIdentityIndex } from './invoice-identity-migration';
 
 const LEGACY_KEYS = [
   'qbo_access_token',
@@ -1101,6 +1102,7 @@ async function main(): Promise<void> {
     await validateLegacyUserRoleOrganizations(client);
     const db = drizzle(client);
     await migrate(db, { migrationsFolder: path.resolve(__dirname, 'migrations') });
+    await prepareInvoiceIdentityIndex(client);
     await prepareInvoiceLineInvoiceIndex(client);
     await ensureInvoiceLineInvoiceForeignKey(client);
     await prepareExternalEntityMappingsLocalKeyIndex(client);
