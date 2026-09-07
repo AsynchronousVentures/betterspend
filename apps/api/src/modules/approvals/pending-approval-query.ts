@@ -13,7 +13,7 @@ export function pendingApprovalQuery(
   const department = sql`COALESCE(r.department_id, pr.department_id)`;
   const project = sql`COALESCE(r.project_id, pr.project_id)`;
   const entity = sql`CASE WHEN ar.approvable_type = 'purchase_order' THEN po.entity_id
-    WHEN ar.approvable_type = 'invoice' THEN i.entity_id END`;
+    WHEN ar.approvable_type = 'invoice' THEN COALESCE(i.entity_id, ipo.entity_id) END`;
   const dimensions = scope
     ? [
         ...scope.departmentIds.map((id) => sql`${department} = ${id}`),
@@ -30,10 +30,15 @@ export function pendingApprovalQuery(
         : sql`false`;
   return sql`
     WITH active_delegators AS MATERIALIZED (
-      SELECT DISTINCT d.delegator_id FROM approval_delegations d
-      WHERE d.organization_id = ${organizationId} AND d.delegate_id = ${actorId}
-        AND d.is_active = true AND d.start_date <= NOW() AND d.end_date >= NOW()
-        AND ${includeDelegations}
+      SELECT selected.delegator_id FROM (
+        SELECT DISTINCT ON (d.delegator_id) d.delegator_id, d.delegate_id
+        FROM approval_delegations d
+        WHERE d.organization_id = ${organizationId}
+          AND d.is_active = true AND d.start_date <= NOW() AND d.end_date >= NOW()
+          AND ${includeDelegations}
+        ORDER BY d.delegator_id, d.created_at, d.id
+      ) selected
+      WHERE selected.delegate_id = ${actorId}
     )
     SELECT ar.id
     FROM approval_requests ar

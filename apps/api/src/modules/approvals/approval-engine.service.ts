@@ -870,7 +870,7 @@ export class ApprovalEngineService {
               sql`
         SELECT i.id, i.internal_number AS "internalNumber", i.invoice_number AS "invoiceNumber",
           v.name AS "vendorName", i.total_amount AS amount, i.currency, i.match_status AS "matchStatus",
-          i.due_date AS "dueDate", i.status, i.entity_id AS "entityId",
+          i.due_date AS "dueDate", i.status, COALESCE(i.entity_id, po.entity_id) AS "entityId",
           r.department_id AS "departmentId", r.project_id AS "projectId"
         FROM invoices i
         LEFT JOIN vendors v ON v.id = i.vendor_id
