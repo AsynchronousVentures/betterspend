@@ -168,3 +168,37 @@ test('aging summary uses real database timestamps across the complete scoped his
     await database.close();
   }
 });
+
+test('aging sums persisted numeric(14,2) amounts exactly in current and overdue buckets', async () => {
+  const database = new PGlite();
+  try {
+    await database.exec(`CREATE TABLE invoices (
+      organization_id uuid, entity_id uuid, status text, paid_at timestamptz,
+      due_date timestamptz, total_amount numeric(14, 2)
+    )`);
+    const current = new Date();
+    current.setHours(12, 0, 0, 0);
+    const overdue = new Date(current);
+    overdue.setDate(overdue.getDate() - 45);
+    for (const dueDate of [current, overdue]) {
+      await database.query(
+        `INSERT INTO invoices
+        SELECT $1::uuid, $2::uuid, 'matched', NULL, $3::timestamptz, 999999999999.99
+        FROM generate_series(1, 38)`,
+        [org, entity, dueDate.toISOString()],
+      );
+    }
+    const db = drizzle(database, { schema });
+    const service = Object.assign(Object.create(InvoicesService.prototype), {
+      db,
+    }) as InvoicesService;
+    const report = await service.getAgingReport(org, access, entity);
+    const expected = { count: 38, totalAmount: '37999999999999.62' };
+    assert.equal(report.openCount, 76);
+    assert.deepEqual(report.dueIn7Days, expected);
+    assert.deepEqual(report.current, expected);
+    assert.deepEqual(report.days_31_60, expected);
+  } finally {
+    await database.close();
+  }
+});

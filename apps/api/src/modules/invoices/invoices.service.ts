@@ -1602,7 +1602,7 @@ export class InvoicesService {
 
     const addToBucket = (bucket: AgingBucket, amount: string) => {
       bucket.count++;
-      bucket.totalAmount = (parseFloat(bucket.totalAmount) + parseFloat(amount || '0')).toFixed(2);
+      bucket.totalAmount = addMoney([bucket.totalAmount, amount]);
     };
 
     const in7Days = new Date(today);
