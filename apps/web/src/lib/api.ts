@@ -995,7 +995,10 @@ export const api = {
       apiFetch<any>(`/payment-runs/vendor-accounts/${id}/verify`, { method: 'PATCH' }),
   },
   approvals: {
-    list: () => apiFetch<any[]>('/approvals'),
+    list: (page = 1, limit = 50) =>
+      apiFetch<{ data: any[]; page: number; limit: number; hasMore: boolean }>(
+        `/approvals?page=${page}&limit=${limit}`,
+      ),
     get: (id: string) => apiFetch<any>(`/approvals/${id}`),
     approve: (id: string, data: unknown) =>
       apiFetch<any>(`/approvals/${id}/approve`, { method: 'POST', body: JSON.stringify(data) }),
