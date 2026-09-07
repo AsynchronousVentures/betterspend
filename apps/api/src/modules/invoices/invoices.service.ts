@@ -11,7 +11,12 @@ import { randomUUID } from 'node:crypto';
 import { eq, and, ne, isNull, lte, gte, or, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
-import { updateInvoiceSchema, type UpdateInvoiceInput } from '@betterspend/shared';
+import {
+  invoiceListQuerySchema,
+  type InvoiceListQuery,
+  updateInvoiceSchema,
+  type UpdateInvoiceInput,
+} from '@betterspend/shared';
 import {
   appendAuditLog,
   invoices,
@@ -236,6 +241,8 @@ export interface AgingBucket {
 }
 
 export interface AgingReport {
+  openCount: number;
+  dueIn7Days: AgingBucket;
   current: AgingBucket;
   days_1_30: AgingBucket;
   days_31_60: AgingBucket;
@@ -366,12 +373,15 @@ export class InvoicesService {
     return new Map(records.map((record) => [record.id, record]));
   }
 
-  async findAll(organizationId: string, entityId?: string, access?: AccessPolicy) {
-    return this.db.query.invoices.findMany({
-      where: (i, { and, eq }) =>
+  async findAll(organizationId: string, input: InvoiceListQuery = {}, access?: AccessPolicy) {
+    const query = invoiceListQuerySchema.parse(input);
+    const rows = await this.db.query.invoices.findMany({
+      where: (i, { and, eq, isNull, ne }) =>
         and(
           eq(i.organizationId, organizationId),
-          entityId ? eq(i.entityId, entityId) : undefined,
+          query.entityId ? eq(i.entityId, query.entityId) : undefined,
+          query.status ? eq(i.status, query.status) : undefined,
+          query.unpaid === 'true' ? and(isNull(i.paidAt), ne(i.status, 'paid')) : undefined,
           permissionScopePredicate(
             access,
             'invoice',
@@ -384,8 +394,15 @@ export class InvoicesService {
         purchaseOrder: true,
         entity: true,
       },
-      orderBy: (i, { desc }) => desc(i.createdAt),
+      orderBy: (i, { desc }) => [desc(i.createdAt), desc(i.id)],
+      limit: query.limit + 1,
+      offset: (query.page - 1) * query.limit,
     });
+    return {
+      items: rows.slice(0, query.limit),
+      page: query.page,
+      hasMore: rows.length > query.limit,
+    };
   }
 
   private async findOneWithExecutor(
@@ -1549,7 +1566,11 @@ export class InvoicesService {
     return updated;
   }
 
-  async getAgingReport(organizationId: string, access?: AccessPolicy): Promise<AgingReport> {
+  async getAgingReport(
+    organizationId: string,
+    access?: AccessPolicy,
+    entityId?: string,
+  ): Promise<AgingReport> {
     requireAnyPermission(access, ['invoices:view_all', 'payments:view']);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -1559,16 +1580,19 @@ export class InvoicesService {
       where: (i, { and, eq, isNull, ne }) =>
         and(
           eq(i.organizationId, organizationId),
+          entityId ? eq(i.entityId, entityId) : undefined,
           isNull(i.paidAt),
           ne(i.status, 'paid'),
           invoiceReportScopePredicate(access, organizationId),
         ),
-      with: { vendor: { columns: { punchoutConfig: false } } },
+      columns: { dueDate: true, totalAmount: true },
     });
 
     const emptyBucket = (): AgingBucket => ({ count: 0, totalAmount: '0.00' });
 
     const result: AgingReport = {
+      openCount: unpaidInvoices.length,
+      dueIn7Days: emptyBucket(),
       current: emptyBucket(),
       days_1_30: emptyBucket(),
       days_31_60: emptyBucket(),
@@ -1581,9 +1605,11 @@ export class InvoicesService {
       bucket.totalAmount = (parseFloat(bucket.totalAmount) + parseFloat(amount || '0')).toFixed(2);
     };
 
+    const in7Days = new Date(today);
+    in7Days.setDate(today.getDate() + 7);
     for (const inv of unpaidInvoices) {
-      const amount = (inv as any).totalAmount || '0';
-      const dueDate = (inv as any).dueDate ? new Date((inv as any).dueDate) : null;
+      const amount = inv.totalAmount || '0';
+      const dueDate = inv.dueDate ? new Date(`${inv.dueDate}T00:00:00`) : null;
 
       if (!dueDate) {
         addToBucket(result.current, amount);
@@ -1591,6 +1617,7 @@ export class InvoicesService {
       }
 
       dueDate.setHours(0, 0, 0, 0);
+      if (dueDate >= today && dueDate <= in7Days) addToBucket(result.dueIn7Days, amount);
       const diffMs = today.getTime() - dueDate.getTime();
       const daysOverdue = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 

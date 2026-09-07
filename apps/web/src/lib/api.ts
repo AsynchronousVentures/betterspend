@@ -36,7 +36,6 @@ import type {
   InvoiceCashFlowWeek,
   InvoiceDetail,
   InvoiceInput,
-  InvoiceListItem,
   InvoiceMatchResponse,
   InvoiceReviewCommandResult,
   InvoiceReviewListQuery,
@@ -443,7 +442,15 @@ const purchaseOrdersApi = {
 } satisfies PurchaseOrdersApi;
 
 const invoicesApi = {
-  list: () => apiFetch<InvoiceListItem[]>(appendEntityId('/invoices')),
+  list: (query: Parameters<InvoicesApi['list']>[0] = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined) params.set(key, String(value));
+    }
+    return apiFetch<Awaited<ReturnType<InvoicesApi['list']>>>(
+      appendEntityId(`/invoices${params.size ? `?${params}` : ''}`),
+    );
+  },
   get: (id: string) => apiFetch<InvoiceDetail>(`/invoices/${id}`),
   create: (data: InvoiceInput) =>
     apiFetch<InvoiceDetail>('/invoices', {
@@ -471,7 +478,7 @@ const invoicesApi = {
     }),
   rerunMatch: (id: string) =>
     apiFetch<InvoiceMatchResponse>(`/invoices/${id}/match`, { method: 'POST' }),
-  aging: () => apiFetch<InvoiceAgingReport>('/invoices/aging'),
+  aging: () => apiFetch<InvoiceAgingReport>(appendEntityId('/invoices/aging')),
   cashFlowForecast: () => apiFetch<InvoiceCashFlowWeek[]>('/invoices/cash-flow-forecast'),
   earlyPaymentOpportunities: () =>
     apiFetch<Array<InvoiceRecord & { vendor: { id: string; name: string } | null }>>(

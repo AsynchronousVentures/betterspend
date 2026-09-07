@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { createSearchRequestController } from '../../../lib/search-request';
 import { AlertTriangle, CalendarClock, CircleDollarSign, Percent, Wallet } from 'lucide-react';
 import { api } from '../../../lib/api';
 import type { InvoiceAgingReport, InvoiceListItem } from '../../../lib/api-contracts';
@@ -182,6 +183,9 @@ function RecordExternalPaymentModal({
 }
 
 export default function ApAgingPage() {
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [requestController] = useState(createSearchRequestController);
   const [aging, setAging] = useState<InvoiceAgingReport | null>(null);
   const [invoices, setInvoices] = useState<InvoiceListItem[]>([]);
   const [earlyPayCount, setEarlyPayCount] = useState(0);
@@ -190,27 +194,34 @@ export default function ApAgingPage() {
   const [markPaidInvoice, setMarkPaidInvoice] = useState<InvoiceListItem | null>(null);
 
   const loadData = useCallback(async () => {
+    const currentRequest = requestController.begin();
     setLoading(true);
     setError('');
     try {
       const [agingData, allInvoices, earlyPay] = await Promise.all([
         api.invoices.aging(),
-        api.invoices.list(),
+        api.invoices.list({ page, limit: 50, unpaid: 'true' }),
         api.invoices.earlyPaymentOpportunities(),
       ]);
+      if (!requestController.isCurrent(currentRequest)) return;
       setAging(agingData);
-      setInvoices(allInvoices.filter((invoice) => !invoice.paidAt && invoice.status !== 'paid'));
+      setInvoices(allInvoices.items);
+      setHasMore(allInvoices.hasMore);
       setEarlyPayCount(earlyPay.length);
     } catch (err: any) {
-      setError(err.message || 'Failed to load AP aging data');
+      if (requestController.isCurrent(currentRequest))
+        setError(err.message || 'Failed to load AP aging data');
     } finally {
-      setLoading(false);
+      if (requestController.isCurrent(currentRequest)) setLoading(false);
     }
-  }, []);
+  }, [page, requestController]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    void loadData();
+    return () => {
+      requestController.invalidate();
+    };
+  }, [loadData, requestController]);
 
   const totalOverdue = aging
     ? (
@@ -221,14 +232,7 @@ export default function ApAgingPage() {
       ).toFixed(2)
     : '0.00';
 
-  const dueIn7Days = invoices.filter((invoice) => {
-    if (!invoice.dueDate) return false;
-    const due = new Date(invoice.dueDate);
-    const today = new Date();
-    const in7 = new Date();
-    in7.setDate(today.getDate() + 7);
-    return due >= today && due <= in7;
-  });
+  const dueIn7Days = aging?.dueIn7Days ?? { count: 0, totalAmount: '0.00' };
 
   const bucketCards = aging
     ? [
@@ -291,17 +295,15 @@ export default function ApAgingPage() {
         <StatCard
           icon={Wallet}
           label="Open Invoices"
-          value={String(invoices.length)}
+          value={String(aging?.openCount ?? 0)}
           sub="Unpaid invoice count"
           tone="text-foreground"
         />
         <StatCard
           icon={CalendarClock}
           label="Due in 7 Days"
-          value={fmt(
-            dueIn7Days.reduce((sum, invoice) => sum + parseFloat(invoice.totalAmount || '0'), 0),
-          )}
-          sub={`${dueIn7Days.length} invoice${dueIn7Days.length !== 1 ? 's' : ''}`}
+          value={fmt(dueIn7Days.totalAmount)}
+          sub={`${dueIn7Days.count} invoice${dueIn7Days.count !== 1 ? 's' : ''}`}
           tone="text-amber-700"
         />
         <StatCard
@@ -449,6 +451,33 @@ export default function ApAgingPage() {
           )}
         </CardContent>
       </Card>
+
+      <nav
+        aria-label="Unpaid invoice pagination"
+        className="flex items-center justify-between gap-3"
+      >
+        <Button
+          variant="outline"
+          disabled={loading || page === 1}
+          onClick={() => {
+            setLoading(true);
+            setPage(page - 1);
+          }}
+        >
+          Previous
+        </Button>
+        <span>Page {page}</span>
+        <Button
+          variant="outline"
+          disabled={loading || !!error || !hasMore}
+          onClick={() => {
+            setLoading(true);
+            setPage(page + 1);
+          }}
+        >
+          Next
+        </Button>
+      </nav>
 
       {markPaidInvoice ? (
         <RecordExternalPaymentModal
