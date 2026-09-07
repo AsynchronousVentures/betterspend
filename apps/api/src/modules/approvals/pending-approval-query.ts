@@ -29,6 +29,12 @@ export function pendingApprovalQuery(
         ? sql`(${sql.join(dimensions, sql` OR `)})`
         : sql`false`;
   return sql`
+    WITH active_delegators AS MATERIALIZED (
+      SELECT DISTINCT d.delegator_id FROM approval_delegations d
+      WHERE d.organization_id = ${organizationId} AND d.delegate_id = ${actorId}
+        AND d.is_active = true AND d.start_date <= NOW() AND d.end_date >= NOW()
+        AND ${includeDelegations}
+    )
     SELECT ar.id
     FROM approval_requests ar
     JOIN users actor ON actor.id = ${actorId} AND actor.organization_id = ${organizationId}
@@ -52,16 +58,8 @@ export function pendingApprovalQuery(
       AND ${permission}
       AND (
         ar.required_approver_id = ${actorId} OR step.approver_id = ${actorId}
-        OR ${
-          includeDelegations
-            ? sql`EXISTS (
-          SELECT 1 FROM approval_delegations d
-          WHERE d.organization_id = ar.organization_id AND d.delegate_id = ${actorId}
-            AND d.is_active = true AND d.start_date <= NOW() AND d.end_date >= NOW()
-            AND (d.delegator_id = ar.required_approver_id OR d.delegator_id = step.approver_id)
-        )`
-            : sql`false`
-        }
+        OR ar.required_approver_id IN (SELECT delegator_id FROM active_delegators)
+        OR step.approver_id IN (SELECT delegator_id FROM active_delegators)
         OR EXISTS (
           SELECT 1 FROM user_roles assignment
           WHERE assignment.user_id = ${actorId}
