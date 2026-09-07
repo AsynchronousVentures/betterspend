@@ -66,6 +66,11 @@ export const invoices = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    vendorInvoiceIdentity: uniqueIndex('invoices_org_vendor_number_unique').on(
+      table.organizationId,
+      table.vendorId,
+      table.invoiceNumber,
+    ),
     idOrganization: uniqueIndex('invoices_id_organization_id_unique').on(
       table.id,
       table.organizationId,

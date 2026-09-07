@@ -1,3 +1,4 @@
+import { rethrowInvoiceIdentityConflict } from './invoice-identity';
 import {
   Injectable,
   Inject,
@@ -643,7 +644,7 @@ export class InvoicesService {
       );
       assertInvoiceScope(access, 'invoices:manage', authorizationScope, actorId);
     }
-    const result = await this.db.transaction(async (tx) => {
+    const updating = this.db.transaction(async (tx) => {
       const [lockedInvoice] = await tx
         .select()
         .from(invoices)
@@ -748,7 +749,7 @@ export class InvoicesService {
           columns: { id: true },
         });
         if (duplicate) {
-          throw new BadRequestException(
+          throw new ConflictException(
             `Duplicate invoice: ${lockedInvoice.invoiceNumber} already exists for this vendor`,
           );
         }
@@ -1052,6 +1053,7 @@ export class InvoicesService {
       };
     });
 
+    const result = await updating.catch(rethrowInvoiceIdentityConflict);
     if (result.publishRequestId) {
       await this.workflowExecution.publishCommittedRequest(result.publishRequestId, organizationId);
     }
@@ -1116,7 +1118,7 @@ export class InvoicesService {
         ),
     });
     if (duplicate) {
-      throw new BadRequestException(
+      throw new ConflictException(
         `Duplicate invoice: ${input.invoiceNumber} already exists for this vendor (${duplicate.internalNumber})`,
       );
     }
@@ -1142,7 +1144,7 @@ export class InvoicesService {
         resolvedExchangeRate,
       );
 
-    const invoiceId = await this.db.transaction(async (tx) => {
+    const creating = this.db.transaction(async (tx) => {
       const internalNumber = await this.sequenceService.next(organizationId, 'invoice', tx);
       const [inv] = await tx
         .insert(invoices)
@@ -1223,6 +1225,8 @@ export class InvoicesService {
 
       return inv.id;
     });
+
+    const invoiceId = await creating.catch(rethrowInvoiceIdentityConflict);
 
     // Auto-run 3-way match if PO is linked
     if (input.purchaseOrderId) {
