@@ -1,4 +1,6 @@
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import type { AccessPolicy } from '../auth/access-policy';
+import { permissionScopePredicate } from '../auth/access-scope';
 import { eq, and, or } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import { AuditService } from '../audit/audit.service';
@@ -58,9 +60,19 @@ export class RequisitionTemplatesService {
     organizationId: string,
     userId: string,
     input: CreateTemplateFromRequisitionInput,
+    access: AccessPolicy,
   ) {
     const req = await this.db.query.requisitions.findFirst({
-      where: (r, { and, eq }) => and(eq(r.id, requisitionId), eq(r.organizationId, organizationId)),
+      where: (r, { and, eq }) => and(
+        eq(r.id, requisitionId),
+        eq(r.organizationId, organizationId),
+        permissionScopePredicate(access, 'requisition',
+          ['requisitions:view_all', 'requisitions:view_own', 'requisitions:manage'], {
+            own: (id) => eq(r.requesterId, id),
+            department: (id) => eq(r.departmentId, id),
+            project: (id) => eq(r.projectId, id),
+          }),
+      ),
       with: { lines: true },
     });
     if (!req) throw new NotFoundException(`Requisition ${requisitionId} not found`);

@@ -150,3 +150,10 @@ test('fails closed when legacy assignments contain the payment release toxic pai
   assert.equal(policy.can('payments:release'), false);
   assert.equal(policy.can('vendors:edit_payment_details'), false);
 });
+
+test('a global view-own grant remains owner constrained', () => {
+  const policy = createAccessPolicy(identity, [builtIn('requester')]);
+  const scope = policy.scopeFor('requisition', 'requisitions:view_own');
+  assert.equal(scope.ownOnly, true);
+  assert.equal(scope.unrestricted, false);
+});

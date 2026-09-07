@@ -1,5 +1,7 @@
+import type { AccessPolicy } from '../auth/access-policy';
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -121,7 +123,8 @@ export class EmailIntakeService implements OnModuleInit {
     this.logger.log(`Raw email retention configured for ${RAW_RETENTION_DAYS} days`);
   }
 
-  async list(organizationId: string) {
+  async list(organizationId: string, access: AccessPolicy) {
+    this.requireInboxAccess(access, false);
     return this.db.query.emailIntakeItems.findMany({
       where: (item, { eq }) => eq(item.organizationId, organizationId),
       orderBy: (item, { desc }) => desc(item.createdAt),
@@ -138,7 +141,8 @@ export class EmailIntakeService implements OnModuleInit {
     return item;
   }
 
-  async getInboundAddress(organizationId: string, userId: string): Promise<{ address: string }> {
+  async getInboundAddress(organizationId: string, userId: string, access: AccessPolicy): Promise<{ address: string }> {
+    this.requireInboxAccess(access, false);
     const domain = this.intakeDomain();
     let row = await this.db.query.emailIntakeAddresses.findFirst({
       where: (address, { eq }) => eq(address.organizationId, organizationId),
@@ -536,7 +540,8 @@ export class EmailIntakeService implements OnModuleInit {
     }
   }
 
-  async create(organizationId: string, input: CreateEmailIntakeInput) {
+  async create(organizationId: string, input: CreateEmailIntakeInput, access: AccessPolicy) {
+    this.requireInboxAccess(access, true);
     const body = this.messageBody(input.body);
     const subject = this.postgresText(input.subject).trim();
     const detected = this.detectIntakeType(subject, body);
@@ -570,14 +575,37 @@ export class EmailIntakeService implements OnModuleInit {
     return created;
   }
 
-  async discard(id: string, organizationId: string) {
-    await this.findOne(id, organizationId);
-    const [updated] = await this.db
-      .update(emailIntakeItems)
-      .set({ status: 'discarded', updatedAt: new Date() })
-      .where(and(eq(emailIntakeItems.id, id), eq(emailIntakeItems.organizationId, organizationId)))
-      .returning();
-    return updated;
+  async discard(id: string, organizationId: string, userId: string, access: AccessPolicy) {
+    this.requireInboxAccess(access, true);
+    return this.db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(emailIntakeItems)
+        .set({ status: 'discarded', updatedAt: new Date() })
+        .where(and(eq(emailIntakeItems.id, id), eq(emailIntakeItems.organizationId, organizationId)))
+        .returning();
+      if (!updated) throw new NotFoundException(`Email intake item ${id} not found`);
+      await appendAuditLog(tx, {
+        organizationId,
+        userId,
+        entityType: 'email_intake_item',
+        entityId: id,
+        action: 'discarded',
+      });
+      return updated;
+    });
+  }
+
+  private requireInboxAccess(access: AccessPolicy, manage: boolean) {
+    // Unassigned intake has no resource scope. Only organization-wide AP grants
+    // can expose the shared mailbox, including items linked to scoped invoices.
+    const permissions = manage
+      ? ['invoices:manage'] as const
+      : ['invoices:view_all', 'invoices:manage'] as const;
+    if (!permissions.some((permission) =>
+      access?.can(permission) && access.scopeFor('invoice', permission).unrestricted,
+    )) {
+      throw new ForbiddenException('Requires organization-wide invoice access');
+    }
   }
 
   private async promotePendingAttachments(

@@ -201,7 +201,7 @@ export function createAccessPolicy(
       if (grants.some((grant) => grant.scopeType === 'global')) {
         return {
           ...EMPTY_SCOPE(identity, ownOnly),
-          unrestricted: true,
+          unrestricted: !ownOnly,
         };
       }
 
