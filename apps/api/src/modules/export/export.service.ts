@@ -1,5 +1,5 @@
-import { Injectable, Inject } from '@nestjs/common';
-import { sql } from 'drizzle-orm';
+import { Injectable, Inject, BadRequestException } from '@nestjs/common';
+import { sql, type SQL } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type * as schema from '@betterspend/db';
@@ -31,29 +31,26 @@ function buildCsv(headers: string[], rows: Record<string, unknown>[]): string {
   return lines.join('\n');
 }
 
-function paginate<T>(items: T[], page: number, limit: number): { data: T[]; total: number; page: number; limit: number; pages: number } {
-  const total = items.length;
-  const pages = Math.ceil(total / limit);
-  const data = items.slice((page - 1) * limit, page * limit);
-  return { data, total, page, limit, pages };
-}
+export type ExportType =
+  | 'purchase-orders'
+  | 'invoices'
+  | 'budgets'
+  | 'audit-log'
+  | 'spend-by-vendor'
+  | 'spend-by-category';
 
 @Injectable()
 export class ExportService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  async getPurchaseOrders(
-    organizationId: string,
-    query: ExportQuery,
-    scope?: ScopeConstraint,
-  ) {
+  private queryPurchaseOrders(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
     const rowScope = scopePredicate(scope, {
       department: sql`r.department_id`,
       project: sql`r.project_id`,
       entity: sql`po.entity_id`,
     });
-    const rows = await this.db.execute(sql`
+    return sql`
       SELECT
         po.id,
         po.number,
@@ -65,7 +62,7 @@ export class ExportService {
         po.issued_at          AS "issuedAt",
         po.created_at         AS "createdAt",
         v.name                AS "vendorName",
-        v.email               AS "vendorEmail",
+        v.contact_info->>'email'               AS "vendorEmail",
         d.name                AS "departmentName"
       FROM purchase_orders po
       LEFT JOIN vendors      v  ON v.id = po.vendor_id
@@ -75,19 +72,17 @@ export class ExportService {
         ${from ? sql`AND po.created_at >= ${new Date(from)}` : sql``}
         ${to ? sql`AND po.created_at <= ${new Date(to + 'T23:59:59Z')}` : sql``}
         AND ${rowScope}
-      ORDER BY po.created_at DESC
-    `);
-    return rows as Record<string, unknown>[];
+    `;
   }
 
-  async getInvoices(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
+  private queryInvoices(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
     const rowScope = scopePredicate(scope, {
       department: sql`r.department_id`,
       project: sql`r.project_id`,
       entity: sql`COALESCE(i.entity_id, po.entity_id)`,
     });
-    const rows = await this.db.execute(sql`
+    return sql`
       SELECT
         i.id,
         i.internal_number     AS "internalNumber",
@@ -112,19 +107,17 @@ export class ExportService {
         ${from ? sql`AND i.created_at >= ${new Date(from)}` : sql``}
         ${to ? sql`AND i.created_at <= ${new Date(to + 'T23:59:59Z')}` : sql``}
         AND ${rowScope}
-      ORDER BY i.created_at DESC
-    `);
-    return rows as Record<string, unknown>[];
+    `;
   }
 
-  async getBudgets(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
+  private queryBudgets(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
     const rowScope = scopePredicate(scope, {
       department: sql`CASE WHEN b.budget_type = 'department' THEN b.scope_id END`,
       project: sql`CASE WHEN b.budget_type = 'project' THEN b.scope_id END`,
       entity: sql`b.entity_id`,
     });
-    const rows = await this.db.execute(sql`
+    return sql`
       SELECT
         b.id,
         b.name,
@@ -149,15 +142,13 @@ export class ExportService {
         ${from ? sql`AND b.created_at >= ${new Date(from)}` : sql``}
         ${to ? sql`AND b.created_at <= ${new Date(to + 'T23:59:59Z')}` : sql``}
         AND ${rowScope}
-      ORDER BY b.fiscal_year DESC, b.name ASC
-    `);
-    return rows as Record<string, unknown>[];
+    `;
   }
 
-  async getAuditLog(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
+  private queryAuditLog(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
     const rowScope = globalOnlyPredicate(scope);
-    const rows = await this.db.execute(sql`
+    return sql`
       SELECT
         al.id,
         al.entity_type        AS "entityType",
@@ -170,23 +161,21 @@ export class ExportService {
         ${from ? sql`AND al.created_at >= ${new Date(from)}` : sql``}
         ${to ? sql`AND al.created_at <= ${new Date(to + 'T23:59:59Z')}` : sql``}
         AND ${rowScope}
-      ORDER BY al.created_at DESC
-    `);
-    return rows as Record<string, unknown>[];
+    `;
   }
 
-  async getSpendByVendor(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
+  private querySpendByVendor(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
     const { from, to } = query;
     const rowScope = scopePredicate(scope, {
       department: sql`r.department_id`,
       project: sql`r.project_id`,
       entity: sql`COALESCE(i.entity_id, po.entity_id)`,
     });
-    const rows = await this.db.execute(sql`
+    return sql`
       SELECT
         v.id                              AS "vendorId",
         v.name                            AS "vendorName",
-        v.email                           AS "vendorEmail",
+        v.contact_info->>'email'                           AS "vendorEmail",
         COUNT(DISTINCT i.id)::int         AS "invoiceCount",
         SUM(i.total_amount)::numeric      AS "totalSpend",
         MIN(i.invoice_date)               AS "firstInvoiceDate",
@@ -200,20 +189,22 @@ export class ExportService {
         ${from ? sql`AND i.invoice_date >= ${new Date(from)}` : sql``}
         ${to ? sql`AND i.invoice_date <= ${new Date(to + 'T23:59:59Z')}` : sql``}
         AND ${rowScope}
-      GROUP BY v.id, v.name, v.email
-      ORDER BY "totalSpend" DESC
-    `);
-    return rows as Record<string, unknown>[];
+      GROUP BY v.id, v.name
+    `;
   }
 
-  async getSpendByCategory(organizationId: string, query: ExportQuery, scope?: ScopeConstraint) {
+  private querySpendByCategory(
+    organizationId: string,
+    query: ExportQuery,
+    scope?: ScopeConstraint,
+  ) {
     const { from, to } = query;
     const rowScope = scopePredicate(scope, {
       department: sql`r.department_id`,
       project: sql`r.project_id`,
       entity: sql`COALESCE(i.entity_id, po.entity_id)`,
     });
-    const rows = await this.db.execute(sql`
+    return sql`
       SELECT
         COALESCE(il.gl_account, 'Uncategorized')   AS "glAccount",
         COUNT(DISTINCT i.id)::int                  AS "invoiceCount",
@@ -229,9 +220,7 @@ export class ExportService {
         ${to ? sql`AND i.invoice_date <= ${new Date(to + 'T23:59:59Z')}` : sql``}
         AND ${rowScope}
       GROUP BY il.gl_account
-      ORDER BY "totalSpend" DESC
-    `);
-    return rows as Record<string, unknown>[];
+    `;
   }
 
   buildCsvForType(type: string, rows: Record<string, unknown>[]): string {
@@ -247,7 +236,113 @@ export class ExportService {
     return buildCsv(headers, rows);
   }
 
-  paginateRows(rows: Record<string, unknown>[], page: number, limit: number) {
-    return paginate(rows, page, limit);
+  normalizeQuery(query: ExportQuery): Required<Pick<ExportQuery, 'page' | 'limit'>> & ExportQuery {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 500;
+    if (
+      !Number.isSafeInteger(page) ||
+      page < 1 ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 1000 ||
+      !Number.isSafeInteger((page - 1) * limit)
+    )
+      throw new BadRequestException('Invalid export page or limit');
+    for (const value of [query.from, query.to]) {
+      if (
+        value !== undefined &&
+        (!/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+          Number.isNaN(Date.parse(value)) ||
+          new Date(value).toISOString().slice(0, 10) !== value)
+      ) {
+        throw new BadRequestException('Export dates must use YYYY-MM-DD');
+      }
+    }
+    return { ...query, page, limit };
+  }
+
+  private source(
+    type: ExportType,
+    organizationId: string,
+    query: ExportQuery,
+    scope?: ScopeConstraint,
+  ): { query: SQL; order: SQL } {
+    switch (type) {
+      case 'purchase-orders':
+        return {
+          query: this.queryPurchaseOrders(organizationId, query, scope),
+          order: sql`"createdAt" DESC, id`,
+        };
+      case 'invoices':
+        return {
+          query: this.queryInvoices(organizationId, query, scope),
+          order: sql`"createdAt" DESC, id`,
+        };
+      case 'budgets':
+        return {
+          query: this.queryBudgets(organizationId, query, scope),
+          order: sql`"fiscalYear" DESC, name, id`,
+        };
+      case 'audit-log':
+        return {
+          query: this.queryAuditLog(organizationId, query, scope),
+          order: sql`"createdAt" DESC, id`,
+        };
+      case 'spend-by-vendor':
+        return {
+          query: this.querySpendByVendor(organizationId, query, scope),
+          order: sql`"totalSpend" DESC, "vendorId"`,
+        };
+      case 'spend-by-category':
+        return {
+          query: this.querySpendByCategory(organizationId, query, scope),
+          order: sql`"totalSpend" DESC, il.gl_account ASC NULLS FIRST`,
+        };
+    }
+  }
+
+  async getPage(
+    type: ExportType,
+    organizationId: string,
+    query: ExportQuery,
+    scope?: ScopeConstraint,
+  ) {
+    const normalized = this.normalizeQuery(query);
+    const { page, limit } = normalized;
+    const source = this.source(type, organizationId, normalized, scope);
+    const [data, totals] = await Promise.all([
+      this.db.execute(
+        sql`${source.query} ORDER BY ${source.order} LIMIT ${limit} OFFSET ${(page - 1) * limit}`,
+      ),
+      this.db.execute(sql`SELECT COUNT(*)::int AS total FROM (${source.query}) export_rows`),
+    ]);
+    const total = Number((totals as unknown as { total: number }[])[0]?.total ?? 0);
+    return {
+      data: data as unknown as Record<string, unknown>[],
+      total,
+      page,
+      limit,
+      pages: Math.ceil(total / limit),
+    };
+  }
+
+  async *csvChunks(
+    type: ExportType,
+    organizationId: string,
+    query: ExportQuery,
+    scope?: ScopeConstraint,
+  ) {
+    const source = this.source(type, organizationId, this.normalizeQuery(query), scope);
+    yield this.buildCsvForType(type, []) + '\n';
+    const batchSize = 1000;
+    for (let offset = 0; ; offset += batchSize) {
+      const rows = (await this.db.execute(
+        sql`${source.query} ORDER BY ${source.order} LIMIT ${batchSize} OFFSET ${offset}`,
+      )) as unknown as Record<string, unknown>[];
+      if (!rows.length) return;
+      const csv = this.buildCsvForType(type, rows);
+      yield csv.slice(csv.indexOf('\n') + 1) + '\n';
+      if (rows.length < batchSize) return;
+    }
   }
 }

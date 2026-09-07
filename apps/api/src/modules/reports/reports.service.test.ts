@@ -113,13 +113,13 @@ test('scoped audit exports fail closed while global exports remain available', a
     },
   } as never);
 
-  await service.getAuditLog('org-acme', {}, scopedAccess);
+  await service.getPage('audit-log', 'org-acme', {}, scopedAccess);
   const scopedQuery = new PgDialect().sqlToQuery(queries[0] as never);
   assert.match(scopedQuery.sql, /and\s+false/i);
   assert.doesNotMatch(scopedQuery.sql, /and\s+true/i);
 
-  await service.getAuditLog('org-acme', {}, { ...scopedAccess, unrestricted: true });
-  const globalQuery = new PgDialect().sqlToQuery(queries[1] as never);
+  await service.getPage('audit-log', 'org-acme', {}, { ...scopedAccess, unrestricted: true });
+  const globalQuery = new PgDialect().sqlToQuery(queries[2] as never);
   assert.match(globalQuery.sql, /and\s+true/i);
   assert.doesNotMatch(globalQuery.sql, /and\s+false/i);
 });
