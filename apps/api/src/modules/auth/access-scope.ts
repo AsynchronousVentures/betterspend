@@ -46,6 +46,8 @@ function scopeClauses(scope: ResourceScope, predicates: ScopePredicates): SQL[] 
     if (predicates.entity) clauses.push(predicates.entity(entityId));
   }
   if (scope.ownOnly && predicates.own) {
+    const hasDimensions = scope.departmentIds.length + scope.projectIds.length + scope.entityIds.length > 0;
+    if (hasDimensions && clauses.length === 0) return [];
     const owner = predicates.own(scope.userId);
     return [clauses.length > 0 ? and(owner, or(...clauses))! : owner];
   }

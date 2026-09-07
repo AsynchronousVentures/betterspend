@@ -167,7 +167,7 @@ function request(path: string, role: keyof typeof policies, body?: unknown) {
 
 test('template copies enforce owner and department scope before inserting', async () => {
   const path = `requisition-templates/from-requisition/${id(10)}`;
-  for (const role of ['other', 'scoped', 'denied'] as const) {
+  for (const role of ['other', 'scoped', 'requesterScoped', 'denied'] as const) {
     assert.equal((await request(path, role, { name: 'copy', isOrgWide: true })).status, 404);
   }
   assert.equal((await database.query('SELECT * FROM requisition_templates')).rows.length, 0);
