@@ -744,9 +744,7 @@ export interface InvoiceCashFlowWeek {
 }
 
 export interface InvoicesApi {
-  list(
-    query?: InvoiceListQuery,
-  ): Promise<{ items: InvoiceListItem[]; page: number; hasMore: boolean }>;
+  list(query?: InvoiceListQuery): Promise<{ items: InvoiceListItem[]; nextCursor: string | null }>;
   get(id: string): Promise<InvoiceDetail>;
   create(data: InvoiceInput): Promise<InvoiceDetail>;
   approve(id: string): Promise<InvoiceDetail>;

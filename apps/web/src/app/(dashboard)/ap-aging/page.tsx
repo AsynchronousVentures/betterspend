@@ -183,8 +183,10 @@ function RecordExternalPaymentModal({
 }
 
 export default function ApAgingPage() {
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
+  const [cursors, setCursors] = useState<Array<string | undefined>>([undefined]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const page = cursors.length;
+  const cursor = cursors.at(-1);
   const [requestController] = useState(createSearchRequestController);
   const [aging, setAging] = useState<InvoiceAgingReport | null>(null);
   const [invoices, setInvoices] = useState<InvoiceListItem[]>([]);
@@ -200,13 +202,13 @@ export default function ApAgingPage() {
     try {
       const [agingData, allInvoices, earlyPay] = await Promise.all([
         api.invoices.aging(),
-        api.invoices.list({ page, limit: 50, unpaid: 'true' }),
+        api.invoices.list({ cursor, limit: 50, unpaid: 'true' }),
         api.invoices.earlyPaymentOpportunities(),
       ]);
       if (!requestController.isCurrent(currentRequest)) return;
       setAging(agingData);
       setInvoices(allInvoices.items);
-      setHasMore(allInvoices.hasMore);
+      setNextCursor(allInvoices.nextCursor);
       setEarlyPayCount(earlyPay.length);
     } catch (err: any) {
       if (requestController.isCurrent(currentRequest))
@@ -214,7 +216,7 @@ export default function ApAgingPage() {
     } finally {
       if (requestController.isCurrent(currentRequest)) setLoading(false);
     }
-  }, [page, requestController]);
+  }, [cursor, requestController]);
 
   useEffect(() => {
     void loadData();
@@ -461,7 +463,7 @@ export default function ApAgingPage() {
           disabled={loading || page === 1}
           onClick={() => {
             setLoading(true);
-            setPage(page - 1);
+            setCursors((previous) => previous.slice(0, -1));
           }}
         >
           Previous
@@ -469,10 +471,10 @@ export default function ApAgingPage() {
         <span>Page {page}</span>
         <Button
           variant="outline"
-          disabled={loading || !!error || !hasMore}
+          disabled={loading || !!error || !nextCursor}
           onClick={() => {
             setLoading(true);
-            setPage(page + 1);
+            setCursors((previous) => [...previous, nextCursor ?? undefined]);
           }}
         >
           Next

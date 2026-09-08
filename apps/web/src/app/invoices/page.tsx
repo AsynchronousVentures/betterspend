@@ -48,8 +48,10 @@ async function downloadCsv(type: string) {
 
 export default function InvoicesPage() {
   const isMobile = useIsMobile();
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
+  const [cursors, setCursors] = useState<Array<string | undefined>>([undefined]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const page = cursors.length;
+  const cursor = cursors.at(-1);
   const [requestController] = useState(createSearchRequestController);
   const [invoices, setInvoices] = useState<InvoiceListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,19 +71,19 @@ export default function InvoicesPage() {
     setSelected(new Set());
     try {
       const data = await api.invoices.list({
-        page,
+        cursor,
         limit: 50,
         status: invoiceListQuerySchema.shape.status.parse(statusFilter || undefined),
       });
       if (!requestController.isCurrent(currentRequest)) return;
       setInvoices(data.items);
-      setHasMore(data.hasMore);
+      setNextCursor(data.nextCursor);
     } catch (loadFailure) {
       if (requestController.isCurrent(currentRequest)) setLoadError(loadFailure);
     } finally {
       if (requestController.isCurrent(currentRequest)) setLoading(false);
     }
-  }, [page, statusFilter, requestController]);
+  }, [cursor, statusFilter, requestController]);
 
   useEffect(() => {
     void load();
@@ -95,7 +97,9 @@ export default function InvoicesPage() {
   function changePage(next: number) {
     setSelected(new Set());
     setLoading(true);
-    setPage(next);
+    setCursors((previous) =>
+      next < page ? previous.slice(0, -1) : [...previous, nextCursor ?? undefined],
+    );
   }
 
   const approvableSelected = [...selected].filter((id) => {
@@ -211,7 +215,7 @@ export default function InvoicesPage() {
               value={statusFilter}
               onChange={(event) => {
                 setLoading(true);
-                setPage(1);
+                setCursors([undefined]);
                 setStatusFilter(event.target.value);
                 setSelected(new Set());
               }}
@@ -549,7 +553,7 @@ export default function InvoicesPage() {
         <span>Page {page}. Selection applies to this page.</span>
         <Button
           variant="outline"
-          disabled={loading || bulkLoading || !!loadError || !hasMore}
+          disabled={loading || bulkLoading || !!loadError || !nextCursor}
           onClick={() => changePage(page + 1)}
         >
           Next

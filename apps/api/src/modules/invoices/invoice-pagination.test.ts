@@ -8,6 +8,7 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import { invoices } from '@betterspend/db';
 import { invoiceListQuerySchema } from '@betterspend/shared';
 import type { AccessPolicy } from '../auth/access-policy';
+import { encodeInvoiceListCursor } from './invoice-list-cursor';
 import { InvoicesService } from './invoices.service';
 
 const org = '00000000-0000-4000-8000-000000000001';
@@ -59,7 +60,7 @@ test('paginates real scoped SQL across matching timestamps and server filters', 
         index === 125 ? other : org,
         index === 124 ? other : entity,
         index === 123 ? 'paid' : 'matched',
-        '2026-09-01',
+        index === 1 ? '2026-09-01T00:00:00.123455Z' : '2026-09-01T00:00:00.123456Z',
       ]);
     }
     let returnedRows = 0;
@@ -73,12 +74,13 @@ test('paginates real scoped SQL across matching timestamps and server filters', 
             ) => SQL;
             orderBy: (table: typeof invoices, operators: { desc: typeof desc }) => SQL[];
             limit: number;
-            offset: number;
+            extras: (table: typeof invoices) => { cursorCreatedAt: SQL.Aliased<string> };
           }) => {
+            assert.equal('offset' in config, false);
             const predicate = config.where(invoices, { and, eq, ne, isNull });
             const ordering = config.orderBy(invoices, { desc });
             const statement = new PgDialect().sqlToQuery(
-              sql`SELECT id FROM invoices WHERE ${predicate} ORDER BY ${sql.join(ordering, sql`, `)} LIMIT ${config.limit} OFFSET ${config.offset}`,
+              sql`SELECT id, ${config.extras(invoices).cursorCreatedAt.sql} AS "cursorCreatedAt" FROM invoices WHERE ${predicate} ORDER BY ${sql.join(ordering, sql`, `)} LIMIT ${config.limit}`,
             );
             const result = await database.query(statement.sql, statement.params);
             returnedRows = result.rows.length;
@@ -91,16 +93,26 @@ test('paginates real scoped SQL across matching timestamps and server filters', 
       db,
     }) as InvoicesService;
     const seen = new Set<string>();
+    let cursor: string | undefined;
     for (let page = 1; page <= 3; page++) {
       const result = await service.findAll(
         org,
-        { page, limit: 50, status: 'matched', unpaid: 'true' },
+        { cursor, limit: 50, status: 'matched', unpaid: 'true' },
         access,
       );
-      assert.equal(result.page, page);
-      assert.equal(result.hasMore, page < 3);
+      assert.equal(result.nextCursor !== null, page < 3);
+      cursor = result.nextCursor ?? undefined;
       assert.equal(result.items.length, page < 3 ? 50 : 22);
       assert.ok(returnedRows <= 51);
+      if (page === 1)
+        await database.query('INSERT INTO invoices VALUES ($1,$2,$3,$4,NULL,$5)', [
+          '20000000-0000-4000-8000-000000000001',
+          org,
+          entity,
+          'matched',
+          '2026-09-02',
+        ]);
+      if (page === 2) await database.query('DELETE FROM invoices WHERE id = $1', [[...seen][0]]);
       for (const row of result.items) {
         assert.equal(seen.has(row.id), false);
         seen.add(row.id);
@@ -114,7 +126,14 @@ test('paginates real scoped SQL across matching timestamps and server filters', 
     );
     await database.query("UPDATE invoices SET status = 'paid' WHERE status = 'ready_for_release'");
     assert.equal((await service.findAll(org, { entityId: other }, access)).items.length, 0);
-    assert.equal((await service.findAll(org, { page: 4 }, access)).hasMore, false);
+    await assert.rejects(service.findAll(org, { cursor: 'invalid' }, access));
+    await assert.rejects(
+      service.findAll(
+        org,
+        { cursor: encodeInvoiceListCursor({ createdAt: 'invalid', id: org }) },
+        access,
+      ),
+    );
     assert.equal((await service.findAll(org, { status: 'paid' }, access)).items.length, 1);
     assert.equal((await service.findAll(org, {}, { ...access, can: () => false })).items.length, 0);
     await assert.rejects(service.findAll(org, { limit: 101 }, access));

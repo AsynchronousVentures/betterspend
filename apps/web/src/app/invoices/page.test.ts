@@ -64,8 +64,11 @@ for (const mobile of [false, true]) {
       'list',
       async (query: Parameters<typeof api.invoices.list>[0]) => {
         requests.push(query);
-        const page = Number(query?.page ?? 1);
-        return { items: history.slice((page - 1) * 50, page * 50), page, hasMore: page < 3 };
+        const page = Number(query?.cursor ?? '1');
+        return {
+          items: history.slice((page - 1) * 50, page * 50),
+          nextCursor: page < 3 ? String(page + 1) : null,
+        };
       },
     );
     const container = document.createElement('div');
@@ -77,7 +80,7 @@ for (const mobile of [false, true]) {
       });
       assert.equal(container.querySelectorAll(mobile ? 'article' : 'tbody tr').length, 50);
       assert.equal(container.querySelectorAll(mobile ? 'tbody tr' : 'article').length, 0);
-      assert.deepEqual(requests[0], { page: 1, limit: 50, status: undefined });
+      assert.deepEqual(requests[0], { cursor: undefined, limit: 50, status: undefined });
       const checkbox = container.querySelector<HTMLInputElement>('input[type="checkbox"]');
       assert.ok(checkbox);
       await act(async () => {
@@ -90,7 +93,7 @@ for (const mobile of [false, true]) {
       await act(async () => {
         next.click();
       });
-      assert.equal(requests.at(-1)?.page, 2);
+      assert.equal(requests.at(-1)?.cursor, '2');
       assert.doesNotMatch(container.textContent ?? '', /Approve \d+ Selected/);
       assert.equal(container.querySelectorAll(mobile ? 'article' : 'tbody tr').length, 50);
       await act(async () => {
@@ -98,15 +101,24 @@ for (const mobile of [false, true]) {
       });
       assert.equal(container.querySelectorAll(mobile ? 'article' : 'tbody tr').length, 25);
       assert.equal(next.disabled, true);
+      const previous = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Previous',
+      )!;
+      await act(async () => {
+        previous.click();
+      });
+      assert.equal(requests.at(-1)?.cursor, '2');
+      assert.equal(container.querySelectorAll(mobile ? 'article' : 'tbody tr').length, 50);
       const filter = container.querySelector('select')!;
       await act(async () => {
         filter.value = 'approved';
         filter.dispatchEvent(new window.Event('change', { bubbles: true }));
       });
-      assert.deepEqual(requests.at(-1), { page: 1, limit: 50, status: 'approved' });
+      assert.deepEqual(requests.at(-1), { cursor: undefined, limit: 50, status: 'approved' });
+      assert.equal(previous.disabled, true);
       const beforeBytes = Buffer.byteLength(JSON.stringify(history));
       const afterBytes = Buffer.byteLength(
-        JSON.stringify({ items: history.slice(0, 50), page: 1, hasMore: true }),
+        JSON.stringify({ items: history.slice(0, 50), nextCursor: '2' }),
       );
       assert.ok(afterBytes < beforeBytes / 2);
       console.log(
@@ -148,10 +160,10 @@ test('a late response cannot replace the active invoice filter', async () => {
       filter.dispatchEvent(new window.Event('change', { bubbles: true }));
     });
     await act(async () => {
-      resolvers[1]({ items: [invoice(222)], page: 1, hasMore: false });
+      resolvers[1]({ items: [invoice(222)], nextCursor: null });
     });
     await act(async () => {
-      resolvers[0]({ items: [invoice(111)], page: 1, hasMore: true });
+      resolvers[0]({ items: [invoice(111)], nextCursor: '2' });
     });
     assert.match(container.textContent ?? '', /INV-222/);
     assert.doesNotMatch(container.textContent ?? '', /INV-111/);
@@ -182,8 +194,7 @@ test('AP aging keeps complete-history KPIs while paging its unpaid table', async
       assert.equal(query?.unpaid, 'true');
       return {
         items: Array.from({ length: 50 }, (_, index) => invoice(index)),
-        page: Number(query?.page),
-        hasMore: true,
+        nextCursor: '2',
       };
     },
   );
@@ -205,7 +216,7 @@ test('AP aging keeps complete-history KPIs while paging its unpaid table', async
     });
     assert.match(container.textContent ?? '', /Open Invoices\s*125/);
     assert.match(container.textContent ?? '', /125 invoices/);
-    assert.equal(list.mock.calls.at(-1)?.arguments[0]?.page, 2);
+    assert.equal(list.mock.calls.at(-1)?.arguments[0]?.cursor, '2');
   } finally {
     act(() => root.unmount());
     container.remove();

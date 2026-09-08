@@ -59,29 +59,26 @@ export const updateInvoiceSchema = z
 
 export type UpdateInvoiceInput = z.infer<typeof updateInvoiceSchema>;
 
-export const invoiceListQuerySchema = z.object({
-  entityId: z.string().uuid().optional(),
-  status: z
-    .enum([
-      'draft',
-      'pending_match',
-      'pending_approval',
-      'matched',
-      'partial_match',
-      'exception',
-      'approved',
-      'ready_for_release',
-      'paid',
-      'cancelled',
-    ])
-    .optional(),
-  unpaid: z.enum(['true', 'false']).optional(),
-  page: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(Math.floor(Number.MAX_SAFE_INTEGER / 100))
-    .default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-});
+export const invoiceListQuerySchema = z
+  .object({
+    entityId: z.string().uuid().optional(),
+    status: z
+      .enum([
+        'draft',
+        'pending_match',
+        'pending_approval',
+        'matched',
+        'partial_match',
+        'exception',
+        'approved',
+        'ready_for_release',
+        'paid',
+        'cancelled',
+      ])
+      .optional(),
+    unpaid: z.enum(['true', 'false']).optional(),
+    cursor: z.string().min(1).max(512).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+  })
+  .strict();
 export type InvoiceListQuery = Partial<z.output<typeof invoiceListQuerySchema>>;

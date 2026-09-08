@@ -50,6 +50,7 @@ import { WorkflowExecutionService } from '../workflow-execution/workflow-executi
 import { InvoiceReviewsService } from '../invoice-reviews/invoice-reviews.service';
 import { InvoiceReviewProvenanceService } from '../invoice-reviews/invoice-review-provenance.service';
 import { changedMaterialInvoiceFields, type MaterialInvoiceState } from './invoice-material-edit';
+import { decodeInvoiceListCursor, encodeInvoiceListCursor } from './invoice-list-cursor';
 import { calculateInvoiceLineAmounts } from './invoice-money';
 import type { AccessPolicy } from '../auth/access-policy';
 import { canViewRelatedRecord } from '../auth/related-record-access';
@@ -375,10 +376,14 @@ export class InvoicesService {
 
   async findAll(organizationId: string, input: InvoiceListQuery = {}, access?: AccessPolicy) {
     const query = invoiceListQuerySchema.parse(input);
+    const cursor = query.cursor ? decodeInvoiceListCursor(query.cursor) : null;
     const rows = await this.db.query.invoices.findMany({
       where: (i, { and, eq, isNull, ne }) =>
         and(
           eq(i.organizationId, organizationId),
+          cursor
+            ? sql`(${i.createdAt}, ${i.id}) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`
+            : undefined,
           query.entityId ? eq(i.entityId, query.entityId) : undefined,
           query.status ? eq(i.status, query.status) : undefined,
           query.unpaid === 'true' ? and(isNull(i.paidAt), ne(i.status, 'paid')) : undefined,
@@ -394,14 +399,24 @@ export class InvoicesService {
         purchaseOrder: true,
         entity: true,
       },
+      // Preserve PostgreSQL microseconds; JavaScript Date would truncate cursor precision.
+      extras: (i) => ({
+        cursorCreatedAt:
+          sql<string>`to_char(${i.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as(
+            'cursor_created_at',
+          ),
+      }),
       orderBy: (i, { desc }) => [desc(i.createdAt), desc(i.id)],
       limit: query.limit + 1,
-      offset: (query.page - 1) * query.limit,
     });
+    const page = rows.slice(0, query.limit);
+    const last = page.at(-1);
     return {
-      items: rows.slice(0, query.limit),
-      page: query.page,
-      hasMore: rows.length > query.limit,
+      items: page.map(({ cursorCreatedAt: _cursorCreatedAt, ...invoice }) => invoice),
+      nextCursor:
+        rows.length > query.limit && last
+          ? encodeInvoiceListCursor({ createdAt: last.cursorCreatedAt, id: last.id })
+          : null,
     };
   }
 

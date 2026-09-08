@@ -491,7 +491,8 @@ test('invoice pages and both AP aging KPI requests carry the selected entity', a
   });
   try {
     for (const call of [
-      () => api.invoices.list({ page: 2, limit: 50, status: 'ready_for_release' }),
+      () =>
+        api.invoices.list({ cursor: 'synthetic-cursor', limit: 50, status: 'ready_for_release' }),
       () => api.invoices.aging(),
       () => api.invoices.earlyPaymentOpportunities(),
     ]) {
@@ -499,7 +500,7 @@ test('invoice pages and both AP aging KPI requests carry the selected entity', a
       const url = new URL(String(request.input), 'https://example.test');
       assert.equal(url.searchParams.get('entityId'), entityId);
       if (url.pathname.endsWith('/invoices')) {
-        assert.equal(url.searchParams.get('page'), '2');
+        assert.equal(url.searchParams.get('cursor'), 'synthetic-cursor');
         assert.equal(url.searchParams.get('status'), 'ready_for_release');
       }
     }
