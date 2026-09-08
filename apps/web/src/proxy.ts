@@ -1,15 +1,8 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const PUBLIC_PATH_PREFIXES = ['/login', '/signup', '/punchout'];
-const PUBLIC_EXACT_PATHS = new Set(['/runtime-version']);
-
-export function isPublicPath(pathname: string): boolean {
-  return (
-    PUBLIC_EXACT_PATHS.has(pathname) ||
-    PUBLIC_PATH_PREFIXES.some((path) => pathname === path || pathname.startsWith(`${path}/`))
-  );
-}
+import { isPublicPath } from './lib/public-routes';
+export { isPublicPath } from './lib/public-routes';
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -23,7 +16,7 @@ export function proxy(request: NextRequest) {
   const token = request.cookies.get('bs_token')?.value;
   if (!token) {
     const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('next', pathname);
+    loginUrl.searchParams.set('next', pathname + request.nextUrl.search);
     return NextResponse.redirect(loginUrl);
   }
 
