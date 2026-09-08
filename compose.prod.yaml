@@ -30,6 +30,7 @@ services:
       NODE_ENV: production
       APP_VERSION: ${APP_VERSION:-}
       API_PORT: 4001
+      API_TRUST_PROXY_HOPS: '1'
       DATABASE_URL: ${DATABASE_URL}
       REDIS_HOST: redis
       REDIS_PORT: 6379
