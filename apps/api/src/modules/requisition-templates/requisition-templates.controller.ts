@@ -16,6 +16,8 @@ import {
   createRequisitionTemplateSchema,
   createTemplateFromRequisitionSchema,
 } from '@betterspend/shared';
+import { CurrentAccess } from '../auth/current-access.decorator';
+import type { AccessPolicy } from '../auth/access-policy';
 import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
@@ -56,9 +58,10 @@ export class RequisitionTemplatesController {
     @Body() body: unknown,
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
+    @CurrentAccess() access: AccessPolicy,
   ) {
     const parsed = createTemplateFromRequisitionSchema.parse(body);
-    return this.service.createFromRequisition(requisitionId, orgId, userId, parsed);
+    return this.service.createFromRequisition(requisitionId, orgId, userId, parsed, access);
   }
 
   @Patch(':id')

@@ -1,3 +1,5 @@
+import type { AccessPolicy } from '../auth/access-policy';
+import { requirePermission } from '../auth/access-scope';
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import {
@@ -229,9 +231,9 @@ export class IntakeConciergeService {
     return created;
   }
 
-  async findSession(id: string, organizationId: string) {
+  async findSession(id: string, organizationId: string, requesterId: string) {
     const session = await this.db.query.intakeConciergeSessions.findFirst({
-      where: (record, { and, eq }) => and(eq(record.id, id), eq(record.organizationId, organizationId)),
+      where: (record, { and, eq }) => and(eq(record.id, id), eq(record.organizationId, organizationId), eq(record.requesterId, requesterId)),
     });
     if (!session) throw new NotFoundException(`Concierge session ${id} not found`);
     return session;
@@ -241,7 +243,7 @@ export class IntakeConciergeService {
     const message = input.message?.trim();
     if (!message) throw new BadRequestException('message is required');
 
-    const session = await this.findSession(id, organizationId);
+    const session = await this.findSession(id, organizationId, requesterId);
     if (session.status !== 'draft') {
       throw new BadRequestException('Only draft concierge sessions can be updated');
     }
@@ -315,8 +317,9 @@ export class IntakeConciergeService {
     organizationId: string,
     requesterId: string,
     input: unknown,
+    access: AccessPolicy,
   ) {
-    const session = await this.findSession(id, organizationId);
+    const session = await this.findSession(id, organizationId, requesterId);
     if (session.status !== 'draft') {
       throw new BadRequestException('This concierge session has already been converted or routed');
     }
@@ -339,11 +342,12 @@ export class IntakeConciergeService {
     }
 
     if (workflow === 'requisition') {
+      requirePermission(access, 'requisitions:create');
       const requisitionInput = this.toRequisitionInput(
         session.draft as unknown as AiParsedRequisition,
         acceptedValues,
       );
-      const created = await this.requisitionsService.create(organizationId, requesterId, requisitionInput);
+      const created = await this.requisitionsService.create(organizationId, requesterId, requisitionInput, access);
       await this.db
         .update(requisitions)
         .set({ sourceType: 'concierge', updatedAt: new Date() })
@@ -366,6 +370,7 @@ export class IntakeConciergeService {
     }
 
     if (workflow === 'rfq') {
+      requirePermission(access, 'rfqs:manage');
       const rfqInput = this.toRfqInput(session.draft as unknown as AiParsedRequisition, acceptedValues, plan);
       const created = await this.rfqService.create(organizationId, requesterId, rfqInput);
       await this.markConverted(session.id, organizationId, requesterId, {

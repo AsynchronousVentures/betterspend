@@ -1,3 +1,7 @@
+import { createAccessPolicy } from '../auth/access-policy';
+const access = createAccessPolicy({ id: 'requester-1', organizationId: 'organization-1' }, [
+  { role: 'admin', customRoleId: null, scopeType: 'global', scopeId: null },
+]);
 import { IntakeConciergeService } from './intake-concierge.service';
 
 describe('IntakeConciergeService workflow links', () => {
@@ -40,13 +44,19 @@ describe('IntakeConciergeService workflow links', () => {
     );
 
     await expect(
-      service.convertSession('session-1', 'organization-1', 'requester-1', {
-        workflow: 'rfq',
-        acceptedValues: {
-          departmentId: '00000000-0000-4000-8000-000000000001',
-          supplierShortlist: ['00000000-0000-4000-8000-000000000002'],
+      service.convertSession(
+        'session-1',
+        'organization-1',
+        'requester-1',
+        {
+          workflow: 'rfq',
+          acceptedValues: {
+            departmentId: '00000000-0000-4000-8000-000000000001',
+            supplierShortlist: ['00000000-0000-4000-8000-000000000002'],
+          },
         },
-      }),
+        access,
+      ),
     ).resolves.toMatchObject({
       workflow: 'rfq',
       draftId: 'rfq-1',
@@ -95,9 +105,15 @@ describe('IntakeConciergeService workflow links', () => {
     );
 
     await expect(
-      service.convertSession('session-1', 'organization-1', 'requester-1', {
-        workflow: 'requisition',
-      }),
+      service.convertSession(
+        'session-1',
+        'organization-1',
+        'requester-1',
+        {
+          workflow: 'requisition',
+        },
+        access,
+      ),
     ).rejects.toThrow('Answer the routing questions before creating a guided draft.');
   });
 
@@ -145,15 +161,22 @@ describe('IntakeConciergeService workflow links', () => {
     );
 
     await expect(
-      service.convertSession('session-1', 'organization-1', 'requester-1', {
-        workflow: 'requisition',
-        acceptedValues: { departmentId: '00000000-0000-4000-8000-000000000001' },
-      }),
+      service.convertSession(
+        'session-1',
+        'organization-1',
+        'requester-1',
+        {
+          workflow: 'requisition',
+          acceptedValues: { departmentId: '00000000-0000-4000-8000-000000000001' },
+        },
+        access,
+      ),
     ).resolves.toMatchObject({ draftId: 'req-1', workflow: 'requisition' });
     expect(requisitionsService.create).toHaveBeenCalledWith(
       'organization-1',
       'requester-1',
       expect.objectContaining({ departmentId: '00000000-0000-4000-8000-000000000001' }),
+      access,
     );
   });
 
@@ -189,10 +212,16 @@ describe('IntakeConciergeService workflow links', () => {
     );
 
     await expect(
-      service.convertSession('session-1', 'organization-1', 'requester-1', {
-        workflow: 'rfq',
-        acceptedValues: { departmentId: '00000000-0000-4000-8000-000000000001' },
-      }),
+      service.convertSession(
+        'session-1',
+        'organization-1',
+        'requester-1',
+        {
+          workflow: 'rfq',
+          acceptedValues: { departmentId: '00000000-0000-4000-8000-000000000001' },
+        },
+        access,
+      ),
     ).rejects.toThrow('Answer the routing questions before creating a guided draft.');
   });
 
@@ -229,9 +258,15 @@ describe('IntakeConciergeService workflow links', () => {
     );
 
     await expect(
-      service.convertSession('session-1', 'organization-1', 'requester-1', {
-        acceptedValues: { departmentOrProject: {} },
-      }),
+      service.convertSession(
+        'session-1',
+        'organization-1',
+        'requester-1',
+        {
+          acceptedValues: { departmentOrProject: {} },
+        },
+        access,
+      ),
     ).rejects.toThrow('Routing answers are invalid.');
     expect(requisitionsService.create).not.toHaveBeenCalled();
   });
@@ -273,17 +308,24 @@ describe('IntakeConciergeService workflow links', () => {
       audit as never,
     );
 
-    await service.convertSession('session-1', 'organization-1', 'requester-1', {
-      acceptedValues: {
-        departmentId: '00000000-0000-4000-8000-000000000001',
-        estimatedPrice: 0.1 + 0.2,
+    await service.convertSession(
+      'session-1',
+      'organization-1',
+      'requester-1',
+      {
+        acceptedValues: {
+          departmentId: '00000000-0000-4000-8000-000000000001',
+          estimatedPrice: 0.1 + 0.2,
+        },
       },
-    });
+      access,
+    );
 
     expect(requisitionsService.create).toHaveBeenCalledWith(
       'organization-1',
       'requester-1',
       expect.objectContaining({ lines: [expect.objectContaining({ unitPrice: 0.3 })] }),
+      access,
     );
   });
 });

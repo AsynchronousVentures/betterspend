@@ -1,5 +1,7 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { CurrentAccess } from '../auth/current-access.decorator';
+import type { AccessPolicy } from '../auth/access-policy';
 import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
@@ -68,8 +70,8 @@ export class IntakeConciergeController {
 
   @Get('sessions/:id')
   @ApiOperation({ summary: 'Get a procurement concierge session' })
-  findSession(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
-    return this.conciergeService.findSession(id, orgId);
+  findSession(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
+    return this.conciergeService.findSession(id, orgId, userId);
   }
 
   @Post('sessions/:id/messages')
@@ -96,7 +98,8 @@ export class IntakeConciergeController {
       workflow?: 'requisition' | 'rfq' | 'vendor_onboarding' | 'software_license';
       acceptedValues?: Record<string, unknown>;
     },
+    @CurrentAccess() access: AccessPolicy,
   ) {
-    return this.conciergeService.convertSession(id, orgId, userId, body ?? {});
+    return this.conciergeService.convertSession(id, orgId, userId, body ?? {}, access);
   }
 }
