@@ -1,8 +1,8 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
-import { invoices, invoiceLines, matchResults } from '@betterspend/db';
+import { invoices, invoiceLines, matchResults, poLines } from '@betterspend/db';
 
 // Configurable tolerances
 const PRICE_TOLERANCE_PCT = 2; // 2% price variance allowed
@@ -52,6 +52,25 @@ export class MatchingService {
       status: string;
     }>;
   }> {
+    if (executor === this.db) {
+      return this.db.transaction((tx) => this.runMatch(invoiceId, tx));
+    }
+    // Serialize evaluations against shared PO quantities. Re-read sources after
+    // acquiring the lock so a waiting transaction sees the preceding commit.
+    // NO KEY UPDATE permits invoice-line FK key-share locks, avoiding lock
+    // upgrade deadlocks when two portal submissions insert before evaluation.
+    const source = await executor.query.invoices.findFirst({
+      where: (i, { eq }) => eq(i.id, invoiceId),
+      columns: { purchaseOrderId: true },
+    });
+    if (source?.purchaseOrderId) {
+      await executor
+        .select({ id: poLines.id })
+        .from(poLines)
+        .where(eq(poLines.purchaseOrderId, source.purchaseOrderId))
+        .orderBy(asc(poLines.id))
+        .for('no key update');
+    }
     const invoice = await executor.query.invoices.findFirst({
       where: (i, { eq }) => eq(i.id, invoiceId),
       with: {
@@ -69,10 +88,37 @@ export class MatchingService {
       return { matchStatus: 'unmatched', lineResults: [] };
     }
 
-    const po = invoice.purchaseOrder as any;
-    const poLines: any[] = po.lines ?? [];
-    const allGrnLines: any[] = (po.goodsReceipts ?? []).flatMap((g: any) => g.lines ?? []);
-    const invoiceLineIds = (invoice.lines as any[]).map((line) => line.id);
+    const po = invoice.purchaseOrder;
+    const purchaseOrderLines = po.lines;
+    const allGrnLines = po.goodsReceipts
+      .filter(
+        (receipt) =>
+          receipt.status === 'confirmed' && receipt.organizationId === invoice.organizationId,
+      )
+      .flatMap((receipt) => receipt.lines);
+    const invoiceLineIds = invoice.lines.map((line) => line.id);
+    // Include every active invoice, including sibling lines on this invoice.
+    // Other rejected, cancelled, and unsubmitted draft invoices do not consume
+    // receipts. Released invoices remain active, including ready_for_release.
+    const activeQuantities = await executor
+      .select({
+        poLineId: invoiceLines.poLineId,
+        quantity: sql<string>`sum(${invoiceLines.quantity})::text`,
+      })
+      .from(invoiceLines)
+      .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
+      .where(
+        and(
+          eq(invoices.organizationId, invoice.organizationId),
+          eq(invoices.purchaseOrderId, po.id),
+          or(
+            eq(invoices.id, invoiceId),
+            notInArray(invoices.status, ['draft', 'rejected', 'cancelled']),
+          ),
+        ),
+      )
+      .groupBy(invoiceLines.poLineId);
+    const quantities = new Map(activeQuantities.map((line) => [line.poLineId, line.quantity]));
 
     const lineResults: Array<{
       invoiceLineId: string;
@@ -87,8 +133,8 @@ export class MatchingService {
       invoicedQuantity: number;
     }> = [];
 
-    for (const invLine of invoice.lines as any[]) {
-      const poLine = poLines.find((p: any) => p.id === invLine.poLineId);
+    for (const invLine of invoice.lines) {
+      const poLine = purchaseOrderLines.find((p) => p.id === invLine.poLineId);
       if (!poLine) {
         lineResults.push({
           invoiceLineId: invLine.id,
@@ -105,45 +151,25 @@ export class MatchingService {
         continue;
       }
 
-      // Price match
-      const invoicedPrice = parseFloat(invLine.unitPrice);
-      const poPrice = parseFloat(poLine.unitPrice);
-      const priceVariance = Math.abs(invoicedPrice - poPrice);
-      const priceVariancePct = poPrice > 0 ? (priceVariance / poPrice) * 100 : 0;
-      const priceMatch = priceVariancePct <= PRICE_TOLERANCE_PCT;
-
-      // Quantity match: invoice qty vs total received for this PO line
-      const totalReceived = allGrnLines
-        .filter((gl: any) => gl.poLineId === poLine.id)
-        .reduce((sum: number, gl: any) => sum + parseFloat(gl.quantityReceived), 0);
-
-      const invoicedQty = parseFloat(invLine.quantity);
-      const qtyVariance = Math.abs(invoicedQty - totalReceived);
-      const qtyVariancePct =
-        totalReceived > 0 ? (qtyVariance / totalReceived) * 100 : invoicedQty > 0 ? 100 : 0;
-      const quantityMatch = qtyVariancePct <= QTY_TOLERANCE_PCT;
-
-      // Find the GRN line (use first matching one for FK reference)
-      const grnLine = allGrnLines.find((gl: any) => gl.poLineId === poLine.id) ?? null;
-
-      const status =
-        priceMatch && quantityMatch
-          ? 'match'
-          : priceVariancePct <= PRICE_TOLERANCE_PCT * 3 && qtyVariancePct <= QTY_TOLERANCE_PCT * 3
-            ? 'within_tolerance'
-            : 'exception';
+      const received = allGrnLines.filter((line) => line.poLineId === poLine.id);
+      const match = evaluateInvoiceQuantitiesAndPrice({
+        invoicePrice: invLine.unitPrice,
+        poPrice: poLine.unitPrice,
+        cumulativeQuantity: quantities.get(poLine.id) ?? invLine.quantity,
+        receipts: received,
+      });
+      const grnLine =
+        received.find(
+          (line) =>
+            decimalHundredths(line.quantityReceived) > decimalHundredths(line.quantityRejected),
+        ) ?? null;
 
       lineResults.push({
         invoiceLineId: invLine.id,
         poLineId: poLine.id,
-        priceMatch,
-        quantityMatch,
-        status,
-        priceVariance,
-        quantityVariance: qtyVariance,
-        variancePct: Math.max(priceVariancePct, qtyVariancePct),
+        ...match,
         grnLineId: grnLine?.id ?? null,
-        invoicedQuantity: invoicedQty,
+        invoicedQuantity: Number(invLine.quantity),
       });
     }
 
@@ -163,8 +189,12 @@ export class MatchingService {
         priceMatch: r.priceMatch,
         quantityMatch: r.quantityMatch,
         priceVariance: String(r.priceVariance),
-        quantityVariance: String(r.quantityVariance),
-        variancePct: String(r.variancePct.toFixed(2)),
+        // Cumulative quantities can exceed a single line's numeric(10,2) range.
+        // Cap only the legacy diagnostic; matching uses the full integer sum.
+        quantityVariance: String(Math.min(r.quantityVariance, 99_999_999.99)),
+        // The legacy numeric(5,2) diagnostic cannot store ratios >= 1000%.
+        // Match decisions above use uncapped integer inputs.
+        variancePct: String(Math.min(r.variancePct, 999.99).toFixed(2)),
         status: r.status,
         toleranceApplied: String(Math.max(PRICE_TOLERANCE_PCT, QTY_TOLERANCE_PCT)),
       });
@@ -191,4 +221,51 @@ export class MatchingService {
 
     return { matchStatus, lineResults };
   }
+}
+
+// Prices and quantities are numeric(..., 2) in the database. Compare integer
+// hundredths exactly, converting only display diagnostics back to numbers.
+function decimalHundredths(value: string): bigint {
+  const [whole, fraction = ''] = value.split('.');
+  return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0').slice(0, 2));
+}
+
+export function evaluateInvoiceQuantitiesAndPrice(input: {
+  invoicePrice: string;
+  poPrice: string;
+  cumulativeQuantity: string;
+  receipts: Array<{ quantityReceived: string; quantityRejected: string }>;
+}) {
+  const price = decimalHundredths(input.invoicePrice);
+  const poPrice = decimalHundredths(input.poPrice);
+  const priceDifference = price > poPrice ? price - poPrice : poPrice - price;
+  const quantity = decimalHundredths(input.cumulativeQuantity);
+  const received = input.receipts.reduce((sum, line) => {
+    const accepted =
+      decimalHundredths(line.quantityReceived) - decimalHundredths(line.quantityRejected);
+    return sum + (accepted > 0n ? accepted : 0n);
+  }, 0n);
+  // Partial invoices consume only their share of receipts. Underbilling is safe.
+  const excess = quantity > received ? quantity - received : 0n;
+  const validPrice = poPrice > 0n || price === 0n;
+  const hasReceipt = received > 0n;
+  const priceMatch = validPrice && priceDifference * 100n <= poPrice * BigInt(PRICE_TOLERANCE_PCT);
+  const quantityMatch = hasReceipt && excess * 100n <= received * BigInt(QTY_TOLERANCE_PCT);
+  const withinTolerance =
+    validPrice &&
+    hasReceipt &&
+    priceDifference * 100n <= poPrice * BigInt(PRICE_TOLERANCE_PCT * 3) &&
+    excess * 100n <= received * BigInt(QTY_TOLERANCE_PCT * 3);
+  return {
+    priceMatch,
+    quantityMatch,
+    status:
+      priceMatch && quantityMatch ? 'match' : withinTolerance ? 'within_tolerance' : 'exception',
+    priceVariance: Number(priceDifference) / 100,
+    quantityVariance: Number(excess) / 100,
+    variancePct: Math.max(
+      poPrice > 0n ? (Number(priceDifference) / Number(poPrice)) * 100 : price > 0n ? 100 : 0,
+      received > 0n ? (Number(excess) / Number(received)) * 100 : quantity > 0n ? 100 : 0,
+    ),
+  };
 }

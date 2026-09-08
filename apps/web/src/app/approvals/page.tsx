@@ -41,13 +41,26 @@ export default function ApprovalsPage() {
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retryVersion, setRetryVersion] = useState(0);
+
   useEffect(() => {
+    let current = true;
     api.approvals
-      .list()
-      .then((data) => setApprovals(Array.isArray(data) ? data : ((data as any).data ?? [])))
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+      .list(page)
+      .then((result) => {
+        if (!current) return;
+        setApprovals(result.data);
+        setHasMore(result.hasMore);
+      })
+      .catch(() => {
+        if (current) setError('Could not load approvals. Try again.');
+      })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [page, retryVersion]);
 
   return (
     <div className="space-y-6 p-4 lg:p-8">
@@ -58,7 +71,12 @@ export default function ApprovalsPage() {
 
       <Card className="overflow-hidden">
         <CardContent className="p-0">
-          {loading ? (
+          {error ? (
+            <div role="alert" className="flex items-center gap-3 p-4 text-sm">
+              <span>{error}</span>
+              <Button variant="outline" onClick={() => { setLoading(true); setError(null); setRetryVersion((value) => value + 1); }}>Retry</Button>
+            </div>
+          ) : loading ? (
             <div className="flex min-h-[260px] items-center justify-center text-sm text-muted-foreground">
               Loading approvals...
             </div>
@@ -236,6 +254,11 @@ export default function ApprovalsPage() {
           )}
         </CardContent>
       </Card>
+      <div className="flex items-center justify-between gap-3">
+        <Button variant="outline" disabled={loading || page === 1} onClick={() => { setLoading(true); setError(null); setPage((value) => value - 1); }}>Previous</Button>
+        <span className="text-sm" aria-live="polite">Page {page}</span>
+        <Button variant="outline" disabled={loading || !!error || !hasMore} onClick={() => { setLoading(true); setError(null); setPage((value) => value + 1); }}>Next</Button>
+      </div>
     </div>
   );
 }

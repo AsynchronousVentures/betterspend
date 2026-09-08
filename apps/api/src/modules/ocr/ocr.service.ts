@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Inject, NotFoundException, Logger } fr
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { and, eq, inArray } from 'drizzle-orm';
+import { TERMINAL_JOB_RETENTION } from '../../common/queue/terminal-job-retention';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db } from '@betterspend/db';
 import { invoices, ocrJobs } from '@betterspend/db';
@@ -123,6 +124,7 @@ export class OcrService {
       'extract',
       { jobId: job.id },
       {
+        ...TERMINAL_JOB_RETENTION,
         attempts: 3,
         backoff: { type: 'exponential', delay: 2000 },
       },
