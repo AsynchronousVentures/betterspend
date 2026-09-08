@@ -1,11 +1,9 @@
 import { Injectable, Inject, BadRequestException } from '@nestjs/common';
 import { sql, type SQL } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import type * as schema from '@betterspend/db';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { Db } from '@betterspend/db';
 import { globalOnlyPredicate, scopePredicate, type ScopeConstraint } from '../auth/scope-sql';
-
-type Db = NodePgDatabase<typeof schema>;
 
 export interface ExportQuery {
   from?: string;
@@ -310,12 +308,18 @@ export class ExportService {
     const normalized = this.normalizeQuery(query);
     const { page, limit } = normalized;
     const source = this.source(type, organizationId, normalized, scope);
-    const [data, totals] = await Promise.all([
-      this.db.execute(
-        sql`${source.query} ORDER BY ${source.order} LIMIT ${limit} OFFSET ${(page - 1) * limit}`,
-      ),
-      this.db.execute(sql`SELECT COUNT(*)::int AS total FROM (${source.query}) export_rows`),
-    ]);
+    const [data, totals] = await this.db.transaction(
+      async (tx) => {
+        const data = await tx.execute(
+          sql`${source.query} ORDER BY ${source.order} LIMIT ${limit} OFFSET ${(page - 1) * limit}`,
+        );
+        const totals = await tx.execute(
+          sql`SELECT COUNT(*)::int AS total FROM (${source.query}) export_rows`,
+        );
+        return [data, totals];
+      },
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
     const total = Number((totals as unknown as { total: number }[])[0]?.total ?? 0);
     return {
       data: data as unknown as Record<string, unknown>[],
@@ -334,15 +338,19 @@ export class ExportService {
   ) {
     const source = this.source(type, organizationId, this.normalizeQuery(query), scope);
     yield this.buildCsvForType(type, []) + '\n';
-    const batchSize = 1000;
-    for (let offset = 0; ; offset += batchSize) {
-      const rows = (await this.db.execute(
-        sql`${source.query} ORDER BY ${source.order} LIMIT ${batchSize} OFFSET ${offset}`,
-      )) as unknown as Record<string, unknown>[];
-      if (!rows.length) return;
+    // One portal keeps a single SELECT snapshot across batches. Iterator return closes
+    // the portal when the response pipeline stops consuming after a disconnect.
+    const statement = new PgDialect().sqlToQuery(sql`${source.query} ORDER BY ${source.order}`);
+    const parameters = statement.params.map((value: unknown) =>
+      value instanceof Date ? value.toISOString() : value,
+    ) as Parameters<Db['$client']['unsafe']>[1];
+    const cursor = this.db.$client
+      .unsafe<Record<string, unknown>[]>(statement.sql, parameters)
+      .cursor(1000);
+    for await (const rows of cursor) {
+      if (!rows.length) continue;
       const csv = this.buildCsvForType(type, rows);
       yield csv.slice(csv.indexOf('\n') + 1) + '\n';
-      if (rows.length < batchSize) return;
     }
   }
 }

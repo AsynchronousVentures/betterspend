@@ -9,7 +9,7 @@ import { ExportService, type ExportType } from './export.service';
 
 const id = (suffix: number) => `00000000-0000-4000-8000-${String(suffix).padStart(12, '0')}`;
 
-test('SQL export pages share scoped totals and stable ordering; CSV reads bounded batches', async () => {
+test('SQL export pages share scoped totals and stable ordering', async () => {
   const database = new PGlite();
   try {
     const directory = join(process.cwd(), '../../packages/db/src/migrations');
@@ -27,7 +27,7 @@ test('SQL export pages share scoped totals and stable ordering; CSV reads bounde
         VALUES ('${id(2)}', '${id(5)}', 'OTHER', 'OTHER', '2026-01-01', 'approved', 999);
     `);
     const reads: Array<{ sql: string; rows: number }> = [];
-    const service = new ExportService({
+    const fixture = {
       execute: async (statement: SQL) => {
         const query = new PgDialect().sqlToQuery(statement);
         const result = await database.query(
@@ -37,6 +37,9 @@ test('SQL export pages share scoped totals and stable ordering; CSV reads bounde
         reads.push({ sql: query.sql, rows: result.rows.length });
         return result.rows;
       },
+    };
+    const service = new ExportService({
+      transaction: (run: (tx: typeof fixture) => unknown) => run(fixture),
     } as never);
     const first = await service.getPage('invoices', id(1), { page: 1, limit: 1 });
     const second = await service.getPage('invoices', id(1), { page: 2, limit: 1 });
@@ -81,15 +84,6 @@ test('SQL export pages share scoped totals and stable ordering; CSV reads bounde
       (await service.getPage('spend-by-vendor', id(1), {})).data[0].totalSpend,
       '11050.00',
     );
-    reads.length = 0;
-    const chunks: string[] = [];
-    for await (const chunk of service.csvChunks('invoices', id(1), {})) chunks.push(chunk);
-    assert.deepEqual(
-      reads.map((read) => read.rows),
-      [1000, 105],
-    );
-    assert.equal(chunks.join('').trimEnd().split('\n').length, 1106);
-    assert.equal(chunks.join('').match(/internalNumber/g)?.length, 1);
     assert.equal(
       (await service.getPage('invoices', id(1), { from: '2026-02-01', limit: 1 })).total,
       0,

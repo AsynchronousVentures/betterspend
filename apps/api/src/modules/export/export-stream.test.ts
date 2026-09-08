@@ -51,3 +51,39 @@ test('CSV responses honor writable backpressure instead of consuming the whole p
   assert.equal(produced, 1000);
   assert.equal(output, 'row\n'.repeat(1000));
 });
+
+test('a disconnected CSV response closes the producer', async () => {
+  let closed = false;
+  const response = Object.assign(
+    new Writable({
+      highWaterMark: 1,
+      write(_chunk, _encoding, callback) {
+        callback(new Error('client disconnected'));
+      },
+    }),
+    { setHeader: () => undefined },
+  );
+  const controller = new ExportController({
+    normalizeQuery: (query: ExportQuery) => query,
+    async *csvChunks() {
+      try {
+        for (let i = 0; i < 1000; i++) yield 'row\n';
+      } finally {
+        closed = true;
+      }
+    },
+  } as never);
+  await assert.rejects(
+    controller.exportInvoices(
+      'org',
+      undefined,
+      undefined,
+      'csv',
+      undefined,
+      undefined,
+      response as never,
+    ),
+    /client disconnected/,
+  );
+  assert.equal(closed, true);
+});
