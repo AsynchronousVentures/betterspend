@@ -62,6 +62,13 @@ export function pendingApprovalQuery(
     WHERE ar.organization_id = ${organizationId} AND ar.status = 'pending'
       AND ${permission}
       AND (
+        (ar.definition_version_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM workflow_approval_assignments wa
+          WHERE wa.organization_id = ar.organization_id
+            AND wa.approval_request_id = ar.id AND wa.node_id = ar.current_node_id
+            AND wa.status = 'pending' AND wa.assigned_approver_id = ${actorId}
+        ))
+        OR (ar.definition_version_id IS NULL AND (
         ar.required_approver_id = ${actorId} OR step.approver_id = ${actorId}
         OR ar.required_approver_id IN (SELECT delegator_id FROM active_delegators)
         OR step.approver_id IN (SELECT delegator_id FROM active_delegators)
@@ -79,6 +86,7 @@ export function pendingApprovalQuery(
               ))
             )
         )
+        ))
       )
     ORDER BY ar.created_at, ar.id
     LIMIT ${limit + 1} OFFSET ${(page - 1) * limit}

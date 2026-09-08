@@ -156,6 +156,51 @@ test('pending selection applies direct, role, department-head and delegation eli
       (await engine.getRequest(id(86), id(1), id(12), access)).entitySummary.entityId,
       id(80),
     );
+    // Versioned runtime assignments are persisted snapshots, including delegation decisions.
+    await database.exec(`
+      INSERT INTO workflow_definitions (id, organization_id, domain, name, current_draft, created_by, updated_by)
+        VALUES ('${id(90)}', '${id(1)}', 'invoice', 'Versioned', '{}', '${id(10)}', '${id(10)}');
+      INSERT INTO workflow_definition_versions (id, definition_id, organization_id, version, graph_json, executable_json, published_by)
+        VALUES ('${id(91)}', '${id(90)}', '${id(1)}', 1, '{}', '{}', '${id(10)}');
+      INSERT INTO approval_requests (id, organization_id, approvable_type, approvable_id, approval_rule_id, required_approver_id, definition_version_id, current_node_id, current_step, status)
+        VALUES ('${id(92)}', '${id(1)}', 'invoice', '${id(83)}', '${id(40)}', '${id(10)}', '${id(91)}', 'current', 1, 'pending');
+      INSERT INTO workflow_approval_assignments (organization_id, approval_request_id, node_id, sequence, resolver, resolved_approver_id, assigned_approver_id, status)
+        VALUES ('${id(1)}', '${id(92)}', 'current', 1, '{}', '${id(10)}', '${id(13)}', 'pending'),
+          ('${id(1)}', '${id(92)}', 'old', 1, '{}', '${id(12)}', '${id(12)}', 'pending');
+      INSERT INTO users (id, organization_id, name, email) VALUES ('${id(14)}', '${id(2)}', 'Foreign', 'foreign@test.example');
+    `);
+    const assignedPage = await engine.listPending(id(1), id(13), access);
+    assert.deepEqual(
+      assignedPage.data.map((row) => row.id),
+      [id(92)],
+    );
+    assert.deepEqual(
+      await query(10, 1, 50, [id(80)]),
+      [],
+      'Legacy owner/rule assignment cannot authorize a versioned request',
+    );
+    assert.deepEqual(
+      (await query(12, 1, 50, [id(80)])).map((row) => row.id),
+      [id(86)],
+      'An assignment on another node is not active',
+    );
+    assert.deepEqual(await query(13, 1, 50, []), []);
+    assert.deepEqual((await engine.listPending(id(2), id(13))).data, []);
+    assert.deepEqual((await engine.listPending(id(1), id(14))).data, []);
+    for (const status of ['waiting', 'approved', 'rejected', 'skipped']) {
+      await database.exec(
+        `UPDATE workflow_approval_assignments SET status = '${status}' WHERE approval_request_id = '${id(92)}' AND node_id = 'current'`,
+      );
+      assert.deepEqual(
+        await query(13, 1, 50, [id(80)]),
+        [],
+        `Assignment status ${status} must not enter the pending queue`,
+      );
+    }
+    await database.exec(
+      `UPDATE workflow_approval_assignments SET status = 'pending' WHERE approval_request_id = '${id(92)}' AND node_id = 'current'; UPDATE approval_requests SET status = 'approved' WHERE id = '${id(92)}'`,
+    );
+    assert.deepEqual(await query(13, 1, 50, [id(80)]), []);
   } finally {
     await database.close();
   }
