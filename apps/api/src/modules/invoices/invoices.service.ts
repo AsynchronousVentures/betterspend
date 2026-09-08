@@ -1682,7 +1682,11 @@ export class InvoicesService {
     return weeks;
   }
 
-  async getEarlyPaymentOpportunities(organizationId: string, access?: AccessPolicy) {
+  async getEarlyPaymentOpportunities(
+    organizationId: string,
+    access?: AccessPolicy,
+    entityId?: string,
+  ) {
     requireAnyPermission(access, ['invoices:view_all', 'payments:view']);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -1693,6 +1697,7 @@ export class InvoicesService {
       where: (i, { and, eq, isNull, ne }) =>
         and(
           eq(i.organizationId, organizationId),
+          entityId ? eq(i.entityId, entityId) : undefined,
           isNull(i.paidAt),
           ne(i.status, 'paid'),
           invoiceReportScopePredicate(access, organizationId),

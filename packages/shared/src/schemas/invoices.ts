@@ -70,6 +70,7 @@ export const invoiceListQuerySchema = z.object({
       'partial_match',
       'exception',
       'approved',
+      'ready_for_release',
       'paid',
       'cancelled',
     ])

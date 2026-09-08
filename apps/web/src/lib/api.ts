@@ -482,7 +482,7 @@ const invoicesApi = {
   cashFlowForecast: () => apiFetch<InvoiceCashFlowWeek[]>('/invoices/cash-flow-forecast'),
   earlyPaymentOpportunities: () =>
     apiFetch<Array<InvoiceRecord & { vendor: { id: string; name: string } | null }>>(
-      '/invoices/early-payment-opportunities',
+      appendEntityId('/invoices/early-payment-opportunities'),
     ),
 } satisfies InvoicesApi;
 

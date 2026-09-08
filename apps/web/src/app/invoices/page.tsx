@@ -224,6 +224,7 @@ export default function InvoicesPage() {
               <option value="exception">Exception</option>
               <option value="pending_approval">Pending Approval</option>
               <option value="approved">Approved</option>
+              <option value="ready_for_release">Ready for Release</option>
               <option value="paid">Paid</option>
             </Select>
             <Button variant="outline" onClick={handleExportCsv} disabled={exporting}>

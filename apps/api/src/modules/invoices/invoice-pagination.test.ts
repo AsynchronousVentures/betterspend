@@ -32,6 +32,7 @@ const access: AccessPolicy = {
 test('validates bounded invoice page parameters', () => {
   assert.equal(invoiceListQuerySchema.parse({}).limit, 50);
   assert.equal(invoiceListQuerySchema.safeParse({ status: 'pending_approval' }).success, true);
+  assert.equal(invoiceListQuerySchema.safeParse({ status: 'ready_for_release' }).success, true);
   for (const query of [
     { limit: 0 },
     { limit: 101 },
@@ -106,6 +107,12 @@ test('paginates real scoped SQL across matching timestamps and server filters', 
       }
     }
     assert.equal(seen.size, 122);
+    await database.query("UPDATE invoices SET status = 'ready_for_release' WHERE status = 'paid'");
+    assert.equal(
+      (await service.findAll(org, { status: 'ready_for_release' }, access)).items.length,
+      1,
+    );
+    await database.query("UPDATE invoices SET status = 'paid' WHERE status = 'ready_for_release'");
     assert.equal((await service.findAll(org, { entityId: other }, access)).items.length, 0);
     assert.equal((await service.findAll(org, { page: 4 }, access)).hasMore, false);
     assert.equal((await service.findAll(org, { status: 'paid' }, access)).items.length, 1);
@@ -198,6 +205,54 @@ test('aging sums persisted numeric(14,2) amounts exactly in current and overdue 
     assert.deepEqual(report.dueIn7Days, expected);
     assert.deepEqual(report.current, expected);
     assert.deepEqual(report.days_31_60, expected);
+  } finally {
+    await database.close();
+  }
+});
+
+test('early payment opportunities intersect selected entity and access scopes', async () => {
+  const database = new PGlite();
+  try {
+    await database.exec(`CREATE TABLE invoices (
+      id uuid, organization_id uuid, entity_id uuid, status text, paid_at timestamptz
+    )`);
+    await database.query(
+      "INSERT INTO invoices VALUES ($1,$2,$3,'matched',NULL),($2,$2,$1,'matched',NULL),($3,$1,$3,'matched',NULL)",
+      [other, org, entity],
+    );
+    const db = {
+      query: {
+        invoices: {
+          findMany: async (config: {
+            where: (
+              table: typeof invoices,
+              operators: { and: typeof and; eq: typeof eq; ne: typeof ne; isNull: typeof isNull },
+            ) => SQL;
+          }) => {
+            const statement = new PgDialect().sqlToQuery(
+              sql`SELECT id FROM invoices WHERE ${config.where(invoices, { and, eq, ne, isNull })}`,
+            );
+            const result = await database.query<{ id: string }>(statement.sql, statement.params);
+            return result.rows.map((row) => ({
+              ...row,
+              earlyPaymentDiscountBy: new Date(),
+              earlyPaymentDiscountPercent: '2.00',
+            }));
+          },
+        },
+      },
+    };
+    const service = Object.assign(Object.create(InvoicesService.prototype), {
+      db,
+    }) as InvoicesService;
+    const unrestricted = {
+      ...access,
+      scopeFor: () => ({ ...access.scopeFor('invoice', 'invoices:view_all'), unrestricted: true }),
+    };
+    assert.equal((await service.getEarlyPaymentOpportunities(org, unrestricted)).length, 2);
+    assert.equal((await service.getEarlyPaymentOpportunities(org, unrestricted, entity)).length, 1);
+    assert.equal((await service.getEarlyPaymentOpportunities(org, access, other)).length, 0);
+    assert.equal((await service.getEarlyPaymentOpportunities(org, access, entity)).length, 1);
   } finally {
     await database.close();
   }

@@ -477,3 +477,34 @@ test('risk screening lists accept migrated demo vendor UUIDs', async () => {
 
   assert.deepEqual(result, vendors);
 });
+
+test('invoice pages and both AP aging KPI requests carry the selected entity', async () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const entityId = '00000000-0000-4000-8000-000000000002';
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      localStorage: {
+        getItem: (key: string) => (key === 'betterspend:selected-entity-id' ? entityId : null),
+      },
+    },
+  });
+  try {
+    for (const call of [
+      () => api.invoices.list({ page: 2, limit: 50, status: 'ready_for_release' }),
+      () => api.invoices.aging(),
+      () => api.invoices.earlyPaymentOpportunities(),
+    ]) {
+      const { request } = await runWithMockedRequest<unknown>(jsonResponse([]), call);
+      const url = new URL(String(request.input), 'https://example.test');
+      assert.equal(url.searchParams.get('entityId'), entityId);
+      if (url.pathname.endsWith('/invoices')) {
+        assert.equal(url.searchParams.get('page'), '2');
+        assert.equal(url.searchParams.get('status'), 'ready_for_release');
+      }
+    }
+  } finally {
+    if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+    else Reflect.deleteProperty(globalThis, 'window');
+  }
+});

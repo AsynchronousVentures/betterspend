@@ -61,8 +61,13 @@ export class InvoicesController {
   getEarlyPaymentOpportunities(
     @CurrentOrgId() orgId: string,
     @CurrentAccess() access?: AccessPolicy,
+    @Query('entityId') entityId?: string,
   ) {
-    return this.invoicesService.getEarlyPaymentOpportunities(orgId, access);
+    return this.invoicesService.getEarlyPaymentOpportunities(
+      orgId,
+      access,
+      invoiceListQuerySchema.shape.entityId.parse(entityId),
+    );
   }
 
   @Get(':id')
