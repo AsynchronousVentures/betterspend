@@ -43,7 +43,7 @@ This path runs PostgreSQL, Redis, and MinIO in Docker while the API and web app 
 ### Prerequisites
 
 - Docker Engine with the Docker Compose plugin
-- Node.js 22
+- Node.js 24
 - pnpm 10.15.1, as pinned by `packageManager` in `package.json`
 - OpenSSL, used to generate local encryption keys
 

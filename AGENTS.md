@@ -11,7 +11,7 @@ BetterSpend is a single-tenant, open-source **Purchase Order Management** system
 ### Prerequisites
 
 - Docker & Docker Compose
-- Node.js 22
+- Node.js 24
 - pnpm (`wget -qO- https://get.pnpm.io/install.sh | bash`)
 
 ### Environment
