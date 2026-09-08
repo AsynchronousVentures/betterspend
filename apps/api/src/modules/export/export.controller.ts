@@ -1,7 +1,9 @@
 import { Controller, Get, Query, Res } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { Response } from 'express';
-import { ExportService } from './export.service';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { ExportService, type ExportType, type ExportQuery } from './export.service';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentAccess } from '../auth/current-access.decorator';
 import type { AccessPolicy } from '../auth/access-policy';
@@ -24,18 +26,25 @@ export class ExportController {
 
   private async handleExport(
     res: Response,
-    type: string,
-    rows: Record<string, unknown>[],
+    type: ExportType,
+    orgId: string,
+    query: ExportQuery,
     format: string | undefined,
+    access?: AccessPolicy,
   ) {
+    const scope = this.reportExportScope(access);
+    const normalized = this.exportService.normalizeQuery(query);
     if (format === 'csv') {
-      const csv = this.exportService.buildCsvForType(type, rows);
       const date = new Date().toISOString().split('T')[0];
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="export-${type}-${date}.csv"`);
-      return res.send(csv);
+      await pipeline(
+        Readable.from(this.exportService.csvChunks(type, orgId, normalized, scope)),
+        res,
+      );
+      return;
     }
-    return res.json(rows);
+    return res.json(await this.exportService.getPage(type, orgId, normalized, scope));
   }
 
   @Get('purchase-orders')
@@ -55,17 +64,19 @@ export class ExportController {
     @Res() res?: Response,
     @CurrentAccess() access?: AccessPolicy,
   ) {
-    const rows = await this.exportService.getPurchaseOrders(
+    return this.handleExport(
+      res!,
+      'purchase-orders',
       orgId,
-      { from, to },
-      this.reportExportScope(access),
+      {
+        from,
+        to,
+        page: format === 'csv' || page === undefined ? undefined : Number(page),
+        limit: format === 'csv' || limit === undefined ? undefined : Number(limit),
+      },
+      format,
+      access,
     );
-    if (format === 'csv') {
-      return this.handleExport(res!, 'purchase-orders', rows, format);
-    }
-    const p = parseInt(page ?? '1', 10);
-    const l = parseInt(limit ?? '500', 10);
-    return res!.json(this.exportService.paginateRows(rows, p, l));
   }
 
   @Get('invoices')
@@ -85,17 +96,19 @@ export class ExportController {
     @Res() res?: Response,
     @CurrentAccess() access?: AccessPolicy,
   ) {
-    const rows = await this.exportService.getInvoices(
+    return this.handleExport(
+      res!,
+      'invoices',
       orgId,
-      { from, to },
-      this.reportExportScope(access),
+      {
+        from,
+        to,
+        page: format === 'csv' || page === undefined ? undefined : Number(page),
+        limit: format === 'csv' || limit === undefined ? undefined : Number(limit),
+      },
+      format,
+      access,
     );
-    if (format === 'csv') {
-      return this.handleExport(res!, 'invoices', rows, format);
-    }
-    const p = parseInt(page ?? '1', 10);
-    const l = parseInt(limit ?? '500', 10);
-    return res!.json(this.exportService.paginateRows(rows, p, l));
   }
 
   @Get('budgets')
@@ -115,17 +128,19 @@ export class ExportController {
     @Res() res?: Response,
     @CurrentAccess() access?: AccessPolicy,
   ) {
-    const rows = await this.exportService.getBudgets(
+    return this.handleExport(
+      res!,
+      'budgets',
       orgId,
-      { from, to },
-      this.reportExportScope(access),
+      {
+        from,
+        to,
+        page: format === 'csv' || page === undefined ? undefined : Number(page),
+        limit: format === 'csv' || limit === undefined ? undefined : Number(limit),
+      },
+      format,
+      access,
     );
-    if (format === 'csv') {
-      return this.handleExport(res!, 'budgets', rows, format);
-    }
-    const p = parseInt(page ?? '1', 10);
-    const l = parseInt(limit ?? '500', 10);
-    return res!.json(this.exportService.paginateRows(rows, p, l));
   }
 
   @Get('audit-log')
@@ -145,17 +160,19 @@ export class ExportController {
     @Res() res?: Response,
     @CurrentAccess() access?: AccessPolicy,
   ) {
-    const rows = await this.exportService.getAuditLog(
+    return this.handleExport(
+      res!,
+      'audit-log',
       orgId,
-      { from, to },
-      this.reportExportScope(access),
+      {
+        from,
+        to,
+        page: format === 'csv' || page === undefined ? undefined : Number(page),
+        limit: format === 'csv' || limit === undefined ? undefined : Number(limit),
+      },
+      format,
+      access,
     );
-    if (format === 'csv') {
-      return this.handleExport(res!, 'audit-log', rows, format);
-    }
-    const p = parseInt(page ?? '1', 10);
-    const l = parseInt(limit ?? '500', 10);
-    return res!.json(this.exportService.paginateRows(rows, p, l));
   }
 
   @Get('spend-by-vendor')
@@ -175,17 +192,19 @@ export class ExportController {
     @Res() res?: Response,
     @CurrentAccess() access?: AccessPolicy,
   ) {
-    const rows = await this.exportService.getSpendByVendor(
+    return this.handleExport(
+      res!,
+      'spend-by-vendor',
       orgId,
-      { from, to },
-      this.reportExportScope(access),
+      {
+        from,
+        to,
+        page: format === 'csv' || page === undefined ? undefined : Number(page),
+        limit: format === 'csv' || limit === undefined ? undefined : Number(limit),
+      },
+      format,
+      access,
     );
-    if (format === 'csv') {
-      return this.handleExport(res!, 'spend-by-vendor', rows, format);
-    }
-    const p = parseInt(page ?? '1', 10);
-    const l = parseInt(limit ?? '500', 10);
-    return res!.json(this.exportService.paginateRows(rows, p, l));
   }
 
   @Get('spend-by-category')
@@ -205,16 +224,18 @@ export class ExportController {
     @Res() res?: Response,
     @CurrentAccess() access?: AccessPolicy,
   ) {
-    const rows = await this.exportService.getSpendByCategory(
+    return this.handleExport(
+      res!,
+      'spend-by-category',
       orgId,
-      { from, to },
-      this.reportExportScope(access),
+      {
+        from,
+        to,
+        page: format === 'csv' || page === undefined ? undefined : Number(page),
+        limit: format === 'csv' || limit === undefined ? undefined : Number(limit),
+      },
+      format,
+      access,
     );
-    if (format === 'csv') {
-      return this.handleExport(res!, 'spend-by-category', rows, format);
-    }
-    const p = parseInt(page ?? '1', 10);
-    const l = parseInt(limit ?? '500', 10);
-    return res!.json(this.exportService.paginateRows(rows, p, l));
   }
 }
