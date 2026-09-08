@@ -13,7 +13,7 @@ import {
   type WorkflowDraftLease,
   type WorkflowDraftLeaseStatus,
 } from '@betterspend/shared';
-import { getRedisConnection } from '../../common/queue/queue.module';
+import { getRedisConnection } from '../../common/redis-connection';
 
 export const WORKFLOW_DRAFT_LEASE_TTL_MS = 60_000;
 export const WORKFLOW_DRAFT_LEASE_REDIS = Symbol('WORKFLOW_DRAFT_LEASE_REDIS');
