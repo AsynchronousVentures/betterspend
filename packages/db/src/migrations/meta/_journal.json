@@ -512,6 +512,13 @@
       "when": 1788822732726,
       "tag": "20260907231212_invoice_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1788831545552,
+      "tag": "20260908013905_invoice_list_seek",
+      "breakpoints": true
     }
   ]
 }
