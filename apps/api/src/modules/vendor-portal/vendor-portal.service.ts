@@ -1,4 +1,6 @@
+import { rethrowInvoiceIdentityConflict } from '../invoices/invoice-identity';
 import {
+  ConflictException,
   Injectable,
   Inject,
   NotFoundException,
@@ -291,14 +293,14 @@ export class VendorPortalService {
         ),
     });
     if (duplicate) {
-      throw new ForbiddenException(
+      throw new ConflictException(
         `Invoice number ${data.invoiceNumber} already exists for this vendor`,
       );
     }
 
     const subtotal = data.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
 
-    const invoiceId = await this.db.transaction(async (tx) => {
+    const creating = this.db.transaction(async (tx) => {
       const internalNumber = await this.sequenceService.next(orgId, 'invoice', tx);
       const [inv] = await tx
         .insert(invoices)
@@ -338,6 +340,7 @@ export class VendorPortalService {
       return inv.id;
     });
 
+    const invoiceId = await creating.catch(rethrowInvoiceIdentityConflict);
     return this.db.query.invoices.findFirst({
       where: (i, { eq }) => eq(i.id, invoiceId),
       with: { lines: true },

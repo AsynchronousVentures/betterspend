@@ -1,5 +1,5 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { and, eq, sql, type SQL } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { AccessPolicy } from '../auth/access-policy';
 import { scopedEntityPredicate } from '../auth/operational-access';
@@ -11,10 +11,10 @@ export interface ScorecardDatabase {
 export interface ScorecardSummary {
   vendorId: string;
   vendorName: string;
-  overallScore: number;
-  deliveryScore: number;
-  qualityScore: number;
-  priceScore: number;
+  overallScore: number | null;
+  deliveryScore: number | null;
+  qualityScore: number | null;
+  priceScore: number | null;
   invoiceAccuracyScore: number;
   totalPos: number;
   totalInvoices: number;
@@ -29,10 +29,10 @@ export interface ScorecardDetail {
     status: string;
   };
   scores: {
-    overallScore: number;
-    deliveryScore: number;
-    qualityScore: number;
-    priceScore: number;
+    overallScore: number | null;
+    deliveryScore: number | null;
+    qualityScore: number | null;
+    priceScore: number | null;
     invoiceAccuracyScore: number;
     totalPos: number;
     totalInvoices: number;
@@ -40,7 +40,7 @@ export interface ScorecardDetail {
   trend: Array<{
     month: string;
     invoiceAccuracy: number;
-    priceScore: number;
+    priceScore: number | null;
   }>;
   recentPos: Array<{
     id: string;
@@ -60,17 +60,6 @@ export interface ScorecardDetail {
   }>;
 }
 
-function computeOverallScore(
-  deliveryScore: number,
-  invoiceAccuracyScore: number,
-  priceScore: number,
-  qualityScore: number,
-): number {
-  return Math.round(
-    deliveryScore * 0.3 + invoiceAccuracyScore * 0.3 + priceScore * 0.25 + qualityScore * 0.15,
-  );
-}
-
 @Injectable()
 export class SupplierScorecardService {
   constructor(@Inject(DB_TOKEN) private readonly db: ScorecardDatabase) {}
@@ -81,7 +70,7 @@ export class SupplierScorecardService {
     access?: AccessPolicy,
   ): Promise<ScorecardSummary[]> {
     const vendorScope =
-      scopedEntityPredicate(access, 'vendor', 'vendors:view', sql.raw('v.entity_id')) ?? sql``;
+      scopedEntityPredicate(access, 'vendor', 'vendors:view', sql.raw('v.entity_id')) ?? sql`true`;
     const rows = await this.db.execute(sql`
       WITH vendor_pos AS (
         SELECT
@@ -111,34 +100,21 @@ export class SupplierScorecardService {
         WHERE i.organization_id = ${organizationId}
         GROUP BY i.vendor_id
       ),
-      vendor_delivery AS (
-        SELECT
-          gr.vendor_id,
-          COALESCE(
-            ROUND(
-              COUNT(DISTINCT CASE WHEN gr.received_at::date <= po.expected_delivery_date THEN gr.id END)::numeric
-              / NULLIF(COUNT(DISTINCT gr.id), 0) * 100, 1
-            ), 100
-          )                                                                  AS delivery_score
-        FROM goods_receipts gr
-        JOIN purchase_orders po ON po.id = gr.purchase_order_id
-        WHERE gr.organization_id = ${organizationId}
-          AND po.expected_delivery_date IS NOT NULL
-        GROUP BY gr.vendor_id
-      ),
       vendor_price AS (
         SELECT
-          mr.vendor_id,
-          COALESCE(
-            GREATEST(
-              0,
-              100 - ROUND(AVG(ABS(mr.price_variance_pct::numeric)) * 10, 1)
-            ), 100
-          )                                                                  AS price_score
+          i.vendor_id,
+          CASE WHEN COUNT(NULLIF(pl.unit_price, 0)) > 0 THEN
+            GREATEST(0, 100 - ROUND(
+              AVG(ABS(mr.price_variance::numeric / NULLIF(pl.unit_price, 0) * 100)) * 10, 1
+            ))
+          END AS price_score
         FROM match_results mr
-        WHERE mr.organization_id = ${organizationId}
-          AND mr.price_variance_pct IS NOT NULL
-        GROUP BY mr.vendor_id
+        JOIN invoice_lines il ON il.id = mr.invoice_line_id
+        JOIN invoices i ON i.id = il.invoice_id
+        JOIN po_lines pl ON pl.id = mr.po_line_id
+        WHERE i.organization_id = ${organizationId}
+          AND pl.unit_price > 0
+        GROUP BY i.vendor_id
       )
       SELECT
         vp.vendor_id                                  AS "vendorId",
@@ -146,20 +122,14 @@ export class SupplierScorecardService {
         COALESCE(vi.total_invoices, 0)                AS "totalInvoices",
         vp.total_pos                                  AS "totalPos",
         COALESCE(vi.invoice_accuracy_score, 0)::int   AS "invoiceAccuracyScore",
-        COALESCE(vd.delivery_score, 100)::int         AS "deliveryScore",
-        85::int                                       AS "qualityScore",
-        COALESCE(vpr.price_score, 100)::int           AS "priceScore"
+        NULL::int AS "deliveryScore",
+        NULL::int AS "qualityScore",
+        vpr.price_score::int AS "priceScore"
       FROM vendor_pos vp
       LEFT JOIN vendor_invoices vi  ON vi.vendor_id  = vp.vendor_id
-      LEFT JOIN vendor_delivery vd  ON vd.vendor_id  = vp.vendor_id
       LEFT JOIN vendor_price    vpr ON vpr.vendor_id = vp.vendor_id
       WHERE vp.total_pos > 0 OR COALESCE(vi.total_invoices, 0) > 0
-      ORDER BY (
-        COALESCE(vd.delivery_score, 100) * 0.3 +
-        COALESCE(vi.invoice_accuracy_score, 0) * 0.3 +
-        COALESCE(vpr.price_score, 100) * 0.25 +
-        85 * 0.15
-      ) DESC
+      ORDER BY vp.vendor_name, vp.vendor_id
       LIMIT ${limit}
     `);
 
@@ -168,16 +138,11 @@ export class SupplierScorecardService {
       vendorName: r.vendorName,
       totalInvoices: Number(r.totalInvoices),
       totalPos: Number(r.totalPos),
-      deliveryScore: Number(r.deliveryScore),
-      qualityScore: Number(r.qualityScore),
-      priceScore: Number(r.priceScore),
+      deliveryScore: null,
+      qualityScore: null,
+      priceScore: r.priceScore == null ? null : Number(r.priceScore),
       invoiceAccuracyScore: Number(r.invoiceAccuracyScore),
-      overallScore: computeOverallScore(
-        Number(r.deliveryScore),
-        Number(r.invoiceAccuracyScore),
-        Number(r.priceScore),
-        Number(r.qualityScore),
-      ),
+      overallScore: null,
     }));
   }
 
@@ -192,7 +157,7 @@ export class SupplierScorecardService {
       scopedEntityPredicate(access, 'vendor', 'vendors:view', sql.raw('v.entity_id')) ?? sql`true`;
     // Vendor info
     const vendorRows = await this.db.execute(sql`
-      SELECT id, name, email, phone, status
+      SELECT id, name, contact_info->>'email' AS email, contact_info->>'phone' AS phone, status
       FROM vendors
       WHERE id = ${vendorId} AND organization_id = ${organizationId}
         AND ${vendorScope}
@@ -206,7 +171,7 @@ export class SupplierScorecardService {
     const vendor = (vendorRows as any[])[0];
 
     // Scores
-    const [invoiceRows, deliveryRows, priceRows, poCountRows, invoiceCountRows] = await Promise.all(
+    const [invoiceRows, priceRows, poCountRows, invoiceCountRows] = await Promise.all(
       [
         // Invoice accuracy
         this.db.execute(sql`
@@ -226,41 +191,24 @@ export class SupplierScorecardService {
           AND i.vendor_id = ${vendorId}
           AND ${relatedVendorScope}
       `),
-        // Delivery score
-        this.db.execute(sql`
-        SELECT
-          COALESCE(
-            ROUND(
-              COUNT(DISTINCT CASE WHEN gr.received_at::date <= po.expected_delivery_date THEN gr.id END)::numeric
-              / NULLIF(COUNT(DISTINCT gr.id), 0) * 100, 1
-            ), 100
-          ) AS delivery_score
-        FROM goods_receipts gr
-        JOIN purchase_orders po ON po.id = gr.purchase_order_id
-        JOIN vendors v
-          ON v.id = gr.vendor_id
-          AND v.organization_id = gr.organization_id
-        WHERE gr.organization_id = ${organizationId}
-          AND gr.vendor_id = ${vendorId}
-          AND po.expected_delivery_date IS NOT NULL
-          AND ${relatedVendorScope}
-      `),
         // Price score
         this.db.execute(sql`
         SELECT
-          COALESCE(
-            GREATEST(
-              0,
-              100 - ROUND(AVG(ABS(mr.price_variance_pct::numeric)) * 10, 1)
-            ), 100
-          ) AS price_score
+          CASE WHEN COUNT(NULLIF(pl.unit_price, 0)) > 0 THEN
+            GREATEST(0, 100 - ROUND(
+              AVG(ABS(mr.price_variance::numeric / NULLIF(pl.unit_price, 0) * 100)) * 10, 1
+            ))
+          END AS price_score
         FROM match_results mr
+        JOIN invoice_lines il ON il.id = mr.invoice_line_id
+        JOIN invoices i ON i.id = il.invoice_id
+        JOIN po_lines pl ON pl.id = mr.po_line_id
         JOIN vendors v
-          ON v.id = mr.vendor_id
-          AND v.organization_id = mr.organization_id
-        WHERE mr.organization_id = ${organizationId}
-          AND mr.vendor_id = ${vendorId}
-          AND mr.price_variance_pct IS NOT NULL
+          ON v.id = i.vendor_id
+          AND v.organization_id = i.organization_id
+        WHERE i.organization_id = ${organizationId}
+          AND i.vendor_id = ${vendorId}
+          AND pl.unit_price > 0
           AND ${relatedVendorScope}
       `),
         // PO count
@@ -288,18 +236,15 @@ export class SupplierScorecardService {
       ],
     );
 
-    const deliveryScore = Number((deliveryRows as any[])[0]?.delivery_score ?? 100);
+    const deliveryScore = null;
     const invoiceAccuracyScore = Number((invoiceRows as any[])[0]?.invoice_accuracy_score ?? 0);
-    const priceScore = Number((priceRows as any[])[0]?.price_score ?? 100);
-    const qualityScore = 85;
+    const rawPriceScore = (priceRows as any[])[0]?.price_score;
+    const priceScore = rawPriceScore == null ? null : Number(rawPriceScore);
+    const qualityScore = null;
     const totalPos = Number((poCountRows as any[])[0]?.total_pos ?? 0);
     const totalInvoices = Number((invoiceCountRows as any[])[0]?.total_invoices ?? 0);
-    const overallScore = computeOverallScore(
-      deliveryScore,
-      invoiceAccuracyScore,
-      priceScore,
-      qualityScore,
-    );
+    // Do not invent an overall rating from missing delivery and quality inputs.
+    const overallScore = null;
 
     // 6-month trend (invoice accuracy + price score by month)
     const trendRows = await this.db.execute(sql`
@@ -311,19 +256,18 @@ export class SupplierScorecardService {
             / NULLIF(COUNT(DISTINCT i.id), 0) * 100, 1
           ), 0
         ) AS invoice_accuracy,
-        COALESCE(
-          GREATEST(
-            0,
-            100 - ROUND(AVG(ABS(mr.price_variance_pct::numeric)) * 10, 1)
-          ), 100
-        ) AS price_score_monthly
+        CASE WHEN COUNT(NULLIF(pl.unit_price, 0)) > 0 THEN
+            GREATEST(0, 100 - ROUND(
+              AVG(ABS(mr.price_variance::numeric / NULLIF(pl.unit_price, 0) * 100)) * 10, 1
+            ))
+          END AS price_score_monthly
       FROM invoices i
       JOIN vendors v
         ON v.id = i.vendor_id
         AND v.organization_id = i.organization_id
-      LEFT JOIN match_results mr ON mr.vendor_id = i.vendor_id
-        AND mr.organization_id = i.organization_id
-        AND DATE_TRUNC('month', mr.matched_at) = DATE_TRUNC('month', i.invoice_date)
+      LEFT JOIN invoice_lines il ON il.invoice_id = i.id
+      LEFT JOIN match_results mr ON mr.invoice_line_id = il.id
+      LEFT JOIN po_lines pl ON pl.id = mr.po_line_id
       WHERE i.organization_id = ${organizationId}
         AND i.vendor_id = ${vendorId}
         AND i.invoice_date >= NOW() - INTERVAL '6 months'
@@ -336,11 +280,11 @@ export class SupplierScorecardService {
     const recentPoRows = await this.db.execute(sql`
       SELECT
         po.id,
-        po.po_number AS "poNumber",
+        po.number AS "poNumber",
         po.status,
         po.total_amount::numeric AS "totalAmount",
         po.issued_at AS "issuedAt",
-        po.expected_delivery_date AS "expectedDeliveryDate"
+        NULL::date AS "expectedDeliveryDate"
       FROM purchase_orders po
       JOIN vendors v
         ON v.id = po.vendor_id
@@ -392,7 +336,7 @@ export class SupplierScorecardService {
       trend: (trendRows as any[]).map((r) => ({
         month: r.month,
         invoiceAccuracy: Number(r.invoice_accuracy),
-        priceScore: Number(r.price_score_monthly),
+        priceScore: r.price_score_monthly == null ? null : Number(r.price_score_monthly),
       })),
       recentPos: (recentPoRows as any[]).map((r) => ({
         id: r.id,

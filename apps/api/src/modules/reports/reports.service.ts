@@ -203,8 +203,8 @@ export class ReportsService {
         SUM(il.base_total_price)::numeric            AS "totalSpend"
       FROM invoice_lines il
       JOIN invoices i ON i.id = il.invoice_id
-      LEFT JOIN catalog_items ci ON ci.id = il.catalog_item_id
       LEFT JOIN po_lines pl ON pl.id = il.po_line_id
+      LEFT JOIN catalog_items ci ON ci.id = pl.catalog_item_id
       LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
       LEFT JOIN requisitions r ON r.id = po.requisition_id
       WHERE i.organization_id = ${orgId}
@@ -333,7 +333,7 @@ export class ReportsService {
     });
     const rows = await this.db.execute(sql`
       SELECT
-        po.internal_number AS "PO Number",
+        po.number AS "PO Number",
         v.name             AS "Vendor",
         po.status          AS "Status",
         po.currency        AS "Currency",
@@ -366,7 +366,7 @@ export class ReportsService {
         i.internal_number  AS "Invoice Number",
         i.invoice_number   AS "Vendor Invoice #",
         v.name             AS "Vendor",
-        po.internal_number AS "PO Number",
+        po.number AS "PO Number",
         i.status           AS "Status",
         i.match_status     AS "Match Status",
         i.currency         AS "Currency",
@@ -394,7 +394,7 @@ export class ReportsService {
     });
     const rows = await this.db.execute(sql`
       SELECT
-        r.internal_number AS "REQ Number",
+        r.number AS "REQ Number",
         r.title           AS "Title",
         r.status          AS "Status",
         r.priority        AS "Priority",
@@ -541,11 +541,11 @@ export class ReportsService {
     });
     const rows = await this.db.execute(sql`
       SELECT
-        gr.grn_number                 AS "GRN Number",
-        po.internal_number            AS "PO Number",
+        gr.number                 AS "GRN Number",
+        po.number            AS "PO Number",
         v.name                        AS "Vendor",
         gr.status                     AS "Status",
-        gr.received_at                AS "Received At",
+        gr.received_date                AS "Received At",
         u.name                        AS "Received By",
         COUNT(grl.id)::int            AS "Line Count",
         SUM(grl.quantity_received)::numeric AS "Total Qty Received"
@@ -557,8 +557,8 @@ export class ReportsService {
       LEFT JOIN goods_receipt_lines grl ON grl.goods_receipt_id = gr.id
       WHERE gr.organization_id = ${organizationId}
         AND ${rowScope}
-      GROUP BY gr.id, gr.grn_number, po.internal_number, v.name, gr.status, gr.received_at, u.name
-      ORDER BY gr.received_at DESC
+      GROUP BY gr.id, gr.number, po.number, v.name, gr.status, gr.received_date, u.name
+      ORDER BY gr.received_date DESC
     `);
     return toCsv(rows as Record<string, unknown>[]);
   }

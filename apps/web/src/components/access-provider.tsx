@@ -12,20 +12,7 @@ import {
 import { usePathname } from 'next/navigation';
 import type { EffectiveAccessDocument } from '@betterspend/shared';
 import { api } from '../lib/api';
-
-const PUBLIC_PATH_PREFIXES = [
-  '/login',
-  '/signup',
-  '/punchout',
-  '/forgot-password',
-  '/reset-password',
-  '/vendor-portal',
-  '/account/verify-email',
-];
-
-function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PATH_PREFIXES.some((path) => pathname === path || pathname.startsWith(`${path}/`));
-}
+import { isPublicPath } from '../lib/public-routes';
 
 interface AccessContextValue {
   access: EffectiveAccessDocument | null;

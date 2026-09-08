@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { InvoicesService, CreateInvoiceInput, MarkPaidInput } from './invoices.service';
-import { updateInvoiceSchema } from '@betterspend/shared';
+import { updateInvoiceSchema, invoiceListQuerySchema } from '@betterspend/shared';
 import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
@@ -27,19 +27,27 @@ export class InvoicesController {
   constructor(private readonly invoicesService: InvoicesService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List all invoices' })
+  @ApiOperation({ summary: 'List a bounded page of invoices' })
   findAll(
     @CurrentOrgId() orgId: string,
-    @Query('entityId') entityId?: string,
+    @Query() query: unknown,
     @CurrentAccess() access?: AccessPolicy,
   ) {
-    return this.invoicesService.findAll(orgId, entityId, access);
+    return this.invoicesService.findAll(orgId, invoiceListQuerySchema.parse(query), access);
   }
 
   @Get('aging')
   @ApiOperation({ summary: 'AP aging report bucketed by days overdue' })
-  getAgingReport(@CurrentOrgId() orgId: string, @CurrentAccess() access?: AccessPolicy) {
-    return this.invoicesService.getAgingReport(orgId, access);
+  getAgingReport(
+    @CurrentOrgId() orgId: string,
+    @CurrentAccess() access?: AccessPolicy,
+    @Query('entityId') entityId?: string,
+  ) {
+    return this.invoicesService.getAgingReport(
+      orgId,
+      access,
+      invoiceListQuerySchema.shape.entityId.parse(entityId),
+    );
   }
 
   @Get('cash-flow-forecast')
@@ -53,8 +61,13 @@ export class InvoicesController {
   getEarlyPaymentOpportunities(
     @CurrentOrgId() orgId: string,
     @CurrentAccess() access?: AccessPolicy,
+    @Query('entityId') entityId?: string,
   ) {
-    return this.invoicesService.getEarlyPaymentOpportunities(orgId, access);
+    return this.invoicesService.getEarlyPaymentOpportunities(
+      orgId,
+      access,
+      invoiceListQuerySchema.shape.entityId.parse(entityId),
+    );
   }
 
   @Get(':id')

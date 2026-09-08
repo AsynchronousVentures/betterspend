@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'crypto';
 import { and, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
 import { syncRecords, type Db } from '@betterspend/db';
 import type { ResourceScope } from '@betterspend/shared';
+import { TERMINAL_JOB_RETENTION } from '../../common/queue/terminal-job-retention';
 import { DB_TOKEN } from '../../database/database.module';
 import { GlMappingsService } from './gl-mappings.service';
 import { OAuthService } from './oauth.service';
@@ -95,6 +96,7 @@ export class GlExportService {
         'process-export',
         { organizationId, invoiceId, targetSystem },
         {
+          ...TERMINAL_JOB_RETENTION,
           attempts: 3,
           backoff: { type: 'exponential', delay: 2000 },
           ...(jobId ? { jobId } : {}),
@@ -292,7 +294,7 @@ export class GlExportService {
           invoiceId: record.localId,
           targetSystem: record.provider as GlTargetSystem,
         },
-        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+        { ...TERMINAL_JOB_RETENTION, attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
       );
     } catch (error: unknown) {
       await this.db

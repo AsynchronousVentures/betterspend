@@ -42,6 +42,7 @@ import {
   DialogTitle,
 } from './ui/dialog';
 import { cn } from '../lib/utils';
+import { isPublicPath } from '../lib/public-routes';
 import { useAccess } from './access-provider';
 import { createSearchRequestController } from '../lib/search-request';
 import {
@@ -76,15 +77,6 @@ function OfflineIndicator() {
   );
 }
 
-const AUTH_PATHS = [
-  '/login',
-  '/signup',
-  '/punchout',
-  '/forgot-password',
-  '/reset-password',
-  '/vendor-portal',
-  '/account/verify-email',
-];
 const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 const SHORTCUTS_DISABLED_KEY = 'betterspend:shortcuts-disabled';
 const SIDEBAR_COLLAPSED_KEY = 'betterspend:sidebar-collapsed';
@@ -1010,9 +1002,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [shortcutsDisabled, setShortcutsDisabled] = useState(false);
   const shortcutsReturnFocusRef = useRef<HTMLElement | null>(null);
   const sidebarTriggerRef = useRef<HTMLButtonElement>(null);
-  const isAuthPage = AUTH_PATHS.some(
-    (path) => pathname === path || pathname.startsWith(path + '/'),
-  );
+  const isAuthPage = isPublicPath(pathname);
   const branding = useBranding();
 
   useEffect(() => {

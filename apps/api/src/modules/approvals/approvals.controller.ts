@@ -1,5 +1,6 @@
 import {
   Controller,
+  Query,
   Get,
   Post,
   Param,
@@ -33,8 +34,14 @@ export class ApprovalsController {
     @CurrentOrgId() orgId: string,
     @CurrentUserId() userId: string,
     @CurrentAccess() access?: AccessPolicy,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
-    return this.approvalEngineService.listPending(orgId, userId, access);
+    return this.approvalEngineService.listPending(
+      orgId, userId, access,
+      page === undefined ? 1 : Number(page),
+      limit === undefined ? 50 : Number(limit),
+    );
   }
 
   @Get('auto-approved-summary')

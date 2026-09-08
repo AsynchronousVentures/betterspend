@@ -507,7 +507,7 @@ describe('ApprovalEngineService required approvals', () => {
     const { service } = createService();
 
     await assert.doesNotReject(async () => {
-      assert.deepEqual(await service.listPending('organization-1'), []);
+      assert.deepEqual(await service.listPending('organization-1'), { data: [], page: 1, limit: 50, hasMore: false });
     });
   });
 });

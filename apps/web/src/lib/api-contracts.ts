@@ -1,5 +1,6 @@
 import type {
   CreateRequisitionInput,
+  InvoiceListQuery,
   InvoiceReviewCaseState,
   InvoiceReviewCommandInput,
   InvoiceReviewProvenanceSourceType,
@@ -728,6 +729,8 @@ export interface InvoiceAgingBucket {
 }
 
 export interface InvoiceAgingReport {
+  openCount: number;
+  dueIn7Days: InvoiceAgingBucket;
   current: InvoiceAgingBucket;
   days_1_30: InvoiceAgingBucket;
   days_31_60: InvoiceAgingBucket;
@@ -741,7 +744,7 @@ export interface InvoiceCashFlowWeek {
 }
 
 export interface InvoicesApi {
-  list(): Promise<InvoiceListItem[]>;
+  list(query?: InvoiceListQuery): Promise<{ items: InvoiceListItem[]; nextCursor: string | null }>;
   get(id: string): Promise<InvoiceDetail>;
   create(data: InvoiceInput): Promise<InvoiceDetail>;
   approve(id: string): Promise<InvoiceDetail>;
