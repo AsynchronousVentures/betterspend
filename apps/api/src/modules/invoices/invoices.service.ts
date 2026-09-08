@@ -1,3 +1,4 @@
+import { rethrowInvoiceIdentityConflict } from './invoice-identity';
 import {
   Injectable,
   Inject,
@@ -11,7 +12,12 @@ import { randomUUID } from 'node:crypto';
 import { eq, and, ne, isNull, lte, gte, or, sql } from 'drizzle-orm';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
-import { updateInvoiceSchema, type UpdateInvoiceInput } from '@betterspend/shared';
+import {
+  invoiceListQuerySchema,
+  type InvoiceListQuery,
+  updateInvoiceSchema,
+  type UpdateInvoiceInput,
+} from '@betterspend/shared';
 import {
   appendAuditLog,
   invoices,
@@ -45,6 +51,7 @@ import { WorkflowExecutionService } from '../workflow-execution/workflow-executi
 import { InvoiceReviewsService } from '../invoice-reviews/invoice-reviews.service';
 import { InvoiceReviewProvenanceService } from '../invoice-reviews/invoice-review-provenance.service';
 import { changedMaterialInvoiceFields, type MaterialInvoiceState } from './invoice-material-edit';
+import { decodeInvoiceListCursor, encodeInvoiceListCursor } from './invoice-list-cursor';
 import { calculateInvoiceLineAmounts } from './invoice-money';
 import type { AccessPolicy } from '../auth/access-policy';
 import { canViewRelatedRecord } from '../auth/related-record-access';
@@ -236,6 +243,8 @@ export interface AgingBucket {
 }
 
 export interface AgingReport {
+  openCount: number;
+  dueIn7Days: AgingBucket;
   current: AgingBucket;
   days_1_30: AgingBucket;
   days_31_60: AgingBucket;
@@ -366,12 +375,19 @@ export class InvoicesService {
     return new Map(records.map((record) => [record.id, record]));
   }
 
-  async findAll(organizationId: string, entityId?: string, access?: AccessPolicy) {
-    return this.db.query.invoices.findMany({
-      where: (i, { and, eq }) =>
+  async findAll(organizationId: string, input: InvoiceListQuery = {}, access?: AccessPolicy) {
+    const query = invoiceListQuerySchema.parse(input);
+    const cursor = query.cursor ? decodeInvoiceListCursor(query.cursor) : null;
+    const rows = await this.db.query.invoices.findMany({
+      where: (i, { and, eq, isNull, ne }) =>
         and(
           eq(i.organizationId, organizationId),
-          entityId ? eq(i.entityId, entityId) : undefined,
+          cursor
+            ? sql`(${i.createdAt}, ${i.id}) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`
+            : undefined,
+          query.entityId ? eq(i.entityId, query.entityId) : undefined,
+          query.status ? eq(i.status, query.status) : undefined,
+          query.unpaid === 'true' ? and(isNull(i.paidAt), ne(i.status, 'paid')) : undefined,
           permissionScopePredicate(
             access,
             'invoice',
@@ -384,8 +400,25 @@ export class InvoicesService {
         purchaseOrder: true,
         entity: true,
       },
-      orderBy: (i, { desc }) => desc(i.createdAt),
+      // Preserve PostgreSQL microseconds; JavaScript Date would truncate cursor precision.
+      extras: (i) => ({
+        cursorCreatedAt:
+          sql<string>`to_char(${i.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as(
+            'cursor_created_at',
+          ),
+      }),
+      orderBy: (i, { desc }) => [desc(i.createdAt), desc(i.id)],
+      limit: query.limit + 1,
     });
+    const page = rows.slice(0, query.limit);
+    const last = page.at(-1);
+    return {
+      items: page.map(({ cursorCreatedAt: _cursorCreatedAt, ...invoice }) => invoice),
+      nextCursor:
+        rows.length > query.limit && last
+          ? encodeInvoiceListCursor({ createdAt: last.cursorCreatedAt, id: last.id })
+          : null,
+    };
   }
 
   private async findOneWithExecutor(
@@ -643,7 +676,7 @@ export class InvoicesService {
       );
       assertInvoiceScope(access, 'invoices:manage', authorizationScope, actorId);
     }
-    const result = await this.db.transaction(async (tx) => {
+    const updating = this.db.transaction(async (tx) => {
       const [lockedInvoice] = await tx
         .select()
         .from(invoices)
@@ -748,7 +781,7 @@ export class InvoicesService {
           columns: { id: true },
         });
         if (duplicate) {
-          throw new BadRequestException(
+          throw new ConflictException(
             `Duplicate invoice: ${lockedInvoice.invoiceNumber} already exists for this vendor`,
           );
         }
@@ -1052,6 +1085,7 @@ export class InvoicesService {
       };
     });
 
+    const result = await updating.catch(rethrowInvoiceIdentityConflict);
     if (result.publishRequestId) {
       await this.workflowExecution.publishCommittedRequest(result.publishRequestId, organizationId);
     }
@@ -1116,7 +1150,7 @@ export class InvoicesService {
         ),
     });
     if (duplicate) {
-      throw new BadRequestException(
+      throw new ConflictException(
         `Duplicate invoice: ${input.invoiceNumber} already exists for this vendor (${duplicate.internalNumber})`,
       );
     }
@@ -1142,7 +1176,7 @@ export class InvoicesService {
         resolvedExchangeRate,
       );
 
-    const invoiceId = await this.db.transaction(async (tx) => {
+    const creating = this.db.transaction(async (tx) => {
       const internalNumber = await this.sequenceService.next(organizationId, 'invoice', tx);
       const [inv] = await tx
         .insert(invoices)
@@ -1223,6 +1257,8 @@ export class InvoicesService {
 
       return inv.id;
     });
+
+    const invoiceId = await creating.catch(rethrowInvoiceIdentityConflict);
 
     // Auto-run 3-way match if PO is linked
     if (input.purchaseOrderId) {
@@ -1549,7 +1585,11 @@ export class InvoicesService {
     return updated;
   }
 
-  async getAgingReport(organizationId: string, access?: AccessPolicy): Promise<AgingReport> {
+  async getAgingReport(
+    organizationId: string,
+    access?: AccessPolicy,
+    entityId?: string,
+  ): Promise<AgingReport> {
     requireAnyPermission(access, ['invoices:view_all', 'payments:view']);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -1559,16 +1599,19 @@ export class InvoicesService {
       where: (i, { and, eq, isNull, ne }) =>
         and(
           eq(i.organizationId, organizationId),
+          entityId ? eq(i.entityId, entityId) : undefined,
           isNull(i.paidAt),
           ne(i.status, 'paid'),
           invoiceReportScopePredicate(access, organizationId),
         ),
-      with: { vendor: { columns: { punchoutConfig: false } } },
+      columns: { dueDate: true, totalAmount: true },
     });
 
     const emptyBucket = (): AgingBucket => ({ count: 0, totalAmount: '0.00' });
 
     const result: AgingReport = {
+      openCount: unpaidInvoices.length,
+      dueIn7Days: emptyBucket(),
       current: emptyBucket(),
       days_1_30: emptyBucket(),
       days_31_60: emptyBucket(),
@@ -1578,12 +1621,14 @@ export class InvoicesService {
 
     const addToBucket = (bucket: AgingBucket, amount: string) => {
       bucket.count++;
-      bucket.totalAmount = (parseFloat(bucket.totalAmount) + parseFloat(amount || '0')).toFixed(2);
+      bucket.totalAmount = addMoney([bucket.totalAmount, amount]);
     };
 
+    const in7Days = new Date(today);
+    in7Days.setDate(today.getDate() + 7);
     for (const inv of unpaidInvoices) {
-      const amount = (inv as any).totalAmount || '0';
-      const dueDate = (inv as any).dueDate ? new Date((inv as any).dueDate) : null;
+      const amount = inv.totalAmount || '0';
+      const dueDate = inv.dueDate ? new Date(inv.dueDate) : null;
 
       if (!dueDate) {
         addToBucket(result.current, amount);
@@ -1591,6 +1636,7 @@ export class InvoicesService {
       }
 
       dueDate.setHours(0, 0, 0, 0);
+      if (dueDate >= today && dueDate <= in7Days) addToBucket(result.dueIn7Days, amount);
       const diffMs = today.getTime() - dueDate.getTime();
       const daysOverdue = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
@@ -1655,7 +1701,11 @@ export class InvoicesService {
     return weeks;
   }
 
-  async getEarlyPaymentOpportunities(organizationId: string, access?: AccessPolicy) {
+  async getEarlyPaymentOpportunities(
+    organizationId: string,
+    access?: AccessPolicy,
+    entityId?: string,
+  ) {
     requireAnyPermission(access, ['invoices:view_all', 'payments:view']);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -1666,6 +1716,7 @@ export class InvoicesService {
       where: (i, { and, eq, isNull, ne }) =>
         and(
           eq(i.organizationId, organizationId),
+          entityId ? eq(i.entityId, entityId) : undefined,
           isNull(i.paidAt),
           ne(i.status, 'paid'),
           invoiceReportScopePredicate(access, organizationId),

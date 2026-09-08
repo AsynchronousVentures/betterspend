@@ -8,6 +8,7 @@ import {
   jsonb,
   date,
   uniqueIndex,
+  index,
   foreignKey,
 } from 'drizzle-orm/pg-core';
 import { organizations, legalEntities } from './organizations';
@@ -66,6 +67,16 @@ export const invoices = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    vendorInvoiceIdentity: uniqueIndex('invoices_org_vendor_number_unique').on(
+      table.organizationId,
+      table.vendorId,
+      table.invoiceNumber,
+    ),
+    listSeek: index('invoices_organization_created_id_idx').on(
+      table.organizationId,
+      table.createdAt,
+      table.id,
+    ),
     idOrganization: uniqueIndex('invoices_id_organization_id_unique').on(
       table.id,
       table.organizationId,

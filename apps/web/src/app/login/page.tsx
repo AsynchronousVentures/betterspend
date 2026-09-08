@@ -4,6 +4,7 @@ import { useState, FormEvent, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowRight, LockKeyhole, Mail } from 'lucide-react';
+import { loginDestination } from '../../lib/login-destination';
 import { signIn } from '../../lib/auth-client';
 import { AuthShell } from '../../components/auth-shell';
 import { Alert, AlertDescription } from '../../components/ui/alert';
@@ -30,7 +31,7 @@ function LoginForm() {
       if (!result.token) {
         setError(result.message || result.error || 'Invalid email or password');
       } else {
-        const next = searchParams.get('next') || '/';
+        const next = loginDestination(searchParams.get('next'));
         router.push(next);
         router.refresh();
       }

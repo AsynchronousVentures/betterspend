@@ -341,30 +341,39 @@ export class AnalyticsService {
         LEFT JOIN requisitions r ON r.id = po.requisition_id
         WHERE po.organization_id = ${organizationId}
           AND ${poScope}
+      ), invoice_totals AS (
+        SELECT
+          vendor_id,
+          COUNT(*)::int AS invoice_count,
+          COUNT(*) FILTER (WHERE match_status = 'exception')::int AS exception_count,
+          ROUND(AVG(
+            CASE WHEN status = 'approved' AND due_date IS NOT NULL
+              THEN EXTRACT(EPOCH FROM (updated_at - invoice_date)) / 86400
+            END
+          )::numeric, 1) AS avg_days_to_approve,
+          COALESCE(SUM(total_amount) FILTER (WHERE status = 'approved'), 0)::numeric AS total_approved
+        FROM scoped_invoices
+        GROUP BY vendor_id
+      ), po_totals AS (
+        SELECT vendor_id, COUNT(*)::int AS po_count
+        FROM scoped_purchase_orders
+        GROUP BY vendor_id
       )
       SELECT
-        v.id                                                                   AS "vendorId",
-        v.name                                                                 AS "vendorName",
-        COUNT(DISTINCT i.id)::int                                              AS "invoiceCount",
-        COUNT(DISTINCT CASE WHEN i.match_status = 'exception' THEN i.id END)::int AS "exceptionCount",
-        ROUND(
-          COUNT(DISTINCT CASE WHEN i.match_status = 'exception' THEN i.id END)::numeric
-          / NULLIF(COUNT(DISTINCT i.id), 0) * 100, 1
-        )                                                                      AS "exceptionRate",
-        ROUND(AVG(
-          CASE WHEN i.status = 'approved' AND i.due_date IS NOT NULL
-            THEN EXTRACT(EPOCH FROM (i.updated_at - i.invoice_date)) / 86400
-          END
-        )::numeric, 1)                                                         AS "avgDaysToApprove",
-        COALESCE(SUM(CASE WHEN i.status = 'approved' THEN i.total_amount END), 0)::numeric AS "totalApproved",
-        COUNT(DISTINCT po.id)::int                                             AS "poCount"
+        v.id AS "vendorId",
+        v.name AS "vendorName",
+        COALESCE(i.invoice_count, 0)::int AS "invoiceCount",
+        COALESCE(i.exception_count, 0)::int AS "exceptionCount",
+        ROUND(i.exception_count::numeric / NULLIF(i.invoice_count, 0) * 100, 1) AS "exceptionRate",
+        i.avg_days_to_approve AS "avgDaysToApprove",
+        COALESCE(i.total_approved, 0)::numeric AS "totalApproved",
+        COALESCE(po.po_count, 0)::int AS "poCount"
       FROM vendors v
-      LEFT JOIN scoped_invoices i ON i.vendor_id = v.id
-      LEFT JOIN scoped_purchase_orders po ON po.vendor_id = v.id
+      LEFT JOIN invoice_totals i ON i.vendor_id = v.id
+      LEFT JOIN po_totals po ON po.vendor_id = v.id
       WHERE v.organization_id = ${organizationId}
-      GROUP BY v.id, v.name
-      HAVING COUNT(DISTINCT i.id) > 0 OR COUNT(DISTINCT po.id) > 0
-      ORDER BY "totalApproved" DESC
+        AND (i.invoice_count > 0 OR po.po_count > 0)
+      ORDER BY "totalApproved" DESC, v.id
       LIMIT 50
     `);
     return rows;

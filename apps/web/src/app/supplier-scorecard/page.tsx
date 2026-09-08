@@ -25,10 +25,10 @@ import {
 interface ScorecardRow {
   vendorId: string;
   vendorName: string;
-  overallScore: number;
-  deliveryScore: number;
-  qualityScore: number;
-  priceScore: number;
+  overallScore: number | null;
+  deliveryScore: number | null;
+  qualityScore: number | null;
+  priceScore: number | null;
   invoiceAccuracyScore: number;
   totalPos: number;
   totalInvoices: number;
@@ -43,15 +43,15 @@ interface ScorecardDetail {
     status: string;
   };
   scores: {
-    overallScore: number;
-    deliveryScore: number;
-    qualityScore: number;
-    priceScore: number;
+    overallScore: number | null;
+    deliveryScore: number | null;
+    qualityScore: number | null;
+    priceScore: number | null;
     invoiceAccuracyScore: number;
     totalPos: number;
     totalInvoices: number;
   };
-  trend: Array<{ month: string; invoiceAccuracy: number; priceScore: number }>;
+  trend: Array<{ month: string; invoiceAccuracy: number; priceScore: number | null }>;
   recentPos: Array<{
     id: string;
     poNumber: string;
@@ -144,6 +144,8 @@ export default function SupplierScorecardPage() {
   const sorted = [...rows].sort((a, b) => {
     const av = a[sortField];
     const bv = b[sortField];
+    if (av == null) return bv == null ? 0 : 1;
+    if (bv == null) return -1;
     const cmp =
       typeof av === 'number' && typeof bv === 'number'
         ? av - bv
@@ -362,7 +364,8 @@ function DetailPanel({ detail }: { detail: ScorecardDetail }) {
   );
 }
 
-function ScoreBadge({ score }: { score: number }) {
+function ScoreBadge({ score }: { score: number | null }) {
+  if (score == null) return <span className="text-xs text-muted-foreground">N/A</span>;
   return (
     <span
       className={`inline-flex min-w-[42px] items-center justify-center rounded-full border px-2 py-1 text-xs font-bold ${scoreBadgeClasses(
@@ -374,7 +377,15 @@ function ScoreBadge({ score }: { score: number }) {
   );
 }
 
-function ScoreBar({ score, label }: { score: number; label: string }) {
+function ScoreBar({ score, label }: { score: number | null; label: string }) {
+  if (score == null) {
+    return (
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span>{label}</span>
+        <span>N/A</span>
+      </div>
+    );
+  }
   // Score meter — BRANDING §7 status ramp (success → warning → destructive).
   const tone =
     score >= 80 ? '#1f7a4f' : score >= 60 ? '#f0a230' : '#c23b33';

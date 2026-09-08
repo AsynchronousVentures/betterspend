@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { createSearchRequestController } from '../../lib/search-request';
+import { invoiceListQuerySchema } from '@betterspend/shared';
+import { useIsMobile } from '../../lib/use-media-query';
 import { AlertTriangle, Download, FileSpreadsheet, Inbox, Plus, Upload } from 'lucide-react';
 import { api, loadFailureState } from '../../lib/api';
 import type { InvoiceListItem } from '../../lib/api-contracts';
@@ -44,6 +47,12 @@ async function downloadCsv(type: string) {
 }
 
 export default function InvoicesPage() {
+  const isMobile = useIsMobile();
+  const [cursors, setCursors] = useState<Array<string | undefined>>([undefined]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const page = cursors.length;
+  const cursor = cursors.at(-1);
+  const [requestController] = useState(createSearchRequestController);
   const [invoices, setInvoices] = useState<InvoiceListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<unknown>(null);
@@ -56,25 +65,42 @@ export default function InvoicesPage() {
   const [showAddSources, setShowAddSources] = useState(false);
 
   const load = useCallback(async () => {
+    const currentRequest = requestController.begin();
     setLoading(true);
     setLoadError(null);
+    setSelected(new Set());
     try {
-      const data = await api.invoices.list();
-      setInvoices(Array.isArray(data) ? data : []);
+      const data = await api.invoices.list({
+        cursor,
+        limit: 50,
+        status: invoiceListQuerySchema.shape.status.parse(statusFilter || undefined),
+      });
+      if (!requestController.isCurrent(currentRequest)) return;
+      setInvoices(data.items);
+      setNextCursor(data.nextCursor);
     } catch (loadFailure) {
-      setLoadError(loadFailure);
+      if (requestController.isCurrent(currentRequest)) setLoadError(loadFailure);
     } finally {
-      setLoading(false);
+      if (requestController.isCurrent(currentRequest)) setLoading(false);
     }
-  }, []);
+  }, [cursor, statusFilter, requestController]);
 
   useEffect(() => {
     void load();
-  }, [load]);
+    return () => {
+      requestController.invalidate();
+    };
+  }, [load, requestController]);
 
-  const filtered = statusFilter
-    ? invoices.filter((invoice) => invoice.status === statusFilter)
-    : invoices;
+  const filtered = invoices;
+
+  function changePage(next: number) {
+    setSelected(new Set());
+    setLoading(true);
+    setCursors((previous) =>
+      next < page ? previous.slice(0, -1) : [...previous, nextCursor ?? undefined],
+    );
+  }
 
   const approvableSelected = [...selected].filter((id) => {
     const invoice = invoices.find((item) => item.id === id);
@@ -185,8 +211,11 @@ export default function InvoicesPage() {
               </Button>
             ) : null}
             <Select
+              disabled={bulkLoading}
               value={statusFilter}
               onChange={(event) => {
+                setLoading(true);
+                setCursors([undefined]);
                 setStatusFilter(event.target.value);
                 setSelected(new Set());
               }}
@@ -197,7 +226,9 @@ export default function InvoicesPage() {
               <option value="matched">Matched</option>
               <option value="partial_match">Partial Match</option>
               <option value="exception">Exception</option>
+              <option value="pending_approval">Pending Approval</option>
               <option value="approved">Approved</option>
+              <option value="ready_for_release">Ready for Release</option>
               <option value="paid">Paid</option>
             </Select>
             <Button variant="outline" onClick={handleExportCsv} disabled={exporting}>
@@ -277,238 +308,257 @@ export default function InvoicesPage() {
             />
           ) : (
             <>
-              <div className="divide-y divide-border/70 md:hidden">
-                {filtered.map((invoice) => {
-                  const isOverdue =
-                    Boolean(invoice.dueDate) &&
-                    !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
-                    isDateOnlyBeforeToday(invoice.dueDate);
-                  const canSelect =
-                    !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
-                    invoice.matchStatus !== 'exception';
+              {isMobile ? (
+                <div className="divide-y divide-border/70">
+                  {filtered.map((invoice) => {
+                    const isOverdue =
+                      Boolean(invoice.dueDate) &&
+                      !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
+                      isDateOnlyBeforeToday(invoice.dueDate);
+                    const canSelect =
+                      !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
+                      invoice.matchStatus !== 'exception';
 
-                  return (
-                    <article
-                      key={invoice.id}
-                      className={`space-y-4 p-4 ${isOverdue ? 'bg-rose-50/70' : ''}`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex min-w-0 items-start gap-3">
-                          {canSelect ? (
-                            <input
-                              type="checkbox"
-                              aria-label={`Select invoice ${invoice.internalNumber}`}
-                              checked={selected.has(invoice.id)}
-                              onChange={() => toggleSelect(invoice.id)}
-                              className="mt-1"
-                            />
-                          ) : null}
-                          <div className="min-w-0">
-                            <Link
-                              href={`/invoices/${invoice.id}`}
-                              className="font-semibold text-primary hover:underline"
-                            >
-                              {invoice.internalNumber}
-                            </Link>
-                            <div className="mt-1 truncate text-xs text-muted-foreground">
-                              Vendor invoice {invoice.invoiceNumber}
-                            </div>
-                          </div>
-                        </div>
-                        <StatusBadge value={invoice.status} />
-                      </div>
-                      <dl className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                        <div className="min-w-0">
-                          <dt className="text-xs text-muted-foreground">Supplier</dt>
-                          <dd className="mt-1 truncate text-foreground">
-                            <RelatedRecordLink
-                              record={{
-                                kind: 'vendor',
-                                id: invoice.vendor?.id,
-                                label: invoice.vendor?.name,
-                                relation: 'Supplier',
-                              }}
-                            />
-                          </dd>
-                        </div>
-                        <div className="min-w-0">
-                          <dt className="text-xs text-muted-foreground">Purchase order</dt>
-                          <dd className="mt-1 truncate text-foreground">
-                            <RelatedRecordLink
-                              record={{
-                                kind: 'purchase_order',
-                                id: invoice.purchaseOrder?.id,
-                                label: invoice.purchaseOrder?.number,
-                                relation: 'Purchase order',
-                              }}
-                            />
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-xs text-muted-foreground">Total</dt>
-                          <dd className="mt-1 font-medium text-foreground">
-                            {formatCurrency(invoice.totalAmount, invoice.currency)}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-xs text-muted-foreground">Match</dt>
-                          <dd className="mt-1">
-                            <StatusBadge value={invoice.matchStatus} />
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-xs text-muted-foreground">Invoice date</dt>
-                          <dd className="mt-1 text-foreground">
-                            {new Date(invoice.invoiceDate).toLocaleDateString()}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-xs text-muted-foreground">Due date</dt>
-                          <dd
-                            className={
-                              isOverdue
-                                ? 'mt-1 font-semibold text-rose-700'
-                                : 'mt-1 text-foreground'
-                            }
-                          >
-                            {formatDateOnly(invoice.dueDate)}
-                          </dd>
-                        </div>
-                      </dl>
-                      <Link
-                        href={`/invoices/${invoice.id}`}
-                        className="inline-flex text-sm font-semibold text-primary hover:underline"
+                    return (
+                      <article
+                        key={invoice.id}
+                        className={`space-y-4 p-4 ${isOverdue ? 'bg-rose-50/70' : ''}`}
                       >
-                        View invoice
-                      </Link>
-                    </article>
-                  );
-                })}
-              </div>
-
-              <div className="hidden md:block">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="w-10">
-                        <input
-                          type="checkbox"
-                          aria-label="Select approvable invoices"
-                          onChange={toggleAll}
-                          checked={
-                            filtered
-                              .filter(
-                                (invoice) =>
-                                  !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
-                                  invoice.matchStatus !== 'exception',
-                              )
-                              .every((invoice) => selected.has(invoice.id)) &&
-                            filtered.some(
-                              (invoice) =>
-                                !['approved', 'paid', 'cancelled'].includes(invoice.status),
-                            )
-                          }
-                        />
-                      </TableHead>
-                      <TableHead>Internal #</TableHead>
-                      <TableHead>Vendor Invoice #</TableHead>
-                      <TableHead>Vendor</TableHead>
-                      <TableHead>PO</TableHead>
-                      <TableHead>Invoice Date</TableHead>
-                      <TableHead>Due Date</TableHead>
-                      <TableHead>Total</TableHead>
-                      <TableHead>Match</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filtered.map((invoice) => {
-                      const isOverdue =
-                        Boolean(invoice.dueDate) &&
-                        !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
-                        isDateOnlyBeforeToday(invoice.dueDate);
-                      const canSelect =
-                        !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
-                        invoice.matchStatus !== 'exception';
-
-                      return (
-                        <TableRow
-                          key={invoice.id}
-                          className={isOverdue ? 'bg-rose-50/70 hover:bg-rose-50' : undefined}
-                        >
-                          <TableCell>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-start gap-3">
                             {canSelect ? (
                               <input
                                 type="checkbox"
                                 aria-label={`Select invoice ${invoice.internalNumber}`}
                                 checked={selected.has(invoice.id)}
                                 onChange={() => toggleSelect(invoice.id)}
+                                className="mt-1"
                               />
                             ) : null}
-                          </TableCell>
-                          <TableCell className="font-semibold">
-                            <Link
-                              href={`/invoices/${invoice.id}`}
-                              className="text-primary hover:underline"
-                            >
-                              {invoice.internalNumber}
-                            </Link>
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {invoice.invoiceNumber}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            <RelatedRecordLink
-                              record={{
-                                kind: 'vendor',
-                                id: invoice.vendor?.id,
-                                label: invoice.vendor?.name,
-                                relation: 'Supplier',
-                              }}
-                            />
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            <RelatedRecordLink
-                              record={{
-                                kind: 'purchase_order',
-                                id: invoice.purchaseOrder?.id,
-                                label: invoice.purchaseOrder?.number,
-                                relation: 'Purchase order',
-                              }}
-                            />
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {new Date(invoice.invoiceDate).toLocaleDateString()}
-                          </TableCell>
-                          <TableCell
-                            className={
-                              isOverdue ? 'font-semibold text-rose-700' : 'text-muted-foreground'
-                            }
-                          >
-                            <div className="flex items-center gap-2">
-                              <span>{formatDateOnly(invoice.dueDate)}</span>
-                              {isOverdue ? <AlertTriangle className="h-4 w-4" /> : null}
+                            <div className="min-w-0">
+                              <Link
+                                href={`/invoices/${invoice.id}`}
+                                className="font-semibold text-primary hover:underline"
+                              >
+                                {invoice.internalNumber}
+                              </Link>
+                              <div className="mt-1 truncate text-xs text-muted-foreground">
+                                Vendor invoice {invoice.invoiceNumber}
+                              </div>
                             </div>
-                          </TableCell>
-                          <TableCell className="font-medium text-foreground">
-                            {formatCurrency(invoice.totalAmount, invoice.currency)}
-                          </TableCell>
-                          <TableCell>
-                            <StatusBadge value={invoice.matchStatus} />
-                          </TableCell>
-                          <TableCell>
-                            <StatusBadge value={invoice.status} />
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
+                          </div>
+                          <StatusBadge value={invoice.status} />
+                        </div>
+                        <dl className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                          <div className="min-w-0">
+                            <dt className="text-xs text-muted-foreground">Supplier</dt>
+                            <dd className="mt-1 truncate text-foreground">
+                              <RelatedRecordLink
+                                record={{
+                                  kind: 'vendor',
+                                  id: invoice.vendor?.id,
+                                  label: invoice.vendor?.name,
+                                  relation: 'Supplier',
+                                }}
+                              />
+                            </dd>
+                          </div>
+                          <div className="min-w-0">
+                            <dt className="text-xs text-muted-foreground">Purchase order</dt>
+                            <dd className="mt-1 truncate text-foreground">
+                              <RelatedRecordLink
+                                record={{
+                                  kind: 'purchase_order',
+                                  id: invoice.purchaseOrder?.id,
+                                  label: invoice.purchaseOrder?.number,
+                                  relation: 'Purchase order',
+                                }}
+                              />
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs text-muted-foreground">Total</dt>
+                            <dd className="mt-1 font-medium text-foreground">
+                              {formatCurrency(invoice.totalAmount, invoice.currency)}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs text-muted-foreground">Match</dt>
+                            <dd className="mt-1">
+                              <StatusBadge value={invoice.matchStatus} />
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs text-muted-foreground">Invoice date</dt>
+                            <dd className="mt-1 text-foreground">
+                              {new Date(invoice.invoiceDate).toLocaleDateString()}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs text-muted-foreground">Due date</dt>
+                            <dd
+                              className={
+                                isOverdue
+                                  ? 'mt-1 font-semibold text-rose-700'
+                                  : 'mt-1 text-foreground'
+                              }
+                            >
+                              {formatDateOnly(invoice.dueDate)}
+                            </dd>
+                          </div>
+                        </dl>
+                        <Link
+                          href={`/invoices/${invoice.id}`}
+                          className="inline-flex text-sm font-semibold text-primary hover:underline"
+                        >
+                          View invoice
+                        </Link>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div>
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="w-10">
+                          <input
+                            type="checkbox"
+                            aria-label="Select approvable invoices"
+                            onChange={toggleAll}
+                            checked={
+                              filtered
+                                .filter(
+                                  (invoice) =>
+                                    !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
+                                    invoice.matchStatus !== 'exception',
+                                )
+                                .every((invoice) => selected.has(invoice.id)) &&
+                              filtered.some(
+                                (invoice) =>
+                                  !['approved', 'paid', 'cancelled'].includes(invoice.status),
+                              )
+                            }
+                          />
+                        </TableHead>
+                        <TableHead>Internal #</TableHead>
+                        <TableHead>Vendor Invoice #</TableHead>
+                        <TableHead>Vendor</TableHead>
+                        <TableHead>PO</TableHead>
+                        <TableHead>Invoice Date</TableHead>
+                        <TableHead>Due Date</TableHead>
+                        <TableHead>Total</TableHead>
+                        <TableHead>Match</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filtered.map((invoice) => {
+                        const isOverdue =
+                          Boolean(invoice.dueDate) &&
+                          !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
+                          isDateOnlyBeforeToday(invoice.dueDate);
+                        const canSelect =
+                          !['approved', 'paid', 'cancelled'].includes(invoice.status) &&
+                          invoice.matchStatus !== 'exception';
+
+                        return (
+                          <TableRow
+                            key={invoice.id}
+                            className={isOverdue ? 'bg-rose-50/70 hover:bg-rose-50' : undefined}
+                          >
+                            <TableCell>
+                              {canSelect ? (
+                                <input
+                                  type="checkbox"
+                                  aria-label={`Select invoice ${invoice.internalNumber}`}
+                                  checked={selected.has(invoice.id)}
+                                  onChange={() => toggleSelect(invoice.id)}
+                                />
+                              ) : null}
+                            </TableCell>
+                            <TableCell className="font-semibold">
+                              <Link
+                                href={`/invoices/${invoice.id}`}
+                                className="text-primary hover:underline"
+                              >
+                                {invoice.internalNumber}
+                              </Link>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {invoice.invoiceNumber}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              <RelatedRecordLink
+                                record={{
+                                  kind: 'vendor',
+                                  id: invoice.vendor?.id,
+                                  label: invoice.vendor?.name,
+                                  relation: 'Supplier',
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              <RelatedRecordLink
+                                record={{
+                                  kind: 'purchase_order',
+                                  id: invoice.purchaseOrder?.id,
+                                  label: invoice.purchaseOrder?.number,
+                                  relation: 'Purchase order',
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {new Date(invoice.invoiceDate).toLocaleDateString()}
+                            </TableCell>
+                            <TableCell
+                              className={
+                                isOverdue ? 'font-semibold text-rose-700' : 'text-muted-foreground'
+                              }
+                            >
+                              <div className="flex items-center gap-2">
+                                <span>{formatDateOnly(invoice.dueDate)}</span>
+                                {isOverdue ? <AlertTriangle className="h-4 w-4" /> : null}
+                              </div>
+                            </TableCell>
+                            <TableCell className="font-medium text-foreground">
+                              {formatCurrency(invoice.totalAmount, invoice.currency)}
+                            </TableCell>
+                            <TableCell>
+                              <StatusBadge value={invoice.matchStatus} />
+                            </TableCell>
+                            <TableCell>
+                              <StatusBadge value={invoice.status} />
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
             </>
           )}
         </CardContent>
       </Card>
+      <nav aria-label="Invoice pagination" className="flex items-center justify-between gap-3">
+        <Button
+          variant="outline"
+          disabled={loading || bulkLoading || page === 1}
+          onClick={() => changePage(page - 1)}
+        >
+          Previous
+        </Button>
+        <span>Page {page}. Selection applies to this page.</span>
+        <Button
+          variant="outline"
+          disabled={loading || bulkLoading || !!loadError || !nextCursor}
+          onClick={() => changePage(page + 1)}
+        >
+          Next
+        </Button>
+      </nav>
     </div>
   );
 }
