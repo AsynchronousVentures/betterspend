@@ -1,3 +1,4 @@
+import { SkipThrottle } from '@nestjs/throttler';
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
@@ -7,6 +8,7 @@ import { getAppVersion } from '../../common/release';
 @Controller('health')
 export class HealthController {
   @Get()
+  @SkipThrottle()
   @Public()
   @ApiOperation({ summary: 'Service health check' })
   check() {

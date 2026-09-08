@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 import { DatabaseModule } from './database/database.module';
 import { QueueModule } from './common/queue/queue.module';
 import { CommonServicesModule } from './common/services/common-services.module';
@@ -60,6 +61,7 @@ import { QboInboundModule } from './modules/integrations/qbo/qbo-inbound.module'
 import { InvoiceReviewsModule } from './modules/invoice-reviews/invoice-reviews.module';
 
 @Module({
+  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 300 }]),

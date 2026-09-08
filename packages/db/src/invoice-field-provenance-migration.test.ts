@@ -53,6 +53,8 @@ test('invoice field provenance keeps line references on the same invoice', async
       CREATE TABLE invoices (
         id uuid PRIMARY KEY,
         organization_id uuid NOT NULL,
+        vendor_id uuid NOT NULL,
+        invoice_number varchar(100) NOT NULL,
         UNIQUE (id, organization_id)
       );
       CREATE TABLE invoice_lines (
@@ -90,9 +92,9 @@ test('invoice field provenance keeps line references on the same invoice', async
         updated_at timestamptz NOT NULL
       );
       INSERT INTO organizations (id) VALUES ('00000000-0000-4000-8000-000000000001');
-      INSERT INTO invoices (id, organization_id) VALUES
-        ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001'),
-        ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000001');
+      INSERT INTO invoices (id, organization_id, vendor_id, invoice_number) VALUES
+        ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000010', 'INV-1'),
+        ('00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000010', 'INV-2');
       INSERT INTO invoice_lines (id, invoice_id) VALUES
         ('00000000-0000-4000-8000-000000000004', '00000000-0000-4000-8000-000000000002'),
         ('00000000-0000-4000-8000-000000000005', '00000000-0000-4000-8000-000000000003');

@@ -1,3 +1,4 @@
+import { getRedisConnection } from '../../common/redis-connection';
 import { Injectable, OnModuleDestroy, ServiceUnavailableException } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import Redis from 'ioredis';
@@ -64,13 +65,7 @@ export class OAuthRedisService implements OnModuleDestroy {
   private readonly redis: Redis;
 
   constructor() {
-    this.redis = process.env.REDIS_URL
-      ? new Redis(process.env.REDIS_URL, { lazyConnect: true })
-      : new Redis({
-          host: process.env.REDIS_HOST || 'localhost',
-          port: Number(process.env.REDIS_PORT || 6379),
-          lazyConnect: true,
-        });
+    this.redis = new Redis({ ...getRedisConnection(), lazyConnect: true });
   }
 
   async createState(binding: OAuthStateBinding): Promise<string> {

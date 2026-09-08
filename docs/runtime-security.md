@@ -1,0 +1,9 @@
+# Runtime security configuration
+
+Production requires `BETTER_AUTH_SECRET` to contain at least 32 characters and rejects the checked-in development/example values. Generate a random secret during deployment configuration. Do not reuse test/example values. Local development can use the development fallback.
+
+The API enforces 300 requests per minute per route, per client IP, per API process. Health probes are exempt. Better Auth's separately mounted middleware retains its own rate limiting; Nest guards do not wrap that handler. Queue workers are outside the HTTP budget. Multiple API replicas each have a separate budget.
+
+Proxy trust follows ingress configuration. `API_TRUST_PROXY_HOPS` defaults to `0`, which ignores forwarded headers even in production mode. The supported production Compose stack explicitly sets `1`: only Caddy publishes application HTTP ports, and the API has exactly one proxy hop. Caddy overwrites untrusted incoming forwarding headers and adds the client IP. The API then uses the nearest forwarded address, ignoring forged earlier hops. Local application containers expose the API directly and explicitly use `0`. Do not expose the API directly with `1`; a different ingress topology requires revisiting this configuration. Other values fail startup.
+
+`REDIS_URL`, when supplied, is authoritative for all queue, draft-lease and OAuth clients, even when `REDIS_HOST` is also present. It accepts `redis://` and `rediss://`, preserves authentication and the logical database path, and enables TLS for `rediss://`. Invalid URLs, unsupported schemes, query/fragment options, invalid database indexes, and invalid ports fail at configuration rather than falling back to localhost. Without a URL, `REDIS_HOST` and `REDIS_PORT` select the server, defaulting to localhost:6379. This preserves the internal Redis setup in the checked-in Compose configuration.

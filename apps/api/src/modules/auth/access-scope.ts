@@ -1,5 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
-import { or, sql, type SQL } from 'drizzle-orm';
+import { and, or, sql, type SQL } from 'drizzle-orm';
 import type { AccessPolicy } from './access-policy';
 import type { AccessResource, PermissionKey, ResourceScope } from '@betterspend/shared';
 
@@ -35,7 +35,7 @@ export function permissionScopePredicate(
 
 function scopeClauses(scope: ResourceScope, predicates: ScopePredicates): SQL[] {
   const clauses: SQL[] = [];
-  if (scope.ownOnly && predicates.own) clauses.push(predicates.own(scope.userId));
+  if (scope.ownOnly && !predicates.own) return [];
   for (const departmentId of scope.departmentIds) {
     if (predicates.department) clauses.push(predicates.department(departmentId));
   }
@@ -44,6 +44,12 @@ function scopeClauses(scope: ResourceScope, predicates: ScopePredicates): SQL[] 
   }
   for (const entityId of scope.entityIds) {
     if (predicates.entity) clauses.push(predicates.entity(entityId));
+  }
+  if (scope.ownOnly && predicates.own) {
+    const hasDimensions = scope.departmentIds.length + scope.projectIds.length + scope.entityIds.length > 0;
+    if (hasDimensions && clauses.length === 0) return [];
+    const owner = predicates.own(scope.userId);
+    return [clauses.length > 0 ? and(owner, or(...clauses))! : owner];
   }
   return clauses;
 }

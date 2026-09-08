@@ -10,6 +10,8 @@ import {
   Post,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { CurrentAccess } from '../auth/current-access.decorator';
+import type { AccessPolicy } from '../auth/access-policy';
 import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CurrentOrgId } from '../../common/decorators/current-org-id.decorator';
 import { CurrentUserId } from '../../common/decorators/current-user-id.decorator';
@@ -24,14 +26,14 @@ export class EmailIntakeController {
 
   @Get()
   @ApiOperation({ summary: 'List email intake items awaiting review' })
-  list(@CurrentOrgId() orgId: string) {
-    return this.emailIntakeService.list(orgId);
+  list(@CurrentOrgId() orgId: string, @CurrentAccess() access: AccessPolicy) {
+    return this.emailIntakeService.list(orgId, access);
   }
 
   @Get('address')
   @ApiOperation({ summary: 'Get the organization inbound email address' })
-  address(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string) {
-    return this.emailIntakeService.getInboundAddress(orgId, userId);
+  address(@CurrentOrgId() orgId: string, @CurrentUserId() userId: string, @CurrentAccess() access: AccessPolicy) {
+    return this.emailIntakeService.getInboundAddress(orgId, userId, access);
   }
 
   @Public()
@@ -47,13 +49,14 @@ export class EmailIntakeController {
   create(
     @CurrentOrgId() orgId: string,
     @Body() body: { sourceEmail: string; subject: string; body: string },
+    @CurrentAccess() access: AccessPolicy,
   ) {
-    return this.emailIntakeService.create(orgId, body);
+    return this.emailIntakeService.create(orgId, body, access);
   }
 
   @Post(':id/discard')
   @ApiOperation({ summary: 'Discard an intake item' })
-  discard(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string) {
-    return this.emailIntakeService.discard(id, orgId);
+  discard(@Param('id', ParseUUIDPipe) id: string, @CurrentOrgId() orgId: string, @CurrentUserId() userId: string, @CurrentAccess() access: AccessPolicy) {
+    return this.emailIntakeService.discard(id, orgId, userId, access);
   }
 }

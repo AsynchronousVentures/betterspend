@@ -8,6 +8,7 @@ services:
     environment:
       NODE_ENV: production
       API_PORT: 4001
+      API_TRUST_PROXY_HOPS: '0'
       DATABASE_URL: postgresql://betterspend:betterspend@postgres:5432/betterspend
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -16,7 +17,8 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: betterspend
-      BETTER_AUTH_SECRET: betterspend-dev-secret-change-in-prod
+      # Validate on API startup so infrastructure-only profiles need no auth secret.
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?Set CREDENTIAL_ENCRYPTION_KEY in .env. Generate it with openssl rand -base64 32}
       AI_CREDENTIAL_ENCRYPTION_KEY: ${AI_CREDENTIAL_ENCRYPTION_KEY:-}
       API_URL: http://localhost:4001

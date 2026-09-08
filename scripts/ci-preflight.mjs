@@ -47,7 +47,10 @@ run(
   'docker',
   ['compose', '--profile', 'app', '--profile', 'tools', 'config'],
   {
-    env: { CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString('base64') },
+    env: {
+      CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
+      BETTER_AUTH_SECRET: randomBytes(32).toString('hex'),
+    },
     quiet: true,
   },
 );
