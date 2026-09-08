@@ -7,6 +7,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { eq, and, sql, gte, inArray, lte } from 'drizzle-orm';
+import { pendingApprovalQuery } from './pending-approval-query';
 import { DB_TOKEN } from '../../database/database.module';
 import type { Db, DbTransaction } from '@betterspend/db';
 import {
@@ -869,12 +870,12 @@ export class ApprovalEngineService {
               sql`
         SELECT i.id, i.internal_number AS "internalNumber", i.invoice_number AS "invoiceNumber",
           v.name AS "vendorName", i.total_amount AS amount, i.currency, i.match_status AS "matchStatus",
-          i.due_date AS "dueDate", i.status, i.entity_id AS "entityId",
+          i.due_date AS "dueDate", i.status, COALESCE(i.entity_id, po.entity_id) AS "entityId",
           r.department_id AS "departmentId", r.project_id AS "projectId"
         FROM invoices i
         LEFT JOIN vendors v ON v.id = i.vendor_id
-        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id
-        LEFT JOIN requisitions r ON r.id = po.requisition_id
+        LEFT JOIN purchase_orders po ON po.id = i.purchase_order_id AND po.organization_id = i.organization_id
+        LEFT JOIN requisitions r ON r.id = po.requisition_id AND r.organization_id = i.organization_id
         WHERE i.id = ANY(${uuidArray(invoiceIds)})
       `,
             )
@@ -920,76 +921,50 @@ export class ApprovalEngineService {
     return enriched;
   }
 
-  // List all pending requests for an organization.
-  async listPending(organizationId: string, actorId?: string, access?: AccessPolicy) {
+  async listPending(
+    organizationId: string,
+    actorId?: string,
+    access?: AccessPolicy,
+    page = 1,
+    limit = 50,
+  ) {
     requirePermission(access, 'approvals:view');
-    if (!actorId) return [];
+    if (
+      !Number.isSafeInteger(page) || page < 1 ||
+      !Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
+      !Number.isSafeInteger((page - 1) * limit)
+    ) {
+      throw new BadRequestException('Invalid approval page or limit');
+    }
+    if (!actorId) return { data: [], page, limit, hasMore: false };
+    const candidates = await this.db.execute(
+      pendingApprovalQuery(
+        organizationId, actorId, access?.scopeFor('approval', 'approvals:view'),
+        page, limit, !!this.delegations,
+      ),
+    ) as { id: string }[];
+    const ids = candidates.slice(0, limit).map((row) => row.id);
+    if (!ids.length) return { data: [], page, limit, hasMore: false };
     const rows = await this.db.query.approvalRequests.findMany({
-      where: (record, { and, eq }) =>
-        and(eq(record.organizationId, organizationId), eq(record.status, 'pending')),
+      where: (record, { and, eq, inArray }) =>
+        and(
+          eq(record.organizationId, organizationId),
+          eq(record.status, 'pending'),
+          inArray(record.id, ids),
+        ),
       with: {
         rule: { with: { steps: true } },
-        actions: { orderBy: (a, { desc }) => desc(a.actedAt) },
+        actions: { orderBy: (action, { desc }) => desc(action.actedAt) },
       },
-      orderBy: (r, { asc }) => asc(r.createdAt),
+      orderBy: (record, { asc }) => [asc(record.createdAt), asc(record.id)],
     });
-    const actor = actorId
-      ? await this.db.query.users.findFirst({
-          where: (user, { and, eq }) =>
-            and(eq(user.id, actorId), eq(user.organizationId, organizationId)),
-          with: { userRoles: true },
-        })
-      : null;
     const enriched = await this.enrichWithEntityInfo(rows);
-    const pending = await Promise.all(
-      enriched.map(async (row) => {
-        const currentStep = row.rule?.steps?.find(
-          (step: { stepOrder: number }) => step.stepOrder === row.currentStep,
-        );
-        const approverRole =
-          currentStep?.approverType === 'role'
-            ? currentStep.approverRole
-            : currentStep?.approverType === 'department_head'
-              ? 'approver'
-              : null;
-        const roleAssigned = approverRole
-          ? actor?.userRoles.some(
-              (assignment) =>
-                assignment.role === approverRole &&
-                roleAssignmentMatchesApprovalScope(
-                  assignment,
-                  row.entitySummary ?? {},
-                  currentStep?.approverType === 'department_head',
-                ),
-            )
-          : false;
-        const delegateApproverIds = [row.requiredApproverId, currentStep?.approverId].filter(
-          (approverId): approverId is string => !!approverId,
-        );
-        const delegatedToActor =
-          !!actorId &&
-          !!this.delegations &&
-          (
-            await Promise.all(
-              delegateApproverIds.map((approverId) =>
-                this.delegations!.getActiveDelegatee(organizationId, approverId, this.db),
-              ),
-            )
-          ).includes(actorId);
-        const actorAssigned =
-          row.requiredApproverId === actorId ||
-          currentStep?.approverId === actorId ||
-          delegatedToActor ||
-          roleAssigned;
-        return { row, actorAssigned };
-      }),
-    );
-    return pending
-      .filter(
-        ({ row, actorAssigned }) =>
-          actorAssigned && scopeAllowsApproval(access, row.entitySummary ?? {}),
-      )
-      .map(({ row }) => row);
+    return {
+      data: enriched.filter((row) => scopeAllowsApproval(access, row.entitySummary ?? {})),
+      page,
+      limit,
+      hasMore: candidates.length > limit,
+    };
   }
 
   // Process an approve or reject action

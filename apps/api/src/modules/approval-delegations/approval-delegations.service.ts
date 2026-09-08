@@ -111,6 +111,8 @@ export class ApprovalDelegationsService {
           lte(d.startDate, now),
           gte(d.endDate, now),
         ),
+      // Match the pending queue's single winner when active delegations overlap.
+      orderBy: (d, { asc }) => [asc(d.createdAt), asc(d.id)],
     });
     return result?.delegateeId ?? null;
   }
