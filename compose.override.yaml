@@ -16,7 +16,8 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: betterspend
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env. Generate it with openssl rand -hex 32}
+      # Validate on API startup so infrastructure-only profiles need no auth secret.
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?Set CREDENTIAL_ENCRYPTION_KEY in .env. Generate it with openssl rand -base64 32}
       AI_CREDENTIAL_ENCRYPTION_KEY: ${AI_CREDENTIAL_ENCRYPTION_KEY:-}
       API_URL: http://localhost:4001
