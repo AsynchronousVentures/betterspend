@@ -2,6 +2,9 @@
   "name": "betterspend",
   "version": "0.2.3",
   "private": true,
+  "engines": {
+    "node": ">=24.9 <25"
+  },
   "pnpm": {
     "overrides": {
       "@esbuild-kit/core-utils>esbuild": "0.25.12",
@@ -38,7 +41,7 @@
     "release:push": "git push origin main --follow-tags"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^24.13.3",
     "eslint": "^9.39.5",
     "eslint-config-next": "16.3.3",
     "husky": "^9.1.7",

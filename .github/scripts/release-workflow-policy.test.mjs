@@ -257,8 +257,8 @@ test('uses standard GitHub-hosted runners without duplicate validation', () => {
     workflow,
     /publish:\n    name: Publish Images[\s\S]*?runs-on: ubuntu-24\.04[\s\S]*?timeout-minutes: 30/,
   );
-  assert.equal((workflow.match(/uses: docker\/setup-buildx-action@v3/g) ?? []).length, 2);
-  assert.equal((workflow.match(/uses: docker\/build-push-action@v6/g) ?? []).length, 6);
+  assert.equal((workflow.match(/uses: docker\/setup-buildx-action@v4/g) ?? []).length, 2);
+  assert.equal((workflow.match(/uses: docker\/build-push-action@v7/g) ?? []).length, 6);
   assert.doesNotMatch(workflow, /blacksmith|useblacksmith/i);
   assert.match(
     workflow,
@@ -299,13 +299,13 @@ test('builds missing immutable sources with the standard Docker actions after va
   );
   assert.match(
     workflow,
-    /publish:\n    name: Publish Images[\s\S]*?needs\.validate\.result == 'success'[\s\S]*?name: Set up Docker builder\n        uses: docker\/setup-buildx-action@v3/,
+    /publish:\n    name: Publish Images[\s\S]*?needs\.validate\.result == 'success'[\s\S]*?name: Set up Docker builder\n        uses: docker\/setup-buildx-action@v4/,
   );
   for (const image of ['API', 'web', 'migrator']) {
     assert.match(
       workflow,
       new RegExp(
-        `name: Build and push ${image} image[\\s\\S]*?if: steps\\.existing_images\\.outputs\\.${image.toLowerCase()}_exists != 'true'[\\s\\S]*?uses: docker/build-push-action@v6`,
+        `name: Build and push ${image} image[\\s\\S]*?if: steps\\.existing_images\\.outputs\\.${image.toLowerCase()}_exists != 'true'[\\s\\S]*?uses: docker/build-push-action@v7`,
       ),
     );
   }

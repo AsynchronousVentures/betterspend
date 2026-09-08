@@ -14,7 +14,7 @@ Next.js 16.3.3 is the current Active LTS patch as of August 28, 2026. It is also
 
 - Target `next` 16.3.3 and `eslint-config-next` 16.3.3. Keep the existing manifest style, `^16.3.3` for the application dependency and an exact `16.3.3` for the root ESLint config, with 16.3.3 resolved in `pnpm-lock.yaml`.
 - Keep React and React DOM at 19.2.8. Next.js 16 uses React 19.2 in the App Router, and the repository is already on the current stable packages. Keep `@types/react` at 19.2.18 and update `@types/react-dom` from 19.2.4 to 19.2.5 so the React type packages are current together. See the [Next.js 16 release](https://nextjs.org/blog/next-16) and [React versions policy](https://react.dev/versions).
-- Keep Node.js 22 in CI and all Docker stages. Next.js 16 requires Node.js 20.9.0 or newer, while BetterSpend already develops, builds, and runs on Node.js 22. Correct the stale `Node.js 20+` prerequisite in the root `AGENTS.md` to Node.js 22; no runtime image change is needed. TypeScript 5.1 or newer is required, and the repository's TypeScript 5.7 manifest range satisfies that requirement. See the [Next.js 16 runtime requirements](https://nextjs.org/docs/app/guides/upgrading/version-16#nodejs-runtime-and-browser-support).
+- Use Node.js 24 in CI and all Docker stages, matching the repository prerequisites and Node type definitions. This supersedes the original migration plan to retain Node.js 22. Next.js 16 requires Node.js 20.9.0 or newer. TypeScript 5.1 or newer is required, and the repository's TypeScript 5.7 manifest range satisfies that requirement. See the [Next.js 16 runtime requirements](https://nextjs.org/docs/app/guides/upgrading/version-16#nodejs-runtime-and-browser-support).
 - Keep pnpm 10.15.1. The official upgrade guide specifies no higher pnpm floor, and the repository already pins pnpm through `packageManager` and CI. See the [pnpm upgrade path](https://nextjs.org/docs/app/guides/upgrading/version-16#using-the-codemod).
 - Adopt Turbopack for development and production builds, which is the Next.js 16 default. Do not add `--webpack` preemptively.
 - Rename Middleware to Proxy and use its Node.js runtime. BetterSpend does not declare or depend on the Edge runtime.
@@ -227,7 +227,7 @@ The currently installed Next.js 15.5.21 is not an acceptable steady-state rollba
 
 - `apps/web/package.json` and `pnpm-lock.yaml` resolve Next.js 16.3.3; root `eslint-config-next` is 16.3.3.
 - React and React DOM remain on 19.2.8 with current matching type packages.
-- CI and runtime remain on Node.js 22, and repository prerequisites no longer imply that Node versions below 20.9 are supported.
+- CI, runtime, and repository prerequisites use Node.js 24.
 - The application uses `proxy.ts` and a `proxy` export; no deprecated Middleware convention remains.
 - All async request API sites compile without compatibility casts, `UnsafeUnwrapped` types, or `@next-codemod` markers.
 - Turbopack completes the production build with no `--webpack` flag.
