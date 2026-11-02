@@ -218,7 +218,7 @@ export class VendorPortalService {
     const [poRows, invoiceRows] = await Promise.all([
       this.db.execute(sql`
         SELECT
-          po.id, po.internal_number AS "internalNumber", po.status,
+          po.id, po.number AS "internalNumber", po.status,
           po.total_amount::numeric AS "totalAmount", po.currency,
           po.issued_at AS "issuedAt", po.created_at AS "createdAt"
         FROM purchase_orders po

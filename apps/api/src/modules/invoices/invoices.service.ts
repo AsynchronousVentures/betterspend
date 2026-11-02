@@ -1155,10 +1155,11 @@ export class InvoicesService {
       );
     }
 
-    const taxCodeMap = await this.getTaxCodeMap(
-      organizationId,
-      input.lines.map((line) => line.taxCodeId).filter((value): value is string => !!value),
-    );
+    const taxCodeMap = await this.getTaxCodeMap(organizationId, [
+      ...new Set(
+        input.lines.map((line) => line.taxCodeId).filter((value): value is string => !!value),
+      ),
+    ]);
 
     const lineAmounts = input.lines.map((line) => {
       const taxCode = line.taxCodeId ? taxCodeMap.get(line.taxCodeId) : null;

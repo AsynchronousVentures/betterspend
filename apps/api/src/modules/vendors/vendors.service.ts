@@ -547,7 +547,7 @@ export class VendorsService {
       `),
       this.db.execute(sql`
         SELECT
-          po.id, po.internal_number AS number, po.status,
+          po.id, po.number AS number, po.status,
           po.total_amount::numeric AS amount, po.issued_at AS "issuedAt", po.created_at AS date
         FROM purchase_orders po
         JOIN vendors v
