@@ -2,10 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
-import { getTableColumns, getTableName } from 'drizzle-orm';
-import type { AnyPgTable } from 'drizzle-orm/pg-core';
 import * as schema from '@betterspend/db';
 import type { Db } from '@betterspend/db';
+import { createSchemaTables } from '../../common/testing/pglite-schema';
 import type { EntitiesService } from '../entities/entities.service';
 import { VendorsService } from '../vendors/vendors.service';
 import { VendorPortalService } from './vendor-portal.service';
@@ -16,40 +15,15 @@ const vendor = '00000000-0000-4000-8000-000000000003';
 const po = '00000000-0000-4000-8000-000000000004';
 const invoice = '00000000-0000-4000-8000-000000000005';
 
-// Build each table from the Drizzle schema so the raw SQL in the services is
-// checked against the real column names rather than a hand-written copy.
-function createTableSql(table: AnyPgTable): string {
-  const columns = Object.values(getTableColumns(table)).map((column) => {
-    const type =
-      column.columnType === 'PgUUID'
-        ? 'uuid'
-        : column.columnType === 'PgNumeric'
-          ? 'numeric'
-          : column.columnType === 'PgTimestamp'
-            ? 'timestamptz'
-            : column.columnType === 'PgBoolean'
-              ? 'boolean'
-              : column.columnType === 'PgJsonb'
-                ? 'jsonb'
-                : column.columnType === 'PgInteger' || column.columnType === 'PgSerial'
-                  ? 'integer'
-                  : 'text';
-    return `"${column.name}" ${type}`;
-  });
-  return `CREATE TABLE "${getTableName(table)}" (${columns.join(', ')})`;
-}
-
 test('vendor PO queries select real purchase_orders columns', async () => {
   const database = new PGlite();
   try {
-    for (const table of [
+    await createSchemaTables(database, [
       schema.legalEntities,
       schema.vendors,
       schema.purchaseOrders,
       schema.invoices,
-    ]) {
-      await database.exec(createTableSql(table));
-    }
+    ]);
     await database.query(
       'INSERT INTO vendors (id, organization_id, entity_id, name, code, status) VALUES ($1,$2,$3,$4,$5,$6)',
       [vendor, org, entity, 'Supplier One', 'SUP-1', 'active'],

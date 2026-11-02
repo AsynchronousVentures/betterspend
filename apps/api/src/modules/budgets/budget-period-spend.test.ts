@@ -2,10 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
-import { getTableColumns, getTableName } from 'drizzle-orm';
-import type { AnyPgTable } from 'drizzle-orm/pg-core';
 import * as schema from '@betterspend/db';
 import type { Db } from '@betterspend/db';
+import { createSchemaTables } from '../../common/testing/pglite-schema';
 import { BudgetsService } from './budgets.service';
 
 const org = '00000000-0000-4000-8000-000000000001';
@@ -13,32 +12,10 @@ const department = '00000000-0000-4000-8000-000000000002';
 const budget = '00000000-0000-4000-8000-000000000003';
 const period = '00000000-0000-4000-8000-000000000004';
 
-function createTableSql(table: AnyPgTable): string {
-  const columns = Object.values(getTableColumns(table)).map((column) => {
-    const type =
-      column.columnType === 'PgUUID'
-        ? 'uuid'
-        : column.columnType === 'PgNumeric'
-          ? 'numeric'
-          : column.columnType === 'PgTimestamp'
-            ? 'timestamptz'
-            : column.columnType === 'PgBoolean'
-              ? 'boolean'
-              : column.columnType === 'PgJsonb'
-                ? 'jsonb'
-                : column.columnType === 'PgInteger' || column.columnType === 'PgSerial'
-                  ? 'integer'
-                  : 'text';
-    return `"${column.name}" ${type}`;
-  });
-  return `CREATE TABLE "${getTableName(table)}" (${columns.join(', ')})`;
-}
-
 test('recording spend updates the matching budget period with driver-safe dates', async () => {
   const database = new PGlite();
   try {
-    await database.exec(createTableSql(schema.budgets));
-    await database.exec(createTableSql(schema.budgetPeriods));
+    await createSchemaTables(database, [schema.budgets, schema.budgetPeriods]);
     await database.query(
       'INSERT INTO budgets (id, organization_id, name, budget_type, scope_id, fiscal_year, total_amount, spent_amount, base_spent_amount, exchange_rate, currency) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
       [
