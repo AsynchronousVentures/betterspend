@@ -15,6 +15,7 @@ import {
   isNotNull,
   isNull,
   lt,
+  lte,
   ne,
   or,
   type SQL,
@@ -1173,8 +1174,8 @@ export class BudgetsService {
       .where(
         and(
           eq(budgetPeriods.budgetId, budget.id),
-          sql`${budgetPeriods.periodStart} <= ${recordedAt}`,
-          sql`${budgetPeriods.periodEnd} >= ${recordedAt}`,
+          lte(budgetPeriods.periodStart, recordedAt),
+          gte(budgetPeriods.periodEnd, recordedAt),
         ),
       );
 
