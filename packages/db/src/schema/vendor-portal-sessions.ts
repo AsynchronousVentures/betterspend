@@ -1,6 +1,7 @@
 import { foreignKey, index, pgTable, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
 import { organizations } from './organizations';
 import { vendors } from './vendors';
+import { vendorPortalUsers } from './vendor-portal-users';
 
 export const vendorPortalSessions = pgTable(
   'vendor_portal_sessions',
@@ -10,6 +11,9 @@ export const vendorPortalSessions = pgTable(
       .notNull()
       .references(() => organizations.id),
     vendorId: uuid('vendor_id').notNull(),
+    portalUserId: uuid('portal_user_id').references(() => vendorPortalUsers.id, {
+      onDelete: 'cascade',
+    }),
     tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),

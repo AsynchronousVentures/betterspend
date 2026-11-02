@@ -20,6 +20,52 @@ describe('VendorPortalController session boundary', () => {
     expect(service.sendAccessLink).toHaveBeenCalledWith(vendorId, organizationId, access);
   });
 
+  it('signs in with a portal login and sets the same scoped HttpOnly cookie', async () => {
+    const service = {
+      loginWithPassword: jest.fn(async () => ({
+        sessionToken: 'login-secret',
+        expiresAt: new Date(Date.now() + PORTAL_SESSION_TTL_MS),
+      })),
+    };
+    const response = { cookie: jest.fn() };
+    const controller = new VendorPortalController(service as never, {} as never);
+
+    await expect(
+      controller.login(
+        { email: 'billing@vendor.test', password: 'hunter2hunter2' },
+        response as unknown as Response,
+      ),
+    ).resolves.toEqual({ success: true });
+    expect(service.loginWithPassword).toHaveBeenCalledWith('billing@vendor.test', 'hunter2hunter2');
+    expect(response.cookie).toHaveBeenCalledWith(
+      PORTAL_SESSION_COOKIE,
+      'login-secret',
+      expect.objectContaining({
+        httpOnly: true,
+        sameSite: 'strict',
+        path: '/api/v1/vendor-portal',
+      }),
+    );
+  });
+
+  it('refuses a password change on a link-only session', async () => {
+    const service = {
+      validateSessionContext: jest.fn(async () => ({
+        vendorId,
+        organizationId,
+        portalUserId: null,
+      })),
+    };
+    const users = { changePassword: jest.fn() };
+    const controller = new VendorPortalController(service as never, {} as never, users as never);
+    const request = { headers: { cookie: `${PORTAL_SESSION_COOKIE}=abc` } } as Request;
+
+    await expect(
+      controller.changeOwnPassword(request, { currentPassword: 'a', newPassword: 'longenough' }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(users.changePassword).not.toHaveBeenCalled();
+  });
+
   it('exchanges the link token for a scoped HttpOnly cookie', async () => {
     const service = {
       exchangeLinkToken: jest.fn(async () => ({

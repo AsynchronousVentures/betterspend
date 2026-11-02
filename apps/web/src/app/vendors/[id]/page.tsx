@@ -9,6 +9,7 @@ import { useToast } from '../../../components/toast';
 import Breadcrumbs from '../../../components/breadcrumbs';
 import { StatusBadge } from '../../../components/status-badge';
 import { SupplierHubNav } from '../../../components/supplier-hub-nav';
+import { VendorPortalLogins } from '../../../components/vendor-portal-logins';
 import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
@@ -519,18 +520,25 @@ export default function VendorDetailPage() {
                 {portalSending ? 'Sending...' : 'Send Access Link'}
               </Button>
             </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                Send a secure, tokenized portal link so the vendor can view purchase orders and
-                submit invoices directly.
-              </p>
-              {portalMsg ? (
-                <div
-                  className={`mt-4 rounded-xl border px-4 py-3 text-sm ${portalMsg.startsWith('Error') ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}
-                >
-                  {portalMsg}
-                </div>
-              ) : null}
+            <CardContent className="space-y-6">
+              <div>
+                <p className="text-sm text-muted-foreground">
+                  Send a secure, tokenized portal link so the vendor can view purchase orders and
+                  submit invoices directly. Suppliers can also sign in any time with one of the
+                  email and password logins below.
+                </p>
+                {portalMsg ? (
+                  <div
+                    className={`mt-4 rounded-xl border px-4 py-3 text-sm ${portalMsg.startsWith('Error') ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}
+                  >
+                    {portalMsg}
+                  </div>
+                ) : null}
+              </div>
+              <div className="space-y-2">
+                <div className="text-sm font-semibold text-foreground">Portal logins</div>
+                <VendorPortalLogins vendorId={id} />
+              </div>
             </CardContent>
           </Card>
 

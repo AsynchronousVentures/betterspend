@@ -38,6 +38,7 @@ import {
 import { systemSettings } from './schema/system-settings';
 import { vendorPortalTokens } from './schema/vendor-portal-tokens';
 import { vendorPortalSessions } from './schema/vendor-portal-sessions';
+import { vendorPortalUsers } from './schema/vendor-portal-users';
 import { notifications } from './schema/notifications';
 import {
   paymentRunEvents,
@@ -932,6 +933,22 @@ export const vendorPortalSessionsRelations = relations(vendorPortalSessions, ({ 
     fields: [vendorPortalSessions.vendorId, vendorPortalSessions.organizationId],
     references: [vendors.id, vendors.organizationId],
   }),
+  portalUser: one(vendorPortalUsers, {
+    fields: [vendorPortalSessions.portalUserId],
+    references: [vendorPortalUsers.id],
+  }),
+}));
+
+export const vendorPortalUsersRelations = relations(vendorPortalUsers, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [vendorPortalUsers.organizationId],
+    references: [organizations.id],
+  }),
+  vendor: one(vendors, {
+    fields: [vendorPortalUsers.vendorId, vendorPortalUsers.organizationId],
+    references: [vendors.id, vendors.organizationId],
+  }),
+  sessions: many(vendorPortalSessions),
 }));
 
 export const requisitionTemplatesRelations = relations(requisitionTemplates, ({ one }) => ({

@@ -15,6 +15,8 @@ export type {
 export * from './relations';
 export * from './client';
 export * from './credential-crypto';
+export * from './vendor-portal-password';
+export * from './vendor-portal-seed';
 export * from './better-auth-migration';
 export {
   DEMO_ADMIN_EMAIL,

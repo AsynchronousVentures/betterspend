@@ -20,6 +20,7 @@ export * from './contracts';
 export * from './system-settings';
 export * from './password-reset-tokens';
 export * from './vendor-portal-tokens';
+export * from './vendor-portal-users';
 export * from './vendor-portal-sessions';
 export * from './notifications';
 export * from './notification-preferences';

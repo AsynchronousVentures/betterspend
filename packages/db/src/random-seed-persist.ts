@@ -4,6 +4,7 @@ import { db, type DbTransaction } from './client';
 import { appendAuditLog, appendAuditLogIfAbsent } from './audit-integrity';
 import { upsertDemoFixtures } from './demo-fixtures';
 import { materializeEmailIntakeTokens, materializeWebhookSecrets } from './random-seed-secrets';
+import { demoVendorPortalPassword, materializeVendorPortalUsers } from './vendor-portal-seed';
 import {
   approvalActions,
   approvalDelegations,
@@ -75,6 +76,7 @@ import {
   vendorOnboardingSubmissions,
   vendorPaymentAccounts,
   vendorVirtualCards,
+  vendorPortalUsers,
   vendors,
   webhookDeliveries,
   webhookEndpoints,
@@ -201,6 +203,11 @@ export async function persistRandomSeed(
     await insertBatches(tx, users, dataset.users);
     await insertBatches(tx, userRoles, dataset.userRoles);
     await insertBatches(tx, vendors, dataset.vendors);
+    await insertBatches(
+      tx,
+      vendorPortalUsers,
+      await materializeVendorPortalUsers(dataset.vendorPortalUsers),
+    );
     await insertBatches(tx, catalogItems, dataset.catalogItems);
     await insertBatches(tx, taxCodes, dataset.taxCodes);
     await insertBatches(tx, exchangeRates, dataset.exchangeRates);
@@ -288,5 +295,10 @@ export async function seedRandomWorkload(
     `Random seed complete for ${options.count} workload stories (seed "${options.seed}").`,
   );
   console.log(`Rows inserted or already present: ${domains}`);
+  if (summary.vendorPortalUsers > 0) {
+    console.log(
+      `Vendor portal logins use each vendor's contact email with password "${demoVendorPortalPassword()}" (override with SEED_VENDOR_PORTAL_PASSWORD).`,
+    );
+  }
   return summary;
 }

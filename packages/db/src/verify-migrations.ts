@@ -3,6 +3,7 @@ import postgres from 'postgres';
 const EXPECTED_TABLES = [
   'vendor_portal_tokens',
   'vendor_portal_sessions',
+  'vendor_portal_users',
   'notifications',
   'integration_connections',
   'sync_records',
@@ -21,6 +22,7 @@ const EXPECTED_TABLES = [
 ] as const;
 
 const EXPECTED_COLUMNS = [
+  { table: 'vendor_portal_sessions', column: 'portal_user_id' },
   { table: 'audit_log', column: 'prev_hash' },
   { table: 'audit_log', column: 'entry_hash' },
   { table: 'auth_accounts', column: 'issuer' },
@@ -161,6 +163,12 @@ const EXPECTED_INDEXES = [
     columns: ['id', 'organization_id'],
     unique: true,
   },
+  {
+    name: 'vendor_portal_users_org_email_unique',
+    table: 'vendor_portal_users',
+    columns: ['organization_id', 'email'],
+    unique: true,
+  },
 ] as const;
 
 const EXPECTED_TRIGGERS = [
@@ -233,6 +241,27 @@ const EXPECTED_FOREIGN_KEYS = [
   {
     name: 'vendor_portal_sessions_vendor_org_fk',
     child: 'vendor_portal_sessions',
+    parent: 'vendors',
+    childColumns: ['vendor_id', 'organization_id'],
+    parentColumns: ['id', 'organization_id'],
+  },
+  {
+    name: 'vendor_portal_sessions_portal_user_id_vendor_portal_users_id_fk',
+    child: 'vendor_portal_sessions',
+    parent: 'vendor_portal_users',
+    childColumns: ['portal_user_id'],
+    parentColumns: ['id'],
+  },
+  {
+    name: 'vendor_portal_users_organization_id_organizations_id_fk',
+    child: 'vendor_portal_users',
+    parent: 'organizations',
+    childColumns: ['organization_id'],
+    parentColumns: ['id'],
+  },
+  {
+    name: 'vendor_portal_users_vendor_org_fk',
+    child: 'vendor_portal_users',
     parent: 'vendors',
     childColumns: ['vendor_id', 'organization_id'],
     parentColumns: ['id', 'organization_id'],

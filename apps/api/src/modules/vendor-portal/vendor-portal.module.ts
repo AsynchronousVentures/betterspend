@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { VendorPortalController } from './vendor-portal.controller';
 import { VendorPortalService } from './vendor-portal.service';
+import { VendorPortalUsersService } from './vendor-portal-users.service';
 import { SettingsModule } from '../settings/settings.module';
 import { InvoicesModule } from '../invoices/invoices.module';
 import { VendorsModule } from '../vendors/vendors.module';
@@ -8,14 +9,8 @@ import { CatalogModule } from '../catalog/catalog.module';
 import { MessagesModule } from '../messages/messages.module';
 
 @Module({
-  imports: [
-    SettingsModule,
-    InvoicesModule,
-    VendorsModule,
-    CatalogModule,
-    MessagesModule,
-  ],
+  imports: [SettingsModule, InvoicesModule, VendorsModule, CatalogModule, MessagesModule],
   controllers: [VendorPortalController],
-  providers: [VendorPortalService],
+  providers: [VendorPortalService, VendorPortalUsersService],
 })
 export class VendorPortalModule {}

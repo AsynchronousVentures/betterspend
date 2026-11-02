@@ -74,6 +74,7 @@ import {
   purchaseOrders,
 } from './schema';
 import type { DemoIdentity } from './demo-fixtures';
+import { demoVendorPortalEmail, type VendorPortalUserSeedRow } from './vendor-portal-seed';
 
 export const DEFAULT_RANDOM_COUNT = 500;
 export const DEFAULT_RANDOM_SEED = 'betterspend-demo-2026';
@@ -167,6 +168,7 @@ type Rows = {
   integrationConnections: Array<InsertRow<typeof integrationConnections>>;
   syncRecords: Array<InsertRow<typeof syncRecords>>;
   approvalDelegations: Array<InsertRow<typeof approvalDelegations>>;
+  vendorPortalUsers: Array<VendorPortalUserSeedRow>;
   auditLog: Array<AuditSeedRow>;
 };
 
@@ -178,7 +180,7 @@ export interface RandomSeedDataset extends Rows {
 export const RANDOM_SEED_COVERAGE = {
   included: [
     'fixed Acme organization and legal entities, departments, projects, users, scoped roles',
-    'vendors, catalog, onboarding, tax codes, exchange rates, sanctions screenings',
+    'vendors, vendor portal logins, catalog, onboarding, tax codes, exchange rates, sanctions screenings',
     'requisitions, approval rules/steps/requests/actions, purchase orders, receipts, invoices, matching',
     'budgets, periods, commitment events, RFQs, contracts, inventory, recurring POs, templates',
     'payments, GL mappings/export jobs, documents/OCR metadata, notifications/preferences, messages',
@@ -464,6 +466,7 @@ function emptyRows(): Rows {
     integrationConnections: [],
     syncRecords: [],
     approvalDelegations: [],
+    vendorPortalUsers: [],
     auditLog: [],
   };
 }
@@ -721,6 +724,15 @@ export function generateRandomSeedDataset(
       sanctionsNote: 'Demo screening result, no external lookup performed.',
       createdAt: stableDate(seed, 'vendor-created', index, -360, -20),
       updatedAt: stableDate(seed, 'vendor-updated', index, -40, 0),
+    });
+    rows.vendorPortalUsers.push({
+      id: stableUuid(seed, 'vendor-portal-user', index),
+      organizationId: DEMO_ORG_ID,
+      vendorId: id,
+      email: demoVendorPortalEmail(rows.vendors[rows.vendors.length - 1]!),
+      name: 'Billing contact',
+      createdAt: stableDate(seed, 'vendor-portal-user-created', index, -350, -20),
+      updatedAt: stableDate(seed, 'vendor-portal-user-updated', index, -40, 0),
     });
   }
   for (let index = 0; index < catalogCount; index += 1) {

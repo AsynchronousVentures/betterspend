@@ -61,6 +61,15 @@ test('invoice field provenance keeps line references on the same invoice', async
         id uuid PRIMARY KEY,
         invoice_id uuid NOT NULL
       );
+      -- Vendor portal logins later attach to vendors and to existing portal sessions.
+      CREATE TABLE vendors (
+        id uuid PRIMARY KEY,
+        organization_id uuid NOT NULL,
+        UNIQUE (id, organization_id)
+      );
+      CREATE TABLE vendor_portal_sessions (
+        id uuid PRIMARY KEY
+      );
       -- Supplier delivery later links review intents to the durable message
       -- artifact created by the earlier messages migration.
       CREATE TABLE messages (

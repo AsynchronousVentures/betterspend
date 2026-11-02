@@ -14,14 +14,16 @@ import {
   ClipboardCheck,
   CreditCard,
   FileSpreadsheet,
+  KeyRound,
   LoaderCircle,
+  LogOut,
   ReceiptText,
   Send,
   ShieldCheck,
   Upload,
   X,
 } from 'lucide-react';
-import { api } from '../../lib/api';
+import { api, type VendorPortalAccount } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { StatusBadge } from '../../components/status-badge';
 import { MessageThread } from '../../components/message-thread';
@@ -47,7 +49,8 @@ import {
 } from '../../components/ui/table';
 import { Textarea } from '../../components/ui/textarea';
 
-type PortalTab = 'overview' | 'pos' | 'invoices' | 'messages' | 'onboarding' | 'catalog';
+type PortalTab =
+  'overview' | 'pos' | 'invoices' | 'messages' | 'onboarding' | 'catalog' | 'account';
 
 interface InvoiceLine {
   lineNumber: number;
@@ -117,10 +120,12 @@ function PortalShell({
   children,
   vendorName,
   onSubmitInvoice,
+  onSignOut,
 }: {
   children: ReactNode;
   vendorName?: string;
   onSubmitInvoice?: () => void;
+  onSignOut?: () => void;
 }) {
   return (
     <div className="min-h-screen bg-background">
@@ -134,16 +139,110 @@ function PortalShell({
               {vendorName ?? 'BetterSpend Supplier Access'}
             </div>
           </div>
-          {onSubmitInvoice ? (
-            <Button type="button" onClick={onSubmitInvoice} className="gap-2">
-              <ReceiptText className="h-4 w-4" />
-              Submit Invoice
-            </Button>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {onSubmitInvoice ? (
+              <Button type="button" onClick={onSubmitInvoice} className="gap-2">
+                <ReceiptText className="h-4 w-4" />
+                Submit Invoice
+              </Button>
+            ) : null}
+            {onSignOut ? (
+              <Button type="button" variant="outline" onClick={onSignOut} className="gap-2">
+                <LogOut className="h-4 w-4" />
+                Sign out
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
       <div className="mx-auto w-full max-w-7xl px-4 py-6 md:px-6 md:py-8">{children}</div>
     </div>
+  );
+}
+
+function PortalLogin({ notice, onSuccess }: { notice: string; onSuccess: () => void }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [loginError, setLoginError] = useState('');
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    setSubmitting(true);
+    setLoginError('');
+    try {
+      await api.vendorPortal.login(email, password);
+      onSuccess();
+    } catch (err: any) {
+      setLoginError(err.message || 'Sign in failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <PortalShell>
+      <div className="flex min-h-[70vh] items-center justify-center">
+        <Card className="w-full max-w-md rounded-[28px] border-border/70 bg-card">
+          <CardHeader className="items-center text-center">
+            <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-[22px] bg-ember-50 text-primary">
+              <KeyRound className="h-8 w-8" />
+            </div>
+            <CardTitle className="text-2xl tracking-[-0.03em]">Supplier sign in</CardTitle>
+            <CardDescription>
+              Use the email and password your buyer set up for you, or open the access link they
+              sent.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {notice ? (
+              <Alert className="mb-4">
+                <AlertDescription>{notice}</AlertDescription>
+              </Alert>
+            ) : null}
+            {loginError ? (
+              <Alert variant="destructive" className="mb-4">
+                <AlertDescription>{loginError}</AlertDescription>
+              </Alert>
+            ) : null}
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label htmlFor="portal-email" className="text-sm font-medium text-foreground">
+                  Email
+                </label>
+                <Input
+                  id="portal-email"
+                  type="email"
+                  autoComplete="username"
+                  required
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="portal-password" className="text-sm font-medium text-foreground">
+                  Password
+                </label>
+                <Input
+                  id="portal-password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </div>
+              <Button type="submit" className="w-full" disabled={submitting}>
+                {submitting ? 'Signing in...' : 'Sign in'}
+              </Button>
+            </form>
+            <p className="mt-4 text-center text-xs text-muted-foreground">
+              Forgot your password? Ask your buyer contact to reset it from your supplier record.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    </PortalShell>
   );
 }
 
@@ -511,17 +610,31 @@ function VendorPortalContent() {
   const [proposalSaving, setProposalSaving] = useState(false);
   const [bulkUploadMessage, setBulkUploadMessage] = useState('');
   const [messagePoId, setMessagePoId] = useState('');
+  const [needsLogin, setNeedsLogin] = useState(false);
+  const [loginNotice, setLoginNotice] = useState('');
+  const [sessionVersion, setSessionVersion] = useState(0);
+  const [account, setAccount] = useState<VendorPortalAccount | null>(null);
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountMessage, setAccountMessage] = useState('');
+  const [newLoginForm, setNewLoginForm] = useState({ email: '', name: '', password: '' });
+  const [passwordForm, setPasswordForm] = useState({ current: '', next: '' });
   const initializationRef = useRef<{
     linkToken: string;
+    sessionVersion: number;
     promise: Promise<[VendorPortalData, any, any]>;
   } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    if (!initializationRef.current || initializationRef.current.linkToken !== linkToken) {
+    if (
+      !initializationRef.current ||
+      initializationRef.current.linkToken !== linkToken ||
+      initializationRef.current.sessionVersion !== sessionVersion
+    ) {
       initializationRef.current = {
         linkToken,
+        sessionVersion,
         promise: (async () => {
           if (linkToken) {
             await api.vendorPortal.exchangeSession(linkToken);
@@ -563,9 +676,17 @@ function VendorPortalContent() {
         }
       })
       .catch((sessionError: any) => {
-        if (!cancelled) {
-          setError(sessionError.message || 'Failed to load portal data.');
+        if (cancelled) return;
+        if (sessionError?.status === 401) {
+          setLoginNotice(
+            linkToken
+              ? 'That access link is invalid or has already been used. Sign in with your email and password, or ask your buyer for a new link.'
+              : '',
+          );
+          setNeedsLogin(true);
+          return;
         }
+        setError(sessionError.message || 'Failed to load portal data.');
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -574,7 +695,17 @@ function VendorPortalContent() {
     return () => {
       cancelled = true;
     };
-  }, [linkToken]);
+  }, [linkToken, sessionVersion]);
+
+  useEffect(() => {
+    if (activeTab !== 'account' || account || needsLogin) return;
+    api.vendorPortal
+      .account()
+      .then(setAccount)
+      .catch((accountError: any) => {
+        setAccountMessage(`Error: ${accountError.message || 'Failed to load account.'}`);
+      });
+  }, [activeTab, account, needsLogin]);
 
   useEffect(() => {
     const pos = data?.purchaseOrders ?? [];
@@ -610,6 +741,20 @@ function VendorPortalContent() {
     );
   }
 
+  if (needsLogin) {
+    return (
+      <PortalLogin
+        notice={loginNotice}
+        onSuccess={() => {
+          setNeedsLogin(false);
+          setLoginNotice('');
+          setAccount(null);
+          setSessionVersion((version) => version + 1);
+        }}
+      />
+    );
+  }
+
   if (error) {
     return (
       <EmptyPortalState
@@ -632,7 +777,54 @@ function VendorPortalContent() {
     { key: 'messages', label: 'Messages' },
     { key: 'onboarding', label: 'Onboarding' },
     { key: 'catalog', label: `Catalog & Pricing (${catalogData?.items.length ?? 0})` },
+    { key: 'account', label: 'Account' },
   ];
+
+  async function handleSignOut() {
+    try {
+      await api.vendorPortal.revokeSession();
+    } finally {
+      setData(null);
+      setAccount(null);
+      setActiveTab('overview');
+      setLoginNotice('You have been signed out.');
+      setNeedsLogin(true);
+    }
+  }
+
+  async function runAccountAction(action: () => Promise<unknown>, success: string) {
+    setAccountBusy(true);
+    setAccountMessage('');
+    try {
+      await action();
+      setAccountMessage(success);
+      setAccount(await api.vendorPortal.account());
+    } catch (accountError: any) {
+      setAccountMessage(`Error: ${accountError.message || 'Request failed.'}`);
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
+  function submitNewLogin(event: FormEvent) {
+    event.preventDefault();
+    void runAccountAction(async () => {
+      await api.vendorPortal.createLogin({
+        email: newLoginForm.email,
+        password: newLoginForm.password,
+        name: newLoginForm.name || undefined,
+      });
+      setNewLoginForm({ email: '', name: '', password: '' });
+    }, 'Login created. You can now sign in with that email and password.');
+  }
+
+  function submitPasswordChange(event: FormEvent) {
+    event.preventDefault();
+    void runAccountAction(async () => {
+      await api.vendorPortal.changePassword(passwordForm.current, passwordForm.next);
+      setPasswordForm({ current: '', next: '' });
+    }, 'Password updated.');
+  }
 
   async function submitPriceProposal(event: FormEvent) {
     event.preventDefault();
@@ -733,7 +925,11 @@ function VendorPortalContent() {
   }
 
   return (
-    <PortalShell vendorName={vendor.name} onSubmitInvoice={() => setShowInvoiceModal(true)}>
+    <PortalShell
+      vendorName={vendor.name}
+      onSubmitInvoice={() => setShowInvoiceModal(true)}
+      onSignOut={handleSignOut}
+    >
       <div className="space-y-6">
         {submitSuccess ? (
           <Alert variant="success">
@@ -1385,6 +1581,130 @@ function VendorPortalContent() {
                 </CardContent>
               </Card>
             </div>
+          </div>
+        ) : null}
+
+        {activeTab === 'account' ? (
+          <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
+            <Card className="rounded-[28px]">
+              <CardHeader>
+                <CardTitle>Portal logins</CardTitle>
+                <CardDescription>
+                  {account?.user
+                    ? `Signed in as ${account.user.email}.`
+                    : 'You opened the portal with an access link. Create a login below so you can sign in directly next time.'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {accountMessage ? (
+                  <Alert variant={accountMessage.startsWith('Error') ? 'destructive' : 'success'}>
+                    <AlertDescription>{accountMessage}</AlertDescription>
+                  </Alert>
+                ) : null}
+                {account && account.logins.length > 0 ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Last sign-in</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {account.logins.map((login) => (
+                        <TableRow key={login.id}>
+                          <TableCell className="font-medium">{login.email}</TableCell>
+                          <TableCell>{login.name || '—'}</TableCell>
+                          <TableCell className="capitalize">{login.status}</TableCell>
+                          <TableCell>
+                            {login.lastLoginAt
+                              ? new Date(login.lastLoginAt).toLocaleString()
+                              : 'Never'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    {account ? 'No logins yet.' : 'Loading logins...'}
+                  </p>
+                )}
+                <form onSubmit={submitNewLogin} className="grid gap-3 md:grid-cols-2">
+                  <Input
+                    type="email"
+                    required
+                    placeholder="Email"
+                    value={newLoginForm.email}
+                    onChange={(event) =>
+                      setNewLoginForm({ ...newLoginForm, email: event.target.value })
+                    }
+                  />
+                  <Input
+                    placeholder="Name (optional)"
+                    value={newLoginForm.name}
+                    onChange={(event) =>
+                      setNewLoginForm({ ...newLoginForm, name: event.target.value })
+                    }
+                  />
+                  <Input
+                    type="password"
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    placeholder="Password (8+ characters)"
+                    value={newLoginForm.password}
+                    onChange={(event) =>
+                      setNewLoginForm({ ...newLoginForm, password: event.target.value })
+                    }
+                  />
+                  <Button type="submit" disabled={accountBusy}>
+                    Add login
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+            <Card className="rounded-[28px]">
+              <CardHeader>
+                <CardTitle>Change password</CardTitle>
+                <CardDescription>
+                  {account?.user
+                    ? 'Update the password for your current login.'
+                    : 'Sign in with an email and password to change it here.'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={submitPasswordChange} className="space-y-3">
+                  <Input
+                    type="password"
+                    required
+                    autoComplete="current-password"
+                    placeholder="Current password"
+                    disabled={!account?.user}
+                    value={passwordForm.current}
+                    onChange={(event) =>
+                      setPasswordForm({ ...passwordForm, current: event.target.value })
+                    }
+                  />
+                  <Input
+                    type="password"
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    placeholder="New password (8+ characters)"
+                    disabled={!account?.user}
+                    value={passwordForm.next}
+                    onChange={(event) =>
+                      setPasswordForm({ ...passwordForm, next: event.target.value })
+                    }
+                  />
+                  <Button type="submit" disabled={accountBusy || !account?.user}>
+                    Update password
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
           </div>
         ) : null}
       </div>

@@ -519,6 +519,13 @@
       "when": 1788831545552,
       "tag": "20260908013905_invoice_list_seek",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1793642006959,
+      "tag": "20261102175326_vendor_portal_users",
+      "breakpoints": true
     }
   ]
 }

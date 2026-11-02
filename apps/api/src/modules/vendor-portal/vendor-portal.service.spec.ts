@@ -83,6 +83,7 @@ describe('VendorPortalService sessions', () => {
     await expect(createService(db).validateSessionContext('live-session')).resolves.toEqual({
       vendorId,
       organizationId,
+      portalUserId: null,
     });
   });
 

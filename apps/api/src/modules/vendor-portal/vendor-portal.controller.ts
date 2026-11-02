@@ -1,19 +1,24 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   HttpCode,
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
+  Query,
   Req,
   Res,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { postMessageSchema } from '@betterspend/shared';
+import { IsEmail, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import type { Request, Response } from 'express';
 import {
   BulkCatalogPriceProposalRow,
@@ -32,6 +37,56 @@ import {
   portalSessionCookieOptions,
   readPortalSessionCookie,
 } from './vendor-portal-session';
+import { VendorPortalUsersService } from './vendor-portal-users.service';
+
+class PortalLoginDto {
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(256)
+  password: string;
+}
+
+class PortalPasswordDto {
+  @IsString()
+  @MinLength(8)
+  @MaxLength(256)
+  password: string;
+}
+
+class CreatePortalLoginDto extends PortalPasswordDto {
+  @IsEmail()
+  email: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  name?: string;
+}
+
+class CreatePortalUserDto extends CreatePortalLoginDto {
+  @IsUUID()
+  vendorId: string;
+}
+
+class ChangePortalPasswordDto {
+  @IsString()
+  currentPassword: string;
+
+  @IsString()
+  @MinLength(8)
+  @MaxLength(256)
+  newPassword: string;
+}
+
+class PortalUserStatusDto {
+  @IsIn(['active', 'disabled'])
+  status: 'active' | 'disabled';
+}
+
+const LOGIN_THROTTLE = { default: { limit: 10, ttl: 60_000 } };
 
 @ApiTags('vendor-portal')
 @Controller('vendor-portal')
@@ -39,7 +94,132 @@ export class VendorPortalController {
   constructor(
     private readonly vendorPortalService: VendorPortalService,
     private readonly messagesService: MessagesService,
+    private readonly portalUsersService?: VendorPortalUsersService,
   ) {}
+
+  /** Public: sign in with a vendor portal email/password login. */
+  @Post('login')
+  @Public()
+  @Throttle(LOGIN_THROTTLE)
+  @ApiOperation({ summary: 'Sign in to the vendor portal with email and password' })
+  @HttpCode(HttpStatus.OK)
+  async login(@Body() body: PortalLoginDto, @Res({ passthrough: true }) response: Response) {
+    const { sessionToken } = await this.vendorPortalService.loginWithPassword(
+      body.email,
+      body.password,
+    );
+    response.cookie(PORTAL_SESSION_COOKIE, sessionToken, portalSessionCookieOptions());
+    return { success: true };
+  }
+
+  /** Public (portal session): the signed-in login and every login for this vendor. */
+  @Get('account')
+  @Public()
+  @ApiOperation({ summary: 'Get the vendor portal account and its logins via portal session' })
+  async getAccount(@Req() request: Request) {
+    const { vendorId, organizationId, portalUserId } = await this.getSessionContext(request);
+    const users = this.requirePortalUsers();
+    const [user, logins] = await Promise.all([
+      portalUserId ? users.findSummary(portalUserId, organizationId) : null,
+      users.listByVendor(vendorId, organizationId),
+    ]);
+    return { user, logins };
+  }
+
+  /** Public (portal session): add an email/password login for this vendor. */
+  @Post('account/logins')
+  @Public()
+  @ApiOperation({ summary: 'Create a vendor portal login for the current vendor' })
+  async createOwnLogin(@Req() request: Request, @Body() body: CreatePortalLoginDto) {
+    const { vendorId, organizationId } = await this.getSessionContext(request);
+    return this.requirePortalUsers().createForVendor(vendorId, organizationId, body);
+  }
+
+  /** Public (portal session bound to a login): change that login's password. */
+  @Post('account/password')
+  @Public()
+  @Throttle(LOGIN_THROTTLE)
+  @ApiOperation({ summary: 'Change the signed-in vendor portal password' })
+  @HttpCode(HttpStatus.OK)
+  async changeOwnPassword(@Req() request: Request, @Body() body: ChangePortalPasswordDto) {
+    const { portalUserId } = await this.getSessionContext(request);
+    if (!portalUserId) {
+      throw new UnauthorizedException('Sign in with your email and password to change it');
+    }
+    return this.requirePortalUsers().changePassword(
+      portalUserId,
+      body.currentPassword,
+      body.newPassword,
+    );
+  }
+
+  /** Admin: list portal logins for a vendor. */
+  @Get('users')
+  @Permissions('vendors:view')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List vendor portal logins for a vendor (admin use)' })
+  listUsers(
+    @Query('vendorId', new ParseUUIDPipe()) vendorId: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.requirePortalUsers().listForVendor(vendorId, orgId, access);
+  }
+
+  /** Admin: create a portal login for a vendor contact. */
+  @Post('users')
+  @Permissions('vendors:edit')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create a vendor portal login (admin use)' })
+  createUser(
+    @Body() body: CreatePortalUserDto,
+    @CurrentOrgId() orgId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.requirePortalUsers().create(body, orgId, access);
+  }
+
+  /** Admin: set a new password on a portal login. */
+  @Post('users/:userId/password')
+  @Permissions('vendors:edit')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Reset a vendor portal login password (admin use)' })
+  @HttpCode(HttpStatus.OK)
+  resetUserPassword(
+    @Param('userId', new ParseUUIDPipe()) userId: string,
+    @Body() body: PortalPasswordDto,
+    @CurrentOrgId() orgId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.requirePortalUsers().resetPassword(userId, body.password, orgId, access);
+  }
+
+  /** Admin: enable or disable a portal login. */
+  @Patch('users/:userId')
+  @Permissions('vendors:edit')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Enable or disable a vendor portal login (admin use)' })
+  updateUser(
+    @Param('userId', new ParseUUIDPipe()) userId: string,
+    @Body() body: PortalUserStatusDto,
+    @CurrentOrgId() orgId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.requirePortalUsers().setStatus(userId, body.status, orgId, access);
+  }
+
+  /** Admin: delete a portal login. */
+  @Delete('users/:userId')
+  @Permissions('vendors:edit')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete a vendor portal login (admin use)' })
+  removeUser(
+    @Param('userId', new ParseUUIDPipe()) userId: string,
+    @CurrentOrgId() orgId: string,
+    @CurrentAccess() access?: AccessPolicy,
+  ) {
+    return this.requirePortalUsers().remove(userId, orgId, access);
+  }
 
   /** Admin: send portal access link to a vendor (requires auth). */
   @Post('access')
@@ -225,6 +405,11 @@ export class VendorPortalController {
       organizationId,
       Array.isArray(body?.rows) ? body.rows : [],
     );
+  }
+
+  private requirePortalUsers(): VendorPortalUsersService {
+    if (!this.portalUsersService) throw new UnauthorizedException('Portal logins are unavailable');
+    return this.portalUsersService;
   }
 
   private getSessionToken(request: Request): string {

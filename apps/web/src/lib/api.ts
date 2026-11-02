@@ -73,6 +73,21 @@ const ENTITY_STORAGE_KEY = 'betterspend:selected-entity-id';
 
 export type ApiErrorKind = 'unauthorized' | 'forbidden' | 'network' | 'server' | 'request';
 
+export interface VendorPortalUser {
+  id: string;
+  vendorId: string;
+  email: string;
+  name: string | null;
+  status: 'active' | 'disabled' | string;
+  lastLoginAt: string | null;
+  createdAt: string;
+}
+
+export interface VendorPortalAccount {
+  user: VendorPortalUser | null;
+  logins: VendorPortalUser[];
+}
+
 export class ApiError extends Error {
   readonly kind: ApiErrorKind;
   readonly status: number | null;
@@ -1292,6 +1307,41 @@ export const api = {
       apiFetch<{ success: boolean }>('/vendor-portal/access', {
         method: 'POST',
         body: JSON.stringify({ vendorId }),
+      }),
+    listUsers: (vendorId: string) =>
+      apiFetch<VendorPortalUser[]>(`/vendor-portal/users?vendorId=${vendorId}`),
+    createUser: (data: { vendorId: string; email: string; password: string; name?: string }) =>
+      apiFetch<VendorPortalUser>('/vendor-portal/users', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    resetUserPassword: (userId: string, password: string) =>
+      apiFetch<{ success: boolean }>(`/vendor-portal/users/${userId}/password`, {
+        method: 'POST',
+        body: JSON.stringify({ password }),
+      }),
+    updateUser: (userId: string, data: { status: 'active' | 'disabled' }) =>
+      apiFetch<VendorPortalUser>(`/vendor-portal/users/${userId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    removeUser: (userId: string) =>
+      apiFetch<{ success: boolean }>(`/vendor-portal/users/${userId}`, { method: 'DELETE' }),
+    login: (email: string, password: string) =>
+      vendorPortalFetch<{ success: boolean }>('/vendor-portal/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+      }),
+    account: () => vendorPortalFetch<VendorPortalAccount>('/vendor-portal/account'),
+    createLogin: (data: { email: string; password: string; name?: string }) =>
+      vendorPortalFetch<VendorPortalUser>('/vendor-portal/account/logins', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    changePassword: (currentPassword: string, newPassword: string) =>
+      vendorPortalFetch<{ success: boolean }>('/vendor-portal/account/password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword, newPassword }),
       }),
     exchangeSession: (token: string) =>
       vendorPortalFetch<{ success: boolean }>('/vendor-portal/session', {

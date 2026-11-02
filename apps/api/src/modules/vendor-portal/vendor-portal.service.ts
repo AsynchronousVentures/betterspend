@@ -30,6 +30,13 @@ import { VendorsService } from '../vendors/vendors.service';
 import { CatalogService } from '../catalog/catalog.service';
 import type { AccessPolicy } from '../auth/access-policy';
 import { hashPortalSessionToken, PORTAL_SESSION_TTL_MS } from './vendor-portal-session';
+import { VendorPortalUsersService } from './vendor-portal-users.service';
+
+export interface PortalSessionContext {
+  vendorId: string;
+  organizationId: string;
+  portalUserId: string | null;
+}
 
 export interface SubmitInvoiceInput {
   purchaseOrderId: string;
@@ -73,6 +80,7 @@ export class VendorPortalService {
     private readonly invoicesService: InvoicesService,
     private readonly vendorsService: VendorsService,
     private readonly catalogService: CatalogService,
+    private readonly portalUsersService?: VendorPortalUsersService,
   ) {}
 
   async sendAccessLink(
@@ -138,12 +146,36 @@ export class VendorPortalService {
     return { success: true };
   }
 
+  /** Sign in with an email/password login and open a portal session bound to that login. */
+  async loginWithPassword(
+    email: string,
+    password: string,
+  ): Promise<{ sessionToken: string; expiresAt: Date }> {
+    if (!this.portalUsersService) throw new UnauthorizedException('Portal logins are unavailable');
+    const identity = await this.portalUsersService.authenticate(email, password);
+    return this.createSession(this.db, identity);
+  }
+
+  private async createSession(
+    executor: Pick<Db, 'insert'>,
+    identity: { organizationId: string; vendorId: string; portalUserId?: string | null },
+  ): Promise<{ sessionToken: string; expiresAt: Date }> {
+    const sessionToken = randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + PORTAL_SESSION_TTL_MS);
+    await executor.insert(vendorPortalSessions).values({
+      organizationId: identity.organizationId,
+      vendorId: identity.vendorId,
+      portalUserId: identity.portalUserId ?? null,
+      tokenHash: hashPortalSessionToken(sessionToken),
+      expiresAt,
+    });
+    return { sessionToken, expiresAt };
+  }
+
   async exchangeLinkToken(token: string): Promise<{ sessionToken: string; expiresAt: Date }> {
     if (!token) throw new UnauthorizedException('Portal link token is required');
 
     const now = new Date();
-    const sessionToken = randomBytes(32).toString('hex');
-    const expiresAt = new Date(now.getTime() + PORTAL_SESSION_TTL_MS);
 
     return this.db.transaction(async (tx) => {
       const record = await tx.query.vendorPortalTokens.findFirst({
@@ -173,20 +205,14 @@ export class VendorPortalService {
         throw new UnauthorizedException('Invalid or expired portal link');
       }
 
-      await tx.insert(vendorPortalSessions).values({
+      return this.createSession(tx, {
         organizationId: vendor.organizationId,
         vendorId: record.vendorId,
-        tokenHash: hashPortalSessionToken(sessionToken),
-        expiresAt,
       });
-
-      return { sessionToken, expiresAt };
     });
   }
 
-  async validateSessionContext(
-    sessionToken: string,
-  ): Promise<{ vendorId: string; organizationId: string }> {
+  async validateSessionContext(sessionToken: string): Promise<PortalSessionContext> {
     if (!sessionToken) throw new UnauthorizedException('Vendor portal session is required');
 
     const record = await this.db.query.vendorPortalSessions.findFirst({
@@ -196,7 +222,11 @@ export class VendorPortalService {
       throw new UnauthorizedException('Invalid or expired vendor portal session');
     }
 
-    return { vendorId: record.vendorId, organizationId: record.organizationId };
+    return {
+      vendorId: record.vendorId,
+      organizationId: record.organizationId,
+      portalUserId: record.portalUserId ?? null,
+    };
   }
 
   async revokeSession(sessionToken: string): Promise<void> {
